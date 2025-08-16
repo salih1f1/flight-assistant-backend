@@ -7,6 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.8" />
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="9.0.8" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\FlightAssistant.Application\FlightAssistant.Application.csproj" />
     <ProjectReference Include="..\FlightAssistant.Domain\FlightAssistant.Domain.csproj" />
     <ProjectReference Include="..\FlightAssistant.SharedKernel\FlightAssistant.SharedKernel.csproj" />
