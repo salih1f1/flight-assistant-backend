@@ -3,9 +3,71 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.36221.1 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "01.Domain", "01.Domain", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "02.Infrastructure", "02.Infrastructure", "{BA8D3BBF-EDD1-4D76-8D33-A66BA5D37ECD}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "03.Application", "03.Application", "{63170451-738A-4235-B8AF-F0AB4544657E}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "04.API", "04.API", "{4A53089C-9B5D-4AEA-AED1-82DA7E419F72}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "05.Testing", "05.Testing", "{472F7928-2451-4E45-AC1B-FD94E6C20BBA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FlightAssistant.Domain", "FlightAssistant.Domain\FlightAssistant.Domain.csproj", "{85BDF520-6D48-4CDA-9CB8-92D1DB1B324E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FlightAssistant.Infrastructure", "FlightAssistant.Infrastructure\FlightAssistant.Infrastructure.csproj", "{3E58041C-A318-4751-B151-4263BA451A30}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FlightAssistant.Application", "FlightAssistant.Application\FlightAssistant.Application.csproj", "{606629E0-597F-45AD-958D-57A61FB382F6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FlightAssistant.API", "FlightAssistant.API\FlightAssistant.API.csproj", "{FD601C8F-4B31-4058-9ADE-3E228623FC44}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "00.Common", "00.Common", "{A6177305-BC0A-4F8E-829E-5041D41E4C54}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FlightAssistant.SharedKernel", "FlightAssistant.SharedKernel\FlightAssistant.SharedKernel.csproj", "{0DD9DF1D-A21E-4920-9A11-B14DBDB750B0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FlightAssistant.Contracts", "FlightAssistant.Contracts\FlightAssistant.Contracts.csproj", "{44CCC272-7277-4F95-A02F-AE84E7C5A1F0}"
+EndProject
 Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{85BDF520-6D48-4CDA-9CB8-92D1DB1B324E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{85BDF520-6D48-4CDA-9CB8-92D1DB1B324E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{85BDF520-6D48-4CDA-9CB8-92D1DB1B324E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{85BDF520-6D48-4CDA-9CB8-92D1DB1B324E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3E58041C-A318-4751-B151-4263BA451A30}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3E58041C-A318-4751-B151-4263BA451A30}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3E58041C-A318-4751-B151-4263BA451A30}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3E58041C-A318-4751-B151-4263BA451A30}.Release|Any CPU.Build.0 = Release|Any CPU
+		{606629E0-597F-45AD-958D-57A61FB382F6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{606629E0-597F-45AD-958D-57A61FB382F6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{606629E0-597F-45AD-958D-57A61FB382F6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{606629E0-597F-45AD-958D-57A61FB382F6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FD601C8F-4B31-4058-9ADE-3E228623FC44}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FD601C8F-4B31-4058-9ADE-3E228623FC44}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FD601C8F-4B31-4058-9ADE-3E228623FC44}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FD601C8F-4B31-4058-9ADE-3E228623FC44}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0DD9DF1D-A21E-4920-9A11-B14DBDB750B0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0DD9DF1D-A21E-4920-9A11-B14DBDB750B0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0DD9DF1D-A21E-4920-9A11-B14DBDB750B0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0DD9DF1D-A21E-4920-9A11-B14DBDB750B0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{44CCC272-7277-4F95-A02F-AE84E7C5A1F0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{44CCC272-7277-4F95-A02F-AE84E7C5A1F0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{44CCC272-7277-4F95-A02F-AE84E7C5A1F0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{44CCC272-7277-4F95-A02F-AE84E7C5A1F0}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{85BDF520-6D48-4CDA-9CB8-92D1DB1B324E} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{3E58041C-A318-4751-B151-4263BA451A30} = {BA8D3BBF-EDD1-4D76-8D33-A66BA5D37ECD}
+		{606629E0-597F-45AD-958D-57A61FB382F6} = {63170451-738A-4235-B8AF-F0AB4544657E}
+		{FD601C8F-4B31-4058-9ADE-3E228623FC44} = {4A53089C-9B5D-4AEA-AED1-82DA7E419F72}
+		{0DD9DF1D-A21E-4920-9A11-B14DBDB750B0} = {A6177305-BC0A-4F8E-829E-5041D41E4C54}
+		{44CCC272-7277-4F95-A02F-AE84E7C5A1F0} = {A6177305-BC0A-4F8E-829E-5041D41E4C54}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {CA415E6B-1C9E-49A7-99A2-D570266FB2BD}
