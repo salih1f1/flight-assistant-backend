@@ -10,10 +10,11 @@ namespace FlightAssistant.Infrastructure.Persistance
     {
         public FlightAssistantDbContext(DbContextOptions<FlightAssistantDbContext> options) : base(options) { }
 
-        //// Travelers
-        //public DbSet<Traveler> Travelers => Set<Traveler>();
-        //public DbSet<DeviceToken> DeviceTokens => Set<DeviceToken>();
+        // Travelers
+        public DbSet<Traveler> Travelers => Set<Traveler>();
+        public DbSet<DeviceToken> DeviceTokens => Set<DeviceToken>();
 
+        // Reference Data
         public DbSet<Country> Countries => Set<Country>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)

@@ -15,6 +15,8 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddDbContext<FlightAssistantDbContext>(opt =>
     opt.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+builder.Services.AddScoped<ITravelerRepository, TravelerRepository>();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
