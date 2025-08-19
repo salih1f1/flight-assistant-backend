@@ -1,4 +1,5 @@
 ﻿using FlightAssistant.Domain.Common;
+using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -13,6 +14,13 @@ namespace FlightAssistant.Infrastructure.Persistance
         // Travelers
         public DbSet<Traveler> Travelers => Set<Traveler>();
         public DbSet<DeviceToken> DeviceTokens => Set<DeviceToken>();
+
+        // Fligghts
+        public DbSet<Flight> Flights => Set<Flight>();
+        public DbSet<TravelerFlight> TravelerFlights => Set<TravelerFlight>();
+        public DbSet<FlightStatus> FlightStatus => Set<FlightStatus>();
+        public DbSet<FlightStatusEvent> FlightStatusEvents => Set<FlightStatusEvent>();
+
 
         // Reference Data
         public DbSet<Airline> Airlines => Set<Airline>();

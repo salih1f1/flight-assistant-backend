@@ -7,12 +7,17 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Flights\Events\**" />
+    <EmbeddedResource Remove="Flights\Events\**" />
+    <None Remove="Flights\Events\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\FlightAssistant.SharedKernel\FlightAssistant.SharedKernel.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <Folder Include="Common\Enums\" />
-    <Folder Include="Flights\Events\" />
   </ItemGroup>
 
 </Project>

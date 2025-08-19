@@ -1,4 +1,6 @@
-﻿namespace FlightAssistant.Domain.ReferenceData.Entities
+﻿using FlightAssistant.Domain.Flights.Entities;
+
+namespace FlightAssistant.Domain.ReferenceData.Entities
 {
     public class Airline
     {
@@ -10,5 +12,7 @@
 
         public string? AllianceCode { get; private set; }
         public Alliance? Alliance { get; private set; }
+
+        public ICollection<Flight> Flights { get; private set; } = new List<Flight>();
     }
 }

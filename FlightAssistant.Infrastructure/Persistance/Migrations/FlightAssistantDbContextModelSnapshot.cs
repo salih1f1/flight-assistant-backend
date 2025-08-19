@@ -22,6 +22,205 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("FlightAssistant.Domain.Flights.Entities.Flight", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime?>("ActualArrivalUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ActualDepartureUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("AirlineId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ArrivalAirportId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DepartureAirportId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("EquipmentAircraftIcao")
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<DateTime?>("EstimatedArrivalUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("EstimatedDepartureUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExternalId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("FlightNumber")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<DateTime>("ScheduledArrivalUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ScheduledDepartureUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly>("ServiceDateUtc")
+                        .HasColumnType("date");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ArrivalAirportId", "ServiceDateUtc")
+                        .HasDatabaseName("ix_flight_arr_day");
+
+                    b.HasIndex("DepartureAirportId", "ServiceDateUtc")
+                        .HasDatabaseName("ix_flight_dep_day");
+
+                    b.HasIndex("AirlineId", "FlightNumber", "ServiceDateUtc")
+                        .HasDatabaseName("ix_flight_lookup");
+
+                    b.ToTable("flights", (string)null);
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Flights.Entities.FlightStatus", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("flight_statuses", (string)null);
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Flights.Entities.FlightStatusEvent", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("BaggageClaim")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("DedupHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("EffectiveAtUtc")
+                        .HasColumnType("timestamptz");
+
+                    b.Property<string>("ExternalId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("FlightId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Gate")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("RawPayloadJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime>("RecordedAtUtc")
+                        .HasColumnType("timestamptz");
+
+                    b.Property<string>("Remarks")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)")
+                        .HasDefaultValue("manual");
+
+                    b.Property<int>("StatusId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Terminal")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("StatusId");
+
+                    b.HasIndex("FlightId", "EffectiveAtUtc", "RecordedAtUtc")
+                        .HasDatabaseName("ix_fse_latest");
+
+                    b.HasIndex("FlightId", "Source", "DedupHash")
+                        .IsUnique();
+
+                    b.HasIndex("FlightId", "StatusId", "EffectiveAtUtc")
+                        .HasDatabaseName("ix_fse_status_time");
+
+                    b.ToTable("flight_status_events", (string)null);
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Flights.Entities.TravelerFlight", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("FlightId")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("Notify")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("TravelerId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FlightId");
+
+                    b.HasIndex("TravelerId", "FlightId")
+                        .IsUnique();
+
+                    b.ToTable("traveler_flights", (string)null);
+                });
+
             modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Airline", b =>
                 {
                     b.Property<int>("Id")
@@ -56,7 +255,8 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("AllianceCode");
+                    b.HasIndex("AllianceCode")
+                        .HasDatabaseName("ix_airlines_alliance");
 
                     b.HasIndex("CountryCode");
 
@@ -283,6 +483,63 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.ToTable("travelers", (string)null);
                 });
 
+            modelBuilder.Entity("FlightAssistant.Domain.Flights.Entities.Flight", b =>
+                {
+                    b.HasOne("FlightAssistant.Domain.ReferenceData.Entities.Airline", "Airline")
+                        .WithMany("Flights")
+                        .HasForeignKey("AirlineId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FlightAssistant.Domain.ReferenceData.Entities.Airport", null)
+                        .WithMany()
+                        .HasForeignKey("ArrivalAirportId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FlightAssistant.Domain.ReferenceData.Entities.Airport", null)
+                        .WithMany()
+                        .HasForeignKey("DepartureAirportId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Airline");
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Flights.Entities.FlightStatusEvent", b =>
+                {
+                    b.HasOne("FlightAssistant.Domain.Flights.Entities.Flight", "Flight")
+                        .WithMany()
+                        .HasForeignKey("FlightId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("FlightAssistant.Domain.Flights.Entities.FlightStatus", "Status")
+                        .WithMany()
+                        .HasForeignKey("StatusId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Flight");
+
+                    b.Navigation("Status");
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Flights.Entities.TravelerFlight", b =>
+                {
+                    b.HasOne("FlightAssistant.Domain.Flights.Entities.Flight", null)
+                        .WithMany()
+                        .HasForeignKey("FlightId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("FlightAssistant.Domain.Travelers.Entities.Traveler", null)
+                        .WithMany()
+                        .HasForeignKey("TravelerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Airline", b =>
                 {
                     b.HasOne("FlightAssistant.Domain.ReferenceData.Entities.Alliance", "Alliance")
@@ -328,6 +585,11 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .WithMany()
                         .HasForeignKey("ResidenceCountryCode")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Airline", b =>
+                {
+                    b.Navigation("Flights");
                 });
 
             modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Alliance", b =>
