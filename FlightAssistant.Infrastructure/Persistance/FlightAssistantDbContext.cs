@@ -15,7 +15,11 @@ namespace FlightAssistant.Infrastructure.Persistance
         public DbSet<DeviceToken> DeviceTokens => Set<DeviceToken>();
 
         // Reference Data
+        public DbSet<Airline> Airlines => Set<Airline>();
+        public DbSet<Airport> Airports => Set<Airport>();
+        public DbSet<Alliance> Alliances => Set<Alliance>();
         public DbSet<Country> Countries => Set<Country>();
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

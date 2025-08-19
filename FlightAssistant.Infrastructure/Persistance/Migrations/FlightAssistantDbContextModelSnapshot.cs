@@ -22,6 +22,133 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Airline", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AllianceCode")
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<string>("CountryCode")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character(2)")
+                        .IsFixedLength();
+
+                    b.Property<string>("Iata")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("Icao")
+                        .HasMaxLength(4)
+                        .HasColumnType("character varying(4)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AllianceCode");
+
+                    b.HasIndex("CountryCode");
+
+                    b.HasIndex("Iata")
+                        .IsUnique();
+
+                    b.HasIndex("Icao")
+                        .IsUnique()
+                        .HasFilter("\"Icao\" IS NOT NULL");
+
+                    b.ToTable("airlines", (string)null);
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Airport", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("City")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("CountryCode")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character(2)")
+                        .IsFixedLength();
+
+                    b.Property<int?>("ElevationFt")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Iata")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("Icao")
+                        .HasMaxLength(4)
+                        .HasColumnType("character varying(4)");
+
+                    b.Property<double?>("Latitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("Longitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Timezone")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Iata")
+                        .IsUnique();
+
+                    b.HasIndex("Icao")
+                        .IsUnique()
+                        .HasFilter("\"Icao\" IS NOT NULL");
+
+                    b.HasIndex("CountryCode", "City");
+
+                    b.ToTable("airports", (string)null);
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Alliance", b =>
+                {
+                    b.Property<string>("Code")
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Code");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("alliances", (string)null);
+                });
+
             modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Country", b =>
                 {
                     b.Property<string>("Code")
@@ -156,6 +283,31 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.ToTable("travelers", (string)null);
                 });
 
+            modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Airline", b =>
+                {
+                    b.HasOne("FlightAssistant.Domain.ReferenceData.Entities.Alliance", "Alliance")
+                        .WithMany("Airlines")
+                        .HasForeignKey("AllianceCode")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("FlightAssistant.Domain.ReferenceData.Entities.Country", null)
+                        .WithMany()
+                        .HasForeignKey("CountryCode")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Alliance");
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Airport", b =>
+                {
+                    b.HasOne("FlightAssistant.Domain.ReferenceData.Entities.Country", null)
+                        .WithMany()
+                        .HasForeignKey("CountryCode")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("FlightAssistant.Domain.Travelers.Entities.DeviceToken", b =>
                 {
                     b.HasOne("FlightAssistant.Domain.Travelers.Entities.Traveler", null)
@@ -176,6 +328,11 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .WithMany()
                         .HasForeignKey("ResidenceCountryCode")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Alliance", b =>
+                {
+                    b.Navigation("Airlines");
                 });
 
             modelBuilder.Entity("FlightAssistant.Domain.Travelers.Entities.Traveler", b =>
