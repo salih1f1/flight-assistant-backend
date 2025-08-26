@@ -3,7 +3,7 @@ using FlightAssistant.Domain.ReferenceData.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-namespace FlightAssistant.Infrastructure.Persistance.Configurations.Loinges
+namespace FlightAssistant.Infrastructure.Persistance.Configurations.Lounges
 {
     public sealed class LoungeConfiguration : IEntityTypeConfiguration<Lounge>
     {
