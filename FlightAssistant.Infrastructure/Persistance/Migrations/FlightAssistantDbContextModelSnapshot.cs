@@ -221,6 +221,267 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.ToTable("traveler_flights", (string)null);
                 });
 
+            modelBuilder.Entity("FlightAssistant.Domain.Lounges.Entities.Lounge", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("AirportId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Amenities")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Hours")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("IsAirside")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDomesticOnly")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsInternationalOnly")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LocationHint")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Terminal")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AirportId", "Terminal", "Name")
+                        .IsUnique();
+
+                    b.ToTable("lounges", (string)null);
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Lounges.Entities.LoungeProvider", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("lounge_providers", (string)null);
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Lounges.Entities.LoungeProviderLink", b =>
+                {
+                    b.Property<int>("LoungeId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ProviderId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Role")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.HasKey("LoungeId", "ProviderId", "Role");
+
+                    b.HasIndex("ProviderId", "Role");
+
+                    b.ToTable("lounge_provider_links", (string)null);
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Loyalty.Entities.LoyaltyProgram", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int?>("AirlineId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("AllianceCode")
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<int>("KindId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AirlineId");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.HasIndex("KindId");
+
+                    b.ToTable("loyalty_programs", (string)null);
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Loyalty.Entities.LoyaltyProgramKind", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("loyalty_program_kinds", (string)null);
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Loyalty.Entities.LoyaltyTier", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AllianceCode")
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<string>("AllianceTierCode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("ProgramId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Rank")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProgramId", "Code")
+                        .IsUnique();
+
+                    b.HasIndex("ProgramId", "Rank")
+                        .IsUnique();
+
+                    b.ToTable("loyalty_tiers", (string)null);
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Loyalty.Entities.TravelerLoyaltyMembership", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AccountNumber")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly?>("PointsExpiryDate")
+                        .HasColumnType("date");
+
+                    b.Property<int>("ProgramId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateOnly?>("TierExpiryDate")
+                        .HasColumnType("date");
+
+                    b.Property<int?>("TierId")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TravelerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProgramId");
+
+                    b.HasIndex("TierId");
+
+                    b.HasIndex("TravelerId", "ProgramId")
+                        .IsUnique();
+
+                    b.ToTable("traveler_loyalty_memberships", (string)null);
+                });
+
             modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Airline", b =>
                 {
                     b.Property<int>("Id")
@@ -540,6 +801,79 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("FlightAssistant.Domain.Lounges.Entities.Lounge", b =>
+                {
+                    b.HasOne("FlightAssistant.Domain.ReferenceData.Entities.Airport", null)
+                        .WithMany()
+                        .HasForeignKey("AirportId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Lounges.Entities.LoungeProviderLink", b =>
+                {
+                    b.HasOne("FlightAssistant.Domain.Lounges.Entities.Lounge", "Lounge")
+                        .WithMany("Providers")
+                        .HasForeignKey("LoungeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("FlightAssistant.Domain.Lounges.Entities.LoungeProvider", "Provider")
+                        .WithMany("LoungeLinks")
+                        .HasForeignKey("ProviderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Lounge");
+
+                    b.Navigation("Provider");
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Loyalty.Entities.LoyaltyProgram", b =>
+                {
+                    b.HasOne("FlightAssistant.Domain.ReferenceData.Entities.Airline", null)
+                        .WithMany()
+                        .HasForeignKey("AirlineId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("FlightAssistant.Domain.Loyalty.Entities.LoyaltyProgramKind", "Kind")
+                        .WithMany("Programs")
+                        .HasForeignKey("KindId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Kind");
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Loyalty.Entities.LoyaltyTier", b =>
+                {
+                    b.HasOne("FlightAssistant.Domain.Loyalty.Entities.LoyaltyProgram", null)
+                        .WithMany("Tiers")
+                        .HasForeignKey("ProgramId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Loyalty.Entities.TravelerLoyaltyMembership", b =>
+                {
+                    b.HasOne("FlightAssistant.Domain.Loyalty.Entities.LoyaltyProgram", null)
+                        .WithMany()
+                        .HasForeignKey("ProgramId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("FlightAssistant.Domain.Loyalty.Entities.LoyaltyTier", null)
+                        .WithMany()
+                        .HasForeignKey("TierId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("FlightAssistant.Domain.Travelers.Entities.Traveler", null)
+                        .WithMany()
+                        .HasForeignKey("TravelerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Airline", b =>
                 {
                     b.HasOne("FlightAssistant.Domain.ReferenceData.Entities.Alliance", "Alliance")
@@ -585,6 +919,26 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .WithMany()
                         .HasForeignKey("ResidenceCountryCode")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Lounges.Entities.Lounge", b =>
+                {
+                    b.Navigation("Providers");
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Lounges.Entities.LoungeProvider", b =>
+                {
+                    b.Navigation("LoungeLinks");
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Loyalty.Entities.LoyaltyProgram", b =>
+                {
+                    b.Navigation("Tiers");
+                });
+
+            modelBuilder.Entity("FlightAssistant.Domain.Loyalty.Entities.LoyaltyProgramKind", b =>
+                {
+                    b.Navigation("Programs");
                 });
 
             modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Airline", b =>
