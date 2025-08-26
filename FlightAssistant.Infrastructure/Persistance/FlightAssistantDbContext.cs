@@ -15,7 +15,7 @@ namespace FlightAssistant.Infrastructure.Persistance
         public DbSet<Traveler> Travelers => Set<Traveler>();
         public DbSet<DeviceToken> DeviceTokens => Set<DeviceToken>();
 
-        // Fligghts
+        // Flights
         public DbSet<Flight> Flights => Set<Flight>();
         public DbSet<TravelerFlight> TravelerFlights => Set<TravelerFlight>();
         public DbSet<FlightStatus> FlightStatus => Set<FlightStatus>();
