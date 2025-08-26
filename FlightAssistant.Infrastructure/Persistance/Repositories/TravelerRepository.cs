@@ -13,7 +13,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             _db.Travelers.Include(t => t.DeviceTokens).FirstOrDefaultAsync(t => t.Id == id, ct);
 
         public Task<Traveler?> GetByEmailAsync(string email, CancellationToken ct = default) =>
-            _db.Travelers.Include(t => t.DeviceTokens).FirstOrDefaultAsync(t => t.Email == email.ToLower(), ct);
+            _db.Travelers.Include(t => t.DeviceTokens).FirstOrDefaultAsync(t => t.Email == email.Trim().ToLowerInvariant(), ct);
 
         public async Task AddAsync(Traveler entity, CancellationToken ct = default)
             => await _db.Travelers.AddAsync(entity, ct);
