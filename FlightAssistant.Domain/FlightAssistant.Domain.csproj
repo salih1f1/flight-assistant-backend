@@ -7,6 +7,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Common\Enums\**" />
+    <Compile Remove="Flights\Events\**" />
+    <EmbeddedResource Remove="Common\Enums\**" />
+    <EmbeddedResource Remove="Flights\Events\**" />
+    <None Remove="Common\Enums\**" />
+    <None Remove="Flights\Events\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\FlightAssistant.SharedKernel\FlightAssistant.SharedKernel.csproj" />
   </ItemGroup>
 
