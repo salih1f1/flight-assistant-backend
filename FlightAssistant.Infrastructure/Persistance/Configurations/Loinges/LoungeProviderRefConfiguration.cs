@@ -2,7 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-namespace FlightAssistant.Infrastructure.Persistance.Configurations.Loinges
+namespace FlightAssistant.Infrastructure.Persistance.Configurations.Lounges
 {
     public sealed class LoungeProviderRefConfiguration : IEntityTypeConfiguration<LoungeProvider>
     {
