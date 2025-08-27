@@ -1,8 +1,9 @@
-﻿using FlightAssistant.Domain.ReferenceData.Entities;
+﻿using FlightAssistant.Domain.Common.Interfaces;
+using FlightAssistant.Domain.ReferenceData.Entities;
 
 namespace FlightAssistant.Domain.Flights.Entities
 {
-    public class Flight
+    public class Flight : IAggregateRoot
     {
         public int Id { get; private set; }
 
