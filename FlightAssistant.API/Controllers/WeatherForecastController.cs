@@ -1,3 +1,4 @@
+using FlightAssistant.Application.Interfaces.Caching;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FlightAssistant.API.Controllers
@@ -12,15 +13,30 @@ namespace FlightAssistant.API.Controllers
         };
 
         private readonly ILogger<WeatherForecastController> _logger;
+        private readonly ICacheService cacheService;
 
-        public WeatherForecastController(ILogger<WeatherForecastController> logger)
+        public WeatherForecastController(
+            ILogger<WeatherForecastController> logger,
+            ICacheService cacheService
+            )
         {
             _logger = logger;
+            this.cacheService = cacheService;
         }
 
         [HttpGet(Name = "GetWeatherForecast")]
-        public IEnumerable<WeatherForecast> Get()
+        public async Task<IEnumerable<WeatherForecast>> Get()
         {
+            await cacheService.SetAsync("test", "value");
+
+            var tst = await cacheService.GetAsync<string>("test");
+
+            await cacheService.GetOrSetAsync("test2", async (ct) =>
+            {
+                await Task.Delay(1000);
+                return "value from factory";
+            });
+
             return Enumerable.Range(1, 5).Select(index => new WeatherForecast
             {
                 Date = DateOnly.FromDateTime(DateTime.Now.AddDays(index)),

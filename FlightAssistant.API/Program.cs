@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +15,9 @@ builder.Services.AddSwaggerGen();
 
 builder.Services.AddDbContext<FlightAssistantDbContext>(opt =>
     opt.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// Caching
+builder.Services.AddAppCaching(builder.Configuration);
 
 builder.Services.AddScoped<ITravelerRepository, TravelerRepository>();
 
