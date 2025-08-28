@@ -29,7 +29,7 @@ namespace FlightAssistant.API.Controllers
         {
             await cacheService.SetAsync("test", "value");
 
-            var tst = cacheService.GetAsync<string>("test").GetAwaiter().GetResult();
+            var tst = await cacheService.GetAsync<string>("test");
 
             await cacheService.GetOrSetAsync("test2", async (ct) =>
             {
