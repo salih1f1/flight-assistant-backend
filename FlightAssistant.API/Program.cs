@@ -1,3 +1,4 @@
+using Azure.Identity;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.Persistance;
@@ -20,6 +21,13 @@ builder.Services.AddDbContext<FlightAssistantDbContext>(opt =>
 builder.Services.AddAppCaching(builder.Configuration);
 
 builder.Services.AddScoped<ITravelerRepository, TravelerRepository>();
+
+var keyVaultUri = builder.Configuration["Azure:KeyVault"];
+
+if (!string.IsNullOrWhiteSpace(keyVaultUri))
+{
+    builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUri), new DefaultAzureCredential());
+}
 
 var app = builder.Build();
 
