@@ -1,3 +1,4 @@
+using Azure.Identity;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
@@ -16,6 +17,13 @@ builder.Services.AddDbContext<FlightAssistantDbContext>(opt =>
     opt.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddScoped<ITravelerRepository, TravelerRepository>();
+
+var keyVaultUri = builder.Configuration["Azure:KeyVault"];
+
+if (!string.IsNullOrWhiteSpace(keyVaultUri))
+{
+    builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUri), new DefaultAzureCredential());
+}
 
 var app = builder.Build();
 
