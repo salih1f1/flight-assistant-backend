@@ -1,6 +1,8 @@
-﻿namespace FlightAssistant.Domain.ReferenceData.Entities
+﻿using FlightAssistant.Domain.Common;
+
+namespace FlightAssistant.Domain.ReferenceData.Entities
 {
-    public class Airport
+    public class Airport : SeadableEntity
     {
         public int Id { get; private set; }
         public string Iata { get; private set; } = default!;

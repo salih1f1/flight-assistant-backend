@@ -45,7 +45,7 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 builder.Services.AddDbContext<FlightAssistantDbContext>(opt =>
-    opt.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+    opt.UseNpgsql(builder.Configuration["PostgresConnectionString-Local"]));
 
 // Caching
 builder.Services.AddAppCaching(builder.Configuration);

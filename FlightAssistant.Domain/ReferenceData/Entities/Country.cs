@@ -1,6 +1,8 @@
-﻿namespace FlightAssistant.Domain.ReferenceData.Entities
+﻿using FlightAssistant.Domain.Common;
+
+namespace FlightAssistant.Domain.ReferenceData.Entities
 {
-    public class Country
+    public class Country : SeadableEntity
     {
         public string Code { get; private set; } = default!;
         public string Name { get; private set; } = default!;
