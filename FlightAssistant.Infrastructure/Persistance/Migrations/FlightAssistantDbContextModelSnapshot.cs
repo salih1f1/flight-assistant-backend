@@ -22,6 +22,24 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("FlightAssistant.Domain.Configuartion.Entities.SeedVersion", b =>
+                {
+                    b.Property<string>("Dataset")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("AppliedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.HasKey("Dataset", "Version");
+
+                    b.ToTable("seed_versions", (string)null);
+                });
+
             modelBuilder.Entity("FlightAssistant.Domain.Flights.Entities.Flight", b =>
                 {
                     b.Property<int>("Id")
