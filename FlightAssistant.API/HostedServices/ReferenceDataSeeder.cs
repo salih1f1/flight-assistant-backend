@@ -1,7 +1,9 @@
-﻿using FlightAssistant.Domain.Configuartion.Entities;
+﻿using FlightAssistant.Domain.Common.Interfaces;
+using FlightAssistant.Domain.Configuartion.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography.Xml;
 using System.Text.Json;
 using System.Text.RegularExpressions;   
 
@@ -30,7 +32,7 @@ namespace FlightAssistant.API.HostedServices
             using var scope = sp.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
 
-            await SeedAlliances(db, cancellationToken);
+            await SeedData<Alliance>(db, cancellationToken);
 
             log.LogInformation("Reference data seeding completed.");
         }
@@ -74,17 +76,18 @@ namespace FlightAssistant.API.HostedServices
             return false;
         }
 
-        private async Task SeedAlliances(FlightAssistantDbContext db, CancellationToken ct)
+        private async Task SeedData<T>(FlightAssistantDbContext db, CancellationToken ct) 
+            where T : class, ISeadableEntity
         {
-            var folder = Path.Combine(AppContext.BaseDirectory, SeedDataFolderPath, "Alliances");
+            var dataset = typeof(T).Name;
+
+            var folder = Path.Combine(AppContext.BaseDirectory, SeedDataFolderPath, dataset);
 
             if (!Directory.Exists(folder)) 
             { 
                 log.LogWarning("Seed folder not found: {Folder}", folder); 
                 return;
             }
-
-            const string dataset = "Alliances";
 
             foreach (var filePath in Directory.EnumerateFiles(folder, "*.json", SearchOption.TopDirectoryOnly))
             {
@@ -102,10 +105,10 @@ namespace FlightAssistant.API.HostedServices
                     continue;
                 }
 
-                List<Alliance> items;
+                List<T> items;
                 try
                 {
-                    items = LoadJsonFromPath<Alliance>(filePath);
+                    items = LoadJsonFromPath<T>(filePath);
                 }
                 catch (Exception ex)
             {
@@ -115,15 +118,16 @@ namespace FlightAssistant.API.HostedServices
 
             foreach (var item in items)
             {
-                if (!await db.Alliances.AnyAsync(x => x.Code == item.Code, ct))
-                {
-                    item.SourceType = "seed";
-                    item.FirstSeenAt = DateTime.UtcNow;
-                    item.LastSeenAt = DateTime.UtcNow;
-                    db.Alliances.Add(item);
+                    switch (item)
+                    {
+                        case Alliance alliance:
+                            await PopulateAlliancesAsync(alliance, db, ct);
+                            break;
 
-                        log.LogInformation("Seeded Alliance {Code} - {Name} from {File}", item.Code, item.Name, fileName);
-                }
+                        default:
+                            log.LogError("Seeding for type {0} is not implemented", dataset);
+                            return;
+                    }
             }
 
             await db.SaveChangesAsync(ct);
@@ -132,5 +136,20 @@ namespace FlightAssistant.API.HostedServices
             }
         }
 
+        private async Task PopulateAlliancesAsync(
+            Alliance alliance,
+            FlightAssistantDbContext db,
+            CancellationToken ct)
+        {
+            if (!await db.Alliances.AnyAsync(x => x.Code == alliance.Code, ct))
+            {
+                alliance.SourceType = "seed";
+                alliance.FirstSeenAt = DateTime.UtcNow;
+                alliance.LastSeenAt = DateTime.UtcNow;
+                await db.Alliances.AddAsync(alliance);
+
+                log.LogInformation("Seeded Alliance {Code} - {Name}", alliance.Code, alliance.Name);
+            }
+        }
     }
 }

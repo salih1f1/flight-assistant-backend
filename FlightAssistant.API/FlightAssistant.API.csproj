@@ -26,8 +26,4 @@
     <ProjectReference Include="..\FlightAssistant.SharedKernel\FlightAssistant.SharedKernel.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="SeedData\" />
-  </ItemGroup>
-
 </Project>
