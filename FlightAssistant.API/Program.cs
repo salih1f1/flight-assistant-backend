@@ -1,4 +1,5 @@
 using Azure.Identity;
+using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.Persistance;
@@ -93,6 +94,8 @@ builder.Services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSch
 });
 
 builder.Services.AddAuthorization();
+
+builder.Services.AddHostedService<ReferenceDataSeeder>();
 
 var app = builder.Build();
 
