@@ -525,7 +525,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Iata")
-                        .IsRequired()
                         .HasMaxLength(3)
                         .HasColumnType("character varying(3)");
 

@@ -13,7 +13,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.ReferenceDat
 
             // Normalize storage of codes to uppercase (domain does not currently enforce)
             b.Property(x => x.Iata)
-                .IsRequired()
                 .HasMaxLength(3)
                 .HasConversion(
                     v => v.ToUpperInvariant(),

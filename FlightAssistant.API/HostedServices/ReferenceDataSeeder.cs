@@ -35,6 +35,8 @@ namespace FlightAssistant.API.HostedServices
 
             await SeedData<Alliance>(db, cancellationToken);
             await SeedData<Country>(db, cancellationToken);
+            await SeedData<Airport>(db, cancellationToken);
+            await SeedData<Airline>(db, cancellationToken);
 
             log.LogInformation("Reference data seeding completed.");
         }
@@ -131,6 +133,14 @@ namespace FlightAssistant.API.HostedServices
                             await PopulateCountriesAsync(country, db, ct);
                             break;
 
+                        case Airport airport:
+                            await PopulateAirportsAsync(airport, db, ct);
+                            break;
+
+                        case Airline airline:
+                            await PopulateAirlinesAsync(airline, db, ct);
+                            break;
+
                         default:
                             log.LogError("Seeding for type {0} is not implemented", dataset);
                             return;
@@ -154,8 +164,6 @@ namespace FlightAssistant.API.HostedServices
                 alliance.FirstSeenAt = DateTime.UtcNow;
                 alliance.LastSeenAt = DateTime.UtcNow;
                 await db.Alliances.AddAsync(alliance);
-
-                log.LogInformation("Seeded Alliance: {Code} - {Name}", alliance.Code, alliance.Name);
             }
         }
 
@@ -170,10 +178,40 @@ namespace FlightAssistant.API.HostedServices
                 country.FirstSeenAt = DateTime.UtcNow;
                 country.LastSeenAt = DateTime.UtcNow;
                 await db.Countries.AddAsync(country);
-
-                log.LogInformation("Seeded Country: {Code} - {Alpha3}", country.Name, country.Alpha3);
             }
         }
 
+        private async Task PopulateAirportsAsync(
+            Airport airport,
+            FlightAssistantDbContext db,
+            CancellationToken ct)
+        {
+            if (!await db.Airports.AnyAsync(x => (x.Iata == airport.Iata || x.Icao == airport.Icao), ct))
+            {
+                airport.SourceType = "seed";
+                airport.FirstSeenAt = DateTime.UtcNow;
+                airport.LastSeenAt = DateTime.UtcNow;
+                await db.Airports.AddAsync(airport);
+            }
+        }
+
+        private async Task PopulateAirlinesAsync(
+            Airline airline,
+            FlightAssistantDbContext db,
+            CancellationToken ct)
+        {
+            if (!await db.Airlines.AnyAsync(x => (x.Iata == airline.Iata || x.Icao == airline.Icao), ct))
+            {
+                if (airline.Iata?.Length > 3 || airline.Icao?.Length > 4)
+                {
+                    throw new Exception();
+                }
+
+                airline.SourceType = "seed";
+                airline.FirstSeenAt = DateTime.UtcNow;
+                airline.LastSeenAt = DateTime.UtcNow;
+                await db.Airlines.AddAsync(airline);
+            }
+        }
     }
 }
