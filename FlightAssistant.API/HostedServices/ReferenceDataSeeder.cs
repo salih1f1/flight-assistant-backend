@@ -5,6 +5,7 @@ using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography.Xml;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;   
 
 namespace FlightAssistant.API.HostedServices
@@ -33,6 +34,7 @@ namespace FlightAssistant.API.HostedServices
             var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
 
             await SeedData<Alliance>(db, cancellationToken);
+            await SeedData<Country>(db, cancellationToken);
 
             log.LogInformation("Reference data seeding completed.");
         }
@@ -50,7 +52,8 @@ namespace FlightAssistant.API.HostedServices
             {
                 PropertyNameCaseInsensitive = true,
                 ReadCommentHandling = JsonCommentHandling.Skip,
-                AllowTrailingCommas = true
+                AllowTrailingCommas = true,
+                NumberHandling = JsonNumberHandling.AllowReadingFromString
             };
 
             var fileText = File.ReadAllText(absolutePath);
@@ -124,6 +127,10 @@ namespace FlightAssistant.API.HostedServices
                             await PopulateAlliancesAsync(alliance, db, ct);
                             break;
 
+                        case Country country:
+                            await PopulateCountriesAsync(country, db, ct);
+                            break;
+
                         default:
                             log.LogError("Seeding for type {0} is not implemented", dataset);
                             return;
@@ -148,8 +155,25 @@ namespace FlightAssistant.API.HostedServices
                 alliance.LastSeenAt = DateTime.UtcNow;
                 await db.Alliances.AddAsync(alliance);
 
-                log.LogInformation("Seeded Alliance {Code} - {Name}", alliance.Code, alliance.Name);
+                log.LogInformation("Seeded Alliance: {Code} - {Name}", alliance.Code, alliance.Name);
             }
         }
+
+        private async Task PopulateCountriesAsync(
+            Country country,
+            FlightAssistantDbContext db,
+            CancellationToken ct)
+        {
+            if (!await db.Countries.AnyAsync(x => (x.Code == country.Code || x.Alpha3 == country.Alpha3), ct))
+            {
+                country.SourceType = "seed";
+                country.FirstSeenAt = DateTime.UtcNow;
+                country.LastSeenAt = DateTime.UtcNow;
+                await db.Countries.AddAsync(country);
+
+                log.LogInformation("Seeded Country: {Code} - {Alpha3}", country.Name, country.Alpha3);
+            }
+        }
+
     }
 }
