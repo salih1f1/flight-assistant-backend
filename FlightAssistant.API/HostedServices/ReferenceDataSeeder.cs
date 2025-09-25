@@ -3,7 +3,6 @@ using FlightAssistant.Domain.Configuartion.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.EntityFrameworkCore;
-using System.Security.Cryptography.Xml;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;   

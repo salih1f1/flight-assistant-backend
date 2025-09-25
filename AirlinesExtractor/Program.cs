@@ -1,5 +1,4 @@
-﻿using System.Globalization;
-using System.Net.Http.Headers;
+﻿using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -8,10 +7,10 @@ class AirlineOut
 {
     public int Id { get; set; }
     public string Name { get; set; } = default!;
-    public string? Iata { get; set; }
-    public string? Icao { get; set; }
-    public string? Callsign { get; set; }
-    public string? CountryCode { get; set; }   // ISO-3166 alpha-2 (2-char)
+    public string Iata { get; set; } = default!;
+    public string Icao { get; set; } = default!;
+    public string Callsign { get; set; } = default!;
+    public string CountryCode { get; set; } = default!;
     public bool Active { get; set; }
 }
 
@@ -52,15 +51,27 @@ class Program
                 string country = T(f[6]);
                 string active = T(f[7]);
 
-                iata = iata.ToLower() == "n/a" || iata.ToLower() == "\\n" ? null : iata;
-                icao = icao.ToLower() == "n/a" || icao.ToLower() == "\\n" ? null : icao;
-
-                if (iata != null && list.Any(x => x.Iata == iata))
+                if (string.IsNullOrWhiteSpace(name) ||
+                    string.IsNullOrWhiteSpace(iata) || 
+                    string.IsNullOrWhiteSpace(icao) || 
+                    string.IsNullOrWhiteSpace(callsign) || 
+                    string.IsNullOrWhiteSpace(country))
                 {
                     continue;
                 }
 
-                if (icao != null && list.Any(x => x.Icao == icao))
+                if (iata.ToLower() == "n/a" || iata.ToLower() == "\\n" || 
+                    icao.ToLower() == "n/a" || icao.ToLower() == "\\n")
+                {
+                    continue;
+                }
+
+                if (list.Any(x => x.Iata == iata))
+                {
+                    continue;
+                }
+
+                if (list.Any(x => x.Icao == icao))
                 {
                     continue;
                 }
@@ -68,22 +79,18 @@ class Program
                 // Keep only active airlines that have at least IATA or ICAO
                 bool isActive = active.Equals("Y", StringComparison.OrdinalIgnoreCase);
                 if (!isActive) continue;
-                if (string.IsNullOrWhiteSpace(iata) && string.IsNullOrWhiteSpace(icao)) continue;
 
                 string? iso2 = LookupIso2(country, countryMap, overrides);
 
-                if (list.Any(x => x.Iata == iata || x.Icao == icao))
-                {
-
-                }
+                if (string.IsNullOrEmpty(iso2)) continue;
 
                 list.Add(new AirlineOut
                 {
                     Id = 0,
                     Name = name,
-                    Iata = string.IsNullOrWhiteSpace(iata) ? null : iata,
-                    Icao = string.IsNullOrWhiteSpace(icao) ? null : icao,
-                    Callsign = string.IsNullOrWhiteSpace(callsign) ? null : callsign,
+                    Iata = iata,
+                    Icao = icao,
+                    Callsign = callsign,
                     CountryCode = iso2,   // may be null for very rare edge cases
                     Active = true
                 });
@@ -256,7 +263,6 @@ class Program
 
     static string NormalizeName(string s)
     {
-        if (s.ToLower() == "n/a" || s.ToLower() == "\\\n") return null!;
         s = StripParentheses(s);
         s = s.Replace('&', ' ');
         s = s.Replace("’", "'").Replace("‘", "'").Replace("´", "'").Replace("`", "'");
