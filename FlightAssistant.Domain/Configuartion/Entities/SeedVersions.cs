@@ -1,4 +1,4 @@
-﻿namespace FlightAssistant.Domain.Configuartion.Entities
+﻿namespace FlightAssistant.Domain.Configuration.Entities
 {
     public class SeedVersion
     {
