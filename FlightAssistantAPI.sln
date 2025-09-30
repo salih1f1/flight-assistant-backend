@@ -32,9 +32,6 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "DataExtractors", "DataExtractors", "{1B817A2C-B9EB-41D2-812D-0534411FD234}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Countries", "Countries", "{C57A1E0A-9673-4357-BBAE-951FDE052E7B}"
-	ProjectSection(SolutionItems) = preProject
-		build-countries.js = build-countries.js
-	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Airports", "Airports", "{1405A801-282F-4578-B5F1-CCF002FBAF62}"
 EndProject
