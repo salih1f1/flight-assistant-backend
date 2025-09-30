@@ -1,9 +1,11 @@
-﻿namespace FlightAssistant.Domain.ReferenceData.Entities
+﻿using FlightAssistant.Domain.Common;
+
+namespace FlightAssistant.Domain.ReferenceData.Entities
 {
-    public class Alliance
+    public class Alliance : SeedableEntity
     {
-        public string Code { get; private set; } = default!;
-        public string Name { get; private set; } = default!;
+        public string Code { get; init; } = default!;
+        public string Name { get; init; } = default!;
 
         public ICollection<Airline> Airlines { get; private set; } = new List<Airline>();
     }

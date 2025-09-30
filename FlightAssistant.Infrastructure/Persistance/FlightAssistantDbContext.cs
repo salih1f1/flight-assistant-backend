@@ -1,4 +1,5 @@
 ﻿using FlightAssistant.Domain.Common;
+using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
@@ -28,6 +29,9 @@ namespace FlightAssistant.Infrastructure.Persistance
         public DbSet<Alliance> Alliances => Set<Alliance>();
         public DbSet<Country> Countries => Set<Country>();
 
+
+        // Configurations
+        public DbSet<SeedVersion> SeedVersions => Set<SeedVersion>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

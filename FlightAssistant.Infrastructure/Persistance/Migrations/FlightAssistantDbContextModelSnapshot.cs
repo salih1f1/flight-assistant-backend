@@ -22,6 +22,24 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("FlightAssistant.Domain.Configuartion.Entities.SeedVersion", b =>
+                {
+                    b.Property<string>("Dataset")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("AppliedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.HasKey("Dataset", "Version");
+
+                    b.ToTable("seed_versions", (string)null);
+                });
+
             modelBuilder.Entity("FlightAssistant.Domain.Flights.Entities.Flight", b =>
                 {
                     b.Property<int>("Id")
@@ -500,8 +518,13 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasColumnType("character(2)")
                         .IsFixedLength();
 
+                    b.Property<string>("ExternalIds")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Iata")
-                        .IsRequired()
                         .HasMaxLength(3)
                         .HasColumnType("character varying(3)");
 
@@ -509,10 +532,27 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasMaxLength(4)
                         .HasColumnType("character varying(4)");
 
+                    b.Property<DateTime>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceSystem")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 
@@ -553,6 +593,12 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.Property<int?>("ElevationFt")
                         .HasColumnType("integer");
 
+                    b.Property<string>("ExternalIds")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Iata")
                         .IsRequired()
                         .HasMaxLength(3)
@@ -561,6 +607,9 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.Property<string>("Icao")
                         .HasMaxLength(4)
                         .HasColumnType("character varying(4)");
+
+                    b.Property<DateTime>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<double?>("Latitude")
                         .HasColumnType("double precision");
@@ -572,6 +621,20 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceSystem")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<string>("Timezone")
                         .HasMaxLength(64)
@@ -597,10 +660,33 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasMaxLength(8)
                         .HasColumnType("character varying(8)");
 
+                    b.Property<string>("ExternalIds")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceSystem")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.HasKey("Code");
 
@@ -622,6 +708,12 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasColumnType("character(3)")
                         .IsFixedLength();
 
+                    b.Property<string>("ExternalIds")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<bool?>("IsEEA")
                         .HasColumnType("boolean");
 
@@ -631,10 +723,16 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.Property<bool?>("IsSchengen")
                         .HasColumnType("boolean");
 
+                    b.Property<DateTime>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("text");
 
                     b.Property<int?>("NumericCode")
                         .HasColumnType("integer");
@@ -642,6 +740,17 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.Property<string>("Region")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<string>("SourceSystem")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<string>("Subregion")
                         .HasMaxLength(64)

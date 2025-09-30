@@ -1,32 +1,18 @@
-﻿namespace FlightAssistant.Domain.ReferenceData.Entities
+﻿using FlightAssistant.Domain.Common;
+
+namespace FlightAssistant.Domain.ReferenceData.Entities
 {
-    public class Country
+    public class Country : SeedableEntity
     {
-        public string Code { get; private set; } = default!;
-        public string Name { get; private set; } = default!;
-        public string? Alpha3 { get; private set; }
-        public int? NumericCode { get; private set; }
-        public string? Region { get; private set; }
-        public string? Subregion { get; private set; }
+        public string Code { get; init; } = default!;
+        public string Name { get; init; } = default!;
+        public string? Alpha3 { get; init; }
+        public int? NumericCode { get; init; }
+        public string? Region { get; init; }
+        public string? Subregion { get; init; }
 
-        public bool? IsEU { get; private set; }
-        public bool? IsSchengen { get; private set; }
-        public bool? IsEEA { get; private set; }
-
-        private Country() { } // EF
-        public Country(string code, string name, string? alpha3 = null, int? numeric = null,
-                       string? region = null, string? subregion = null,
-                       bool? isEU = null, bool? isSchengen = null, bool? isEEA = null)
-        {
-            Code = code.Trim().ToUpperInvariant();
-            Name = name.Trim();
-            Alpha3 = alpha3?.Trim().ToUpperInvariant();
-            NumericCode = numeric;
-            Region = region;
-            Subregion = subregion;
-            IsEU = isEU;
-            IsSchengen = isSchengen;
-            IsEEA = isEEA;
-        }
+        public bool? IsEU { get; init; }
+        public bool? IsSchengen { get; init; }
+        public bool? IsEEA { get; init; }
     }
 }
