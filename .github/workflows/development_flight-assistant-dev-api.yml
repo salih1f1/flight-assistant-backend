@@ -35,16 +35,17 @@ jobs:
       - name: Add EF to PATH
         run: echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
         
-      - name: Apply EF Core migrations
-        env:
-          CONNECTION_STRING: ${{ github.ref_name == 'development' && secrets.DEV_DB_CONNECTION_STRING
-            || github.ref_name == 'staging' && secrets.STAGE_DB_CONNECTION_STRING
-            || secrets.PROD_DB_CONNECTION_STRING }}
+      - name: Build EF migration bundle
         run: >
-          dotnet ef database update
-          -p FlightAssistant.Infrastructure
-          -s FlightAssistant.API
-          --connection "$CONNECTION_STRING"
+          dotnet ef migrations bundle
+          --project /FlightAssistant.Infrastructure/FlightAssistant.Infrastructure.csproj
+          --startup-project /FlightAssistant.API/FlightAssistant.API.csproj
+          --configuration Release
+          --output efbundle
+    
+      - name: Upload efbundle artifact 
+        uses: actions/upload-artifact@v4
+        with: { name: efbundle, path: efbundle }
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
@@ -59,18 +60,36 @@ jobs:
       id-token: write #This is required for requesting the JWT
       contents: read #This is required for actions/checkout
 
+    env:
+      CONNECTION_STRING: ${{ github.ref_name == 'development' && secrets.DEV_DB_CONNECTION_STRING
+        || github.ref_name == 'staging' && secrets.STAGE_DB_CONNECTION_STRING
+        || secrets.PROD_DB_CONNECTION_STRING }}
+
     steps:
       - name: Download artifact from build job
         uses: actions/download-artifact@v4
         with:
           name: .net-app
-      
+
+      - name: Download efbundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: efbundle
+          path: .
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_A971F90AC92D4F99911760AE30959DCE }}
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_151F54432FBD465486413E352411B32D }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_F8393502DB1F4EEB90642AB89A6FBED7 }}
+
+      - name: Apply EF Core migrations (bundle)
+        env:
+          CONNECTION_STRING: ${{ env.CONNECTION_STRING }}
+        run: |
+          chmod +x ./efbundle
+          ./efbundle --connection "$CONNECTION_STRING"
 
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
@@ -81,4 +100,5 @@ jobs:
           package: .
 
           
+
 
