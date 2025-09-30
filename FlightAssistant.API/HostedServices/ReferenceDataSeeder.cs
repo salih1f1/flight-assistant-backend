@@ -81,7 +81,7 @@ namespace FlightAssistant.API.HostedServices
         }
 
         private async Task SeedData<T>(FlightAssistantDbContext db, CancellationToken ct) 
-            where T : class, ISeadableEntity
+            where T : class, ISeedableEntity
         {
             var dataset = typeof(T).Name;
 
