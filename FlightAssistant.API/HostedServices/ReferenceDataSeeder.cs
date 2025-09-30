@@ -1,5 +1,5 @@
 ﻿using FlightAssistant.Domain.Common.Interfaces;
-using FlightAssistant.Domain.Configuartion.Entities;
+using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.EntityFrameworkCore;

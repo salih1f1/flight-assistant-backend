@@ -3,7 +3,7 @@ using FlightAssistant.Domain.Flights.Entities;
 
 namespace FlightAssistant.Domain.ReferenceData.Entities
 {
-    public class Airline : SeadableEntity
+    public class Airline : SeedableEntity
     {
         public int Id { get; init; }
         public string? Iata { get; init; } = default!;

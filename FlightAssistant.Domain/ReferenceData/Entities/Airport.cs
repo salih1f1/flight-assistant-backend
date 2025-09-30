@@ -2,7 +2,7 @@
 
 namespace FlightAssistant.Domain.ReferenceData.Entities
 {
-    public class Airport : SeadableEntity
+    public class Airport : SeedableEntity
     {
         public int Id { get; init; }
         public string Iata { get; init; } = default!;

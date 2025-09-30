@@ -2,7 +2,7 @@
 
 namespace FlightAssistant.Domain.ReferenceData.Entities
 {
-    public class Country : SeadableEntity
+    public class Country : SeedableEntity
     {
         public string Code { get; init; } = default!;
         public string Name { get; init; } = default!;
