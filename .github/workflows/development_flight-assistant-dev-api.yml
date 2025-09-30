@@ -29,6 +29,23 @@ jobs:
       - name: dotnet publish
         run: dotnet publish -c Release -o ${{env.DOTNET_ROOT}}/myapp
 
+      - name: Install EF Core CLI
+        run: dotnet tool install --global dotnet-ef
+
+      - name: Add EF to PATH
+        run: echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+        
+      - name: Apply EF Core migrations
+        env:
+          CONNECTION_STRING: ${{ github.ref_name == 'development' && secrets.DEV_DB_CONNECTION_STRING
+            || github.ref_name == 'staging' && secrets.STAGE_DB_CONNECTION_STRING
+            || secrets.PROD_DB_CONNECTION_STRING }}
+        run: >
+          dotnet ef database update
+          -p FlightAssistant.Infrastructure
+          -s FlightAssistant.API
+          --connection "$CONNECTION_STRING"
+
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
@@ -64,3 +81,4 @@ jobs:
           package: .
 
           
+
