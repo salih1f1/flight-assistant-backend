@@ -2,8 +2,8 @@
 {
     public class SeedVersion
     {
-        public string Dataset { get; set; } = default!;
-        public int Version { get; set; }
-        public DateTime AppliedAt { get; set; }
+        public string Dataset { get; init; } = default!;
+        public int Version { get; init; }
+        public DateTime AppliedAt { get; init; }
     }
 }
