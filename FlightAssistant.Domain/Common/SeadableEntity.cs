@@ -2,7 +2,7 @@
 
 namespace FlightAssistant.Domain.Common
 {
-    public class SeadableEntity : ISeadableEntity
+    public class SeedableEntity : ISeedableEntity
     {
         public string SourceType { get; set; } = "seed";
         public string? SourceSystem { get; set; }
