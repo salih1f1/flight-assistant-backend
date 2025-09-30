@@ -1,5 +1,5 @@
 ﻿using FlightAssistant.Domain.Common;
-using FlightAssistant.Domain.Configuartion.Entities;
+using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
