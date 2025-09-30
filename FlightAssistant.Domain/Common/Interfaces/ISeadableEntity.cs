@@ -1,6 +1,6 @@
 ﻿namespace FlightAssistant.Domain.Common.Interfaces
 {
-    public interface ISeadableEntity
+    public interface ISeedableEntity
     {
         string SourceType { get; set; }
         string? SourceSystem { get; set; }
