@@ -15,6 +15,9 @@ jobs:
     permissions:
       contents: read #This is required for actions/checkout
 
+    env:
+      CONNECTION_STRING: ${{ secrets.DEV_DB_CONNECTION_STRING }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -61,9 +64,7 @@ jobs:
       contents: read #This is required for actions/checkout
 
     env:
-      CONNECTION_STRING: ${{ github.ref_name == 'development' && secrets.DEV_DB_CONNECTION_STRING
-        || github.ref_name == 'staging' && secrets.STAGE_DB_CONNECTION_STRING
-        || secrets.PROD_DB_CONNECTION_STRING }}
+      CONNECTION_STRING: ${{ secrets.DEV_DB_CONNECTION_STRING }}
 
     steps:
       - name: Download artifact from build job
@@ -100,6 +101,8 @@ jobs:
           package: .
 
           
+
+
 
 
 
