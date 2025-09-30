@@ -1,4 +1,4 @@
-﻿using FlightAssistant.Domain.Configuartion.Entities;
+﻿using FlightAssistant.Domain.Configuration.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
