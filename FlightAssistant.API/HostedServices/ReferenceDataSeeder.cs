@@ -203,7 +203,8 @@ namespace FlightAssistant.API.HostedServices
             {
                 if (airline.Iata?.Length > 3 || airline.Icao?.Length > 4)
                 {
-                    throw new Exception();
+                    throw new Exception(
+                        $"Invalid airline code length: IATA ('{airline.Iata}') must be at most 3 characters, ICAO ('{airline.Icao}') must be at most 4 characters.");
                 }
 
                 airline.SourceType = "seed";
