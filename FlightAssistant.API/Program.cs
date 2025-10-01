@@ -62,7 +62,7 @@ builder.Services.AddScoped<ITravelerRepository, TravelerRepository>();
 // Hosted services
 
 // Commented out because of slow startup in dev/test environments
-// builder.Services.AddHostedService<ReferenceDataSeeder>();
+builder.Services.AddHostedService<ReferenceDataSeeder>();
 
 // ------------------------------------------------------------
 // 3. Authentication & Authorization
