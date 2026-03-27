@@ -1,6 +1,13 @@
 namespace FlightAssistant.Application.Interfaces.Repositories
 {
-    /// <summary>Read-only lookups for airline/airport reference data needed by handlers.</summary>
+    /// <summary>
+    /// Reference-data lookups (IATA ↔ id). Single port avoids extra interfaces while we only
+    /// need primitive resolution.
+    /// </summary>
+    /// <remarks>
+    /// Replace or split into per-aggregate repositories if airline and airport gain real domain
+    /// behavior and persistence as aggregate roots.
+    /// </remarks>
     public interface IRefDataRepository
     {
         Task<int?> GetAirlineIdByIataAsync(string iata, CancellationToken ct = default);
