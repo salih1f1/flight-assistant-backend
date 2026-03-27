@@ -9,5 +9,17 @@ namespace FlightAssistant.Domain.Flights.Entities
         public int FlightId { get; private set; }
         public bool Notify { get; private set; } = true;
         public DateTime CreatedUtc { get; private set; } = DateTime.UtcNow;
+
+        private TravelerFlight() { } // EF
+
+        public static TravelerFlight Create(Guid travelerId, int flightId) => new()
+        {
+            TravelerId = travelerId,
+            FlightId = flightId,
+            Notify = true,
+            CreatedUtc = DateTime.UtcNow
+        };
+
+        public void SetNotify(bool notify) => Notify = notify;
     }
 }

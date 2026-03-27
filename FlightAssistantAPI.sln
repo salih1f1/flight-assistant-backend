@@ -41,6 +41,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Airlines", "Airlines", "{45
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AirlinesExtractor", "AirlinesExtractor\AirlinesExtractor.csproj", "{885E209E-ECB6-4683-8512-320766DEFD64}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FlightAssistant.Domain.Tests", "FlightAssistant.Domain.Tests\FlightAssistant.Domain.Tests.csproj", "{8C25F786-CCF2-48B0-AE98-7C384682F14A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -79,6 +81,10 @@ Global
 		{885E209E-ECB6-4683-8512-320766DEFD64}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{885E209E-ECB6-4683-8512-320766DEFD64}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{885E209E-ECB6-4683-8512-320766DEFD64}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8C25F786-CCF2-48B0-AE98-7C384682F14A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8C25F786-CCF2-48B0-AE98-7C384682F14A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8C25F786-CCF2-48B0-AE98-7C384682F14A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8C25F786-CCF2-48B0-AE98-7C384682F14A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

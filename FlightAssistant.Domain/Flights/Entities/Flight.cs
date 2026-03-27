@@ -26,6 +26,54 @@ namespace FlightAssistant.Domain.Flights.Entities
         public DateTime CreatedUtc { get; private set; } = DateTime.UtcNow;
         public DateTime UpdatedUtc { get; private set; } = DateTime.UtcNow;
 
-        public Airline Airline { get; private set; }
+        public Airline Airline { get; private set; } = default!;
+
+        private Flight() { } // EF
+
+        public static Flight Create(
+            int airlineId,
+            string flightNumber,
+            int departureAirportId,
+            int arrivalAirportId,
+            DateOnly serviceDate,
+            DateTime scheduledDepartureUtc,
+            DateTime scheduledArrivalUtc,
+            string? externalId = null,
+            string? equipmentAircraftIcao = null)
+        {
+            if (string.IsNullOrWhiteSpace(flightNumber))
+                throw new ArgumentException("Flight number is required.", nameof(flightNumber));
+
+            return new Flight
+            {
+                AirlineId = airlineId,
+                FlightNumber = flightNumber.Trim().ToUpperInvariant(),
+                DepartureAirportId = departureAirportId,
+                ArrivalAirportId = arrivalAirportId,
+                ServiceDateUtc = serviceDate,
+                ScheduledDepartureUtc = scheduledDepartureUtc,
+                ScheduledArrivalUtc = scheduledArrivalUtc,
+                ExternalId = externalId,
+                EquipmentAircraftIcao = equipmentAircraftIcao,
+                CreatedUtc = DateTime.UtcNow,
+                UpdatedUtc = DateTime.UtcNow
+            };
+        }
+
+        public void ApplyStatusUpdate(
+            DateTime? estimatedDepartureUtc,
+            DateTime? estimatedArrivalUtc,
+            DateTime? actualDepartureUtc,
+            DateTime? actualArrivalUtc,
+            string? equipmentAircraftIcao)
+        {
+            EstimatedDepartureUtc = estimatedDepartureUtc;
+            EstimatedArrivalUtc = estimatedArrivalUtc;
+            ActualDepartureUtc = actualDepartureUtc;
+            ActualArrivalUtc = actualArrivalUtc;
+            if (equipmentAircraftIcao is not null)
+                EquipmentAircraftIcao = equipmentAircraftIcao;
+            UpdatedUtc = DateTime.UtcNow;
+        }
     }
 }
