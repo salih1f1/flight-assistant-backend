@@ -12,7 +12,7 @@ namespace FlightAssistant.API.Endpoints
 
         public static void MapLoungeEndpoints(this IEndpointRouteBuilder app)
         {
-            var group = app.MapGroup("lounges").RequireAuthorization();
+            var group = app.MapGroup("lounges").RequireAuthorization().WithTags("Lounges");
 
             // GET /lounges?airportIata=LHR — list lounges at an airport, annotated with eligibility
             group.MapGet("", async (HttpContext http, string airportIata, IMediator mediator, CancellationToken ct) =>
@@ -27,7 +27,15 @@ namespace FlightAssistant.API.Endpoints
                     l.Amenities, l.IsEligible, l.EligibleVia));
 
                 return Results.Ok(dtos);
-            });
+            })
+            .WithName("GetLoungesAtAirport")
+            .WithSummary("List lounges at an airport")
+            .WithDescription(
+                "Returns all lounges at the specified airport, each annotated with whether the authenticated traveler is eligible to access it. " +
+                "Eligibility is computed from the traveler's loyalty memberships and tier benefits. " +
+                "Query parameter: airportIata — the IATA airport code (e.g. 'LHR', 'JFK').")
+            .Produces<IEnumerable<LoungeDto>>(200)
+            .ProducesProblem(404);
         }
 
         private static Guid? TryGetTravelerId(HttpContext http)

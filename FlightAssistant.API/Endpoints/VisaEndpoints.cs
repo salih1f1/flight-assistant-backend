@@ -11,7 +11,7 @@ namespace FlightAssistant.API.Endpoints
 
         public static void MapVisaEndpoints(this IEndpointRouteBuilder app)
         {
-            var group = app.MapGroup("visa").RequireAuthorization();
+            var group = app.MapGroup("visa").RequireAuthorization().WithTags("Visa");
 
             // GET /visa?passportCountry=GB&destinationCountry=JP
             group.MapGet("", async (HttpContext http, string passportCountry, string destinationCountry, IMediator mediator, CancellationToken ct) =>
@@ -20,7 +20,17 @@ namespace FlightAssistant.API.Endpoints
                 var result = await mediator.Send(new GetVisaRequirementsQuery(passportCountry, destinationCountry), ct);
                 if (result is null) return Results.NotFound();
                 return Results.Ok(new VisaRequirementDto(result.PassportCountryCode, result.DestinationCountryCode, result.AdmissionType, result.StayDays, result.Notes));
-            });
+            })
+            .WithName("GetVisaRequirements")
+            .WithSummary("Get visa requirements")
+            .WithDescription(
+                "Returns the visa and entry requirements for the given passport/destination country pair. " +
+                "Query parameters: " +
+                "passportCountry — ISO 3166-1 alpha-2 country code of the traveler's passport (e.g. 'GB'); " +
+                "destinationCountry — ISO 3166-1 alpha-2 country code of the destination (e.g. 'JP'). " +
+                "Returns 404 if no requirement data is available for the given combination.")
+            .Produces<VisaRequirementDto>(200)
+            .ProducesProblem(404);
         }
     }
 }

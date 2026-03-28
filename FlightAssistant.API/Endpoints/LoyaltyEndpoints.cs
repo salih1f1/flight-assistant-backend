@@ -15,7 +15,7 @@ namespace FlightAssistant.API.Endpoints
 
         public static void MapLoyaltyEndpoints(this IEndpointRouteBuilder app)
         {
-            var group = app.MapGroup("loyalty").RequireAuthorization();
+            var group = app.MapGroup("loyalty").RequireAuthorization().WithTags("Loyalty");
 
             // GET /loyalty/programs — all programs with tiers (reference data)
             group.MapGet("programs", async (HttpContext http, IMediator mediator, CancellationToken ct) =>
@@ -26,7 +26,13 @@ namespace FlightAssistant.API.Endpoints
                     p.Id, p.Code, p.Name, p.Kind, p.AirlineId, p.AllianceCode,
                     p.Tiers.Select(t => new LoyaltyTierDto(t.Id, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode)).ToList()));
                 return Results.Ok(dtos);
-            });
+            })
+            .WithName("GetLoyaltyPrograms")
+            .WithSummary("List loyalty programs")
+            .WithDescription(
+                "Returns all airline loyalty programs in the reference data, including their full tier hierarchy. " +
+                "Use this to populate program/tier picker UIs. Data is seeded from OpenFlights and is read-only.")
+            .Produces<IEnumerable<LoyaltyProgramDto>>(200);
 
             // GET /loyalty/memberships — traveler's own memberships
             group.MapGet("memberships", async (HttpContext http, IMediator mediator, CancellationToken ct) =>
@@ -36,7 +42,11 @@ namespace FlightAssistant.API.Endpoints
                 var memberships = await mediator.Send(new GetTravelerMembershipsQuery(travelerId), ct);
                 var dtos = memberships.Select(m => new LoyaltyMembershipDto(m.Id, m.ProgramId, m.AccountNumber, m.TierId, m.TierExpiryDate, m.PointsExpiryDate));
                 return Results.Ok(dtos);
-            });
+            })
+            .WithName("GetMemberships")
+            .WithSummary("List own memberships")
+            .WithDescription("Returns all loyalty program memberships the authenticated traveler has registered, including current tier and expiry dates.")
+            .Produces<IEnumerable<LoyaltyMembershipDto>>(200);
 
             // POST /loyalty/memberships — add a membership
             group.MapPost("memberships", async (HttpContext http, [FromBody] AddMembershipRequest req, IMediator mediator, CancellationToken ct) =>
@@ -45,7 +55,15 @@ namespace FlightAssistant.API.Endpoints
                 var travelerId = GetTravelerId(http);
                 var id = await mediator.Send(new AddLoyaltyMembershipCommand(travelerId, req.ProgramId, req.AccountNumber, req.TierId, req.TierExpiryDate, req.PointsExpiryDate), ct);
                 return Results.Created($"/loyalty/memberships/{id}", new { id });
-            });
+            })
+            .WithName("AddMembership")
+            .WithSummary("Add a loyalty membership")
+            .WithDescription(
+                "Links a loyalty program membership to the authenticated traveler. " +
+                "Body fields: ProgramId (from GET /loyalty/programs), AccountNumber, " +
+                "TierId (optional, from the program's tier list), TierExpiryDate (optional, YYYY-MM-DD), PointsExpiryDate (optional, YYYY-MM-DD).")
+            .Produces(201)
+            .ProducesValidationProblem();
 
             // PUT /loyalty/memberships/{id} — update a membership
             group.MapPut("memberships/{id:guid}", async (HttpContext http, Guid id, [FromBody] AddMembershipRequest req, IMediator mediator, CancellationToken ct) =>
@@ -54,7 +72,16 @@ namespace FlightAssistant.API.Endpoints
                 var travelerId = GetTravelerId(http);
                 await mediator.Send(new UpdateLoyaltyMembershipCommand(travelerId, id, req.AccountNumber, req.TierId, req.TierExpiryDate, req.PointsExpiryDate), ct);
                 return Results.NoContent();
-            });
+            })
+            .WithName("UpdateMembership")
+            .WithSummary("Update a loyalty membership")
+            .WithDescription(
+                "Replaces the account number, tier, and expiry dates for the specified membership. " +
+                "Route parameter: id — the membership ID returned when it was added. " +
+                "Only the authenticated traveler's own memberships can be updated.")
+            .Produces(204)
+            .ProducesValidationProblem()
+            .ProducesProblem(404);
 
             // DELETE /loyalty/memberships/{id}
             group.MapDelete("memberships/{id:guid}", async (HttpContext http, Guid id, IMediator mediator, CancellationToken ct) =>
@@ -63,7 +90,14 @@ namespace FlightAssistant.API.Endpoints
                 var travelerId = GetTravelerId(http);
                 await mediator.Send(new RemoveLoyaltyMembershipCommand(travelerId, id), ct);
                 return Results.NoContent();
-            });
+            })
+            .WithName("RemoveMembership")
+            .WithSummary("Remove a loyalty membership")
+            .WithDescription(
+                "Deletes a loyalty membership from the authenticated traveler's profile. " +
+                "Route parameter: id — the membership ID to remove.")
+            .Produces(204)
+            .ProducesProblem(404);
         }
 
         private static Guid GetTravelerId(HttpContext http)
