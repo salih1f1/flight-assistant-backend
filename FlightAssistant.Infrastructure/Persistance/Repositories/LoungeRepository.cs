@@ -34,5 +34,18 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 .Include(l => l.Providers)
                     .ThenInclude(link => link.Provider)
                 .FirstOrDefaultAsync(l => l.Id == id, ct);
+
+        public async Task<IReadOnlyList<Lounge>> GetAllAsync(CancellationToken ct = default) =>
+            await _db.Lounges
+                .Include(l => l.Providers)
+                    .ThenInclude(link => link.Provider)
+                .OrderBy(l => l.Name)
+                .ToListAsync(ct);
+
+        public Task DeleteAsync(Lounge lounge, CancellationToken ct = default)
+        {
+            _db.Lounges.Remove(lounge);
+            return Task.CompletedTask;
+        }
     }
 }

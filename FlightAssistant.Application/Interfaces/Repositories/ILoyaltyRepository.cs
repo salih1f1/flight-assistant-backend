@@ -10,5 +10,8 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         Task<TravelerLoyaltyMembership?> GetMembershipByIdAsync(Guid id, CancellationToken ct = default);
         Task AddMembershipAsync(TravelerLoyaltyMembership membership, CancellationToken ct = default);
         Task RemoveMembershipAsync(TravelerLoyaltyMembership membership, CancellationToken ct = default);
+        Task<LoyaltyProgram?> GetProgramByIdAsync(int id, CancellationToken ct = default);
+        Task AddProgramAsync(LoyaltyProgram program, CancellationToken ct = default);
+        Task DeleteProgramAsync(LoyaltyProgram program, CancellationToken ct = default);
     }
 }

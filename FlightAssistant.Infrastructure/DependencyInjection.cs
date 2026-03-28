@@ -21,6 +21,14 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<ILoyaltyRepository, LoyaltyRepository>();
             services.AddScoped<IRefDataRepository, RefDataRepository>();
 
+            // Admin repositories
+            services.AddScoped<IAdminTravelerRepository, AdminTravelerRepository>();
+            services.AddScoped<IAdminFlightRepository, AdminFlightRepository>();
+            services.AddScoped<IAirlineRepository, AirlineRepository>();
+            services.AddScoped<IAirportRepository, AirportRepository>();
+            services.AddScoped<ICountryRepository, CountryRepository>();
+            services.AddScoped<IAllianceRepository, AllianceRepository>();
+
             // Flight status providers — named HttpClients with base addresses from config
             services.AddHttpClient<AeroDataBoxFlightStatusProvider>(client =>
             {

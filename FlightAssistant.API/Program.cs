@@ -1,5 +1,6 @@
 using Azure.Identity;
 using FlightAssistant.API.Endpoints;
+using FlightAssistant.API.Endpoints.Admin;
 using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application;
 using FlightAssistant.Infrastructure;
@@ -122,7 +123,22 @@ builder.Services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSch
     o.TokenValidationParameters.NameClaimType = NameClaimType;
 });
 
-builder.Services.AddAuthorization();
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AdminPanel", policy =>
+        policy.WithOrigins(
+                builder.Configuration["AdminPanel:AllowedOrigin"] ?? "http://localhost:5173"
+            )
+            .AllowAnyHeader()
+            .AllowAnyMethod());
+});
+
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("AdminOnly", policy =>
+        policy.RequireAuthenticatedUser()
+              .RequireRole("admin"));
+});
 
 // ------------------------------------------------------------
 // 4. Build App
@@ -139,6 +155,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseCors("AdminPanel");
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -153,6 +170,15 @@ app.MapFlightEndpoints();
 app.MapLoyaltyEndpoints();
 app.MapLoungeEndpoints();
 app.MapVisaEndpoints();
+
+// Admin endpoints
+app.MapAdminTravelerEndpoints();
+app.MapAdminFlightEndpoints();
+app.MapAdminAirlineEndpoints();
+app.MapAdminAirportEndpoints();
+app.MapAdminRefDataEndpoints();
+app.MapAdminLoyaltyEndpoints();
+app.MapAdminLoungeEndpoints();
 
 // Group: private (mixed auth)
 var privateGroup = app.MapGroup("private");

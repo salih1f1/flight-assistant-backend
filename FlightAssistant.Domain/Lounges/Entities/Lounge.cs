@@ -1,4 +1,4 @@
-﻿using FlightAssistant.Domain.Common.Interfaces;
+using FlightAssistant.Domain.Common.Interfaces;
 
 namespace FlightAssistant.Domain.Lounges.Entities
 {
@@ -16,5 +16,34 @@ namespace FlightAssistant.Domain.Lounges.Entities
         public string? Amenities { get; private set; }
 
         public ICollection<LoungeProviderLink> Providers { get; private set; } = new List<LoungeProviderLink>();
+
+        public static Lounge Create(int airportId, string name, string? terminal = null,
+            string? locationHint = null, string? hours = null, bool isAirside = true,
+            bool isDomesticOnly = false, bool isInternationalOnly = false, string? amenities = null) =>
+            new()
+            {
+                AirportId = airportId,
+                Name = name,
+                Terminal = terminal,
+                LocationHint = locationHint,
+                Hours = hours,
+                IsAirside = isAirside,
+                IsDomesticOnly = isDomesticOnly,
+                IsInternationalOnly = isInternationalOnly,
+                Amenities = amenities
+            };
+
+        public void Update(string name, string? terminal, string? locationHint, string? hours,
+            bool isAirside, bool isDomesticOnly, bool isInternationalOnly, string? amenities)
+        {
+            Name = name;
+            Terminal = terminal;
+            LocationHint = locationHint;
+            Hours = hours;
+            IsAirside = isAirside;
+            IsDomesticOnly = isDomesticOnly;
+            IsInternationalOnly = isInternationalOnly;
+            Amenities = amenities;
+        }
     }
 }
