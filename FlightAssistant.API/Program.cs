@@ -30,7 +30,6 @@ if (!string.IsNullOrWhiteSpace(keyVaultUri))
 // ------------------------------------------------------------
 // 2. Service Registration
 // ------------------------------------------------------------
-builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 
 builder.Services.AddSwaggerGen(c =>
@@ -146,7 +145,7 @@ app.UseAuthorization();
 // ------------------------------------------------------------
 // 6. Endpoint Mapping
 // ------------------------------------------------------------
-app.MapControllers();
+app.MapHealthEndpoints();
 
 // Domain endpoints
 app.MapTravelerEndpoints();
