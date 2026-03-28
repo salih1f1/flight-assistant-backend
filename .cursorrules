@@ -1,0 +1,36 @@
+# Flight Assistant – Cursor Rules (Repo-Level)
+
+## Non-negotiables
+- Follow Clean Architecture dependency direction:
+  Domain <- Application <- Infrastructure <- API.
+  Domain must not reference Application/Infrastructure/API.
+- Prefer rich domain model: invariants in aggregates, no business logic in controllers/handlers.
+- Use MediatR: API calls Application; Application coordinates; Domain contains business rules.
+- Treat AI output as draft: always ensure it compiles, tests pass, and architecture boundaries hold.
+
+## Code conventions (.NET)
+- C# 12 / .NET 9 patterns.
+- Use nullable reference types correctly; avoid null-forgiving unless justified.
+- Prefer explicit domain names over generic terms (e.g., "FlightLegId" not "id").
+- Use `CancellationToken` in async endpoints and handlers.
+- Avoid throwing generic exceptions; return Result/Errors at application boundary.
+- Add XML docs only for public APIs or tricky domain rules (keep minimal).
+
+## DDD rules (bounded contexts)
+- If a change touches multiple bounded contexts, propose an integration pattern:
+  Domain event -> Integration event -> Handler in other context (or anti-corruption layer).
+- Domain events describe business facts in past tense: `FlightTracked`, `VisaRuleChecked`, `LoungeEligibilityCalculated`.
+- Domain events should not call external services directly.
+
+## Testing rules
+- For non-trivial changes: write/adjust tests.
+- Prefer integration tests for Infrastructure (EF/DB), unit tests for Domain invariants.
+- If refactoring, preserve behavior; add characterization tests where needed.
+
+## Output format rules (how to respond inside Cursor)
+- Start with a short plan (3–7 bullets) before edits.
+- When editing multiple files, list them first.
+- After code changes, include:
+  - what was changed
+  - how to validate (dotnet test / run)
+  - risks and follow-ups
