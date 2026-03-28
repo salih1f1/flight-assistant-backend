@@ -1,4 +1,4 @@
-﻿using FlightAssistant.Domain.Common.Interfaces;
+using FlightAssistant.Domain.Common.Interfaces;
 
 namespace FlightAssistant.Domain.Loyalty.Entities
 {
@@ -15,5 +15,32 @@ namespace FlightAssistant.Domain.Loyalty.Entities
         public string? AllianceCode { get; private set; }       // "STAR","OW","ST" (optional)
 
         public ICollection<LoyaltyTier> Tiers { get; private set; } = new List<LoyaltyTier>();
+
+        public static LoyaltyProgram Create(string code, string name, int kindId, int? airlineId = null, string? allianceCode = null) =>
+            new()
+            {
+                Code = code,
+                Name = name,
+                KindId = kindId,
+                AirlineId = airlineId,
+                AllianceCode = allianceCode
+            };
+
+        public void Update(string code, string name, int kindId, int? airlineId, string? allianceCode)
+        {
+            Code = code;
+            Name = name;
+            KindId = kindId;
+            AirlineId = airlineId;
+            AllianceCode = allianceCode;
+        }
+
+        public void AddTier(LoyaltyTier tier) => Tiers.Add(tier);
+
+        public void RemoveTier(int tierId)
+        {
+            var tier = Tiers.FirstOrDefault(t => t.Id == tierId);
+            if (tier is not null) Tiers.Remove(tier);
+        }
     }
 }
