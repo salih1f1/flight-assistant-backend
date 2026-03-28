@@ -1,4 +1,7 @@
-﻿namespace FlightAssistant.Domain.Flights.Entities
+﻿using System.Security.Cryptography;
+using System.Text;
+
+namespace FlightAssistant.Domain.Flights.Entities
 {
     public sealed class FlightStatusEvent
     {
@@ -17,7 +20,54 @@
         public string? RawPayloadJson { get; private set; }
         public string DedupHash { get; private set; } = default!;
 
-        public Flight Flight { get; private set; }
-        public FlightStatus Status { get; private set; }
+        public Flight Flight { get; private set; } = default!;
+        public FlightStatus Status { get; private set; } = default!;
+
+        private FlightStatusEvent() { } // EF
+
+        public static FlightStatusEvent Create(
+            int flightId,
+            int statusId,
+            DateTime effectiveAtUtc,
+            string source,
+            string? externalId = null,
+            string? gate = null,
+            string? terminal = null,
+            string? baggageClaim = null,
+            string? remarks = null,
+            string? rawPayloadJson = null)
+        {
+            var evt = new FlightStatusEvent
+            {
+                FlightId = flightId,
+                StatusId = statusId,
+                EffectiveAtUtc = effectiveAtUtc,
+                RecordedAtUtc = DateTime.UtcNow,
+                Source = source,
+                ExternalId = externalId,
+                Gate = gate,
+                Terminal = terminal,
+                BaggageClaim = baggageClaim,
+                Remarks = remarks,
+                RawPayloadJson = rawPayloadJson
+            };
+            evt.DedupHash = ComputeHash(flightId, statusId, effectiveAtUtc, source, externalId);
+            return evt;
+        }
+
+        /// <summary>Computes the dedup hash given raw inputs (before status ID is resolved). Used by handlers for pre-insert dedup checks.</summary>
+        public static string ComputeDedupHash(int flightId, string statusCode, DateTime effectiveAt, string source, string? externalId)
+        {
+            var raw = $"{flightId}|{statusCode}|{effectiveAt:O}|{source}|{externalId}";
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
+            return Convert.ToHexString(bytes)[..16];
+        }
+
+        private static string ComputeHash(int flightId, int statusId, DateTime effectiveAt, string source, string? externalId)
+        {
+            var raw = $"{flightId}|{statusId}|{effectiveAt:O}|{source}|{externalId}";
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
+            return Convert.ToHexString(bytes)[..16];
+        }
     }
 }

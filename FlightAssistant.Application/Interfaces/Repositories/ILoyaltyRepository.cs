@@ -5,5 +5,10 @@ namespace FlightAssistant.Application.Interfaces.Repositories
 {
     public interface ILoyaltyRepository : IRepository<LoyaltyProgram>
     {
+        Task<IReadOnlyList<LoyaltyProgram>> GetProgramsAsync(CancellationToken ct = default);
+        Task<IReadOnlyList<TravelerLoyaltyMembership>> GetMembershipsForTravelerAsync(Guid travelerId, CancellationToken ct = default);
+        Task<TravelerLoyaltyMembership?> GetMembershipByIdAsync(Guid id, CancellationToken ct = default);
+        Task AddMembershipAsync(TravelerLoyaltyMembership membership, CancellationToken ct = default);
+        Task RemoveMembershipAsync(TravelerLoyaltyMembership membership, CancellationToken ct = default);
     }
 }

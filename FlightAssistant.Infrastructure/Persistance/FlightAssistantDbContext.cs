@@ -1,6 +1,8 @@
 ﻿using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Domain.Flights.Entities;
+using FlightAssistant.Domain.Lounges.Entities;
+using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -22,13 +24,22 @@ namespace FlightAssistant.Infrastructure.Persistance
         public DbSet<FlightStatus> FlightStatus => Set<FlightStatus>();
         public DbSet<FlightStatusEvent> FlightStatusEvents => Set<FlightStatusEvent>();
 
+        // Lounges
+        public DbSet<Lounge> Lounges => Set<Lounge>();
+        public DbSet<LoungeProvider> LoungeProviders => Set<LoungeProvider>();
+        public DbSet<LoungeProviderLink> LoungeProviderLinks => Set<LoungeProviderLink>();
+
+        // Loyalty
+        public DbSet<LoyaltyProgram> LoyaltyPrograms => Set<LoyaltyProgram>();
+        public DbSet<LoyaltyProgramKind> LoyaltyProgramKinds => Set<LoyaltyProgramKind>();
+        public DbSet<LoyaltyTier> LoyaltyTiers => Set<LoyaltyTier>();
+        public DbSet<TravelerLoyaltyMembership> TravelerLoyaltyMemberships => Set<TravelerLoyaltyMembership>();
 
         // Reference Data
         public DbSet<Airline> Airlines => Set<Airline>();
         public DbSet<Airport> Airports => Set<Airport>();
         public DbSet<Alliance> Alliances => Set<Alliance>();
         public DbSet<Country> Countries => Set<Country>();
-
 
         // Configurations
         public DbSet<SeedVersion> SeedVersions => Set<SeedVersion>();
@@ -40,6 +51,5 @@ namespace FlightAssistant.Infrastructure.Persistance
 
             modelBuilder.Ignore<DomainEvent>();
         }
-
     }
 }

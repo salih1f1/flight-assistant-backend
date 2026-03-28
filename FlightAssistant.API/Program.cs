@@ -1,9 +1,10 @@
 using Azure.Identity;
+using FlightAssistant.API.Endpoints;
 using FlightAssistant.API.HostedServices;
-using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application;
+using FlightAssistant.Infrastructure;
 using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.Persistance;
-using FlightAssistant.Infrastructure.Persistance.Repositories;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Identity.Web;
@@ -29,7 +30,6 @@ if (!string.IsNullOrWhiteSpace(keyVaultUri))
 // ------------------------------------------------------------
 // 2. Service Registration
 // ------------------------------------------------------------
-builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 
 builder.Services.AddSwaggerGen(c =>
@@ -56,8 +56,11 @@ builder.Services.AddDbContext<FlightAssistantDbContext>(opt =>
 // Caching
 builder.Services.AddAppCaching(builder.Configuration);
 
-// Repositories
-builder.Services.AddScoped<ITravelerRepository, TravelerRepository>();
+// Application layer (MediatR, validators, pipeline)
+builder.Services.AddApplication();
+
+// Infrastructure layer (repositories, external services)
+builder.Services.AddInfrastructure(builder.Configuration);
 
 // Hosted services
 
@@ -142,7 +145,14 @@ app.UseAuthorization();
 // ------------------------------------------------------------
 // 6. Endpoint Mapping
 // ------------------------------------------------------------
-app.MapControllers();
+app.MapHealthEndpoints();
+
+// Domain endpoints
+app.MapTravelerEndpoints();
+app.MapFlightEndpoints();
+app.MapLoyaltyEndpoints();
+app.MapLoungeEndpoints();
+app.MapVisaEndpoints();
 
 // Group: private (mixed auth)
 var privateGroup = app.MapGroup("private");
