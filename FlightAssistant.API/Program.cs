@@ -88,6 +88,7 @@ builder.Services.AddInfrastructure(builder.Configuration);
 
 // Commented out because of slow startup in dev/test environments
 builder.Services.AddHostedService<ReferenceDataSeeder>();
+builder.Services.AddHostedService<FlightStatusSyncBackgroundService>();
 
 // ------------------------------------------------------------
 // 3. Authentication & Authorization

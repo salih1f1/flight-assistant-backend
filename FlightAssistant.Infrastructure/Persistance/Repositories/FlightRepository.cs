@@ -69,5 +69,14 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 .Where(s => s.Code == code)
                 .Select(s => (int?)s.Id)
                 .FirstOrDefaultAsync(ct);
+
+        public async Task<IReadOnlyList<Flight>> GetActiveTrackedFlightsAsync(CancellationToken ct = default)
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            return await _db.Flights
+                .Where(f => f.ServiceDateUtc >= today &&
+                            _db.TravelerFlights.Any(tf => tf.FlightId == f.Id && tf.Notify))
+                .ToListAsync(ct);
+        }
     }
 }
