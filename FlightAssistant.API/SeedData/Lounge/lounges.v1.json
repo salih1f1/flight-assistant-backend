@@ -1,0 +1,63 @@
+[
+  { "airportIata": "LHR", "name": "British Airways Galleries Club", "terminal": "T3", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "LHR", "name": "British Airways Galleries First", "terminal": "T3", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "LHR", "name": "British Airways Galleries Club", "terminal": "T5", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "LHR", "name": "British Airways Galleries First", "terminal": "T5", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "LHR", "name": "American Airlines Admirals Club", "terminal": "T3", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "LHR", "name": "Qantas International Business Lounge", "terminal": "T3", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": true },
+  { "airportIata": "LHR", "name": "Air France Lounge", "terminal": "T4", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "LHR", "name": "Virgin Atlantic Clubhouse", "terminal": "T3", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+
+  { "airportIata": "CDG", "name": "Air France Business Lounge", "terminal": "2E", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "CDG", "name": "Air France La Première Lounge", "terminal": "2E", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "CDG", "name": "Air France Business Lounge", "terminal": "2F", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "CDG", "name": "KLM Crown Lounge", "terminal": "2F", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+
+  { "airportIata": "AMS", "name": "KLM Crown Lounge", "terminal": "D", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "AMS", "name": "KLM Crown Lounge Non-Schengen", "terminal": "E", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": true },
+
+  { "airportIata": "FRA", "name": "Lufthansa Business Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "FRA", "name": "Lufthansa Senator Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "FRA", "name": "Lufthansa First Class Terminal", "terminal": "FT", "isAirside": false, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "FRA", "name": "Lufthansa Business Lounge", "terminal": "T2", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+
+  { "airportIata": "JFK", "name": "American Airlines Admirals Club", "terminal": "T8", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "JFK", "name": "American Airlines Flagship Lounge", "terminal": "T8", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "JFK", "name": "Delta Sky Club", "terminal": "T4", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "JFK", "name": "British Airways Galleries Club", "terminal": "T7", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": true },
+  { "airportIata": "JFK", "name": "Qantas International Business Lounge", "terminal": "T8", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": true },
+
+  { "airportIata": "DXB", "name": "Emirates Business Class Lounge", "terminal": "T3", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false, "locationHint": "Concourse B" },
+  { "airportIata": "DXB", "name": "Emirates First Class Lounge", "terminal": "T3", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false, "locationHint": "Concourse B" },
+  { "airportIata": "DXB", "name": "Emirates Business Class Lounge", "terminal": "T3", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false, "locationHint": "Concourse C" },
+
+  { "airportIata": "DOH", "name": "Qatar Airways Al Mourjan Business Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "DOH", "name": "Qatar Airways Al Safwa First Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+
+  { "airportIata": "SIN", "name": "Singapore Airlines SilverKris Business Class Lounge", "terminal": "T3", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": true },
+  { "airportIata": "SIN", "name": "Singapore Airlines SilverKris First Class Lounge", "terminal": "T3", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": true },
+
+  { "airportIata": "HKG", "name": "Cathay Pacific The Wing Business Class Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": true },
+  { "airportIata": "HKG", "name": "Cathay Pacific The Pier First Class Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": true },
+  { "airportIata": "HKG", "name": "Cathay Pacific The Bridge Business Class Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": true },
+
+  { "airportIata": "NRT", "name": "JAL Sakura Lounge", "terminal": "T2", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": true },
+  { "airportIata": "NRT", "name": "ANA Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": true },
+
+  { "airportIata": "IST", "name": "Turkish Airlines Business Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "IST", "name": "Turkish Airlines Miles&Smiles Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+
+  { "airportIata": "SYD", "name": "Qantas International Business Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": true },
+  { "airportIata": "SYD", "name": "Qantas International First Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": true },
+  { "airportIata": "SYD", "name": "Qantas Domestic Business Lounge", "terminal": "T3", "isAirside": true, "isDomesticOnly": true, "isInternationalOnly": false },
+
+  { "airportIata": "YYZ", "name": "Air Canada Maple Leaf Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "YYZ", "name": "Air Canada Signature Suite", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+
+  { "airportIata": "MAD", "name": "Iberia Business Lounge", "terminal": "T4", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "MAD", "name": "Iberia Velázquez VIP Lounge", "terminal": "T4", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+
+  { "airportIata": "ORD", "name": "United Club", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "ORD", "name": "American Airlines Admirals Club", "terminal": "T3", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "ORD", "name": "Delta Sky Club", "terminal": "T5", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false }
+]

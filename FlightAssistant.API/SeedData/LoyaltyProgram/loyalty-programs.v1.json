@@ -1,0 +1,241 @@
+[
+  {
+    "code": "BA-EXEC", "name": "British Airways Executive Club",
+    "kindCode": "FF", "airlineIata": "BA", "allianceCode": "OW",
+    "tiers": [
+      { "code": "BLUE",     "name": "Blue",          "rank": 1 },
+      { "code": "BRONZE",   "name": "Bronze",        "rank": 2 },
+      { "code": "SILVER",   "name": "Silver",        "rank": 3 },
+      { "code": "GOLD",     "name": "Gold",          "rank": 4 }
+    ]
+  },
+  {
+    "code": "DL-SKY", "name": "Delta SkyMiles",
+    "kindCode": "FF", "airlineIata": "DL", "allianceCode": "ST",
+    "tiers": [
+      { "code": "SILVER",   "name": "Silver Medallion",   "rank": 1 },
+      { "code": "GOLD",     "name": "Gold Medallion",     "rank": 2 },
+      { "code": "PLATINUM", "name": "Platinum Medallion", "rank": 3 },
+      { "code": "DIAMOND",  "name": "Diamond Medallion",  "rank": 4 }
+    ]
+  },
+  {
+    "code": "UA-MP", "name": "United MileagePlus",
+    "kindCode": "FF", "airlineIata": "UA", "allianceCode": "SA",
+    "tiers": [
+      { "code": "SILVER",   "name": "Premier Silver",    "rank": 1 },
+      { "code": "GOLD",     "name": "Premier Gold",      "rank": 2 },
+      { "code": "PLATINUM", "name": "Premier Platinum",  "rank": 3 },
+      { "code": "1K",       "name": "Premier 1K",        "rank": 4 }
+    ]
+  },
+  {
+    "code": "AA-ADV", "name": "American AAdvantage",
+    "kindCode": "FF", "airlineIata": "AA", "allianceCode": "OW",
+    "tiers": [
+      { "code": "GOLD",     "name": "Gold",              "rank": 1 },
+      { "code": "PLATINUM", "name": "Platinum",          "rank": 2 },
+      { "code": "PLAT-PRO", "name": "Platinum Pro",      "rank": 3 },
+      { "code": "EXP",      "name": "Executive Platinum","rank": 4 }
+    ]
+  },
+  {
+    "code": "AF-FB", "name": "Air France-KLM Flying Blue",
+    "kindCode": "FF", "airlineIata": "AF", "allianceCode": "ST",
+    "tiers": [
+      { "code": "EXPLORER", "name": "Explorer",          "rank": 1 },
+      { "code": "SILVER",   "name": "Silver",            "rank": 2 },
+      { "code": "GOLD",     "name": "Gold",              "rank": 3 },
+      { "code": "PLATINUM", "name": "Platinum",          "rank": 4 },
+      { "code": "ULTIMATE", "name": "Ultimate",          "rank": 5 }
+    ]
+  },
+  {
+    "code": "LH-MM", "name": "Miles & More",
+    "kindCode": "FF", "airlineIata": "LH", "allianceCode": "SA",
+    "tiers": [
+      { "code": "FREQUENT",  "name": "Frequent Traveller",  "rank": 1 },
+      { "code": "SENATOR",   "name": "Senator",             "rank": 2 },
+      { "code": "HON-CIRCLE","name": "HON Circle",          "rank": 3 }
+    ]
+  },
+  {
+    "code": "EK-SKY", "name": "Emirates Skywards",
+    "kindCode": "FF", "airlineIata": "EK",
+    "tiers": [
+      { "code": "BLUE",     "name": "Blue",     "rank": 1 },
+      { "code": "SILVER",   "name": "Silver",   "rank": 2 },
+      { "code": "GOLD",     "name": "Gold",     "rank": 3 },
+      { "code": "PLATINUM", "name": "Platinum", "rank": 4 }
+    ]
+  },
+  {
+    "code": "EY-GUEST", "name": "Etihad Guest",
+    "kindCode": "FF", "airlineIata": "EY",
+    "tiers": [
+      { "code": "SILVER",   "name": "Silver",   "rank": 1 },
+      { "code": "GOLD",     "name": "Gold",     "rank": 2 },
+      { "code": "PLATINUM", "name": "Platinum", "rank": 3 }
+    ]
+  },
+  {
+    "code": "QR-PC", "name": "Qatar Airways Privilege Club",
+    "kindCode": "FF", "airlineIata": "QR", "allianceCode": "OW",
+    "tiers": [
+      { "code": "BURGUNDY",  "name": "Burgundy",  "rank": 1 },
+      { "code": "SILVER",    "name": "Silver",    "rank": 2 },
+      { "code": "GOLD",      "name": "Gold",      "rank": 3 },
+      { "code": "PLATINUM",  "name": "Platinum",  "rank": 4 }
+    ]
+  },
+  {
+    "code": "SQ-KF", "name": "Singapore Airlines KrisFlyer",
+    "kindCode": "FF", "airlineIata": "SQ", "allianceCode": "SA",
+    "tiers": [
+      { "code": "KRISFLYER",     "name": "KrisFlyer",          "rank": 1 },
+      { "code": "ELITE-SILVER",  "name": "Elite Silver",       "rank": 2 },
+      { "code": "ELITE-GOLD",    "name": "Elite Gold",         "rank": 3 }
+    ]
+  },
+  {
+    "code": "CX-MPC", "name": "Cathay Pacific Marco Polo Club",
+    "kindCode": "FF", "airlineIata": "CX", "allianceCode": "OW",
+    "tiers": [
+      { "code": "GREEN",    "name": "Green",    "rank": 1 },
+      { "code": "SILVER",   "name": "Silver",   "rank": 2 },
+      { "code": "GOLD",     "name": "Gold",     "rank": 3 },
+      { "code": "DIAMOND",  "name": "Diamond",  "rank": 4 }
+    ]
+  },
+  {
+    "code": "TK-MS", "name": "Turkish Airlines Miles&Smiles",
+    "kindCode": "FF", "airlineIata": "TK", "allianceCode": "SA",
+    "tiers": [
+      { "code": "CLASSIC-PLUS", "name": "Classic Plus", "rank": 1 },
+      { "code": "ELITE",        "name": "Elite",        "rank": 2 },
+      { "code": "ELITE-PLUS",   "name": "Elite Plus",   "rank": 3 }
+    ]
+  },
+  {
+    "code": "AC-AERO", "name": "Air Canada Aeroplan",
+    "kindCode": "FF", "airlineIata": "AC", "allianceCode": "SA",
+    "tiers": [
+      { "code": "25K",  "name": "25K",  "rank": 1 },
+      { "code": "35K",  "name": "35K",  "rank": 2 },
+      { "code": "50K",  "name": "50K",  "rank": 3 },
+      { "code": "75K",  "name": "75K",  "rank": 4 },
+      { "code": "SUPER","name": "Super Elite", "rank": 5 }
+    ]
+  },
+  {
+    "code": "QF-FF", "name": "Qantas Frequent Flyer",
+    "kindCode": "FF", "airlineIata": "QF", "allianceCode": "OW",
+    "tiers": [
+      { "code": "BRONZE",   "name": "Bronze",   "rank": 1 },
+      { "code": "SILVER",   "name": "Silver",   "rank": 2 },
+      { "code": "GOLD",     "name": "Gold",     "rank": 3 },
+      { "code": "PLATINUM", "name": "Platinum", "rank": 4 },
+      { "code": "PLAT-ONE", "name": "Platinum One", "rank": 5 }
+    ]
+  },
+  {
+    "code": "VS-FC", "name": "Virgin Atlantic Flying Club",
+    "kindCode": "FF", "airlineIata": "VS", "allianceCode": "ST",
+    "tiers": [
+      { "code": "RED",    "name": "Red",    "rank": 1 },
+      { "code": "SILVER", "name": "Silver", "rank": 2 },
+      { "code": "GOLD",   "name": "Gold",   "rank": 3 }
+    ]
+  },
+  {
+    "code": "JL-JMB", "name": "Japan Airlines Mileage Bank",
+    "kindCode": "FF", "airlineIata": "JL", "allianceCode": "OW",
+    "tiers": [
+      { "code": "CRYSTAL",  "name": "Crystal",  "rank": 1 },
+      { "code": "SAPPHIRE", "name": "Sapphire", "rank": 2 },
+      { "code": "EMERALD",  "name": "Emerald",  "rank": 3 }
+    ]
+  },
+  {
+    "code": "NH-AMC", "name": "ANA Mileage Club",
+    "kindCode": "FF", "airlineIata": "NH", "allianceCode": "SA",
+    "tiers": [
+      { "code": "BRONZE",   "name": "Bronze",   "rank": 1 },
+      { "code": "PLATINUM", "name": "Platinum", "rank": 2 },
+      { "code": "DIAMOND",  "name": "Diamond",  "rank": 3 }
+    ]
+  },
+  {
+    "code": "IB-PLUS", "name": "Iberia Plus",
+    "kindCode": "FF", "airlineIata": "IB", "allianceCode": "OW",
+    "tiers": [
+      { "code": "CLASICA",   "name": "Clásica",   "rank": 1 },
+      { "code": "SILVER",    "name": "Silver",    "rank": 2 },
+      { "code": "GOLD",      "name": "Gold",      "rank": 3 },
+      { "code": "PLATINUM",  "name": "Platinum",  "rank": 4 }
+    ]
+  },
+  {
+    "code": "AY-PLUS", "name": "Finnair Plus",
+    "kindCode": "FF", "airlineIata": "AY", "allianceCode": "OW",
+    "tiers": [
+      { "code": "BASIC",    "name": "Basic",    "rank": 1 },
+      { "code": "SILVER",   "name": "Silver",   "rank": 2 },
+      { "code": "GOLD",     "name": "Gold",     "rank": 3 },
+      { "code": "PLATINUM", "name": "Platinum", "rank": 4 }
+    ]
+  },
+  {
+    "code": "A3-MB", "name": "Aegean Miles+Bonus",
+    "kindCode": "FF", "airlineIata": "A3", "allianceCode": "SA",
+    "tiers": [
+      { "code": "SILVER",   "name": "Silver",   "rank": 1 },
+      { "code": "GOLD",     "name": "Gold",     "rank": 2 }
+    ]
+  },
+  {
+    "code": "TP-MILES", "name": "TAP Miles&Go",
+    "kindCode": "FF", "airlineIata": "TP", "allianceCode": "SA",
+    "tiers": [
+      { "code": "SILVER",   "name": "Silver",   "rank": 1 },
+      { "code": "GOLD",     "name": "Gold",     "rank": 2 }
+    ]
+  },
+  {
+    "code": "KE-SKY", "name": "Korean Air SKYPASS",
+    "kindCode": "FF", "airlineIata": "KE", "allianceCode": "ST",
+    "tiers": [
+      { "code": "MORNING-CALM",       "name": "Morning Calm",       "rank": 1 },
+      { "code": "MORNING-CALM-PREM",  "name": "Morning Calm Prem.", "rank": 2 },
+      { "code": "MILLION-MILER",      "name": "Million Miler",      "rank": 3 }
+    ]
+  },
+  {
+    "code": "MH-ENRICH", "name": "Malaysia Airlines Enrich",
+    "kindCode": "FF", "airlineIata": "MH", "allianceCode": "OW",
+    "tiers": [
+      { "code": "BLUE",     "name": "Blue",     "rank": 1 },
+      { "code": "SILVER",   "name": "Silver",   "rank": 2 },
+      { "code": "GOLD",     "name": "Gold",     "rank": 3 },
+      { "code": "PLATINUM", "name": "Platinum", "rank": 4 }
+    ]
+  },
+  {
+    "code": "TG-ROP", "name": "Thai Royal Orchid Plus",
+    "kindCode": "FF", "airlineIata": "TG", "allianceCode": "SA",
+    "tiers": [
+      { "code": "SILVER",   "name": "Silver",   "rank": 1 },
+      { "code": "GOLD",     "name": "Gold",     "rank": 2 },
+      { "code": "PLATINUM", "name": "Platinum", "rank": 3 }
+    ]
+  },
+  {
+    "code": "ET-SHEBA", "name": "Ethiopian Airlines ShebaMiles",
+    "kindCode": "FF", "airlineIata": "ET", "allianceCode": "SA",
+    "tiers": [
+      { "code": "SILVER",   "name": "Silver",   "rank": 1 },
+      { "code": "GOLD",     "name": "Gold",     "rank": 2 },
+      { "code": "PLATINUM", "name": "Platinum", "rank": 3 }
+    ]
+  }
+]
