@@ -13,7 +13,6 @@ using Microsoft.Extensions.Options;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.Resource;
 using Microsoft.OpenApi.Models;
-using System.Security.Claims;
 
 // ------------------------------------------------------------
 // 1. Bootstrap & Configuration
@@ -94,7 +93,6 @@ builder.Services.AddHostedService<ReferenceDataSeeder>();
 // 3. Authentication & Authorization
 // ------------------------------------------------------------
 const string NameClaimType = "name";
-const string ScopeAccessAsUser = "access_as_user";
 
 // Azure AD B2C configuration (kept explicit for clarity)
 var tenantId = Cfg("Azure:TenantId");
@@ -194,40 +192,18 @@ app.MapLoyaltyEndpoints();
 app.MapLoungeEndpoints();
 app.MapVisaEndpoints();
 
-// Admin endpoints
-app.MapAdminTravelerEndpoints();
-app.MapAdminFlightEndpoints();
-app.MapAdminAirlineEndpoints();
-app.MapAdminAirportEndpoints();
-app.MapAdminRefDataEndpoints();
-app.MapAdminLoyaltyEndpoints();
-app.MapAdminLoungeEndpoints();
+// Admin endpoints — shared group carries auth, each file adds its own sub-prefix
+var adminGroup = app.MapGroup("admin").RequireAuthorization("AdminOnly");
+adminGroup.MapAdminTravelerEndpoints();
+adminGroup.MapAdminFlightEndpoints();
+adminGroup.MapAdminAirlineEndpoints();
+adminGroup.MapAdminAirportEndpoints();
+adminGroup.MapAdminRefDataEndpoints();
+adminGroup.MapAdminLoyaltyEndpoints();
+adminGroup.MapAdminLoungeEndpoints();
 
-// Group: private (mixed auth)
-var privateGroup = app.MapGroup("private");
-
-// Public (no auth) ping
-privateGroup.MapGet("ping", () => "pong");
-
-// Authenticated: secure test
-privateGroup.MapGet("secure-test", (HttpContext http) =>
-{
-    http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-    return Results.Ok(new { ok = true, at = DateTime.UtcNow });
-}).RequireAuthorization();
-
-// Authenticated: whoami
-privateGroup.MapGet("whoami", (HttpContext http) =>
-{
-    http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-    return Results.Ok(new
-    {
-        name = http.User.Identity?.Name,
-        aud = http.User.FindFirstValue("aud"),
-        iss = http.User.FindFirstValue("iss"),
-        tfp = http.User.FindFirst("tfp")?.Value ?? http.User.FindFirst("acr")?.Value
-    });
-}).RequireAuthorization();
+// Private endpoints (ping, secure-test, whoami)
+app.MapPrivateEndpoints();
 
 // ------------------------------------------------------------
 // 7. Run

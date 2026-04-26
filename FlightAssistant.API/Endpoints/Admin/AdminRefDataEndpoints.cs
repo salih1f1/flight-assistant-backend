@@ -6,10 +6,9 @@ namespace FlightAssistant.API.Endpoints.Admin
 {
     public static class AdminRefDataEndpoints
     {
-        public static void MapAdminRefDataEndpoints(this IEndpointRouteBuilder app)
+        public static void MapAdminRefDataEndpoints(this IEndpointRouteBuilder admin)
         {
-            var group = app.MapGroup("admin")
-                .RequireAuthorization("AdminOnly")
+            var group = admin.MapGroup("refdata")
                 .WithTags("Admin - Reference Data");
 
             // GET /admin/countries
