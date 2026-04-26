@@ -121,7 +121,7 @@ builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddScoped<TravelerContext>();
 
 builder.Services.AddHealthChecks()
-    .AddCheck<DatabaseHealthCheck>("database")
+    .AddDbContextCheck<FlightAssistantDbContext>()
     .AddRedis(builder.Configuration.GetConnectionString("Redis") ?? string.Empty)
     .AddCheck<AeroDataBoxHealthCheck>("aerodatabox", tags: ["external"])
     .AddCheck<ApnsHealthCheck>("apns", tags: ["external"]);
