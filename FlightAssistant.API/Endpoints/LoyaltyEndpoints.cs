@@ -1,3 +1,4 @@
+using FlightAssistant.API.Authentication;
 using FlightAssistant.Application.Commands.Loyalty;
 using FlightAssistant.Application.Queries.Loyalty;
 using FlightAssistant.Contracts.Requests.Loyalty;
@@ -5,7 +6,6 @@ using FlightAssistant.Contracts.Responses.Loyalty;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Identity.Web.Resource;
-using System.Security.Claims;
 
 namespace FlightAssistant.API.Endpoints
 {
@@ -38,7 +38,7 @@ namespace FlightAssistant.API.Endpoints
             group.MapGet("memberships", async (HttpContext http, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-                var travelerId = GetTravelerId(http);
+                var travelerId = http.User.GetTravelerId();
                 var memberships = await mediator.Send(new GetTravelerMembershipsQuery(travelerId), ct);
                 var dtos = memberships.Select(m => new LoyaltyMembershipDto(m.Id, m.ProgramId, m.AccountNumber, m.TierId, m.TierExpiryDate, m.PointsExpiryDate));
                 return Results.Ok(dtos);
@@ -52,7 +52,7 @@ namespace FlightAssistant.API.Endpoints
             group.MapPost("memberships", async (HttpContext http, [FromBody] AddMembershipRequest req, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-                var travelerId = GetTravelerId(http);
+                var travelerId = http.User.GetTravelerId();
                 var id = await mediator.Send(new AddLoyaltyMembershipCommand(travelerId, req.ProgramId, req.AccountNumber, req.TierId, req.TierExpiryDate, req.PointsExpiryDate), ct);
                 return Results.Created($"/loyalty/memberships/{id}", new { id });
             })
@@ -69,7 +69,7 @@ namespace FlightAssistant.API.Endpoints
             group.MapPut("memberships/{id:guid}", async (HttpContext http, Guid id, [FromBody] AddMembershipRequest req, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-                var travelerId = GetTravelerId(http);
+                var travelerId = http.User.GetTravelerId();
                 await mediator.Send(new UpdateLoyaltyMembershipCommand(travelerId, id, req.AccountNumber, req.TierId, req.TierExpiryDate, req.PointsExpiryDate), ct);
                 return Results.NoContent();
             })
@@ -87,7 +87,7 @@ namespace FlightAssistant.API.Endpoints
             group.MapDelete("memberships/{id:guid}", async (HttpContext http, Guid id, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-                var travelerId = GetTravelerId(http);
+                var travelerId = http.User.GetTravelerId();
                 await mediator.Send(new RemoveLoyaltyMembershipCommand(travelerId, id), ct);
                 return Results.NoContent();
             })
@@ -100,11 +100,5 @@ namespace FlightAssistant.API.Endpoints
             .ProducesProblem(404);
         }
 
-        private static Guid GetTravelerId(HttpContext http)
-        {
-            var oidClaim = http.User.FindFirstValue("oid") ?? http.User.FindFirstValue("sub")
-                ?? throw new InvalidOperationException("User OID claim missing.");
-            return Guid.Parse(oidClaim);
-        }
     }
 }
