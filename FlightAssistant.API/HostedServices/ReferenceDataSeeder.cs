@@ -1,6 +1,7 @@
 using FlightAssistant.Domain.Common.Interfaces;
 using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Domain.Lounges.Entities;
+using FlightAssistant.Domain.Lounges.Enums;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Infrastructure.Persistance;
@@ -41,7 +42,9 @@ namespace FlightAssistant.API.HostedServices
             await SeedData<Airline>(db, cancellationToken);
             await SeedLoyaltyProgramKindsAsync(db, cancellationToken);
             await SeedLoyaltyProgramsAsync(db, cancellationToken);
+            await SeedLoungeProvidersAsync(db, cancellationToken);
             await SeedLoungesAsync(db, cancellationToken);
+            await SeedLoungeProviderLinksAsync(db, cancellationToken);
 
             log.LogInformation("Reference data seeding completed.");
         }
@@ -105,10 +108,33 @@ namespace FlightAssistant.API.HostedServices
                 {
                     if (!await d.Set<LoyaltyTier>().AnyAsync(t => t.ProgramId == program.Id && t.Code == tierDto.Code, c))
                     {
-                        var tier = LoyaltyTier.Create(program.Id, tierDto.Code, tierDto.Name, tierDto.Rank);
+                        var tier = LoyaltyTier.Create(program.Id, tierDto.Code, tierDto.Name, tierDto.Rank,
+                            tierDto.AllianceCode, tierDto.AllianceTierCode);
                         await d.Set<LoyaltyTier>().AddAsync(tier, c);
                     }
                 }
+            });
+        }
+
+        // -----------------------------------------------------------------------
+        // Lounge Providers
+        // -----------------------------------------------------------------------
+
+        private async Task SeedLoungeProvidersAsync(FlightAssistantDbContext db, CancellationToken ct)
+        {
+            const string dataset = "LoungeProvider";
+            await SeedCustomAsync<LoungeProviderSeedDto>(db, dataset, ct, async (dto, d, c) =>
+            {
+                if (await d.Set<LoungeProvider>().AnyAsync(p => p.Code == dto.Code, c))
+                    return;
+
+                if (!Enum.TryParse<LoungeProviderKind>(dto.Kind, ignoreCase: true, out var kind))
+                {
+                    log.LogWarning("Skipping lounge provider '{Code}': unknown kind '{Kind}'", dto.Code, dto.Kind);
+                    return;
+                }
+
+                await d.Set<LoungeProvider>().AddAsync(LoungeProvider.Create(dto.Code, dto.Name, kind, dto.Description), c);
             });
         }
 
@@ -132,15 +158,115 @@ namespace FlightAssistant.API.HostedServices
                     return;
                 }
 
-                var alreadyExists = await d.Lounges.AnyAsync(
-                    l => l.AirportId == airportId && l.Name == dto.Name && l.Terminal == dto.Terminal, c);
+                var existingLounge = await d.Lounges
+                    .Where(l => l.AirportId == airportId && l.Name == dto.Name && l.Terminal == dto.Terminal)
+                    .Select(l => (int?)l.Id)
+                    .FirstOrDefaultAsync(c);
 
-                if (!alreadyExists)
+                int loungeId;
+                if (existingLounge is null)
                 {
                     var lounge = Lounge.Create(
                         airportId.Value, dto.Name, dto.Terminal, dto.LocationHint,
                         dto.Hours, dto.IsAirside, dto.IsDomesticOnly, dto.IsInternationalOnly, dto.Amenities);
                     await d.Lounges.AddAsync(lounge, c);
+                    await d.SaveChangesAsync(c);
+                    loungeId = lounge.Id;
+                }
+                else
+                {
+                    loungeId = existingLounge.Value;
+                }
+
+                if (dto.Providers is { Count: > 0 })
+                {
+                    foreach (var linkDto in dto.Providers)
+                    {
+                        if (!Enum.TryParse<LoungeProviderRole>(linkDto.Role, ignoreCase: true, out var role))
+                        {
+                            log.LogWarning("Skipping provider link for lounge '{Name}': unknown role '{Role}'", dto.Name, linkDto.Role);
+                            continue;
+                        }
+
+                        var providerId = await d.Set<LoungeProvider>()
+                            .Where(p => p.Code == linkDto.ProviderCode)
+                            .Select(p => (int?)p.Id)
+                            .FirstOrDefaultAsync(c);
+
+                        if (providerId is null)
+                        {
+                            log.LogWarning("Skipping provider link for lounge '{Name}': provider '{Code}' not found", dto.Name, linkDto.ProviderCode);
+                            continue;
+                        }
+
+                        var linkExists = await d.Set<LoungeProviderLink>()
+                            .AnyAsync(l => l.LoungeId == loungeId && l.ProviderId == providerId && l.Role == role, c);
+
+                        if (!linkExists)
+                        {
+                            await d.Set<LoungeProviderLink>().AddAsync(
+                                LoungeProviderLink.Create(loungeId, providerId.Value, role, linkDto.Notes, linkDto.MinAllianceTierCode), c);
+                        }
+                    }
+                }
+            });
+        }
+
+        // -----------------------------------------------------------------------
+        // Lounge Provider Links (flat seed — links existing lounges to providers)
+        // -----------------------------------------------------------------------
+
+        private async Task SeedLoungeProviderLinksAsync(FlightAssistantDbContext db, CancellationToken ct)
+        {
+            const string dataset = "LoungeProviderLink";
+            await SeedCustomAsync<FlatLoungeProviderLinkDto>(db, dataset, ct, async (dto, d, c) =>
+            {
+                if (!Enum.TryParse<LoungeProviderRole>(dto.Role, ignoreCase: true, out var role))
+                {
+                    log.LogWarning("Skipping provider link: unknown role '{Role}'", dto.Role);
+                    return;
+                }
+
+                var airportId = await d.Airports
+                    .Where(a => a.Iata == dto.AirportIata)
+                    .Select(a => (int?)a.Id)
+                    .FirstOrDefaultAsync(c);
+
+                if (airportId is null)
+                {
+                    log.LogWarning("Skipping provider link for lounge '{Name}': airport '{Iata}' not found", dto.LoungeName, dto.AirportIata);
+                    return;
+                }
+
+                var loungeId = await d.Lounges
+                    .Where(l => l.AirportId == airportId && l.Name == dto.LoungeName && l.Terminal == dto.Terminal)
+                    .Select(l => (int?)l.Id)
+                    .FirstOrDefaultAsync(c);
+
+                if (loungeId is null)
+                {
+                    log.LogWarning("Skipping provider link: lounge '{Name}' at {Iata}/{Terminal} not found", dto.LoungeName, dto.AirportIata, dto.Terminal);
+                    return;
+                }
+
+                var providerId = await d.Set<LoungeProvider>()
+                    .Where(p => p.Code == dto.ProviderCode)
+                    .Select(p => (int?)p.Id)
+                    .FirstOrDefaultAsync(c);
+
+                if (providerId is null)
+                {
+                    log.LogWarning("Skipping provider link for lounge '{Name}': provider '{Code}' not found", dto.LoungeName, dto.ProviderCode);
+                    return;
+                }
+
+                var exists = await d.Set<LoungeProviderLink>()
+                    .AnyAsync(l => l.LoungeId == loungeId && l.ProviderId == providerId && l.Role == role, c);
+
+                if (!exists)
+                {
+                    await d.Set<LoungeProviderLink>().AddAsync(
+                        LoungeProviderLink.Create(loungeId.Value, providerId.Value, role, dto.Notes, dto.MinAllianceTierCode), c);
                 }
             });
         }
@@ -386,7 +512,8 @@ namespace FlightAssistant.API.HostedServices
 
         private record LoyaltyProgramKindDto(string Code, string Name, string? Description);
 
-        private record LoyaltyTierDto(string Code, string Name, int Rank);
+        private record LoyaltyTierDto(string Code, string Name, int Rank,
+            string? AllianceCode = null, string? AllianceTierCode = null);
 
         private record LoyaltyProgramDto(
             string Code,
@@ -395,6 +522,23 @@ namespace FlightAssistant.API.HostedServices
             string? AirlineIata,
             string? AllianceCode,
             List<LoyaltyTierDto> Tiers);
+
+        private record LoungeProviderSeedDto(string Code, string Name, string Kind, string? Description = null);
+
+        private record LoungeProviderLinkSeedDto(
+            string ProviderCode,
+            string Role,
+            string? MinAllianceTierCode = null,
+            string? Notes = null);
+
+        private record FlatLoungeProviderLinkDto(
+            string AirportIata,
+            string LoungeName,
+            string? Terminal,
+            string ProviderCode,
+            string Role,
+            string? MinAllianceTierCode = null,
+            string? Notes = null);
 
         private record LoungeSeedDto(
             string AirportIata,
@@ -405,6 +549,7 @@ namespace FlightAssistant.API.HostedServices
             bool IsAirside,
             bool IsDomesticOnly,
             bool IsInternationalOnly,
-            string? Amenities);
+            string? Amenities,
+            List<LoungeProviderLinkSeedDto>? Providers = null);
     }
 }

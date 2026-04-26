@@ -1,0 +1,282 @@
+[
+  // ============================================================
+  // LONDON HEATHROW
+  // ============================================================
+  // BA Galleries Club T3 — BA operates; OW SAPPHIRE+ (Emerald gets First)
+  { "airportIata": "LHR", "loungeName": "British Airways Galleries Club",     "terminal": "T3", "providerCode": "BA", "role": "Operator" },
+  { "airportIata": "LHR", "loungeName": "British Airways Galleries Club",     "terminal": "T3", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+
+  // BA Galleries First T3
+  { "airportIata": "LHR", "loungeName": "British Airways Galleries First",    "terminal": "T3", "providerCode": "BA", "role": "Operator" },
+  { "airportIata": "LHR", "loungeName": "British Airways Galleries First",    "terminal": "T3", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "EMERALD" },
+
+  // BA Galleries Club T5
+  { "airportIata": "LHR", "loungeName": "British Airways Galleries Club",     "terminal": "T5", "providerCode": "BA", "role": "Operator" },
+  { "airportIata": "LHR", "loungeName": "British Airways Galleries Club",     "terminal": "T5", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+
+  // BA Galleries First T5
+  { "airportIata": "LHR", "loungeName": "British Airways Galleries First",    "terminal": "T5", "providerCode": "BA", "role": "Operator" },
+  { "airportIata": "LHR", "loungeName": "British Airways Galleries First",    "terminal": "T5", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "EMERALD" },
+
+  // AA Admirals Club T3
+  { "airportIata": "LHR", "loungeName": "American Airlines Admirals Club",    "terminal": "T3", "providerCode": "AA", "role": "Operator" },
+  { "airportIata": "LHR", "loungeName": "American Airlines Admirals Club",    "terminal": "T3", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+
+  // Qantas International Business T3
+  { "airportIata": "LHR", "loungeName": "Qantas International Business Lounge", "terminal": "T3", "providerCode": "QF", "role": "Operator" },
+  { "airportIata": "LHR", "loungeName": "Qantas International Business Lounge", "terminal": "T3", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+
+  // Air France Lounge T4
+  { "airportIata": "LHR", "loungeName": "Air France Lounge",                  "terminal": "T4", "providerCode": "AF", "role": "Operator" },
+  { "airportIata": "LHR", "loungeName": "Air France Lounge",                  "terminal": "T4", "providerCode": "ST", "role": "AccessNetwork", "minAllianceTierCode": "ELITE_PLUS" },
+
+  // Virgin Atlantic Clubhouse T3
+  { "airportIata": "LHR", "loungeName": "Virgin Atlantic Clubhouse",          "terminal": "T3", "providerCode": "VS", "role": "Operator" },
+  { "airportIata": "LHR", "loungeName": "Virgin Atlantic Clubhouse",          "terminal": "T3", "providerCode": "ST", "role": "AccessNetwork", "minAllianceTierCode": "ELITE_PLUS" },
+
+  // Emirates Lounge T3
+  { "airportIata": "LHR", "loungeName": "Emirates Lounge",                    "terminal": "T3", "providerCode": "EK", "role": "Operator" },
+
+  // Cathay Pacific Lounge T3
+  { "airportIata": "LHR", "loungeName": "Cathay Pacific Lounge",              "terminal": "T3", "providerCode": "CX", "role": "Operator" },
+  { "airportIata": "LHR", "loungeName": "Cathay Pacific Lounge",              "terminal": "T3", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+
+  // Singapore Airlines KrisFlyer Lounge T2
+  { "airportIata": "LHR", "loungeName": "Singapore Airlines KrisFlyer Lounge","terminal": "T2", "providerCode": "SQ", "role": "Operator" },
+  { "airportIata": "LHR", "loungeName": "Singapore Airlines KrisFlyer Lounge","terminal": "T2", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "GOLD" },
+
+  // ============================================================
+  // PARIS CDG
+  // ============================================================
+  { "airportIata": "CDG", "loungeName": "Air France Business Lounge",         "terminal": "2E", "providerCode": "AF", "role": "Operator" },
+  { "airportIata": "CDG", "loungeName": "Air France Business Lounge",         "terminal": "2E", "providerCode": "ST", "role": "AccessNetwork", "minAllianceTierCode": "ELITE" },
+
+  { "airportIata": "CDG", "loungeName": "Air France La Première Lounge",      "terminal": "2E", "providerCode": "AF", "role": "Operator" },
+  { "airportIata": "CDG", "loungeName": "Air France La Première Lounge",      "terminal": "2E", "providerCode": "ST", "role": "AccessNetwork", "minAllianceTierCode": "ELITE_PLUS" },
+
+  { "airportIata": "CDG", "loungeName": "Air France Business Lounge",         "terminal": "2F", "providerCode": "AF", "role": "Operator" },
+  { "airportIata": "CDG", "loungeName": "Air France Business Lounge",         "terminal": "2F", "providerCode": "ST", "role": "AccessNetwork", "minAllianceTierCode": "ELITE" },
+
+  { "airportIata": "CDG", "loungeName": "KLM Crown Lounge",                   "terminal": "2F", "providerCode": "KL", "role": "Operator" },
+  { "airportIata": "CDG", "loungeName": "KLM Crown Lounge",                   "terminal": "2F", "providerCode": "ST", "role": "AccessNetwork", "minAllianceTierCode": "ELITE" },
+
+  { "airportIata": "CDG", "loungeName": "Air France Business Lounge",         "terminal": "2G", "providerCode": "AF", "role": "Operator" },
+  { "airportIata": "CDG", "loungeName": "Air France Business Lounge",         "terminal": "2G", "providerCode": "ST", "role": "AccessNetwork", "minAllianceTierCode": "ELITE" },
+
+  // ============================================================
+  // AMSTERDAM AMS
+  // ============================================================
+  { "airportIata": "AMS", "loungeName": "KLM Crown Lounge",                   "terminal": "D", "providerCode": "KL", "role": "Operator" },
+  { "airportIata": "AMS", "loungeName": "KLM Crown Lounge",                   "terminal": "D", "providerCode": "ST", "role": "AccessNetwork", "minAllianceTierCode": "ELITE" },
+
+  { "airportIata": "AMS", "loungeName": "KLM Crown Lounge Non-Schengen",      "terminal": "E", "providerCode": "KL", "role": "Operator" },
+  { "airportIata": "AMS", "loungeName": "KLM Crown Lounge Non-Schengen",      "terminal": "E", "providerCode": "ST", "role": "AccessNetwork", "minAllianceTierCode": "ELITE" },
+
+  // ============================================================
+  // FRANKFURT FRA
+  // ============================================================
+  { "airportIata": "FRA", "loungeName": "Lufthansa Business Lounge",          "terminal": "T1", "providerCode": "LH", "role": "Operator", "notes": "Concourse A" },
+  { "airportIata": "FRA", "loungeName": "Lufthansa Business Lounge",          "terminal": "T1", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER", "notes": "Concourse A" },
+
+  { "airportIata": "FRA", "loungeName": "Lufthansa Senator Lounge",           "terminal": "T1", "providerCode": "LH", "role": "Operator" },
+  { "airportIata": "FRA", "loungeName": "Lufthansa Senator Lounge",           "terminal": "T1", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "GOLD" },
+
+  { "airportIata": "FRA", "loungeName": "Lufthansa First Class Terminal",     "terminal": "FT", "providerCode": "LH", "role": "Operator" },
+
+  { "airportIata": "FRA", "loungeName": "Lufthansa Business Lounge",          "terminal": "T2", "providerCode": "LH", "role": "Operator" },
+  { "airportIata": "FRA", "loungeName": "Lufthansa Business Lounge",          "terminal": "T2", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER" },
+
+  { "airportIata": "FRA", "loungeName": "Lufthansa Senator Lounge",           "terminal": "T2", "providerCode": "LH", "role": "Operator" },
+  { "airportIata": "FRA", "loungeName": "Lufthansa Senator Lounge",           "terminal": "T2", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "GOLD" },
+
+  // ============================================================
+  // MUNICH MUC
+  // ============================================================
+  { "airportIata": "MUC", "loungeName": "Lufthansa Business Lounge",          "terminal": "T2", "providerCode": "LH", "role": "Operator" },
+  { "airportIata": "MUC", "loungeName": "Lufthansa Business Lounge",          "terminal": "T2", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER" },
+
+  { "airportIata": "MUC", "loungeName": "Lufthansa Senator Lounge",           "terminal": "T2", "providerCode": "LH", "role": "Operator" },
+  { "airportIata": "MUC", "loungeName": "Lufthansa Senator Lounge",           "terminal": "T2", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "GOLD" },
+
+  { "airportIata": "MUC", "loungeName": "Lufthansa HON Circle Lounge",        "terminal": "T2", "providerCode": "LH", "role": "Operator" },
+  { "airportIata": "MUC", "loungeName": "Lufthansa HON Circle Lounge",        "terminal": "T2", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "GOLD" },
+
+  // ============================================================
+  // ZURICH ZRH
+  // ============================================================
+  { "airportIata": "ZRH", "loungeName": "Swiss Business Lounge",              "terminal": "E", "providerCode": "LX", "role": "Operator" },
+  { "airportIata": "ZRH", "loungeName": "Swiss Business Lounge",              "terminal": "E", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER" },
+
+  { "airportIata": "ZRH", "loungeName": "Swiss First Class Lounge",           "terminal": "E", "providerCode": "LX", "role": "Operator" },
+  { "airportIata": "ZRH", "loungeName": "Swiss First Class Lounge",           "terminal": "E", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "GOLD" },
+
+  { "airportIata": "ZRH", "loungeName": "Swiss Senator Lounge",               "terminal": "A", "providerCode": "LX", "role": "Operator" },
+  { "airportIata": "ZRH", "loungeName": "Swiss Senator Lounge",               "terminal": "A", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "GOLD" },
+
+  // ============================================================
+  // DUBAI DXB
+  // ============================================================
+  { "airportIata": "DXB", "loungeName": "Emirates Business Class Lounge",     "terminal": "T3", "providerCode": "EK", "role": "Operator" },
+  { "airportIata": "DXB", "loungeName": "Emirates First Class Lounge",        "terminal": "T3", "providerCode": "EK", "role": "Operator" },
+  { "airportIata": "DXB", "loungeName": "Qatar Airways Al Mourjan Business",  "terminal": "T1", "providerCode": "QR", "role": "Operator" },
+  { "airportIata": "DXB", "loungeName": "Qatar Airways Al Mourjan Business",  "terminal": "T1", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+  { "airportIata": "DXB", "loungeName": "Marhaba Business Class Lounge",      "terminal": "T1", "providerCode": "PP", "role": "AccessNetwork" },
+  { "airportIata": "DXB", "loungeName": "Marhaba Business Class Lounge",      "terminal": "T2", "providerCode": "PP", "role": "AccessNetwork" },
+  { "airportIata": "DXB", "loungeName": "Marhaba Business Class Lounge",      "terminal": "T3", "providerCode": "PP", "role": "AccessNetwork" },
+
+  // ============================================================
+  // ABU DHABI AUH
+  // ============================================================
+  { "airportIata": "AUH", "loungeName": "Etihad First Class Lounge & Spa",    "terminal": "T3", "providerCode": "EY", "role": "Operator" },
+  { "airportIata": "AUH", "loungeName": "Etihad Business Class Lounge",       "terminal": "T3", "providerCode": "EY", "role": "Operator" },
+  { "airportIata": "AUH", "loungeName": "Etihad Business Class Lounge",       "terminal": "T1", "providerCode": "EY", "role": "Operator" },
+
+  // ============================================================
+  // DOHA DOH
+  // ============================================================
+  { "airportIata": "DOH", "loungeName": "Qatar Airways Al Mourjan Business Lounge", "terminal": "HIA", "providerCode": "QR", "role": "Operator" },
+  { "airportIata": "DOH", "loungeName": "Qatar Airways Al Mourjan Business Lounge", "terminal": "HIA", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+  { "airportIata": "DOH", "loungeName": "Qatar Airways Al Safwa First Lounge",      "terminal": "HIA", "providerCode": "QR", "role": "Operator" },
+  { "airportIata": "DOH", "loungeName": "Qatar Airways Al Safwa First Lounge",      "terminal": "HIA", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "EMERALD" },
+
+  // ============================================================
+  // SINGAPORE SIN
+  // ============================================================
+  { "airportIata": "SIN", "loungeName": "Singapore Airlines SilverKris Business Lounge", "terminal": "T3", "providerCode": "SQ", "role": "Operator" },
+  { "airportIata": "SIN", "loungeName": "Singapore Airlines SilverKris Business Lounge", "terminal": "T3", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER" },
+  { "airportIata": "SIN", "loungeName": "Singapore Airlines SilverKris First Lounge",    "terminal": "T3", "providerCode": "SQ", "role": "Operator" },
+  { "airportIata": "SIN", "loungeName": "Singapore Airlines SilverKris First Lounge",    "terminal": "T3", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "GOLD" },
+  { "airportIata": "SIN", "loungeName": "Singapore Airlines SilverKris Business Lounge", "terminal": "T2", "providerCode": "SQ", "role": "Operator" },
+  { "airportIata": "SIN", "loungeName": "Singapore Airlines SilverKris Business Lounge", "terminal": "T2", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER" },
+  { "airportIata": "SIN", "loungeName": "SATS Premier Lounge",                            "terminal": "T1", "providerCode": "PP", "role": "AccessNetwork" },
+
+  // ============================================================
+  // HONG KONG HKG
+  // ============================================================
+  { "airportIata": "HKG", "loungeName": "Cathay Pacific The Pier Business Class", "terminal": "T1", "providerCode": "CX", "role": "Operator" },
+  { "airportIata": "HKG", "loungeName": "Cathay Pacific The Pier Business Class", "terminal": "T1", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+  { "airportIata": "HKG", "loungeName": "Cathay Pacific The Pier First Class",    "terminal": "T1", "providerCode": "CX", "role": "Operator" },
+  { "airportIata": "HKG", "loungeName": "Cathay Pacific The Pier First Class",    "terminal": "T1", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "EMERALD" },
+  { "airportIata": "HKG", "loungeName": "Cathay Pacific The Wing Business",       "terminal": "T1", "providerCode": "CX", "role": "Operator" },
+  { "airportIata": "HKG", "loungeName": "Cathay Pacific The Wing Business",       "terminal": "T1", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+  { "airportIata": "HKG", "loungeName": "Cathay Pacific The Wing First Class",    "terminal": "T1", "providerCode": "CX", "role": "Operator" },
+  { "airportIata": "HKG", "loungeName": "Cathay Pacific The Wing First Class",    "terminal": "T1", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "EMERALD" },
+
+  // ============================================================
+  // TOKYO NARITA NRT
+  // ============================================================
+  { "airportIata": "NRT", "loungeName": "JAL Sakura Lounge",       "terminal": "T2", "providerCode": "JL", "role": "Operator" },
+  { "airportIata": "NRT", "loungeName": "JAL Sakura Lounge",       "terminal": "T2", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+  { "airportIata": "NRT", "loungeName": "ANA Lounge",              "terminal": "T1", "providerCode": "NH", "role": "Operator" },
+  { "airportIata": "NRT", "loungeName": "ANA Lounge",              "terminal": "T1", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER" },
+  { "airportIata": "NRT", "loungeName": "ANA Suite Lounge",        "terminal": "T1", "providerCode": "NH", "role": "Operator" },
+  { "airportIata": "NRT", "loungeName": "ANA Suite Lounge",        "terminal": "T1", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "GOLD" },
+
+  // ============================================================
+  // TOKYO HANEDA HND
+  // ============================================================
+  { "airportIata": "HND", "loungeName": "JAL Sakura Lounge",       "terminal": "T3", "providerCode": "JL", "role": "Operator" },
+  { "airportIata": "HND", "loungeName": "JAL Sakura Lounge",       "terminal": "T3", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+  { "airportIata": "HND", "loungeName": "ANA Lounge",              "terminal": "T3", "providerCode": "NH", "role": "Operator" },
+  { "airportIata": "HND", "loungeName": "ANA Lounge",              "terminal": "T3", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER" },
+
+  // ============================================================
+  // SEOUL ICN
+  // ============================================================
+  { "airportIata": "ICN", "loungeName": "Korean Air Morning Calm Lounge",   "terminal": "T1", "providerCode": "KE", "role": "Operator" },
+  { "airportIata": "ICN", "loungeName": "Korean Air Morning Calm Lounge",   "terminal": "T1", "providerCode": "ST", "role": "AccessNetwork", "minAllianceTierCode": "ELITE" },
+  { "airportIata": "ICN", "loungeName": "Korean Air Prestige Lounge",       "terminal": "T1", "providerCode": "KE", "role": "Operator" },
+  { "airportIata": "ICN", "loungeName": "Korean Air Prestige Lounge",       "terminal": "T1", "providerCode": "ST", "role": "AccessNetwork", "minAllianceTierCode": "ELITE_PLUS" },
+  { "airportIata": "ICN", "loungeName": "Asiana Business Lounge",           "terminal": "T1", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER" },
+
+  // ============================================================
+  // NEW YORK JFK
+  // ============================================================
+  { "airportIata": "JFK", "loungeName": "American Airlines Flagship Lounge",   "terminal": "T8", "providerCode": "AA", "role": "Operator" },
+  { "airportIata": "JFK", "loungeName": "American Airlines Flagship Lounge",   "terminal": "T8", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "EMERALD" },
+  { "airportIata": "JFK", "loungeName": "American Airlines Admirals Club",     "terminal": "T8", "providerCode": "AA", "role": "Operator" },
+  { "airportIata": "JFK", "loungeName": "American Airlines Admirals Club",     "terminal": "T8", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+  { "airportIata": "JFK", "loungeName": "Delta One Lounge",                    "terminal": "T4", "providerCode": "DL", "role": "Operator" },
+  { "airportIata": "JFK", "loungeName": "Delta One Lounge",                    "terminal": "T4", "providerCode": "ST", "role": "AccessNetwork", "minAllianceTierCode": "ELITE_PLUS" },
+  { "airportIata": "JFK", "loungeName": "Delta Sky Club",                      "terminal": "T4", "providerCode": "DL", "role": "Operator" },
+  { "airportIata": "JFK", "loungeName": "Delta Sky Club",                      "terminal": "T4", "providerCode": "ST", "role": "AccessNetwork", "minAllianceTierCode": "ELITE" },
+  { "airportIata": "JFK", "loungeName": "British Airways Galleries Club",      "terminal": "T7", "providerCode": "BA", "role": "Operator" },
+  { "airportIata": "JFK", "loungeName": "British Airways Galleries Club",      "terminal": "T7", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+  { "airportIata": "JFK", "loungeName": "British Airways Galleries First",     "terminal": "T7", "providerCode": "BA", "role": "Operator" },
+  { "airportIata": "JFK", "loungeName": "British Airways Galleries First",     "terminal": "T7", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "EMERALD" },
+  { "airportIata": "JFK", "loungeName": "United Club",                         "terminal": "T7", "providerCode": "UA", "role": "Operator" },
+  { "airportIata": "JFK", "loungeName": "United Club",                         "terminal": "T7", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER" },
+  { "airportIata": "JFK", "loungeName": "Emirates Lounge",                     "terminal": "T4", "providerCode": "EK", "role": "Operator" },
+  { "airportIata": "JFK", "loungeName": "Cathay Pacific Lounge",               "terminal": "T8", "providerCode": "CX", "role": "Operator" },
+  { "airportIata": "JFK", "loungeName": "Cathay Pacific Lounge",               "terminal": "T8", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+
+  // ============================================================
+  // LOS ANGELES LAX
+  // ============================================================
+  { "airportIata": "LAX", "loungeName": "American Airlines Flagship Lounge",   "terminal": "T4", "providerCode": "AA", "role": "Operator" },
+  { "airportIata": "LAX", "loungeName": "American Airlines Flagship Lounge",   "terminal": "T4", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "EMERALD" },
+  { "airportIata": "LAX", "loungeName": "American Airlines Admirals Club",     "terminal": "T4", "providerCode": "AA", "role": "Operator" },
+  { "airportIata": "LAX", "loungeName": "American Airlines Admirals Club",     "terminal": "T4", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+  { "airportIata": "LAX", "loungeName": "Delta Sky Club",                      "terminal": "T3", "providerCode": "DL", "role": "Operator" },
+  { "airportIata": "LAX", "loungeName": "Delta Sky Club",                      "terminal": "T3", "providerCode": "ST", "role": "AccessNetwork", "minAllianceTierCode": "ELITE" },
+  { "airportIata": "LAX", "loungeName": "Delta Sky Club",                      "terminal": "T2", "providerCode": "DL", "role": "Operator" },
+  { "airportIata": "LAX", "loungeName": "Delta Sky Club",                      "terminal": "T2", "providerCode": "ST", "role": "AccessNetwork", "minAllianceTierCode": "ELITE" },
+  { "airportIata": "LAX", "loungeName": "United Club",                         "terminal": "TBIT", "providerCode": "UA", "role": "Operator" },
+  { "airportIata": "LAX", "loungeName": "United Club",                         "terminal": "TBIT", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER" },
+  { "airportIata": "LAX", "loungeName": "Qantas International Business Lounge","terminal": "TBIT", "providerCode": "QF", "role": "Operator" },
+  { "airportIata": "LAX", "loungeName": "Qantas International Business Lounge","terminal": "TBIT", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+  { "airportIata": "LAX", "loungeName": "Singapore Airlines KrisFlyer Lounge", "terminal": "TBIT", "providerCode": "SQ", "role": "Operator" },
+  { "airportIata": "LAX", "loungeName": "Singapore Airlines KrisFlyer Lounge", "terminal": "TBIT", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "GOLD" },
+  { "airportIata": "LAX", "loungeName": "Turkish Airlines Lounge",             "terminal": "TBIT", "providerCode": "TK", "role": "Operator" },
+  { "airportIata": "LAX", "loungeName": "Turkish Airlines Lounge",             "terminal": "TBIT", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER" },
+
+  // ============================================================
+  // ISTANBUL IST
+  // ============================================================
+  { "airportIata": "IST", "loungeName": "Turkish Airlines Business Lounge",    "terminal": "T1", "providerCode": "TK", "role": "Operator" },
+  { "airportIata": "IST", "loungeName": "Turkish Airlines Business Lounge",    "terminal": "T1", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER" },
+  { "airportIata": "IST", "loungeName": "Turkish Airlines Miles&Smiles Lounge","terminal": "T1", "providerCode": "TK", "role": "Operator" },
+  { "airportIata": "IST", "loungeName": "Turkish Airlines Miles&Smiles Lounge","terminal": "T1", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "GOLD" },
+  { "airportIata": "IST", "loungeName": "Turkish Airlines Lounge (Domestic)",  "terminal": "T1", "providerCode": "TK", "role": "Operator" },
+  { "airportIata": "IST", "loungeName": "Turkish Airlines Signature Lounge",   "terminal": "T1", "providerCode": "TK", "role": "Operator" },
+  { "airportIata": "IST", "loungeName": "Turkish Airlines Signature Lounge",   "terminal": "T1", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "GOLD" },
+
+  // ============================================================
+  // SYDNEY SYD
+  // ============================================================
+  { "airportIata": "SYD", "loungeName": "Qantas Domestic Business Lounge",     "terminal": "T3", "providerCode": "QF", "role": "Operator" },
+  { "airportIata": "SYD", "loungeName": "Qantas International Business Lounge","terminal": "T1", "providerCode": "QF", "role": "Operator" },
+  { "airportIata": "SYD", "loungeName": "Qantas International Business Lounge","terminal": "T1", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+  { "airportIata": "SYD", "loungeName": "Qantas International First Lounge",   "terminal": "T1", "providerCode": "QF", "role": "Operator" },
+  { "airportIata": "SYD", "loungeName": "Qantas International First Lounge",   "terminal": "T1", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "EMERALD" },
+
+  // ============================================================
+  // MADRID MAD
+  // ============================================================
+  { "airportIata": "MAD", "loungeName": "Iberia Business Lounge",              "terminal": "T4", "providerCode": "IB", "role": "Operator" },
+  { "airportIata": "MAD", "loungeName": "Iberia Business Lounge",              "terminal": "T4", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+  { "airportIata": "MAD", "loungeName": "Iberia Velazquez VIP Lounge",         "terminal": "T4", "providerCode": "IB", "role": "Operator" },
+  { "airportIata": "MAD", "loungeName": "Iberia Velazquez VIP Lounge",         "terminal": "T4", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "EMERALD" },
+
+  // ============================================================
+  // BARCELONA BCN
+  // ============================================================
+  { "airportIata": "BCN", "loungeName": "Iberia Business Lounge",              "terminal": "T1", "providerCode": "IB", "role": "Operator" },
+  { "airportIata": "BCN", "loungeName": "Iberia Business Lounge",              "terminal": "T1", "providerCode": "OW", "role": "AccessNetwork", "minAllianceTierCode": "SAPPHIRE" },
+
+  // ============================================================
+  // TORONTO YYZ
+  // ============================================================
+  { "airportIata": "YYZ", "loungeName": "Air Canada Maple Leaf Lounge",        "terminal": "T1", "providerCode": "AC", "role": "Operator" },
+  { "airportIata": "YYZ", "loungeName": "Air Canada Maple Leaf Lounge",        "terminal": "T1", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER" },
+  { "airportIata": "YYZ", "loungeName": "Air Canada Maple Leaf Lounge International", "terminal": "T1", "providerCode": "AC", "role": "Operator" },
+  { "airportIata": "YYZ", "loungeName": "Air Canada Maple Leaf Lounge International", "terminal": "T1", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER" },
+  { "airportIata": "YYZ", "loungeName": "Air Canada Signature Suite",          "terminal": "T1", "providerCode": "AC", "role": "Operator" },
+  { "airportIata": "YYZ", "loungeName": "Air Canada Signature Suite",          "terminal": "T1", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "GOLD" },
+
+  // ============================================================
+  // ADDIS ABABA ADD
+  // ============================================================
+  { "airportIata": "ADD", "loungeName": "Ethiopian Airlines Cloud 9 Lounge",   "terminal": "T2", "providerCode": "ET", "role": "Operator" },
+  { "airportIata": "ADD", "loungeName": "Ethiopian Airlines Cloud 9 Lounge",   "terminal": "T2", "providerCode": "SA", "role": "AccessNetwork", "minAllianceTierCode": "SILVER" }
+]

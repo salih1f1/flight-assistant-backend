@@ -22,7 +22,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("FlightAssistant.Domain.Configuartion.Entities.SeedVersion", b =>
+            modelBuilder.Entity("FlightAssistant.Domain.Configuration.Entities.SeedVersion", b =>
                 {
                     b.Property<string>("Dataset")
                         .HasColumnType("text");
@@ -331,6 +331,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
 
                     b.Property<int>("Role")
                         .HasColumnType("integer");
+
+                    b.Property<string>("MinAllianceTierCode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
 
                     b.Property<string>("Notes")
                         .HasMaxLength(4000)

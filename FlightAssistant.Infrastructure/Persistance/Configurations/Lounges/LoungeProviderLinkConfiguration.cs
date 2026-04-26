@@ -13,6 +13,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Lounges
 
             b.Property(x => x.Role).HasConversion<int>();
             b.Property(x => x.Notes).HasMaxLength(4000);
+            b.Property(x => x.MinAllianceTierCode).HasMaxLength(16);
 
             b.HasOne(x => x.Lounge).WithMany(l => l.Providers).HasForeignKey(x => x.LoungeId)
               .OnDelete(DeleteBehavior.Cascade);

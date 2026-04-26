@@ -10,5 +10,10 @@ namespace FlightAssistant.Domain.Lounges.Entities
         public LoungeProviderKind Kind { get; private set; }
         public string? Description { get; private set; }
         public ICollection<LoungeProviderLink> LoungeLinks { get; private set; } = new List<LoungeProviderLink>();
+
+        private LoungeProvider() { }
+
+        public static LoungeProvider Create(string code, string name, LoungeProviderKind kind, string? description = null) =>
+            new() { Code = code, Name = name, Kind = kind, Description = description };
     }
 }
