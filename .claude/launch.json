@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "FlightAssistant API (HTTP)",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "FlightAssistant.API", "--launch-profile", "http"],
+      "port": 5100
+    },
+    {
+      "name": "FlightAssistant API (HTTPS)",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "FlightAssistant.API", "--launch-profile", "https"],
+      "port": 7034
+    }
+  ]
+}
