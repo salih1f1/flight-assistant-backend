@@ -8,6 +8,34 @@ namespace FlightAssistant.Domain.Lounges.Services
 
     public static class LoungeEligibilityService
     {
+        // Alliance tier rank tables — higher rank = higher status
+        private static readonly IReadOnlyDictionary<string, int> OwTierRanks = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["RUBY"]     = 1,
+            ["SAPPHIRE"] = 2,
+            ["EMERALD"]  = 3,
+        };
+
+        private static readonly IReadOnlyDictionary<string, int> SaTierRanks = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["SILVER"] = 1,
+            ["GOLD"]   = 2,
+        };
+
+        private static readonly IReadOnlyDictionary<string, int> StTierRanks = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ELITE"]      = 1,
+            ["ELITE_PLUS"] = 2,
+        };
+
+        private static readonly IReadOnlyDictionary<string, IReadOnlyDictionary<string, int>> AllianceTierRanks =
+            new Dictionary<string, IReadOnlyDictionary<string, int>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["OW"] = OwTierRanks,
+                ["SA"] = SaTierRanks,
+                ["ST"] = StTierRanks,
+            };
+
         /// <summary>
         /// Determines whether a traveler is eligible for a given lounge based on their memberships.
         /// Returns the first matching access route (airline, alliance, contract/card).
@@ -38,7 +66,8 @@ namespace FlightAssistant.Domain.Lounges.Services
                         var allianceMatch = memberships.Any(m =>
                             m.TierId is not null &&
                             tierById.TryGetValue(m.TierId.Value, out var tier) &&
-                            tier.AllianceCode == provider.Code);
+                            tier.AllianceCode == provider.Code &&
+                            MeetsMinTier(provider.Code, tier.AllianceTierCode, link.MinAllianceTierCode));
                         if (allianceMatch)
                             return new EligibilityResult(true, provider.Name, LoungeProviderKind.Alliance);
                         break;
@@ -54,6 +83,18 @@ namespace FlightAssistant.Domain.Lounges.Services
             }
 
             return new EligibilityResult(false, null, null);
+        }
+
+        private static bool MeetsMinTier(string allianceCode, string? memberTierCode, string? minTierCode)
+        {
+            if (minTierCode is null) return true;
+            if (memberTierCode is null) return false;
+
+            if (!AllianceTierRanks.TryGetValue(allianceCode, out var ranks)) return true;
+
+            var memberRank = ranks.GetValueOrDefault(memberTierCode, 0);
+            var minRank    = ranks.GetValueOrDefault(minTierCode, 0);
+            return memberRank >= minRank;
         }
     }
 }

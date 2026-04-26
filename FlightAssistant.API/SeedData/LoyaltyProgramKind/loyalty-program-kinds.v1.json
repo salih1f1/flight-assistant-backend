@@ -1,0 +1,5 @@
+[
+  { "code": "FF",      "name": "Frequent Flyer",    "description": "Airline frequent flyer program" },
+  { "code": "HOTEL",   "name": "Hotel Loyalty",     "description": "Hotel loyalty program" },
+  { "code": "ALLIANCE","name": "Alliance Program",  "description": "Multi-airline alliance program" }
+]
