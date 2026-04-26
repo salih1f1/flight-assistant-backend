@@ -9,10 +9,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         private readonly FlightAssistantDbContext _db;
         public FlightRepository(FlightAssistantDbContext db) => _db = db;
 
-        // Generic IRepository<Flight> — Flight uses int PK, not Guid; use typed methods below instead.
-        public Task<Flight?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
-            throw new NotSupportedException("Flight uses int PK. Use GetFlightByIdAsync instead.");
-
         public async Task AddAsync(Flight entity, CancellationToken ct = default) =>
             await _db.Flights.AddAsync(entity, ct);
 

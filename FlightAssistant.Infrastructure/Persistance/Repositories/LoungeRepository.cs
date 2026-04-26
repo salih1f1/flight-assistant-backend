@@ -9,10 +9,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         private readonly FlightAssistantDbContext _db;
         public LoungeRepository(FlightAssistantDbContext db) => _db = db;
 
-        // Generic IRepository<Lounge> — Lounge uses int PK
-        public Task<Lounge?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
-            throw new NotSupportedException("Lounge uses int PK. Use GetByIdWithProvidersAsync instead.");
-
         public async Task AddAsync(Lounge entity, CancellationToken ct = default) =>
             await _db.Lounges.AddAsync(entity, ct);
 

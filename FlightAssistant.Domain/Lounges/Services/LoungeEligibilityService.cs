@@ -18,6 +18,9 @@ namespace FlightAssistant.Domain.Lounges.Services
             IReadOnlyList<LoyaltyProgram> programs,
             IReadOnlyList<LoyaltyTier> allTiers)
         {
+            var programById = programs.ToDictionary(p => p.Id);
+            var tierById    = allTiers.ToDictionary(t => t.Id);
+
             foreach (var link in lounge.Providers)
             {
                 var provider = link.Provider;
@@ -25,36 +28,25 @@ namespace FlightAssistant.Domain.Lounges.Services
                 switch (provider.Kind)
                 {
                     case LoungeProviderKind.Airline:
-                        // Check if traveler has a membership in an airline program matching this provider's airline code
                         var airlineMatch = memberships.Any(m =>
-                        {
-                            var prog = programs.FirstOrDefault(p => p.Id == m.ProgramId);
-                            return prog?.Code == provider.Code;
-                        });
+                            programById.TryGetValue(m.ProgramId, out var prog) && prog.Code == provider.Code);
                         if (airlineMatch)
                             return new EligibilityResult(true, provider.Name, LoungeProviderKind.Airline);
                         break;
 
                     case LoungeProviderKind.Alliance:
-                        // Check if traveler has a tier matching the provider's alliance code
                         var allianceMatch = memberships.Any(m =>
-                        {
-                            if (m.TierId is null) return false;
-                            var tier = allTiers.FirstOrDefault(t => t.Id == m.TierId);
-                            return tier?.AllianceCode == provider.Code;
-                        });
+                            m.TierId is not null &&
+                            tierById.TryGetValue(m.TierId.Value, out var tier) &&
+                            tier.AllianceCode == provider.Code);
                         if (allianceMatch)
                             return new EligibilityResult(true, provider.Name, LoungeProviderKind.Alliance);
                         break;
 
                     case LoungeProviderKind.Contract:
                     case LoungeProviderKind.Card:
-                        // Check if traveler has a membership in a program matching this contract/card provider
                         var contractMatch = memberships.Any(m =>
-                        {
-                            var prog = programs.FirstOrDefault(p => p.Id == m.ProgramId);
-                            return prog?.Code == provider.Code;
-                        });
+                            programById.TryGetValue(m.ProgramId, out var prog) && prog.Code == provider.Code);
                         if (contractMatch)
                             return new EligibilityResult(true, provider.Name, provider.Kind);
                         break;

@@ -1,3 +1,4 @@
+using FlightAssistant.Application.EventHandlers;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Flights.Entities;
@@ -12,11 +13,13 @@ namespace FlightAssistant.Application.Commands.Flights
     {
         private readonly IFlightRepository _flights;
         private readonly IFlightStatusProvider _provider;
+        private readonly ISender _sender;
 
-        public SyncFlightStatusCommandHandler(IFlightRepository flights, IFlightStatusProvider provider)
+        public SyncFlightStatusCommandHandler(IFlightRepository flights, IFlightStatusProvider provider, ISender sender)
         {
             _flights = flights;
             _provider = provider;
+            _sender = sender;
         }
 
         public async Task<bool> Handle(SyncFlightStatusCommand cmd, CancellationToken ct)
@@ -57,6 +60,13 @@ namespace FlightAssistant.Application.Commands.Flights
 
             await _flights.AddFlightStatusEventAsync(evt, ct);
             await _flights.SaveChangesAsync(ct);
+
+            await _sender.Send(new SendFlightStatusNotificationCommand(
+                cmd.FlightId,
+                result.StatusCode,
+                flight.FlightNumber,
+                flight.ServiceDateUtc), ct);
+
             return true;
         }
     }
