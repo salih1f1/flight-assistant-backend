@@ -179,9 +179,22 @@
 
   { "airportIata": "AMM", "name": "Royal Jordanian Crown Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
 
-  { "airportIata": "IST", "name": "Turkish Airlines Business Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
-  { "airportIata": "IST", "name": "Turkish Airlines Miles&Smiles Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "IST", "name": "Turkish Airlines Business Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false, "locationHint": "International Departures" },
+  { "airportIata": "IST", "name": "Turkish Airlines Miles&Smiles Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false, "locationHint": "International Departures" },
   { "airportIata": "IST", "name": "Turkish Airlines Domestic Business Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": true, "isInternationalOnly": false },
+  { "airportIata": "IST", "name": "Turkish Airlines Domestic Miles&Smiles Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": true, "isInternationalOnly": false },
+  { "airportIata": "IST", "name": "Turkish Airlines Business Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false, "locationHint": "Pier A" },
+  { "airportIata": "IST", "name": "Turkish Airlines Business Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false, "locationHint": "Pier B" },
+  { "airportIata": "IST", "name": "Turkish Airlines Business Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false, "locationHint": "Pier C" },
+  { "airportIata": "IST", "name": "Turkish Airlines Business Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false, "locationHint": "Pier D" },
+  { "airportIata": "IST", "name": "Turkish Airlines Business Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false, "locationHint": "Pier E" },
+  { "airportIata": "IST", "name": "Turkish Airlines Business Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false, "locationHint": "Pier F" },
+  { "airportIata": "IST", "name": "Turkish Airlines Signature Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false, "locationHint": "International Departures" },
+  { "airportIata": "IST", "name": "Primeclass Business Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false, "locationHint": "International Departures" },
+  { "airportIata": "IST", "name": "Primeclass Domestic Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": true, "isInternationalOnly": false },
+
+  { "airportIata": "SAW", "name": "Turkish Airlines Business Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
+  { "airportIata": "SAW", "name": "Primeclass Lounge", "terminal": "T1", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": false },
 
   { "airportIata": "SIN", "name": "Singapore Airlines SilverKris Business Class Lounge", "terminal": "T3", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": true },
   { "airportIata": "SIN", "name": "Singapore Airlines SilverKris First Class Lounge", "terminal": "T3", "isAirside": true, "isDomesticOnly": false, "isInternationalOnly": true },
