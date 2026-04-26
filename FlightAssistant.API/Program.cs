@@ -3,6 +3,7 @@ using Azure.Identity;
 using FlightAssistant.API.Endpoints;
 using FlightAssistant.API.Endpoints.Admin;
 using FlightAssistant.API.HostedServices;
+using FlightAssistant.API.Middleware;
 using FlightAssistant.Application;
 using FlightAssistant.Infrastructure;
 using FlightAssistant.Infrastructure.Caching;
@@ -84,6 +85,9 @@ builder.Services.AddApplication();
 // Infrastructure layer (repositories, external services)
 builder.Services.AddInfrastructure(builder.Configuration);
 
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+
 // Hosted services
 
 // Commented out because of slow startup in dev/test environments
@@ -115,7 +119,7 @@ builder.Services
             jwt.TokenValidationParameters.ValidIssuer = issuer;
             jwt.TokenValidationParameters.ValidAudience = apiClientId;
             jwt.TokenValidationParameters.NameClaimType = NameClaimType;
-            jwt.IncludeErrorDetails = true;
+            jwt.IncludeErrorDetails = builder.Environment.IsDevelopment();
         },
         msid =>
         {
@@ -175,6 +179,8 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseExceptionHandler();
+app.UseStatusCodePages();
 app.UseHttpsRedirection();
 app.UseCors("AdminPanel");
 app.UseAuthentication();
