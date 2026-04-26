@@ -1,3 +1,4 @@
+using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Common.Interfaces;
 
 namespace FlightAssistant.Domain.Loyalty.Entities
@@ -28,6 +29,11 @@ namespace FlightAssistant.Domain.Loyalty.Entities
 
         public void Update(string code, string name, int kindId, int? airlineId, string? allianceCode)
         {
+            if (string.IsNullOrWhiteSpace(code))
+                throw new DomainException("Loyalty program code is required.");
+            if (string.IsNullOrWhiteSpace(name))
+                throw new DomainException("Loyalty program name is required.");
+
             Code = code;
             Name = name;
             KindId = kindId;

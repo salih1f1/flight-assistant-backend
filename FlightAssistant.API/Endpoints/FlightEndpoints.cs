@@ -1,5 +1,4 @@
 using FlightAssistant.Application.Commands.Flights;
-using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Queries.Flights;
 using FlightAssistant.Contracts.Requests.Flights;
 using FlightAssistant.Contracts.Responses.Flights;
@@ -19,25 +18,19 @@ namespace FlightAssistant.API.Endpoints
             var group = app.MapGroup("flights").RequireAuthorization().WithTags("Flights");
 
             // GET /flights — list all tracked flights for the authenticated traveler
-            group.MapGet("", async (HttpContext http, IMediator mediator, IRefDataRepository refData, CancellationToken ct) =>
+            group.MapGet("", async (HttpContext http, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = GetTravelerId(http);
 
                 var results = await mediator.Send(new GetTravelerFlightsQuery(travelerId), ct);
 
-                var dtos = new List<FlightDto>();
-                foreach (var r in results)
-                {
-                    var airlineIata = await refData.GetAirlineIataByIdAsync(r.AirlineId, ct) ?? r.AirlineId.ToString();
-                    var depIata = await refData.GetAirportIataByIdAsync(r.DepartureAirportId, ct) ?? r.DepartureAirportId.ToString();
-                    var arrIata = await refData.GetAirportIataByIdAsync(r.ArrivalAirportId, ct) ?? r.ArrivalAirportId.ToString();
-                    dtos.Add(new FlightDto(r.FlightId, airlineIata, r.FlightNumber, r.ServiceDate, depIata, arrIata,
-                        r.ScheduledDepartureUtc, r.ScheduledArrivalUtc,
-                        r.EstimatedDepartureUtc, r.EstimatedArrivalUtc,
-                        r.ActualDepartureUtc, r.ActualArrivalUtc,
-                        null, r.Notify));
-                }
+                var dtos = results.Select(r => new FlightDto(
+                    r.FlightId, r.AirlineIata, r.FlightNumber, r.ServiceDate, r.DepartureIata, r.ArrivalIata,
+                    r.ScheduledDepartureUtc, r.ScheduledArrivalUtc,
+                    r.EstimatedDepartureUtc, r.EstimatedArrivalUtc,
+                    r.ActualDepartureUtc, r.ActualArrivalUtc,
+                    null, r.Notify)).ToList();
 
                 return Results.Ok(dtos);
             })

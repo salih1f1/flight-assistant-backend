@@ -9,10 +9,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         private readonly FlightAssistantDbContext _db;
         public LoyaltyRepository(FlightAssistantDbContext db) => _db = db;
 
-        // Generic IRepository<LoyaltyProgram> — LoyaltyProgram uses int PK
-        public Task<LoyaltyProgram?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
-            throw new NotSupportedException("LoyaltyProgram uses int PK. Use GetProgramsAsync instead.");
-
         public async Task AddAsync(LoyaltyProgram entity, CancellationToken ct = default) =>
             await _db.LoyaltyPrograms.AddAsync(entity, ct);
 

@@ -11,10 +11,9 @@ namespace FlightAssistant.API.Endpoints.Admin
 {
     public static class AdminLoyaltyEndpoints
     {
-        public static void MapAdminLoyaltyEndpoints(this IEndpointRouteBuilder app)
+        public static void MapAdminLoyaltyEndpoints(this IEndpointRouteBuilder admin)
         {
-            var group = app.MapGroup("admin/loyalty")
-                .RequireAuthorization("AdminOnly")
+            var group = admin.MapGroup("loyalty")
                 .WithTags("Admin - Loyalty");
 
             // GET /admin/loyalty/programs — reuses existing query

@@ -1,3 +1,4 @@
+using Azure.Core;
 using Azure.Identity;
 using FlightAssistant.API.Endpoints;
 using FlightAssistant.API.Endpoints.Admin;
@@ -8,10 +9,10 @@ using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.Resource;
 using Microsoft.OpenApi.Models;
-using System.Security.Claims;
 
 // ------------------------------------------------------------
 // 1. Bootstrap & Configuration
@@ -25,7 +26,27 @@ string Cfg(string key) =>
 var keyVaultUri = builder.Configuration["Azure:KeyVault"];
 if (!string.IsNullOrWhiteSpace(keyVaultUri))
 {
-    builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUri), new DefaultAzureCredential());
+    // In Development use AzureCliCredential so local `az login` is sufficient.
+    // In other environments fall back to DefaultAzureCredential (managed identity, etc.).
+    TokenCredential kvCredential = builder.Environment.IsDevelopment()
+        ? new AzureCliCredential()
+        : new DefaultAzureCredential();
+
+    // Retry up to 3 times with backoff — guards against transient 403s during
+    // subscription re-activation propagation.
+    var kvUri = new Uri(keyVaultUri);
+    for (int attempt = 1; ; attempt++)
+    {
+        try
+        {
+            builder.Configuration.AddAzureKeyVault(kvUri, kvCredential);
+            break;
+        }
+        catch (Exception) when (attempt < 3)
+        {
+            Thread.Sleep(TimeSpan.FromSeconds(attempt * 5));
+        }
+    }
 }
 
 // ------------------------------------------------------------
@@ -72,7 +93,6 @@ builder.Services.AddHostedService<ReferenceDataSeeder>();
 // 3. Authentication & Authorization
 // ------------------------------------------------------------
 const string NameClaimType = "name";
-const string ScopeAccessAsUser = "access_as_user";
 
 // Azure AD B2C configuration (kept explicit for clarity)
 var tenantId = Cfg("Azure:TenantId");
@@ -91,23 +111,11 @@ builder.Services
         jwt =>
         {
             jwt.Authority = authority;
+            jwt.MapInboundClaims = false;
             jwt.TokenValidationParameters.ValidIssuer = issuer;
             jwt.TokenValidationParameters.ValidAudience = apiClientId;
             jwt.TokenValidationParameters.NameClaimType = NameClaimType;
             jwt.IncludeErrorDetails = true;
-            jwt.Events = new JwtBearerEvents
-            {
-                OnAuthenticationFailed = ctx =>
-                {
-                    Console.WriteLine("[JWT fail] " + ctx.Exception.Message);
-                    return Task.CompletedTask;
-                },
-                OnChallenge = ctx =>
-                {
-                    Console.WriteLine("[JWT challenge] " + ctx.ErrorDescription);
-                    return Task.CompletedTask;
-                }
-            };
         },
         msid =>
         {
@@ -118,10 +126,6 @@ builder.Services
             msid.Domain = domain;
         });
 
-builder.Services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, o =>
-{
-    o.TokenValidationParameters.NameClaimType = NameClaimType;
-});
 
 builder.Services.AddCors(options =>
 {
@@ -144,6 +148,23 @@ builder.Services.AddAuthorization(options =>
 // 4. Build App
 // ------------------------------------------------------------
 var app = builder.Build();
+
+// Wire up JWT event logging now that the DI container is built
+var jwtLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Auth.Jwt");
+app.Services.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>()
+    .Get(JwtBearerDefaults.AuthenticationScheme).Events = new JwtBearerEvents
+    {
+        OnAuthenticationFailed = ctx =>
+        {
+            jwtLogger.LogWarning("JWT authentication failed: {Message}", ctx.Exception.Message);
+            return Task.CompletedTask;
+        },
+        OnChallenge = ctx =>
+        {
+            jwtLogger.LogWarning("JWT challenge: {Description}", ctx.ErrorDescription);
+            return Task.CompletedTask;
+        }
+    };
 
 // ------------------------------------------------------------
 // 5. Middleware Pipeline
@@ -171,40 +192,18 @@ app.MapLoyaltyEndpoints();
 app.MapLoungeEndpoints();
 app.MapVisaEndpoints();
 
-// Admin endpoints
-app.MapAdminTravelerEndpoints();
-app.MapAdminFlightEndpoints();
-app.MapAdminAirlineEndpoints();
-app.MapAdminAirportEndpoints();
-app.MapAdminRefDataEndpoints();
-app.MapAdminLoyaltyEndpoints();
-app.MapAdminLoungeEndpoints();
+// Admin endpoints — shared group carries auth, each file adds its own sub-prefix
+var adminGroup = app.MapGroup("admin").RequireAuthorization("AdminOnly");
+adminGroup.MapAdminTravelerEndpoints();
+adminGroup.MapAdminFlightEndpoints();
+adminGroup.MapAdminAirlineEndpoints();
+adminGroup.MapAdminAirportEndpoints();
+adminGroup.MapAdminRefDataEndpoints();
+adminGroup.MapAdminLoyaltyEndpoints();
+adminGroup.MapAdminLoungeEndpoints();
 
-// Group: private (mixed auth)
-var privateGroup = app.MapGroup("private");
-
-// Public (no auth) ping
-privateGroup.MapGet("ping", () => "pong");
-
-// Authenticated: secure test
-privateGroup.MapGet("secure-test", (HttpContext http) =>
-{
-    http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-    return Results.Ok(new { ok = true, at = DateTime.UtcNow });
-}).RequireAuthorization();
-
-// Authenticated: whoami
-privateGroup.MapGet("whoami", (HttpContext http) =>
-{
-    http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-    return Results.Ok(new
-    {
-        name = http.User.Identity?.Name,
-        aud = http.User.FindFirstValue("aud"),
-        iss = http.User.FindFirstValue("iss"),
-        tfp = http.User.FindFirst("tfp")?.Value ?? http.User.FindFirst("acr")?.Value
-    });
-}).RequireAuthorization();
+// Private endpoints (ping, secure-test, whoami)
+app.MapPrivateEndpoints();
 
 // ------------------------------------------------------------
 // 7. Run

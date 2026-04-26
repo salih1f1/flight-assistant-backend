@@ -9,10 +9,9 @@ namespace FlightAssistant.API.Endpoints.Admin
 {
     public static class AdminAirportEndpoints
     {
-        public static void MapAdminAirportEndpoints(this IEndpointRouteBuilder app)
+        public static void MapAdminAirportEndpoints(this IEndpointRouteBuilder admin)
         {
-            var group = app.MapGroup("admin/airports")
-                .RequireAuthorization("AdminOnly")
+            var group = admin.MapGroup("airports")
                 .WithTags("Admin - Airports");
 
             // GET /admin/airports

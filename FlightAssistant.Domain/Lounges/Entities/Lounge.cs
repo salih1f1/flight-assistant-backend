@@ -1,3 +1,4 @@
+using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Common.Interfaces;
 
 namespace FlightAssistant.Domain.Lounges.Entities
@@ -36,6 +37,9 @@ namespace FlightAssistant.Domain.Lounges.Entities
         public void Update(string name, string? terminal, string? locationHint, string? hours,
             bool isAirside, bool isDomesticOnly, bool isInternationalOnly, string? amenities)
         {
+            if (string.IsNullOrWhiteSpace(name))
+                throw new DomainException("Lounge name is required.");
+
             Name = name;
             Terminal = terminal;
             LocationHint = locationHint;
