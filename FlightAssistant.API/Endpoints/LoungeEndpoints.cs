@@ -1,8 +1,8 @@
+using FlightAssistant.API.Authentication;
 using FlightAssistant.Application.Queries.Lounges;
 using FlightAssistant.Contracts.Responses.Lounges;
 using MediatR;
 using Microsoft.Identity.Web.Resource;
-using System.Security.Claims;
 
 namespace FlightAssistant.API.Endpoints
 {
@@ -18,7 +18,7 @@ namespace FlightAssistant.API.Endpoints
             group.MapGet("", async (HttpContext http, string airportIata, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-                var travelerId = TryGetTravelerId(http);
+                var travelerId = (Guid?)http.User.GetTravelerId();
 
                 var results = await mediator.Send(new GetLoungesAtAirportQuery(airportIata, travelerId), ct);
                 var dtos = results.Select(l => new LoungeDto(
@@ -38,10 +38,5 @@ namespace FlightAssistant.API.Endpoints
             .ProducesProblem(404);
         }
 
-        private static Guid? TryGetTravelerId(HttpContext http)
-        {
-            var claim = http.User.FindFirstValue("oid") ?? http.User.FindFirstValue("sub");
-            return Guid.TryParse(claim, out var id) ? id : null;
-        }
     }
 }

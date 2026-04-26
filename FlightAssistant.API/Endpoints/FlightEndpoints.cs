@@ -1,3 +1,4 @@
+using FlightAssistant.API.Authentication;
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Queries.Flights;
 using FlightAssistant.Contracts.Requests.Flights;
@@ -5,7 +6,6 @@ using FlightAssistant.Contracts.Responses.Flights;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Identity.Web.Resource;
-using System.Security.Claims;
 
 namespace FlightAssistant.API.Endpoints
 {
@@ -21,7 +21,7 @@ namespace FlightAssistant.API.Endpoints
             group.MapGet("", async (HttpContext http, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-                var travelerId = GetTravelerId(http);
+                var travelerId = http.User.GetTravelerId();
 
                 var results = await mediator.Send(new GetTravelerFlightsQuery(travelerId), ct);
 
@@ -43,7 +43,7 @@ namespace FlightAssistant.API.Endpoints
             group.MapPost("", async (HttpContext http, [FromBody] TrackFlightRequest req, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-                var travelerId = GetTravelerId(http);
+                var travelerId = http.User.GetTravelerId();
 
                 var flightId = await mediator.Send(new TrackFlightCommand(
                     travelerId,
@@ -71,7 +71,7 @@ namespace FlightAssistant.API.Endpoints
             group.MapDelete("{flightId:int}", async (HttpContext http, int flightId, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-                var travelerId = GetTravelerId(http);
+                var travelerId = http.User.GetTravelerId();
                 await mediator.Send(new UntrackFlightCommand(travelerId, flightId), ct);
                 return Results.NoContent();
             })
@@ -87,7 +87,7 @@ namespace FlightAssistant.API.Endpoints
             group.MapPatch("{flightId:int}/notify", async (HttpContext http, int flightId, [FromBody] bool notify, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-                var travelerId = GetTravelerId(http);
+                var travelerId = http.User.GetTravelerId();
                 await mediator.Send(new ToggleFlightNotificationCommand(travelerId, flightId, notify), ct);
                 return Results.NoContent();
             })
@@ -135,11 +135,5 @@ namespace FlightAssistant.API.Endpoints
             .ProducesProblem(404);
         }
 
-        private static Guid GetTravelerId(HttpContext http)
-        {
-            var oidClaim = http.User.FindFirstValue("oid") ?? http.User.FindFirstValue("sub")
-                ?? throw new InvalidOperationException("User OID claim missing.");
-            return Guid.Parse(oidClaim);
-        }
     }
 }
