@@ -16,5 +16,6 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         Task AddFlightStatusEventAsync(FlightStatusEvent evt, CancellationToken ct = default);
         Task<bool> FlightStatusEventExistsAsync(string dedupHash, CancellationToken ct = default);
         Task<int?> GetFlightStatusIdByCodeAsync(string code, CancellationToken ct = default);
+        Task<IReadOnlyList<Flight>> GetActiveTrackedFlightsAsync(CancellationToken ct = default);
     }
 }
