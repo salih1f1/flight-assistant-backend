@@ -57,11 +57,7 @@ string Cfg(string key) =>
 var keyVaultUri = builder.Configuration["Azure:KeyVault"];
 if (!string.IsNullOrWhiteSpace(keyVaultUri))
 {
-    // In Development use AzureCliCredential so local `az login` is sufficient.
-    // In other environments fall back to DefaultAzureCredential (managed identity, etc.).
-    TokenCredential kvCredential = builder.Environment.IsDevelopment()
-        ? new AzureCliCredential()
-        : new DefaultAzureCredential();
+    TokenCredential kvCredential = new DefaultAzureCredential();
 
     // Retry up to 3 times with backoff — guards against transient 403s during
     // subscription re-activation propagation.
