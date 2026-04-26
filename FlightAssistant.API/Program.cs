@@ -82,7 +82,7 @@ builder.Services.AddAppCaching(builder.Configuration);
 builder.Services.AddApplication();
 
 // Infrastructure layer (repositories, external services)
-builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.IsDevelopment());
 
 // Hosted services
 

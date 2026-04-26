@@ -7,12 +7,11 @@ using FlightAssistant.Infrastructure.Notifications;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-
 namespace FlightAssistant.Infrastructure
 {
     public static class DependencyInjection
     {
-        public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration config)
+        public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration config, bool isDevelopment = false)
         {
             // Repositories
             services.AddScoped<ITravelerRepository, TravelerRepository>();
@@ -56,8 +55,19 @@ namespace FlightAssistant.Infrastructure
             });
             services.AddScoped<IVisaRequirementsProvider, SherpaVisaRequirementsProvider>();
 
-            // Push notifications
-            services.AddScoped<IPushNotificationService, ApplePushNotificationService>();
+            // Push notifications — singleton so the APNs client is created once and reused
+            services.AddOptions<ApnsOptions>()
+                .BindConfiguration("Apns")
+                .Validate(
+                    opts => isDevelopment ||
+                            (!string.IsNullOrWhiteSpace(opts.BundleId) &&
+                             !string.IsNullOrWhiteSpace(opts.KeyId) &&
+                             !string.IsNullOrWhiteSpace(opts.TeamId) &&
+                             !string.IsNullOrWhiteSpace(opts.P8KeyContent)),
+                    "APNs credentials (BundleId, KeyId, TeamId, P8KeyContent) are required in non-Development environments.")
+                .ValidateOnStart();
+
+            services.AddSingleton<IPushNotificationService, ApplePushNotificationService>();
 
             return services;
         }
