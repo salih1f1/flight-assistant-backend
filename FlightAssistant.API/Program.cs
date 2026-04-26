@@ -1,3 +1,4 @@
+using Azure.Core;
 using Azure.Identity;
 using FlightAssistant.API.Endpoints;
 using FlightAssistant.API.Endpoints.Admin;
@@ -26,7 +27,27 @@ string Cfg(string key) =>
 var keyVaultUri = builder.Configuration["Azure:KeyVault"];
 if (!string.IsNullOrWhiteSpace(keyVaultUri))
 {
-    builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUri), new DefaultAzureCredential());
+    // In Development use AzureCliCredential so local `az login` is sufficient.
+    // In other environments fall back to DefaultAzureCredential (managed identity, etc.).
+    TokenCredential kvCredential = builder.Environment.IsDevelopment()
+        ? new AzureCliCredential()
+        : new DefaultAzureCredential();
+
+    // Retry up to 3 times with backoff — guards against transient 403s during
+    // subscription re-activation propagation.
+    var kvUri = new Uri(keyVaultUri);
+    for (int attempt = 1; ; attempt++)
+    {
+        try
+        {
+            builder.Configuration.AddAzureKeyVault(kvUri, kvCredential);
+            break;
+        }
+        catch (Exception) when (attempt < 3)
+        {
+            Thread.Sleep(TimeSpan.FromSeconds(attempt * 5));
+        }
+    }
 }
 
 // ------------------------------------------------------------
@@ -92,6 +113,7 @@ builder.Services
         jwt =>
         {
             jwt.Authority = authority;
+            jwt.MapInboundClaims = false;
             jwt.TokenValidationParameters.ValidIssuer = issuer;
             jwt.TokenValidationParameters.ValidAudience = apiClientId;
             jwt.TokenValidationParameters.NameClaimType = NameClaimType;
@@ -106,10 +128,6 @@ builder.Services
             msid.Domain = domain;
         });
 
-builder.Services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, o =>
-{
-    o.TokenValidationParameters.NameClaimType = NameClaimType;
-});
 
 builder.Services.AddCors(options =>
 {
