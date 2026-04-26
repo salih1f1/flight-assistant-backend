@@ -8,6 +8,7 @@ using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.Resource;
 using Microsoft.OpenApi.Models;
@@ -95,19 +96,6 @@ builder.Services
             jwt.TokenValidationParameters.ValidAudience = apiClientId;
             jwt.TokenValidationParameters.NameClaimType = NameClaimType;
             jwt.IncludeErrorDetails = true;
-            jwt.Events = new JwtBearerEvents
-            {
-                OnAuthenticationFailed = ctx =>
-                {
-                    Console.WriteLine("[JWT fail] " + ctx.Exception.Message);
-                    return Task.CompletedTask;
-                },
-                OnChallenge = ctx =>
-                {
-                    Console.WriteLine("[JWT challenge] " + ctx.ErrorDescription);
-                    return Task.CompletedTask;
-                }
-            };
         },
         msid =>
         {
@@ -144,6 +132,23 @@ builder.Services.AddAuthorization(options =>
 // 4. Build App
 // ------------------------------------------------------------
 var app = builder.Build();
+
+// Wire up JWT event logging now that the DI container is built
+var jwtLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Auth.Jwt");
+app.Services.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>()
+    .Get(JwtBearerDefaults.AuthenticationScheme).Events = new JwtBearerEvents
+    {
+        OnAuthenticationFailed = ctx =>
+        {
+            jwtLogger.LogWarning("JWT authentication failed: {Message}", ctx.Exception.Message);
+            return Task.CompletedTask;
+        },
+        OnChallenge = ctx =>
+        {
+            jwtLogger.LogWarning("JWT challenge: {Description}", ctx.ErrorDescription);
+            return Task.CompletedTask;
+        }
+    };
 
 // ------------------------------------------------------------
 // 5. Middleware Pipeline

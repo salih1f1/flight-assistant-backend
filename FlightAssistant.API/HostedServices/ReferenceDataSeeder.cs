@@ -5,7 +5,7 @@ using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;   
+using System.Text.RegularExpressions;
 
 namespace FlightAssistant.API.HostedServices
 {
@@ -15,6 +15,7 @@ namespace FlightAssistant.API.HostedServices
         private readonly ILogger<ReferenceDataSeeder> log;
 
         private const string SeedDataFolderPath = "SeedData";
+        private const string SeedSourceType = "seed";
         private static readonly Regex VersionFromFilename = new Regex(@"\.v(?<v>\d+)\.json$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         public ReferenceDataSeeder(
@@ -101,7 +102,7 @@ namespace FlightAssistant.API.HostedServices
                 {
                     log.LogWarning("Skipping seed file without version suffix: {File}", fileName);
                     continue;
-            }
+                }
 
                 if (await AlreadySeeded(db, dataset, version, ct))
                 {
@@ -115,13 +116,13 @@ namespace FlightAssistant.API.HostedServices
                     items = LoadJsonFromPath<T>(filePath);
                 }
                 catch (Exception ex)
-            {
+                {
                     log.LogError(ex, "Failed to read seed file {File}", fileName);
                     continue;
-            }
+                }
 
-            foreach (var item in items)
-            {
+                foreach (var item in items)
+                {
                     switch (item)
                     {
                         case Alliance alliance:
@@ -144,10 +145,10 @@ namespace FlightAssistant.API.HostedServices
                             log.LogError("Seeding for type {0} is not implemented", dataset);
                             return;
                     }
-            }
+                }
 
-            await db.SaveChangesAsync(ct);
-            await MarkAsSeeded(db, dataset, version, ct);
+                await db.SaveChangesAsync(ct);
+                await MarkAsSeeded(db, dataset, version, ct);
                 log.LogInformation("Applied seed {Dataset} v{Version} from {File}", dataset, version, fileName);
             }
         }
@@ -159,7 +160,7 @@ namespace FlightAssistant.API.HostedServices
         {
             if (!await db.Alliances.AnyAsync(x => x.Code == alliance.Code, ct))
             {
-                alliance.SourceType = "seed";
+                alliance.SourceType = SeedSourceType;
                 alliance.FirstSeenAt = DateTime.UtcNow;
                 alliance.LastSeenAt = DateTime.UtcNow;
                 await db.Alliances.AddAsync(alliance);
@@ -173,7 +174,7 @@ namespace FlightAssistant.API.HostedServices
         {
             if (!await db.Countries.AnyAsync(x => (x.Code == country.Code || x.Alpha3 == country.Alpha3), ct))
             {
-                country.SourceType = "seed";
+                country.SourceType = SeedSourceType;
                 country.FirstSeenAt = DateTime.UtcNow;
                 country.LastSeenAt = DateTime.UtcNow;
                 await db.Countries.AddAsync(country);
@@ -187,7 +188,7 @@ namespace FlightAssistant.API.HostedServices
         {
             if (!await db.Airports.AnyAsync(x => (x.Iata == airport.Iata || x.Icao == airport.Icao), ct))
             {
-                airport.SourceType = "seed";
+                airport.SourceType = SeedSourceType;
                 airport.FirstSeenAt = DateTime.UtcNow;
                 airport.LastSeenAt = DateTime.UtcNow;
                 await db.Airports.AddAsync(airport);
@@ -207,7 +208,7 @@ namespace FlightAssistant.API.HostedServices
                         $"Invalid airline code length: IATA ('{airline.Iata}') must be at most 3 characters, ICAO ('{airline.Icao}') must be at most 4 characters.");
                 }
 
-                airline.SourceType = "seed";
+                airline.SourceType = SeedSourceType;
                 airline.FirstSeenAt = DateTime.UtcNow;
                 airline.LastSeenAt = DateTime.UtcNow;
                 await db.Airlines.AddAsync(airline);

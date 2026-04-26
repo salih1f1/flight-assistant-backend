@@ -71,7 +71,7 @@ namespace FlightAssistant.Domain.Tests.Flights
         }
 
         [Fact]
-        public void Create_SamInputs_ProduceSameDedupHash()
+        public void Create_SameInputs_ProduceSameDedupHash()
         {
             var at = new DateTime(2025, 6, 15, 10, 0, 0, DateTimeKind.Utc);
             var e1 = FlightStatusEvent.Create(1, 2, at, "AeroDataBox", "ext-1");
