@@ -7,6 +7,8 @@ using FlightAssistant.Infrastructure.Notifications;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Http.Resilience;
+using Polly;
 namespace FlightAssistant.Infrastructure
 {
     public static class DependencyInjection
@@ -33,17 +35,31 @@ namespace FlightAssistant.Infrastructure
             {
                 var baseUrl = config["AeroDataBox:BaseUrl"] ?? "https://aerodatabox.p.rapidapi.com/";
                 client.BaseAddress = new Uri(baseUrl);
+                client.Timeout = TimeSpan.FromSeconds(30);
                 var apiKey = config["AeroDataBox:ApiKey"];
                 if (!string.IsNullOrWhiteSpace(apiKey))
                 {
                     client.DefaultRequestHeaders.Add("X-RapidAPI-Key", apiKey);
                     client.DefaultRequestHeaders.Add("X-RapidAPI-Host", "aerodatabox.p.rapidapi.com");
                 }
+            }).AddStandardResilienceHandler(options =>
+            {
+                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
+                options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(8);
+                options.Retry.MaxRetryAttempts = 3;
+                options.Retry.BackoffType = DelayBackoffType.Exponential;
             });
 
             services.AddHttpClient<AviationStackFlightStatusProvider>(client =>
             {
                 client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "http://api.aviationstack.com/v1/");
+                client.Timeout = TimeSpan.FromSeconds(30);
+            }).AddStandardResilienceHandler(options =>
+            {
+                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
+                options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(8);
+                options.Retry.MaxRetryAttempts = 3;
+                options.Retry.BackoffType = DelayBackoffType.Exponential;
             });
 
             services.AddScoped<IFlightStatusProvider, CompositeFlightStatusProvider>();
@@ -52,6 +68,13 @@ namespace FlightAssistant.Infrastructure
             services.AddHttpClient<SherpaVisaRequirementsProvider>(client =>
             {
                 client.BaseAddress = new Uri(config["Sherpa:BaseUrl"] ?? "https://requirements-api.joinsherpa.com/v2/");
+                client.Timeout = TimeSpan.FromSeconds(30);
+            }).AddStandardResilienceHandler(options =>
+            {
+                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
+                options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(8);
+                options.Retry.MaxRetryAttempts = 3;
+                options.Retry.BackoffType = DelayBackoffType.Exponential;
             });
             services.AddScoped<IVisaRequirementsProvider, SherpaVisaRequirementsProvider>();
 
