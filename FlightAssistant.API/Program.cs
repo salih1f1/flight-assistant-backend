@@ -3,22 +3,51 @@ using Azure.Identity;
 using FlightAssistant.API.Endpoints;
 using FlightAssistant.API.Endpoints.Admin;
 using FlightAssistant.API.HostedServices;
+using FlightAssistant.API.Infrastructure;
 using FlightAssistant.API.Middleware;
 using FlightAssistant.Application;
 using FlightAssistant.Infrastructure;
 using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.Persistance;
+using Microsoft.ApplicationInsights.Extensibility;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.Resource;
 using Microsoft.OpenApi.Models;
+using Serilog;
 
 // ------------------------------------------------------------
 // 1. Bootstrap & Configuration
 // ------------------------------------------------------------
 var builder = WebApplication.CreateBuilder(args);
+
+// Serilog bootstrap logger — captures startup errors before full config loads
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .CreateBootstrapLogger();
+
+builder.Host.UseSerilog((ctx, svc, logCfg) =>
+{
+    logCfg
+        .ReadFrom.Configuration(ctx.Configuration)
+        .ReadFrom.Services(svc)
+        .Enrich.FromLogContext()
+        .Enrich.WithEnvironmentName()
+        .Enrich.WithMachineName();
+
+    if (ctx.HostingEnvironment.IsDevelopment())
+        logCfg.WriteTo.Console();
+
+    var aiConnectionString = ctx.Configuration["ApplicationInsights:ConnectionString"];
+    if (!string.IsNullOrWhiteSpace(aiConnectionString))
+    {
+        logCfg.WriteTo.ApplicationInsights(
+            new TelemetryConfiguration { ConnectionString = aiConnectionString },
+            TelemetryConverter.Traces);
+    }
+});
 
 // Helper to enforce required configuration keys
 string Cfg(string key) =>
@@ -85,8 +114,10 @@ builder.Services.AddApplication();
 // Infrastructure layer (repositories, external services)
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.IsDevelopment());
 
+builder.Services.AddApplicationInsightsTelemetry();
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddScoped<TravelerContext>();
 
 // Hosted services
 
@@ -180,12 +211,15 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
+app.UseSerilogRequestLogging();
 app.UseHttpsRedirection();
 app.UseCors("AdminPanel");
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<TravelerContextMiddleware>();
 
 // ------------------------------------------------------------
 // 6. Endpoint Mapping
