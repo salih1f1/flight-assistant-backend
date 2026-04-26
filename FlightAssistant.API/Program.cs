@@ -8,6 +8,7 @@ using FlightAssistant.API.Middleware;
 using FlightAssistant.Application;
 using FlightAssistant.Infrastructure;
 using FlightAssistant.Infrastructure.Caching;
+using FlightAssistant.Infrastructure.HealthChecks;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.ApplicationInsights.Extensibility;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -118,6 +119,12 @@ builder.Services.AddApplicationInsightsTelemetry();
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddScoped<TravelerContext>();
+
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<FlightAssistantDbContext>()
+    .AddRedis(builder.Configuration.GetConnectionString("Redis") ?? string.Empty)
+    .AddCheck<AeroDataBoxHealthCheck>("aerodatabox", tags: ["external"])
+    .AddCheck<ApnsHealthCheck>("apns", tags: ["external"]);
 
 // Hosted services
 
