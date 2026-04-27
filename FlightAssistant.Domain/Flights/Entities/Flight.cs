@@ -1,11 +1,19 @@
-﻿using FlightAssistant.Domain.Common.Interfaces;
+﻿using FlightAssistant.Domain.Common;
+using FlightAssistant.Domain.Common.Interfaces;
+using FlightAssistant.Domain.Flights.Events;
 using FlightAssistant.Domain.ReferenceData.Entities;
 
 namespace FlightAssistant.Domain.Flights.Entities
 {
-    public class Flight : IAggregateRoot
+    public class Flight : IAggregateRoot, IHasDomainEvents
     {
         public int Id { get; private set; }
+
+        // Domain events
+        private readonly List<DomainEvent> _domainEvents = new();
+        public IReadOnlyCollection<DomainEvent> DomainEvents => _domainEvents.AsReadOnly();
+        public void ClearDomainEvents() => _domainEvents.Clear();
+        private void Raise(DomainEvent @event) => _domainEvents.Add(@event);
 
         public int AirlineId { get; private set; }
         public string FlightNumber { get; private set; } = default!;
@@ -61,6 +69,7 @@ namespace FlightAssistant.Domain.Flights.Entities
         }
 
         public void ApplyStatusUpdate(
+            string statusCode,
             DateTime? estimatedDepartureUtc,
             DateTime? estimatedArrivalUtc,
             DateTime? actualDepartureUtc,
@@ -74,6 +83,8 @@ namespace FlightAssistant.Domain.Flights.Entities
             if (equipmentAircraftIcao is not null)
                 EquipmentAircraftIcao = equipmentAircraftIcao;
             UpdatedUtc = DateTime.UtcNow;
+
+            Raise(new FlightStatusChanged(Id, FlightNumber, ServiceDateUtc, statusCode, DateTime.UtcNow));
         }
     }
 }

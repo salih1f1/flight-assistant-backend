@@ -1,36 +1,29 @@
-using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Flights.Events;
 using MediatR;
 using Microsoft.Extensions.Logging;
 
 namespace FlightAssistant.Application.EventHandlers
 {
     /// <summary>
-    /// After a SyncFlightStatusCommand succeeds, sends push notifications
-    /// to all travelers who track the flight and have Notify = true.
-    ///
-    /// Triggered by calling SendFlightStatusNotificationCommand from the sync endpoint.
+    /// Sends push notifications to travelers who track a flight whenever
+    /// a <see cref="FlightStatusChanged"/> domain event is published.
+    /// The event is raised by <see cref="Domain.Flights.Entities.Flight.ApplyStatusUpdate"/>
+    /// and dispatched by the EF SaveChanges interceptor after a successful commit.
     /// </summary>
-    public record SendFlightStatusNotificationCommand(
-        int FlightId,
-        string StatusCode,
-        string FlightNumber,
-        DateOnly ServiceDate
-    ) : IRequest;
-
-    public sealed class SendFlightStatusNotificationCommandHandler : IRequestHandler<SendFlightStatusNotificationCommand>
+    public sealed class FlightStatusChangedNotificationHandler : INotificationHandler<FlightStatusChanged>
     {
         private readonly IFlightRepository _flights;
         private readonly ITravelerRepository _travelers;
         private readonly IPushNotificationService _push;
-        private readonly ILogger<SendFlightStatusNotificationCommandHandler> _logger;
+        private readonly ILogger<FlightStatusChangedNotificationHandler> _logger;
 
-        public SendFlightStatusNotificationCommandHandler(
+        public FlightStatusChangedNotificationHandler(
             IFlightRepository flights,
             ITravelerRepository travelers,
             IPushNotificationService push,
-            ILogger<SendFlightStatusNotificationCommandHandler> logger)
+            ILogger<FlightStatusChangedNotificationHandler> logger)
         {
             _flights = flights;
             _travelers = travelers;
@@ -38,15 +31,15 @@ namespace FlightAssistant.Application.EventHandlers
             _logger = logger;
         }
 
-        public async Task Handle(SendFlightStatusNotificationCommand cmd, CancellationToken ct)
+        public async Task Handle(FlightStatusChanged notification, CancellationToken ct)
         {
             // Find all travelers tracking this flight with notifications enabled
-            var trackings = await _flights.GetTrackingsByFlightIdAsync(cmd.FlightId, ct);
+            var trackings = await _flights.GetTrackingsByFlightIdAsync(notification.FlightId, ct);
             var notifyTrackings = trackings.Where(t => t.Notify).ToList();
             if (!notifyTrackings.Any()) return;
 
-            var title = $"Flight {cmd.FlightNumber} Update";
-            var body = GetStatusMessage(cmd.StatusCode, cmd.ServiceDate);
+            var title = $"Flight {notification.FlightNumber} Update";
+            var body = GetStatusMessage(notification.StatusCode, notification.ServiceDateUtc);
 
             // Collect all device tokens from notified travelers
             var tokens = new List<string>();
@@ -59,17 +52,20 @@ namespace FlightAssistant.Application.EventHandlers
 
             if (tokens.Count == 0) return;
 
-            _logger.LogInformation("Sending {Count} push notifications for flight {FlightNumber} status {Status}", tokens.Count, cmd.FlightNumber, cmd.StatusCode);
+            _logger.LogInformation(
+                "Sending {Count} push notifications for flight {FlightNumber} status {Status}",
+                tokens.Count, notification.FlightNumber, notification.StatusCode);
+
             await _push.SendAsync(tokens, title, body, ct);
         }
 
         private static string GetStatusMessage(string statusCode, DateOnly serviceDate) => statusCode switch
         {
-            "DEP" => $"Your flight has departed.",
-            "ARR" => $"Your flight has landed.",
-            "DLY" => $"Your flight is delayed.",
-            "CAN" => $"Your flight has been cancelled.",
-            "DIV" => $"Your flight has been diverted.",
+            "DEP" => "Your flight has departed.",
+            "ARR" => "Your flight has landed.",
+            "DLY" => "Your flight is delayed.",
+            "CAN" => "Your flight has been cancelled.",
+            "DIV" => "Your flight has been diverted.",
             _ => $"Status update for your flight on {serviceDate}."
         };
     }

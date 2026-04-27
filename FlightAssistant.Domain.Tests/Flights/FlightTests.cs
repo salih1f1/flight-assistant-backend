@@ -28,7 +28,7 @@ namespace FlightAssistant.Domain.Tests.Flights
 
             var dep = DateTime.UtcNow;
             var arr = DateTime.UtcNow.AddHours(2);
-            flight.ApplyStatusUpdate(dep, arr, null, null, "B789");
+            flight.ApplyStatusUpdate("DLY", dep, arr, null, null, "B789");
 
             Assert.Equal(dep, flight.EstimatedDepartureUtc);
             Assert.Equal(arr, flight.EstimatedArrivalUtc);
