@@ -33,20 +33,30 @@ namespace FlightAssistant.API.HostedServices
         {
             log.LogInformation("Reference data seeding started.");
 
-            using var scope = sp.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+            try
+            {
+                using var scope = sp.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
 
-            await SeedData<Alliance>(db, cancellationToken);
-            await SeedData<Country>(db, cancellationToken);
-            await SeedData<Airport>(db, cancellationToken);
-            await SeedData<Airline>(db, cancellationToken);
-            await SeedLoyaltyProgramKindsAsync(db, cancellationToken);
-            await SeedLoyaltyProgramsAsync(db, cancellationToken);
-            await SeedLoungeProvidersAsync(db, cancellationToken);
-            await SeedLoungesAsync(db, cancellationToken);
-            await SeedLoungeProviderLinksAsync(db, cancellationToken);
+                await SeedData<Alliance>(db, cancellationToken);
+                await SeedData<Country>(db, cancellationToken);
+                await SeedData<Airport>(db, cancellationToken);
+                await SeedData<Airline>(db, cancellationToken);
+                await SeedLoyaltyProgramKindsAsync(db, cancellationToken);
+                await SeedLoyaltyProgramsAsync(db, cancellationToken);
+                await SeedLoungeProvidersAsync(db, cancellationToken);
+                await SeedLoungesAsync(db, cancellationToken);
+                await SeedLoungeProviderLinksAsync(db, cancellationToken);
 
-            log.LogInformation("Reference data seeding completed.");
+                log.LogInformation("Reference data seeding completed.");
+            }
+            catch (Exception ex)
+            {
+                // Seeding failure must not crash the host — the app can still serve
+                // requests and seeding will succeed on the next deploy once the DB
+                // is reachable.
+                log.LogError(ex, "Reference data seeding failed. The application will continue without fresh seed data.");
+            }
         }
 
         public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
