@@ -7,7 +7,7 @@ namespace FlightAssistant.Application.Interfaces.Repositories
     {
         Task<Flight?> GetByFlightNumberAndDateAsync(int airlineId, string flightNumber, DateOnly serviceDate, CancellationToken ct = default);
         Task<Flight?> GetFlightByIdAsync(int flightId, CancellationToken ct = default);
-        Task<IReadOnlyList<(TravelerFlight Tracking, Flight Flight)>> GetTravelerFlightsAsync(Guid travelerId, CancellationToken ct = default);
+        Task<(IReadOnlyList<(TravelerFlight Tracking, Flight Flight)> Items, int Total)> GetTravelerFlightsAsync(Guid travelerId, int page, int pageSize, CancellationToken ct = default);
         Task<TravelerFlight?> GetTravelerFlightAsync(Guid travelerId, int flightId, CancellationToken ct = default);
         Task AddTravelerFlightAsync(TravelerFlight tf, CancellationToken ct = default);
         Task RemoveTravelerFlightAsync(TravelerFlight tf, CancellationToken ct = default);

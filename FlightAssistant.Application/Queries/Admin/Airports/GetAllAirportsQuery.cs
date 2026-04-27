@@ -1,4 +1,7 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Validators;
+using FlightAssistant.Contracts.Paging;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Queries.Admin.Airports
@@ -16,20 +19,29 @@ namespace FlightAssistant.Application.Queries.Admin.Airports
         string? Timezone
     );
 
-    public record GetAllAirportsQuery : IRequest<IReadOnlyList<AirportResult>>;
+    public record GetAllAirportsQuery(PagedRequest Paging) : IRequest<PagedResult<AirportResult>>;
 
-    public sealed class GetAllAirportsQueryHandler : IRequestHandler<GetAllAirportsQuery, IReadOnlyList<AirportResult>>
+    public sealed class GetAllAirportsQueryValidator : AbstractValidator<GetAllAirportsQuery>
+    {
+        public GetAllAirportsQueryValidator()
+        {
+            RuleFor(x => x.Paging).SetValidator(new PagedRequestValidator());
+        }
+    }
+
+    public sealed class GetAllAirportsQueryHandler : IRequestHandler<GetAllAirportsQuery, PagedResult<AirportResult>>
     {
         private readonly IAirportRepository _repo;
         public GetAllAirportsQueryHandler(IAirportRepository repo) => _repo = repo;
 
-        public async Task<IReadOnlyList<AirportResult>> Handle(GetAllAirportsQuery request, CancellationToken ct)
+        public async Task<PagedResult<AirportResult>> Handle(GetAllAirportsQuery request, CancellationToken ct)
         {
-            var airports = await _repo.GetAllAsync(ct);
-            return airports.Select(a => new AirportResult(
+            var (airports, total) = await _repo.GetAllAsync(request.Paging.Page, request.Paging.PageSize, ct);
+            var items = airports.Select(a => new AirportResult(
                 a.Id, a.Iata, a.Icao, a.Name, a.City, a.CountryCode,
                 a.Latitude, a.Longitude, a.ElevationFt, a.Timezone
             )).ToList();
+            return new PagedResult<AirportResult>(items, total, request.Paging.Page, request.Paging.PageSize);
         }
     }
 }

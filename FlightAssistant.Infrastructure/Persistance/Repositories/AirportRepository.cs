@@ -9,8 +9,13 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         private readonly FlightAssistantDbContext _db;
         public AirportRepository(FlightAssistantDbContext db) => _db = db;
 
-        public async Task<IReadOnlyList<Airport>> GetAllAsync(CancellationToken ct = default) =>
-            await _db.Airports.OrderBy(a => a.Name).ToListAsync(ct);
+        public async Task<(IReadOnlyList<Airport> Items, int Total)> GetAllAsync(int page, int pageSize, CancellationToken ct = default)
+        {
+            var query = _db.Airports.OrderBy(a => a.Name);
+            var total = await query.CountAsync(ct);
+            var items = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+            return (items, total);
+        }
 
         public Task<Airport?> GetByIdAsync(int id, CancellationToken ct = default) =>
             _db.Airports.FirstOrDefaultAsync(a => a.Id == id, ct);

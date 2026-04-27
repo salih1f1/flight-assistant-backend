@@ -25,15 +25,16 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 f => f.AirlineId == airlineId && f.FlightNumber == flightNumber && f.ServiceDateUtc == serviceDate,
                 ct);
 
-        public async Task<IReadOnlyList<(TravelerFlight Tracking, Flight Flight)>> GetTravelerFlightsAsync(Guid travelerId, CancellationToken ct = default)
+        public async Task<(IReadOnlyList<(TravelerFlight Tracking, Flight Flight)> Items, int Total)> GetTravelerFlightsAsync(Guid travelerId, int page, int pageSize, CancellationToken ct = default)
         {
-            var rows = await _db.TravelerFlights
+            var query = _db.TravelerFlights
                 .Where(tf => tf.TravelerId == travelerId)
                 .Join(_db.Flights, tf => tf.FlightId, f => f.Id, (tf, f) => new { tf, f })
-                .OrderByDescending(x => x.f.ServiceDateUtc)
-                .ToListAsync(ct);
+                .OrderByDescending(x => x.f.ServiceDateUtc);
 
-            return rows.Select(x => (x.tf, x.f)).ToList();
+            var total = await query.CountAsync(ct);
+            var rows = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+            return (rows.Select(x => (x.tf, x.f)).ToList(), total);
         }
 
         public Task<TravelerFlight?> GetTravelerFlightAsync(Guid travelerId, int flightId, CancellationToken ct = default) =>

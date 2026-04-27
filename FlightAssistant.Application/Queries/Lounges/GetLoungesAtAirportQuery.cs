@@ -35,13 +35,13 @@ namespace FlightAssistant.Application.Queries.Lounges
         {
             var lounges = await _lounges.GetByAirportAsync(query.AirportIata, ct);
 
-            // Load eligibility data if a traveler is identified
+            // Load eligibility data if a traveler is identified (fetch all, not paginated)
             var memberships = query.TravelerId.HasValue
-                ? await _loyalty.GetMembershipsForTravelerAsync(query.TravelerId.Value, ct)
+                ? (await _loyalty.GetMembershipsForTravelerAsync(query.TravelerId.Value, 1, int.MaxValue, ct)).Items
                 : Array.Empty<Domain.Loyalty.Entities.TravelerLoyaltyMembership>();
 
             var programs = memberships.Any()
-                ? await _loyalty.GetProgramsAsync(ct)
+                ? (await _loyalty.GetProgramsAsync(1, int.MaxValue, ct)).Items
                 : Array.Empty<Domain.Loyalty.Entities.LoyaltyProgram>();
 
             var allTiers = programs.SelectMany(p => p.Tiers).ToList();

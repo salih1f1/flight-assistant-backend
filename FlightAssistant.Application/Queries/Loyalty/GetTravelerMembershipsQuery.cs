@@ -1,4 +1,7 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Validators;
+using FlightAssistant.Contracts.Paging;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Queries.Loyalty
@@ -12,20 +15,29 @@ namespace FlightAssistant.Application.Queries.Loyalty
         DateOnly? PointsExpiryDate
     );
 
-    public record GetTravelerMembershipsQuery(Guid TravelerId) : IRequest<IReadOnlyList<MembershipResult>>;
+    public record GetTravelerMembershipsQuery(Guid TravelerId, PagedRequest Paging) : IRequest<PagedResult<MembershipResult>>;
 
-    public sealed class GetTravelerMembershipsQueryHandler : IRequestHandler<GetTravelerMembershipsQuery, IReadOnlyList<MembershipResult>>
+    public class GetTravelerMembershipsQueryValidator : AbstractValidator<GetTravelerMembershipsQuery>
+    {
+        public GetTravelerMembershipsQueryValidator()
+        {
+            RuleFor(x => x.Paging).SetValidator(new PagedRequestValidator());
+        }
+    }
+
+    public sealed class GetTravelerMembershipsQueryHandler : IRequestHandler<GetTravelerMembershipsQuery, PagedResult<MembershipResult>>
     {
         private readonly ILoyaltyRepository _loyalty;
 
         public GetTravelerMembershipsQueryHandler(ILoyaltyRepository loyalty) => _loyalty = loyalty;
 
-        public async Task<IReadOnlyList<MembershipResult>> Handle(GetTravelerMembershipsQuery query, CancellationToken ct)
+        public async Task<PagedResult<MembershipResult>> Handle(GetTravelerMembershipsQuery query, CancellationToken ct)
         {
-            var memberships = await _loyalty.GetMembershipsForTravelerAsync(query.TravelerId, ct);
-            return memberships.Select(m => new MembershipResult(
+            var (memberships, total) = await _loyalty.GetMembershipsForTravelerAsync(query.TravelerId, query.Paging.Page, query.Paging.PageSize, ct);
+            var items = memberships.Select(m => new MembershipResult(
                 m.Id, m.ProgramId, m.AccountNumber, m.TierId, m.TierExpiryDate, m.PointsExpiryDate
             )).ToList();
+            return new PagedResult<MembershipResult>(items, total, query.Paging.Page, query.Paging.PageSize);
         }
     }
 }

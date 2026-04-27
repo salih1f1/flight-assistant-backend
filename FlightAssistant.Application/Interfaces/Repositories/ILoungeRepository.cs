@@ -7,7 +7,7 @@ namespace FlightAssistant.Application.Interfaces.Repositories
     {
         Task<IReadOnlyList<Lounge>> GetByAirportAsync(string airportIata, CancellationToken ct = default);
         Task<Lounge?> GetByIdWithProvidersAsync(int id, CancellationToken ct = default);
-        Task<IReadOnlyList<Lounge>> GetAllAsync(CancellationToken ct = default);
+        Task<(IReadOnlyList<Lounge> Items, int Total)> GetAllAsync(int page, int pageSize, CancellationToken ct = default);
         Task DeleteAsync(Lounge lounge, CancellationToken ct = default);
     }
 }

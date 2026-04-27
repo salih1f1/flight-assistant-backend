@@ -31,12 +31,16 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                     .ThenInclude(link => link.Provider)
                 .FirstOrDefaultAsync(l => l.Id == id, ct);
 
-        public async Task<IReadOnlyList<Lounge>> GetAllAsync(CancellationToken ct = default) =>
-            await _db.Lounges
+        public async Task<(IReadOnlyList<Lounge> Items, int Total)> GetAllAsync(int page, int pageSize, CancellationToken ct = default)
+        {
+            var query = _db.Lounges
                 .Include(l => l.Providers)
                     .ThenInclude(link => link.Provider)
-                .OrderBy(l => l.Name)
-                .ToListAsync(ct);
+                .OrderBy(l => l.Name);
+            var total = await query.CountAsync(ct);
+            var items = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+            return (items, total);
+        }
 
         public Task DeleteAsync(Lounge lounge, CancellationToken ct = default)
         {

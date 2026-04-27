@@ -1,6 +1,7 @@
 using FlightAssistant.API.Authentication;
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Queries.Flights;
+using FlightAssistant.Contracts.Paging;
 using FlightAssistant.Contracts.Requests.Flights;
 using FlightAssistant.Contracts.Responses.Flights;
 using MediatR;
@@ -17,27 +18,28 @@ namespace FlightAssistant.API.Endpoints
         {
             var group = app.MapGroup("flights").RequireAuthorization().WithTags("Flights");
 
-            // GET /flights — list all tracked flights for the authenticated traveler
-            group.MapGet("", async (HttpContext http, IMediator mediator, CancellationToken ct) =>
+            // GET /flights — paginated list of tracked flights for the authenticated traveler
+            group.MapGet("", async (HttpContext http, [AsParameters] PagedRequest paging, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
 
-                var results = await mediator.Send(new GetTravelerFlightsQuery(travelerId), ct);
+                var result = await mediator.Send(new GetTravelerFlightsQuery(travelerId, paging), ct);
 
-                var dtos = results.Select(r => new FlightDto(
+                var dtos = result.Items.Select(r => new FlightDto(
                     r.FlightId, r.AirlineIata, r.FlightNumber, r.ServiceDate, r.DepartureIata, r.ArrivalIata,
                     r.ScheduledDepartureUtc, r.ScheduledArrivalUtc,
                     r.EstimatedDepartureUtc, r.EstimatedArrivalUtc,
                     r.ActualDepartureUtc, r.ActualArrivalUtc,
                     null, r.Notify)).ToList();
 
-                return Results.Ok(dtos);
+                return Results.Ok(new PagedResult<FlightDto>(dtos, result.Total, result.Page, result.PageSize));
             })
             .WithName("GetTrackedFlights")
             .WithSummary("List tracked flights")
-            .WithDescription("Returns all flights the authenticated traveler is currently tracking, enriched with IATA codes and the latest known departure/arrival times.")
-            .Produces<List<FlightDto>>(200);
+            .WithDescription("Returns a paginated list of flights the authenticated traveler is tracking. Supports ?page and ?pageSize (default 50, max 200).")
+            .Produces<PagedResult<FlightDto>>(200)
+            .ProducesValidationProblem();
 
             // POST /flights — track a flight
             group.MapPost("", async (HttpContext http, [FromBody] TrackFlightRequest req, IMediator mediator, CancellationToken ct) =>

@@ -13,6 +13,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\FlightAssistant.Contracts\FlightAssistant.Contracts.csproj" />
     <ProjectReference Include="..\FlightAssistant.Domain\FlightAssistant.Domain.csproj" />
     <ProjectReference Include="..\FlightAssistant.SharedKernel\FlightAssistant.SharedKernel.csproj" />
   </ItemGroup>
