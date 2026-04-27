@@ -3,6 +3,7 @@ using FlightAssistant.Application.Commands.Travelers;
 using FlightAssistant.Application.Queries.Travelers;
 using FlightAssistant.Contracts.Requests.Travelers;
 using FlightAssistant.Contracts.Responses.Travelers;
+using System.Collections.Generic;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Identity.Web.Resource;
@@ -79,6 +80,20 @@ namespace FlightAssistant.API.Endpoints
                 "Currently supports iOS (APNs). The token is used to send flight status alerts when notifications are enabled for a tracked flight.")
             .Produces(204)
             .ProducesValidationProblem();
+
+            // GET /travelers/me/device-tokens — list registered push tokens
+            group.MapGet("me/device-tokens", async (HttpContext http, IMediator mediator, CancellationToken ct) =>
+            {
+                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
+                var travelerId = http.User.GetTravelerId();
+                var tokens = await mediator.Send(new GetDeviceTokensQuery(travelerId), ct);
+                var dtos = tokens.Select(t => new DeviceTokenDto(t.Id, t.Platform, t.Token, t.LastSeenUtc)).ToList();
+                return Results.Ok(dtos);
+            })
+            .WithName("GetDeviceTokens")
+            .WithSummary("List registered device tokens")
+            .WithDescription("Returns all push notification device tokens registered for the authenticated traveler.")
+            .Produces<List<DeviceTokenDto>>(200);
 
             // DELETE /travelers/me/device-tokens/{deviceTokenId}
             group.MapDelete("me/device-tokens/{deviceTokenId:guid}", async (HttpContext http, Guid deviceTokenId, IMediator mediator, CancellationToken ct) =>

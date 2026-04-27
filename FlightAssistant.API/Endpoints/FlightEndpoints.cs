@@ -7,6 +7,7 @@ using FlightAssistant.Contracts.Responses.Flights;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Identity.Web.Resource;
+using System.Collections.Generic;
 
 namespace FlightAssistant.API.Endpoints
 {
@@ -17,6 +18,25 @@ namespace FlightAssistant.API.Endpoints
         public static void MapFlightEndpoints(this IEndpointRouteBuilder app)
         {
             var group = app.MapGroup("flights").RequireAuthorization().WithTags("Flights");
+
+            // GET /flights/search?from=LHR&to=JFK&date=2025-06-01 — search for flights before tracking
+            group.MapGet("search", async (string from, string to, DateOnly date, IMediator mediator, CancellationToken ct) =>
+            {
+                var results = await mediator.Send(new SearchFlightsQuery(from, to, date), ct);
+                var dtos = results.Select(r => new FlightSearchResultDto(
+                    r.FlightNumber, r.AirlineIata, r.DepartureIata, r.ArrivalIata,
+                    r.ServiceDate, r.ScheduledDepartureUtc, r.ScheduledArrivalUtc, r.EquipmentIcao)).ToList();
+                return Results.Ok(dtos);
+            })
+            .WithName("SearchFlights")
+            .WithSummary("Search flights by route and date")
+            .WithDescription(
+                "Searches for scheduled flights between two airports on a given date via AeroDataBox. " +
+                "Use this to populate the 'add flight' picker before calling POST /flights to track a result. " +
+                "Query params: from (IATA), to (IATA), date (YYYY-MM-DD).")
+            .Produces<List<FlightSearchResultDto>>(200)
+            .ProducesValidationProblem()
+            .AllowAnonymous(); // search is public — no auth needed to browse schedules
 
             // GET /flights — paginated list of tracked flights for the authenticated traveler
             group.MapGet("", async (HttpContext http, [AsParameters] PagedRequest paging, IMediator mediator, CancellationToken ct) =>

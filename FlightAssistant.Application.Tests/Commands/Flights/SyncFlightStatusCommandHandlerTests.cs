@@ -1,9 +1,7 @@
 using FlightAssistant.Application.Commands.Flights;
-using FlightAssistant.Application.EventHandlers;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Flights.Entities;
-using MediatR;
 using NSubstitute;
 using NSubstitute.ReturnsExtensions;
 
@@ -13,7 +11,6 @@ public class SyncFlightStatusCommandHandlerTests
 {
     private readonly IFlightRepository _flights = Substitute.For<IFlightRepository>();
     private readonly IFlightStatusProvider _provider = Substitute.For<IFlightStatusProvider>();
-    private readonly ISender _sender = Substitute.For<ISender>();
     private readonly SyncFlightStatusCommandHandler _handler;
 
     private static readonly Flight TestFlight = Flight.Create(
@@ -37,7 +34,7 @@ public class SyncFlightStatusCommandHandlerTests
 
     public SyncFlightStatusCommandHandlerTests()
     {
-        _handler = new SyncFlightStatusCommandHandler(_flights, _provider, _sender);
+        _handler = new SyncFlightStatusCommandHandler(_flights, _provider);
         _provider.ProviderName.Returns("TestProvider");
     }
 
@@ -55,9 +52,8 @@ public class SyncFlightStatusCommandHandlerTests
         Assert.True(result);
         await _flights.Received(1).AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
         await _flights.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
-        await _sender.Received(1).Send(
-            Arg.Is<SendFlightStatusNotificationCommand>(c => c.FlightId == 1 && c.StatusCode == "DEP"),
-            Arg.Any<CancellationToken>());
+        // Notification is now triggered via FlightStatusChanged domain event (dispatched by EF interceptor)
+        // — no ISender call expected here
     }
 
     [Fact]
@@ -73,7 +69,6 @@ public class SyncFlightStatusCommandHandlerTests
         Assert.False(result);
         await _flights.DidNotReceive().AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
         await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
-        await _sender.DidNotReceive().Send(Arg.Any<IRequest>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

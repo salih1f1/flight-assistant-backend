@@ -63,5 +63,14 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             _db.LoyaltyPrograms.Remove(program);
             return Task.CompletedTask;
         }
+
+        public Task<IReadOnlyList<LoyaltyProgram>> SearchProgramsByAirlineIdAsync(int airlineId, CancellationToken ct = default) =>
+            _db.LoyaltyPrograms
+                .Include(p => p.Tiers)
+                .Include(p => p.Kind)
+                .Where(p => p.AirlineId == airlineId)
+                .OrderBy(p => p.Name)
+                .ToListAsync(ct)
+                .ContinueWith(t => (IReadOnlyList<LoyaltyProgram>)t.Result, ct, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 }
