@@ -21,7 +21,7 @@ namespace FlightAssistant.Application.Commands.Admin.Airlines
             var airline = await _repo.GetByIdAsync(cmd.Id, ct);
             if (airline is null) return;
 
-            var hasFlights = (await _flights.GetAllAsync(ct)).Any(f => f.AirlineId == cmd.Id);
+            var hasFlights = await _flights.AnyForAirlineAsync(cmd.Id, ct);
             if (hasFlights)
                 throw new InvalidOperationException($"Cannot delete airline {cmd.Id}: it has associated flights.");
 

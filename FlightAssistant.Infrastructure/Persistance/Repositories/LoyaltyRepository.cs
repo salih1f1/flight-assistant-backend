@@ -17,17 +17,25 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
 
         // --- Domain-specific queries ---
 
-        public async Task<IReadOnlyList<LoyaltyProgram>> GetProgramsAsync(CancellationToken ct = default) =>
-            await _db.LoyaltyPrograms
+        public async Task<(IReadOnlyList<LoyaltyProgram> Items, int Total)> GetProgramsAsync(int page, int pageSize, CancellationToken ct = default)
+        {
+            var query = _db.LoyaltyPrograms
                 .Include(p => p.Tiers)
                 .Include(p => p.Kind)
-                .OrderBy(p => p.Name)
-                .ToListAsync(ct);
+                .OrderBy(p => p.Name);
+            var total = await query.CountAsync(ct);
+            var items = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+            return (items, total);
+        }
 
-        public async Task<IReadOnlyList<TravelerLoyaltyMembership>> GetMembershipsForTravelerAsync(Guid travelerId, CancellationToken ct = default) =>
-            await _db.TravelerLoyaltyMemberships
-                .Where(m => m.TravelerId == travelerId)
-                .ToListAsync(ct);
+        public async Task<(IReadOnlyList<TravelerLoyaltyMembership> Items, int Total)> GetMembershipsForTravelerAsync(Guid travelerId, int page, int pageSize, CancellationToken ct = default)
+        {
+            var query = _db.TravelerLoyaltyMemberships
+                .Where(m => m.TravelerId == travelerId);
+            var total = await query.CountAsync(ct);
+            var items = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+            return (items, total);
+        }
 
         public Task<TravelerLoyaltyMembership?> GetMembershipByIdAsync(Guid id, CancellationToken ct = default) =>
             _db.TravelerLoyaltyMemberships.FirstOrDefaultAsync(m => m.Id == id, ct);

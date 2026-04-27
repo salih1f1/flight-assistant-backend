@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Commands.Admin.Airlines;
 using FlightAssistant.Application.Queries.Admin.Airlines;
+using FlightAssistant.Contracts.Paging;
 using FlightAssistant.Contracts.Requests.Admin.Airlines;
 using FlightAssistant.Contracts.Responses.Admin;
 using MediatR;
@@ -15,14 +16,16 @@ namespace FlightAssistant.API.Endpoints.Admin
                 .WithTags("Admin - Airlines");
 
             // GET /admin/airlines
-            group.MapGet("", async (IMediator mediator, CancellationToken ct) =>
+            group.MapGet("", async ([AsParameters] PagedRequest paging, IMediator mediator, CancellationToken ct) =>
             {
-                var results = await mediator.Send(new GetAllAirlinesQuery(), ct);
-                return Results.Ok(results.Select(a => new AirlineAdminDto(a.Id, a.Iata, a.Icao, a.Name, a.CountryCode, a.AllianceCode)));
+                var result = await mediator.Send(new GetAllAirlinesQuery(paging), ct);
+                var dtos = result.Items.Select(a => new AirlineAdminDto(a.Id, a.Iata, a.Icao, a.Name, a.CountryCode, a.AllianceCode)).ToList();
+                return Results.Ok(new PagedResult<AirlineAdminDto>(dtos, result.Total, result.Page, result.PageSize));
             })
             .WithName("AdminGetAllAirlines")
             .WithSummary("List all airlines")
-            .Produces<IEnumerable<AirlineAdminDto>>(200);
+            .Produces<PagedResult<AirlineAdminDto>>(200)
+            .ProducesValidationProblem();
 
             // GET /admin/airlines/{id}
             group.MapGet("{id:int}", async (int id, IMediator mediator, CancellationToken ct) =>

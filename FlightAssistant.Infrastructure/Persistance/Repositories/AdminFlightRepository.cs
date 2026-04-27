@@ -9,11 +9,18 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         private readonly FlightAssistantDbContext _db;
         public AdminFlightRepository(FlightAssistantDbContext db) => _db = db;
 
-        public async Task<IReadOnlyList<Flight>> GetAllAsync(CancellationToken ct = default) =>
-            await _db.Flights
+        public async Task<(IReadOnlyList<Flight> Items, int Total)> GetAllAsync(int page, int pageSize, CancellationToken ct = default)
+        {
+            var query = _db.Flights
                 .OrderByDescending(f => f.ServiceDateUtc)
-                .ThenBy(f => f.FlightNumber)
-                .ToListAsync(ct);
+                .ThenBy(f => f.FlightNumber);
+            var total = await query.CountAsync(ct);
+            var items = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+            return (items, total);
+        }
+
+        public Task<bool> AnyForAirlineAsync(int airlineId, CancellationToken ct = default) =>
+            _db.Flights.AnyAsync(f => f.AirlineId == airlineId, ct);
 
         public Task<Flight?> GetByIntIdAsync(int id, CancellationToken ct = default) =>
             _db.Flights.FirstOrDefaultAsync(f => f.Id == id, ct);

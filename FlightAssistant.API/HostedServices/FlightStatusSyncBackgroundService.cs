@@ -30,7 +30,22 @@ namespace FlightAssistant.API.HostedServices
 
             while (!stoppingToken.IsCancellationRequested)
             {
-                var delay = await RunBatchAsync(stoppingToken);
+                TimeSpan delay;
+                try
+                {
+                    delay = await RunBatchAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    var retryIn = _config.GetValue("FlightSync:Interval", TimeSpan.FromMinutes(10));
+                    _log.LogError(ex, "Flight status sync batch failed. Retrying in {Interval}.", retryIn);
+                    delay = retryIn;
+                }
+
                 await Task.Delay(delay, stoppingToken);
             }
         }

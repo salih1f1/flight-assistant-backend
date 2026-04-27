@@ -1,4 +1,7 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Validators;
+using FlightAssistant.Contracts.Paging;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Queries.Flights
@@ -19,9 +22,17 @@ namespace FlightAssistant.Application.Queries.Flights
         bool Notify
     );
 
-    public record GetTravelerFlightsQuery(Guid TravelerId) : IRequest<IReadOnlyList<TravelerFlightResult>>;
+    public record GetTravelerFlightsQuery(Guid TravelerId, PagedRequest Paging) : IRequest<PagedResult<TravelerFlightResult>>;
 
-    public sealed class GetTravelerFlightsQueryHandler : IRequestHandler<GetTravelerFlightsQuery, IReadOnlyList<TravelerFlightResult>>
+    public class GetTravelerFlightsQueryValidator : AbstractValidator<GetTravelerFlightsQuery>
+    {
+        public GetTravelerFlightsQueryValidator()
+        {
+            RuleFor(x => x.Paging).SetValidator(new PagedRequestValidator());
+        }
+    }
+
+    public sealed class GetTravelerFlightsQueryHandler : IRequestHandler<GetTravelerFlightsQuery, PagedResult<TravelerFlightResult>>
     {
         private readonly IFlightRepository _flights;
         private readonly IRefDataRepository _refData;
@@ -32,9 +43,9 @@ namespace FlightAssistant.Application.Queries.Flights
             _refData = refData;
         }
 
-        public async Task<IReadOnlyList<TravelerFlightResult>> Handle(GetTravelerFlightsQuery query, CancellationToken ct)
+        public async Task<PagedResult<TravelerFlightResult>> Handle(GetTravelerFlightsQuery query, CancellationToken ct)
         {
-            var rows = await _flights.GetTravelerFlightsAsync(query.TravelerId, ct);
+            var (rows, total) = await _flights.GetTravelerFlightsAsync(query.TravelerId, query.Paging.Page, query.Paging.PageSize, ct);
 
             var results = new List<TravelerFlightResult>(rows.Count);
             foreach (var r in rows)
@@ -59,7 +70,7 @@ namespace FlightAssistant.Application.Queries.Flights
                     r.Tracking.Notify
                 ));
             }
-            return results;
+            return new PagedResult<TravelerFlightResult>(results, total, query.Paging.Page, query.Paging.PageSize);
         }
     }
 }

@@ -1,6 +1,7 @@
 using FlightAssistant.API.Authentication;
 using FlightAssistant.Application.Commands.Loyalty;
 using FlightAssistant.Application.Queries.Loyalty;
+using FlightAssistant.Contracts.Paging;
 using FlightAssistant.Contracts.Requests.Loyalty;
 using FlightAssistant.Contracts.Responses.Loyalty;
 using MediatR;
@@ -17,36 +18,38 @@ namespace FlightAssistant.API.Endpoints
         {
             var group = app.MapGroup("loyalty").RequireAuthorization().WithTags("Loyalty");
 
-            // GET /loyalty/programs — all programs with tiers (reference data)
-            group.MapGet("programs", async (HttpContext http, IMediator mediator, CancellationToken ct) =>
+            // GET /loyalty/programs — paginated programs with tiers (reference data)
+            group.MapGet("programs", async (HttpContext http, [AsParameters] PagedRequest paging, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-                var programs = await mediator.Send(new GetLoyaltyProgramsQuery(), ct);
-                var dtos = programs.Select(p => new LoyaltyProgramDto(
+                var result = await mediator.Send(new GetLoyaltyProgramsQuery(paging), ct);
+                var dtos = result.Items.Select(p => new LoyaltyProgramDto(
                     p.Id, p.Code, p.Name, p.Kind, p.AirlineId, p.AllianceCode,
-                    p.Tiers.Select(t => new LoyaltyTierDto(t.Id, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode)).ToList()));
-                return Results.Ok(dtos);
+                    p.Tiers.Select(t => new LoyaltyTierDto(t.Id, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode)).ToList())).ToList();
+                return Results.Ok(new PagedResult<LoyaltyProgramDto>(dtos, result.Total, result.Page, result.PageSize));
             })
             .WithName("GetLoyaltyPrograms")
             .WithSummary("List loyalty programs")
             .WithDescription(
-                "Returns all airline loyalty programs in the reference data, including their full tier hierarchy. " +
-                "Use this to populate program/tier picker UIs. Data is seeded from OpenFlights and is read-only.")
-            .Produces<IEnumerable<LoyaltyProgramDto>>(200);
+                "Returns a paginated list of airline loyalty programs, including their full tier hierarchy. " +
+                "Use this to populate program/tier picker UIs. Supports ?page and ?pageSize (default 50, max 200).")
+            .Produces<PagedResult<LoyaltyProgramDto>>(200)
+            .ProducesValidationProblem();
 
-            // GET /loyalty/memberships — traveler's own memberships
-            group.MapGet("memberships", async (HttpContext http, IMediator mediator, CancellationToken ct) =>
+            // GET /loyalty/memberships — traveler's own memberships (paginated)
+            group.MapGet("memberships", async (HttpContext http, [AsParameters] PagedRequest paging, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
-                var memberships = await mediator.Send(new GetTravelerMembershipsQuery(travelerId), ct);
-                var dtos = memberships.Select(m => new LoyaltyMembershipDto(m.Id, m.ProgramId, m.AccountNumber, m.TierId, m.TierExpiryDate, m.PointsExpiryDate));
-                return Results.Ok(dtos);
+                var result = await mediator.Send(new GetTravelerMembershipsQuery(travelerId, paging), ct);
+                var dtos = result.Items.Select(m => new LoyaltyMembershipDto(m.Id, m.ProgramId, m.AccountNumber, m.TierId, m.TierExpiryDate, m.PointsExpiryDate)).ToList();
+                return Results.Ok(new PagedResult<LoyaltyMembershipDto>(dtos, result.Total, result.Page, result.PageSize));
             })
             .WithName("GetMemberships")
             .WithSummary("List own memberships")
-            .WithDescription("Returns all loyalty program memberships the authenticated traveler has registered, including current tier and expiry dates.")
-            .Produces<IEnumerable<LoyaltyMembershipDto>>(200);
+            .WithDescription("Returns a paginated list of the authenticated traveler's loyalty memberships. Supports ?page and ?pageSize (default 50, max 200).")
+            .Produces<PagedResult<LoyaltyMembershipDto>>(200)
+            .ProducesValidationProblem();
 
             // POST /loyalty/memberships — add a membership
             group.MapPost("memberships", async (HttpContext http, [FromBody] AddMembershipRequest req, IMediator mediator, CancellationToken ct) =>

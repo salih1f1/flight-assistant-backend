@@ -1,4 +1,7 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Validators;
+using FlightAssistant.Contracts.Paging;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Queries.Loyalty
@@ -7,21 +10,30 @@ namespace FlightAssistant.Application.Queries.Loyalty
 
     public record LoyaltyProgramResult(int Id, string Code, string Name, string Kind, int? AirlineId, string? AllianceCode, IReadOnlyList<LoyaltyTierResult> Tiers);
 
-    public record GetLoyaltyProgramsQuery : IRequest<IReadOnlyList<LoyaltyProgramResult>>;
+    public record GetLoyaltyProgramsQuery(PagedRequest Paging) : IRequest<PagedResult<LoyaltyProgramResult>>;
 
-    public sealed class GetLoyaltyProgramsQueryHandler : IRequestHandler<GetLoyaltyProgramsQuery, IReadOnlyList<LoyaltyProgramResult>>
+    public class GetLoyaltyProgramsQueryValidator : AbstractValidator<GetLoyaltyProgramsQuery>
+    {
+        public GetLoyaltyProgramsQueryValidator()
+        {
+            RuleFor(x => x.Paging).SetValidator(new PagedRequestValidator());
+        }
+    }
+
+    public sealed class GetLoyaltyProgramsQueryHandler : IRequestHandler<GetLoyaltyProgramsQuery, PagedResult<LoyaltyProgramResult>>
     {
         private readonly ILoyaltyRepository _loyalty;
 
         public GetLoyaltyProgramsQueryHandler(ILoyaltyRepository loyalty) => _loyalty = loyalty;
 
-        public async Task<IReadOnlyList<LoyaltyProgramResult>> Handle(GetLoyaltyProgramsQuery query, CancellationToken ct)
+        public async Task<PagedResult<LoyaltyProgramResult>> Handle(GetLoyaltyProgramsQuery query, CancellationToken ct)
         {
-            var programs = await _loyalty.GetProgramsAsync(ct);
-            return programs.Select(p => new LoyaltyProgramResult(
+            var (programs, total) = await _loyalty.GetProgramsAsync(query.Paging.Page, query.Paging.PageSize, ct);
+            var items = programs.Select(p => new LoyaltyProgramResult(
                 p.Id, p.Code, p.Name, p.Kind.Code, p.AirlineId, p.AllianceCode,
                 p.Tiers.Select(t => new LoyaltyTierResult(t.Id, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode)).ToList()
             )).ToList();
+            return new PagedResult<LoyaltyProgramResult>(items, total, query.Paging.Page, query.Paging.PageSize);
         }
     }
 }

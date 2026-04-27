@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Commands.Admin.Loyalty;
 using FlightAssistant.Application.Queries.Loyalty;
+using FlightAssistant.Contracts.Paging;
 using FlightAssistant.Contracts.Requests.Admin.Loyalty;
 using FlightAssistant.Contracts.Responses.Loyalty;
 using MediatR;
@@ -16,18 +17,20 @@ namespace FlightAssistant.API.Endpoints.Admin
             var group = admin.MapGroup("loyalty")
                 .WithTags("Admin - Loyalty");
 
-            // GET /admin/loyalty/programs — reuses existing query
-            group.MapGet("programs", async (IMediator mediator, CancellationToken ct) =>
+            // GET /admin/loyalty/programs — reuses existing paginated query
+            group.MapGet("programs", async ([AsParameters] PagedRequest paging, IMediator mediator, CancellationToken ct) =>
             {
-                var results = await mediator.Send(new GetLoyaltyProgramsQuery(), ct);
-                return Results.Ok(results.Select(p => new LoyaltyProgramDto(
+                var result = await mediator.Send(new GetLoyaltyProgramsQuery(paging), ct);
+                var dtos = result.Items.Select(p => new LoyaltyProgramDto(
                     p.Id, p.Code, p.Name, p.Kind, p.AirlineId, p.AllianceCode,
                     p.Tiers.Select(t => new LoyaltyTierDto(t.Id, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode))
-                           .ToList())));
+                           .ToList())).ToList();
+                return Results.Ok(new PagedResult<LoyaltyProgramDto>(dtos, result.Total, result.Page, result.PageSize));
             })
             .WithName("AdminGetLoyaltyPrograms")
             .WithSummary("List all loyalty programs")
-            .Produces<IEnumerable<LoyaltyProgramDto>>(200);
+            .Produces<PagedResult<LoyaltyProgramDto>>(200)
+            .ProducesValidationProblem();
 
             // POST /admin/loyalty/programs
             group.MapPost("programs", async ([FromBody] CreateLoyaltyProgramRequest req, IMediator mediator, CancellationToken ct) =>

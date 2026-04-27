@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Commands.Admin.Lounges;
 using FlightAssistant.Application.Queries.Admin.Lounges;
+using FlightAssistant.Contracts.Paging;
 using FlightAssistant.Contracts.Requests.Admin.Lounges;
 using FlightAssistant.Contracts.Responses.Admin;
 using MediatR;
@@ -15,16 +16,18 @@ namespace FlightAssistant.API.Endpoints.Admin
                 .WithTags("Admin - Lounges");
 
             // GET /admin/lounges
-            group.MapGet("", async (IMediator mediator, CancellationToken ct) =>
+            group.MapGet("", async ([AsParameters] PagedRequest paging, IMediator mediator, CancellationToken ct) =>
             {
-                var results = await mediator.Send(new GetAllLoungesAdminQuery(), ct);
-                return Results.Ok(results.Select(l => new AdminLoungeDto(
+                var result = await mediator.Send(new GetAllLoungesAdminQuery(paging), ct);
+                var dtos = result.Items.Select(l => new AdminLoungeDto(
                     l.Id, l.AirportId, l.Name, l.Terminal, l.LocationHint, l.Hours,
-                    l.IsAirside, l.IsDomesticOnly, l.IsInternationalOnly, l.Amenities)));
+                    l.IsAirside, l.IsDomesticOnly, l.IsInternationalOnly, l.Amenities)).ToList();
+                return Results.Ok(new PagedResult<AdminLoungeDto>(dtos, result.Total, result.Page, result.PageSize));
             })
             .WithName("AdminGetAllLounges")
             .WithSummary("List all lounges")
-            .Produces<IEnumerable<AdminLoungeDto>>(200);
+            .Produces<PagedResult<AdminLoungeDto>>(200)
+            .ProducesValidationProblem();
 
             // GET /admin/lounges/{id}
             group.MapGet("{id:int}", async (int id, IMediator mediator, CancellationToken ct) =>

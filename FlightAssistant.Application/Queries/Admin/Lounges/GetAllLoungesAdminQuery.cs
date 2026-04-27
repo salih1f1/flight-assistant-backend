@@ -1,4 +1,7 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Validators;
+using FlightAssistant.Contracts.Paging;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Queries.Admin.Lounges
@@ -16,20 +19,29 @@ namespace FlightAssistant.Application.Queries.Admin.Lounges
         string? Amenities
     );
 
-    public record GetAllLoungesAdminQuery : IRequest<IReadOnlyList<AdminLoungeResult>>;
+    public record GetAllLoungesAdminQuery(PagedRequest Paging) : IRequest<PagedResult<AdminLoungeResult>>;
 
-    public sealed class GetAllLoungesAdminQueryHandler : IRequestHandler<GetAllLoungesAdminQuery, IReadOnlyList<AdminLoungeResult>>
+    public class GetAllLoungesAdminQueryValidator : AbstractValidator<GetAllLoungesAdminQuery>
+    {
+        public GetAllLoungesAdminQueryValidator()
+        {
+            RuleFor(x => x.Paging).SetValidator(new PagedRequestValidator());
+        }
+    }
+
+    public sealed class GetAllLoungesAdminQueryHandler : IRequestHandler<GetAllLoungesAdminQuery, PagedResult<AdminLoungeResult>>
     {
         private readonly ILoungeRepository _repo;
         public GetAllLoungesAdminQueryHandler(ILoungeRepository repo) => _repo = repo;
 
-        public async Task<IReadOnlyList<AdminLoungeResult>> Handle(GetAllLoungesAdminQuery request, CancellationToken ct)
+        public async Task<PagedResult<AdminLoungeResult>> Handle(GetAllLoungesAdminQuery request, CancellationToken ct)
         {
-            var lounges = await _repo.GetAllAsync(ct);
-            return lounges.Select(l => new AdminLoungeResult(
+            var (lounges, total) = await _repo.GetAllAsync(request.Paging.Page, request.Paging.PageSize, ct);
+            var items = lounges.Select(l => new AdminLoungeResult(
                 l.Id, l.AirportId, l.Name, l.Terminal, l.LocationHint, l.Hours,
                 l.IsAirside, l.IsDomesticOnly, l.IsInternationalOnly, l.Amenities
             )).ToList();
+            return new PagedResult<AdminLoungeResult>(items, total, request.Paging.Page, request.Paging.PageSize);
         }
     }
 }
