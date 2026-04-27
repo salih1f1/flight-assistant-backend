@@ -7,6 +7,7 @@ using FlightAssistant.Contracts.Responses.Loyalty;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Identity.Web.Resource;
+using System.Collections.Generic;
 
 namespace FlightAssistant.API.Endpoints
 {
@@ -17,6 +18,24 @@ namespace FlightAssistant.API.Endpoints
         public static void MapLoyaltyEndpoints(this IEndpointRouteBuilder app)
         {
             var group = app.MapGroup("loyalty").RequireAuthorization().WithTags("Loyalty");
+
+            // GET /loyalty/programs/search?airlineIata=BA — filter programs by airline
+            group.MapGet("programs/search", async (HttpContext http, string airlineIata, IMediator mediator, CancellationToken ct) =>
+            {
+                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
+                var results = await mediator.Send(new SearchLoyaltyProgramsQuery(airlineIata), ct);
+                var dtos = results.Select(p => new LoyaltyProgramDto(
+                    p.Id, p.Code, p.Name, p.Kind, p.AirlineId, p.AllianceCode,
+                    p.Tiers.Select(t => new LoyaltyTierDto(t.Id, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode)).ToList())).ToList();
+                return Results.Ok(dtos);
+            })
+            .WithName("SearchLoyaltyPrograms")
+            .WithSummary("Search loyalty programs by airline")
+            .WithDescription(
+                "Returns loyalty programs linked to the specified airline IATA code (e.g. 'BA'). " +
+                "Use this to populate the program picker when the user knows their airline.")
+            .Produces<List<LoyaltyProgramDto>>(200)
+            .ProducesValidationProblem();
 
             // GET /loyalty/programs — paginated programs with tiers (reference data)
             group.MapGet("programs", async (HttpContext http, [AsParameters] PagedRequest paging, IMediator mediator, CancellationToken ct) =>

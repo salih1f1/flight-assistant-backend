@@ -1,6 +1,7 @@
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Infrastructure.ExternalServices.FlightSearch;
 using FlightAssistant.Infrastructure.ExternalServices.FlightStatus;
 using FlightAssistant.Infrastructure.ExternalServices.Visa;
 using FlightAssistant.Infrastructure.Notifications;
@@ -67,6 +68,27 @@ namespace FlightAssistant.Infrastructure
             });
 
             services.AddScoped<IFlightStatusProvider, CompositeFlightStatusProvider>();
+
+            // Flight search — uses the same AeroDataBox HttpClient base address
+            services.AddHttpClient<AeroDataBoxFlightSearchProvider>(client =>
+            {
+                var baseUrl = config["AeroDataBox:BaseUrl"] ?? "https://aerodatabox.p.rapidapi.com/";
+                client.BaseAddress = new Uri(baseUrl);
+                client.Timeout = TimeSpan.FromSeconds(30);
+                var apiKey = config["AeroDataBox:ApiKey"];
+                if (!string.IsNullOrWhiteSpace(apiKey))
+                {
+                    client.DefaultRequestHeaders.Add("X-RapidAPI-Key", apiKey);
+                    client.DefaultRequestHeaders.Add("X-RapidAPI-Host", "aerodatabox.p.rapidapi.com");
+                }
+            }).AddStandardResilienceHandler(options =>
+            {
+                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
+                options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(8);
+                options.Retry.MaxRetryAttempts = 2;
+                options.Retry.BackoffType = DelayBackoffType.Exponential;
+            });
+            services.AddScoped<IFlightSearchProvider, AeroDataBoxFlightSearchProvider>();
 
             // Visa requirements provider — Sherpa°
             services.AddHttpClient<SherpaVisaRequirementsProvider>(client =>
