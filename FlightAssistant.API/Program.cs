@@ -154,6 +154,7 @@ builder.Services
             jwt.TokenValidationParameters.ValidIssuer = issuer;
             jwt.TokenValidationParameters.ValidAudience = apiClientId;
             jwt.TokenValidationParameters.NameClaimType = NameClaimType;
+            jwt.TokenValidationParameters.RoleClaimType = "roles";
             jwt.IncludeErrorDetails = builder.Environment.IsDevelopment();
         },
         msid =>
