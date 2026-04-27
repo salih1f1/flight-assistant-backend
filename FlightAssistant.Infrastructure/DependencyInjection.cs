@@ -4,6 +4,7 @@ using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Infrastructure.ExternalServices.FlightStatus;
 using FlightAssistant.Infrastructure.ExternalServices.Visa;
 using FlightAssistant.Infrastructure.Notifications;
+using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,6 +16,9 @@ namespace FlightAssistant.Infrastructure
     {
         public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration config, bool isDevelopment = false)
         {
+            // EF interceptors
+            services.AddScoped<DomainEventDispatchInterceptor>();
+
             // Repositories
             services.AddScoped<ITravelerRepository, TravelerRepository>();
             services.AddScoped<IFlightRepository, FlightRepository>();

@@ -99,8 +99,11 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 // Database
-builder.Services.AddDbContext<FlightAssistantDbContext>(opt =>
-    opt.UseNpgsql(Cfg("PostgresConnectionString")));
+builder.Services.AddDbContext<FlightAssistantDbContext>((sp, opt) =>
+{
+    opt.UseNpgsql(Cfg("PostgresConnectionString"));
+    opt.AddInterceptors(sp.GetRequiredService<DomainEventDispatchInterceptor>());
+});
 
 // Caching
 builder.Services.AddAppCaching(builder.Configuration);

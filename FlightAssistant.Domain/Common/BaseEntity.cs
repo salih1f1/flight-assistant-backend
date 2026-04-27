@@ -1,8 +1,9 @@
 ﻿using System.ComponentModel.DataAnnotations.Schema;
+using FlightAssistant.Domain.Common.Interfaces;
 
 namespace FlightAssistant.Domain.Common
 {
-    public class BaseEntity
+    public class BaseEntity : IHasDomainEvents
     {
         public Guid Id { get; protected set; } = Guid.NewGuid();
         
