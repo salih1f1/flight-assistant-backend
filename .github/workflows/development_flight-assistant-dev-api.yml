@@ -35,6 +35,31 @@ jobs:
       - name: dotnet publish
         run: dotnet publish -c Release -o ${{env.DOTNET_ROOT}}/myapp
 
+      - name: Restore dotnet tools
+        run: dotnet tool restore
+
+      - name: Export OpenAPI spec
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+          PostgresConnectionString: "Host=localhost;Database=dummy;Username=dummy;Password=dummy"
+          Azure__TenantId: "00000000-0000-0000-0000-000000000000"
+          Azure__ClientId: "00000000-0000-0000-0000-000000000000"
+          Azure__Instance: "https://login.microsoftonline.com/"
+          Azure__Domain: "dummy.onmicrosoft.com"
+          Azure__SignUpSignInPolicyId: "B2C_1_signupsignin"
+          Azure__Issuer: "https://dummy.b2clogin.com/{0}/v2.0/"
+          Azure__Authority: "https://dummy.b2clogin.com/{0}/B2C_1_signupsignin/v2.0"
+        run: >
+          dotnet swagger tofile
+          --output openapi.json
+          ${{env.DOTNET_ROOT}}/myapp/FlightAssistant.API.dll v1
+
+      - name: Upload OpenAPI spec artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-spec
+          path: openapi.json
+
       - name: Install EF Core CLI
         run: dotnet tool install --global dotnet-ef
 
