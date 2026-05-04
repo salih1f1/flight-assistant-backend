@@ -212,7 +212,7 @@ app.Services.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>()
 // ------------------------------------------------------------
 // 5. Middleware Pipeline
 // ------------------------------------------------------------
-if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment() || app.Environment.IsStaging())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
