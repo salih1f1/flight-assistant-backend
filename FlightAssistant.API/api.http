@@ -1,0 +1,217 @@
+### Flight Assistant API — HTTP Client file
+### Works with VS Code REST Client and JetBrains HTTP Client
+### 1. Start the local stack:  docker compose up -d
+### 2. Run the API:            dotnet run --project FlightAssistant.API
+### 3. Paste a valid B2C JWT into @token below
+
+@baseUrl = http://localhost:5000
+@token = <paste-b2c-token-here>
+
+# ────────────────────────────────────────────────────────────────────────────────
+# TRAVELERS
+# ────────────────────────────────────────────────────────────────────────────────
+
+### Register traveler (idempotent — safe to call on every app launch)
+# Expected: 200 OK  { "id": "...", "email": "...", "firstName": "...", ... }
+POST {{baseUrl}}/travelers
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "email": "john.doe@example.com",
+  "firstName": "John",
+  "lastName": "Doe"
+}
+
+###
+
+### Get my profile
+# Expected: 200 OK  { "id": "...", "email": "...", "firstName": "...", ... }
+GET {{baseUrl}}/travelers/me
+Authorization: Bearer {{token}}
+
+###
+
+### Update my profile
+# Expected: 200 OK  { updated traveler }
+PATCH {{baseUrl}}/travelers/me
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "firstName": "Johnny",
+  "lastName": "Doe"
+}
+
+###
+
+### Add a device token (for APNs push notifications)
+# Expected: 204 No Content
+POST {{baseUrl}}/travelers/me/device-tokens
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "token": "abc123devicetoken",
+  "platform": "iOS"
+}
+
+###
+
+### List my device tokens
+# Expected: 200 OK  [ { "id": "...", "token": "...", "platform": "iOS" }, ... ]
+GET {{baseUrl}}/travelers/me/device-tokens
+Authorization: Bearer {{token}}
+
+###
+
+### Delete a device token
+# Expected: 204 No Content
+@deviceTokenId = 00000000-0000-0000-0000-000000000000
+DELETE {{baseUrl}}/travelers/me/device-tokens/{{deviceTokenId}}
+Authorization: Bearer {{token}}
+
+# ────────────────────────────────────────────────────────────────────────────────
+# FLIGHTS
+# ────────────────────────────────────────────────────────────────────────────────
+
+###
+
+### Search flights (no auth — uses AeroDataBox)
+# Expected: 200 OK  [ { "flightNumber": "BA123", "departure": ..., "arrival": ... }, ... ]
+GET {{baseUrl}}/flights/search?from=LHR&to=JFK&date=2026-05-10
+
+###
+
+### List my tracked flights
+# Expected: 200 OK  { "items": [...], "totalCount": N }
+GET {{baseUrl}}/flights?page=1&pageSize=20
+Authorization: Bearer {{token}}
+
+###
+
+### Track a flight
+# Expected: 200 OK  { "id": N, "flightNumber": "BA117", ... }
+POST {{baseUrl}}/flights
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "flightNumber": "BA117",
+  "serviceDate": "2026-05-10"
+}
+
+###
+
+### Get live flight status
+# Expected: 200 OK  { "status": "OnTime" | "Delayed" | "Cancelled", ... }
+@flightId = 1
+GET {{baseUrl}}/flights/{{flightId}}/status
+Authorization: Bearer {{token}}
+
+###
+
+### Sync flight status now (manual refresh)
+# Expected: 204 No Content
+POST {{baseUrl}}/flights/{{flightId}}/sync
+Authorization: Bearer {{token}}
+
+###
+
+### Toggle push notifications for a flight
+# Expected: 204 No Content
+PATCH {{baseUrl}}/flights/{{flightId}}/notify
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+true
+
+###
+
+### Untrack a flight
+# Expected: 204 No Content
+DELETE {{baseUrl}}/flights/{{flightId}}
+Authorization: Bearer {{token}}
+
+# ────────────────────────────────────────────────────────────────────────────────
+# LOYALTY
+# ────────────────────────────────────────────────────────────────────────────────
+
+###
+
+### Search loyalty programs by airline IATA code
+# Expected: 200 OK  [ { "id": "...", "name": "Executive Club", ... } ]
+GET {{baseUrl}}/loyalty/programs/search?airlineIata=BA
+Authorization: Bearer {{token}}
+
+###
+
+### List all loyalty programs (paginated)
+# Expected: 200 OK  { "items": [...], "totalCount": N }
+GET {{baseUrl}}/loyalty/programs?page=1&pageSize=20
+Authorization: Bearer {{token}}
+
+###
+
+### List my memberships
+# Expected: 200 OK  { "items": [...], "totalCount": N }
+GET {{baseUrl}}/loyalty/memberships?page=1&pageSize=20
+Authorization: Bearer {{token}}
+
+###
+
+### Add a loyalty membership
+# Expected: 200 OK  { "id": "...", "programId": "...", "memberNumber": "...", ... }
+POST {{baseUrl}}/loyalty/memberships
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "loyaltyProgramId": "00000000-0000-0000-0000-000000000001",
+  "memberNumber": "BA1234567",
+  "tierCode": "BLUE"
+}
+
+###
+
+### Update a loyalty membership
+# Expected: 200 OK  { updated membership }
+@membershipId = 00000000-0000-0000-0000-000000000000
+PUT {{baseUrl}}/loyalty/memberships/{{membershipId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "loyaltyProgramId": "00000000-0000-0000-0000-000000000001",
+  "memberNumber": "BA1234567",
+  "tierCode": "SILVER"
+}
+
+###
+
+### Delete a loyalty membership
+# Expected: 204 No Content
+DELETE {{baseUrl}}/loyalty/memberships/{{membershipId}}
+Authorization: Bearer {{token}}
+
+# ────────────────────────────────────────────────────────────────────────────────
+# LOUNGES
+# ────────────────────────────────────────────────────────────────────────────────
+
+###
+
+### Get lounge eligibility at an airport
+# Expected: 200 OK  [ { "loungeName": "...", "eligible": true/false, "reason": "..." }, ... ]
+GET {{baseUrl}}/lounges?airportIata=LHR
+Authorization: Bearer {{token}}
+
+# ────────────────────────────────────────────────────────────────────────────────
+# VISA
+# ────────────────────────────────────────────────────────────────────────────────
+
+###
+
+### Get visa requirements
+# Expected: 200 OK  { "visaRequired": true/false, "visaOnArrival": ..., "notes": "..." }
+GET {{baseUrl}}/visa?passportCountry=GBR&destinationCountry=USA
+Authorization: Bearer {{token}}

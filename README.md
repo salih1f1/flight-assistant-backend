@@ -19,6 +19,24 @@ The project starts with a **.NET 9 backend**, an **iOS client (SwiftUI)**, and w
 
 ---
 
+## ⚡ Quick Start (local dev)
+
+**Prerequisites:** Docker, .NET 8 SDK, `az login` (for Key Vault)
+
+```bash
+# 1. Start Postgres + Redis
+docker compose up -d
+
+# 2. Run the API (connects to localhost by default)
+dotnet run --project FlightAssistant.API
+```
+
+Swagger UI → http://localhost:5000/swagger
+
+**HTTP Client:** Open `FlightAssistant.API/api.http` in VS Code (REST Client extension) or JetBrains Rider. Paste a B2C JWT into `@token` and run any request with one click.
+
+---
+
 ## 🚀 Tech Stack
 
 **Backend**
