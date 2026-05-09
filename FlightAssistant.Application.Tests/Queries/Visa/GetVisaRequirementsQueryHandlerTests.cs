@@ -1,8 +1,11 @@
 using FlightAssistant.Application.Interfaces.Caching;
-using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Queries.Visa;
 using FlightAssistant.Domain.Common.Exceptions;
 using NSubstitute;
+// Alias the two VisaRequirementResult types to avoid ambiguity:
+// the provider DTO (6 params, includes RawPayloadJson) vs the query result DTO (5 params)
+using IVisaRequirementsProvider = FlightAssistant.Application.Interfaces.ExternalServices.IVisaRequirementsProvider;
+using ProviderVisaResult = FlightAssistant.Application.Interfaces.ExternalServices.VisaRequirementResult;
 
 namespace FlightAssistant.Application.Tests.Queries.Visa;
 
@@ -12,7 +15,7 @@ public class GetVisaRequirementsQueryHandlerTests
     private readonly ICacheService _cache = Substitute.For<ICacheService>();
     private readonly GetVisaRequirementsQueryHandler _handler;
 
-    private static readonly VisaRequirementResult SampleResult = new(
+    private static readonly ProviderVisaResult SampleResult = new(
         "GB", "JP", "visa_free", 90, null, null);
 
     public GetVisaRequirementsQueryHandlerTests()
@@ -42,7 +45,7 @@ public class GetVisaRequirementsQueryHandlerTests
     public async Task Handle_CacheHit_DoesNotCallProvider()
     {
         _cache.GetAsync<VisaRequirementResult>(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(SampleResult);
+            .Returns(new VisaRequirementResult("GB", "JP", "visa_free", 90, null));
 
         var result = await _handler.Handle(new GetVisaRequirementsQuery("GB", "JP"), default);
 
@@ -57,7 +60,7 @@ public class GetVisaRequirementsQueryHandlerTests
         _cache.GetAsync<VisaRequirementResult>(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns((VisaRequirementResult?)null);
         _provider.GetRequirementsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns((VisaRequirementResult?)null);
+            .Returns((ProviderVisaResult?)null);
 
         var ex = await Assert.ThrowsAsync<DomainException>(
             () => _handler.Handle(new GetVisaRequirementsQuery("GB", "JP"), default));
