@@ -14,12 +14,12 @@ namespace FlightAssistant.Application.Queries.Flights
             RuleFor(x => x.From)
                 .NotEmpty()
                 .Length(3)
-                .Matches("^[A-Za-z]{3}$").WithMessage("'From' must be a 3-letter IATA airport code.");
+                .Matches("^[A-Z]{3}$").WithMessage("'From' must be a 3-letter uppercase IATA airport code.");
 
             RuleFor(x => x.To)
                 .NotEmpty()
                 .Length(3)
-                .Matches("^[A-Za-z]{3}$").WithMessage("'To' must be a 3-letter IATA airport code.");
+                .Matches("^[A-Z]{3}$").WithMessage("'To' must be a 3-letter uppercase IATA airport code.");
 
             RuleFor(x => x.Date)
                 .Must(d => d >= DateOnly.FromDateTime(DateTime.UtcNow.AddYears(-1)))
