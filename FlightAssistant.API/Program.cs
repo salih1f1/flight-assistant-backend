@@ -321,3 +321,6 @@ app.MapPrivateEndpoints();
 // 7. Run
 // ------------------------------------------------------------
 app.Run();
+
+// Exposes Program for WebApplicationFactory in integration tests
+public partial class Program { }
