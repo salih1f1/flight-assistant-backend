@@ -56,7 +56,15 @@ namespace FlightAssistant.Application.EventHandlers
                 "Sending {Count} push notifications for flight {FlightNumber} status {Status}",
                 tokens.Count, notification.FlightNumber, notification.StatusCode);
 
-            await _push.SendAsync(tokens, title, body, ct);
+            try
+            {
+                await _push.SendAsync(tokens, title, body, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Failed to send push notifications for flight {FlightNumber}", notification.FlightNumber);
+            }
         }
 
         private static string GetStatusMessage(string statusCode, DateOnly serviceDate) => statusCode switch
