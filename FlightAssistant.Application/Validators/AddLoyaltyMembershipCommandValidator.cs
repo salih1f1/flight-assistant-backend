@@ -12,7 +12,7 @@ namespace FlightAssistant.Application.Validators
 
             RuleFor(x => x.AccountNumber)
                 .NotEmpty()
-                .MaximumLength(100);
+                .MaximumLength(64);
         }
     }
 }
