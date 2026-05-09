@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Domain.Common.Exceptions;
 using MediatR;
 
 namespace FlightAssistant.Application.Queries.Visa
@@ -13,9 +14,9 @@ namespace FlightAssistant.Application.Queries.Visa
     );
 
     public record GetVisaRequirementsQuery(string PassportCountryCode, string DestinationCountryCode)
-        : IRequest<VisaRequirementResult?>;
+        : IRequest<VisaRequirementResult>;
 
-    public sealed class GetVisaRequirementsQueryHandler : IRequestHandler<GetVisaRequirementsQuery, VisaRequirementResult?>
+    public sealed class GetVisaRequirementsQueryHandler : IRequestHandler<GetVisaRequirementsQuery, VisaRequirementResult>
     {
         private readonly IVisaRequirementsProvider _provider;
         private readonly ICacheService _cache;
@@ -34,7 +35,9 @@ namespace FlightAssistant.Application.Queries.Visa
             if (cached is not null) return cached;
 
             var result = await _provider.GetRequirementsAsync(query.PassportCountryCode, query.DestinationCountryCode, ct);
-            if (result is null) return null;
+            if (result is null)
+                throw new DomainException(
+                    "Visa requirements service returned an unexpected response. Please try again later.", 503);
 
             var dto = new VisaRequirementResult(result.PassportCountryCode, result.DestinationCountryCode, result.AdmissionType, result.StayDays, result.Notes);
             await _cache.SetAsync(cacheKey, dto, TimeSpan.FromHours(24), ct);

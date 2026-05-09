@@ -1,5 +1,7 @@
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Domain.Common.Exceptions;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using System.Net.Http.Json;
 using System.Text.Json;
 
@@ -10,11 +12,14 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Visa
     {
         private readonly HttpClient _http;
         private readonly string _apiKey;
+        private readonly ILogger<SherpaVisaRequirementsProvider> _log;
 
-        public SherpaVisaRequirementsProvider(HttpClient http, IConfiguration config)
+        public SherpaVisaRequirementsProvider(HttpClient http, IConfiguration config,
+            ILogger<SherpaVisaRequirementsProvider> log)
         {
             _http = http;
             _apiKey = config["Sherpa:ApiKey"] ?? string.Empty;
+            _log = log;
         }
 
         public async Task<VisaRequirementResult?> GetRequirementsAsync(
@@ -35,8 +40,26 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Visa
             };
             request.Headers.Add("Authorization", $"Bearer {_apiKey}");
 
-            var response = await _http.SendAsync(request, ct);
-            if (!response.IsSuccessStatusCode) return null;
+            HttpResponseMessage response;
+            try
+            {
+                response = await _http.SendAsync(request, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogError(ex, "Sherpa visa API unreachable for {Passport}→{Destination}",
+                    passportCountryCode, destinationCountryCode);
+                throw new DomainException(
+                    "Visa requirements service is temporarily unavailable. Please try again later.", 503);
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _log.LogWarning("Sherpa visa API returned {StatusCode} for {Passport}→{Destination}",
+                    (int)response.StatusCode, passportCountryCode, destinationCountryCode);
+                throw new DomainException(
+                    "Visa requirements service is temporarily unavailable. Please try again later.", 503);
+            }
 
             var json = await response.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);

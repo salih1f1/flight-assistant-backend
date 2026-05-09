@@ -18,7 +18,6 @@ namespace FlightAssistant.API.Endpoints
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var result = await mediator.Send(new GetVisaRequirementsQuery(passportCountry, destinationCountry), ct);
-                if (result is null) return Results.NotFound();
                 return Results.Ok(new VisaRequirementDto(result.PassportCountryCode, result.DestinationCountryCode, result.AdmissionType, result.StayDays, result.Notes));
             })
             .WithName("GetVisaRequirements")
