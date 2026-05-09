@@ -2,6 +2,9 @@ using dotAPNS;
 using FlightAssistant.Application.Interfaces.Notifications;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Polly;
+using Polly.CircuitBreaker;
+using Polly.Retry;
 
 namespace FlightAssistant.Infrastructure.Notifications
 {
@@ -10,6 +13,7 @@ namespace FlightAssistant.Infrastructure.Notifications
     {
         private readonly ILogger<ApplePushNotificationService> _logger;
         private readonly Lazy<IApnsClient?> _client;
+        private readonly ResiliencePipeline _pipeline;
 
         public ApplePushNotificationService(
             IOptions<ApnsOptions> options,
@@ -17,6 +21,7 @@ namespace FlightAssistant.Infrastructure.Notifications
         {
             _logger = logger;
             _client = new Lazy<IApnsClient?>(() => BuildClient(options.Value));
+            _pipeline = BuildResiliencePipeline();
         }
 
         public async Task SendAsync(IEnumerable<string> deviceTokens, string title, string body, CancellationToken ct = default)
@@ -30,27 +35,63 @@ namespace FlightAssistant.Infrastructure.Notifications
 
             foreach (var token in deviceTokens)
             {
+                var maskedToken = MaskToken(token);
                 try
                 {
-                    var push = new ApplePush(ApplePushType.Alert)
-                        .AddToken(token)
-                        .AddAlert(title, body)
-                        .AddBadge(1);
+                    await _pipeline.ExecuteAsync(async innerCt =>
+                    {
+                        var push = new ApplePush(ApplePushType.Alert)
+                            .AddToken(token)
+                            .AddAlert(title, body)
+                            .AddBadge(1);
 
-                    var response = await client.SendAsync(push, ct);
-                    if (response.IsSuccessful)
-                        _logger.LogDebug("APNs push sent to {Token}", token[..8] + "...");
-                    else
-                        _logger.LogWarning("APNs push failed for {Token}: {Reason}", token[..8] + "...", response.ReasonString);
+                        var response = await client.SendAsync(push, innerCt);
+                        if (!response.IsSuccessful)
+                        {
+                            _logger.LogWarning("APNs push failed for {Token}: {Reason}",
+                                maskedToken, response.ReasonString);
+                            throw new ApnsDeliveryException(response.ReasonString ?? "Unknown APNs error");
+                        }
+
+                        _logger.LogDebug("APNs push sent to {Token}", maskedToken);
+                    }, ct);
                 }
-                catch (Exception ex)
+                catch (BrokenCircuitException)
                 {
-                    _logger.LogError(ex, "APNs push exception for token {Token}", token[..8] + "...");
+                    _logger.LogError("APNs circuit breaker open — stopping sends for notification: {Title}", title);
+                    return;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogError(ex, "APNs push failed after retries for token {Token}", maskedToken);
                 }
             }
         }
 
-        private IApnsClient? BuildClient(ApnsOptions opts)
+        private ResiliencePipeline BuildResiliencePipeline() =>
+            new ResiliencePipelineBuilder()
+                .AddRetry(new RetryStrategyOptions
+                {
+                    MaxRetryAttempts = 3,
+                    BackoffType = DelayBackoffType.Exponential,
+                    Delay = TimeSpan.FromSeconds(1),
+                    ShouldHandle = new PredicateBuilder().Handle<ApnsDeliveryException>()
+                })
+                .AddCircuitBreaker(new CircuitBreakerStrategyOptions
+                {
+                    // Open after 50% failure rate across at least 5 calls within a 30 s window
+                    FailureRatio = 0.5,
+                    SamplingDuration = TimeSpan.FromSeconds(30),
+                    MinimumThroughput = 5,
+                    BreakDuration = TimeSpan.FromSeconds(60),
+                    ShouldHandle = new PredicateBuilder().Handle<ApnsDeliveryException>()
+                })
+                .Build();
+
+        private static string MaskToken(string token) =>
+            token.Length > 8 ? token[..8] + "..." : "***";
+
+        private static IApnsClient? BuildClient(ApnsOptions opts)
         {
             if (string.IsNullOrWhiteSpace(opts.BundleId) || string.IsNullOrWhiteSpace(opts.KeyId)
                 || string.IsNullOrWhiteSpace(opts.TeamId) || string.IsNullOrWhiteSpace(opts.P8KeyContent))
@@ -67,4 +108,6 @@ namespace FlightAssistant.Infrastructure.Notifications
             return ApnsClient.CreateUsingJwt(new HttpClient(), jwtOptions);
         }
     }
+
+    internal sealed class ApnsDeliveryException(string reason) : Exception(reason);
 }
