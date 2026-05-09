@@ -6,6 +6,7 @@ using FlightAssistant.Domain.Flights.Events;
 using FlightAssistant.Domain.Travelers.Entities;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 
 namespace FlightAssistant.Application.Tests.EventHandlers;
 
