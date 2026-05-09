@@ -70,6 +70,7 @@ namespace FlightAssistant.Domain.Lounges.Services
                         var allianceMatch = activeMemberships.Any(m =>
                             m.TierId is not null &&
                             tierById.TryGetValue(m.TierId.Value, out var tier) &&
+                            tier.AllianceTierCode is not null &&
                             tier.AllianceCode == provider.Code &&
                             MeetsMinTier(provider.Code, tier.AllianceTierCode, link.MinAllianceTierCode));
                         if (allianceMatch)

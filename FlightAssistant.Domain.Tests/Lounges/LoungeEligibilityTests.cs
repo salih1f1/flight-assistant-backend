@@ -105,6 +105,21 @@ namespace FlightAssistant.Domain.Tests.Lounges
             Assert.False(result.IsEligible);
         }
 
+        [Fact]
+        public void CheckEligibility_AllianceTierCodeIsNull_ReturnsNotEligible()
+        {
+            // Tier exists but has no AllianceTierCode — not a proper alliance tier
+            var lounge = BuildLounge(LoungeProviderKind.Alliance, "OW");
+            var tier = LoyaltyTier.Create(1, "BASIC", "Basic", 1, allianceCode: "OW", allianceTierCode: null);
+            typeof(LoyaltyTier).GetProperty(nameof(LoyaltyTier.Id))!.SetValue(tier, 10);
+            var membership = Membership(programId: 1, tierId: 10);
+
+            var result = LoungeEligibilityService.CheckEligibility(
+                lounge, [membership], [], [tier]);
+
+            Assert.False(result.IsEligible);
+        }
+
         // --- Contract / Card eligibility ---
 
         [Fact]
