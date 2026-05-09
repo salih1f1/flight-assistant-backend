@@ -29,7 +29,8 @@ namespace FlightAssistant.API.Endpoints
                 "destinationCountry — ISO 3166-1 alpha-2 country code of the destination (e.g. 'JP'). " +
                 "Returns 404 if no requirement data is available for the given combination.")
             .Produces<VisaRequirementDto>(200)
-            .ProducesProblem(404);
+            .ProducesProblem(404)
+            .RequireRateLimiting("visa");
         }
     }
 }
