@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using FlightAssistant.Domain.Common.Exceptions;
 
 namespace FlightAssistant.API.Authentication
 {
@@ -8,8 +9,10 @@ namespace FlightAssistant.API.Authentication
         {
             var id = user.FindFirstValue("oid") ?? user.FindFirstValue("sub");
             if (string.IsNullOrEmpty(id))
-                throw new InvalidOperationException("No traveler identity claim found.");
-            return Guid.Parse(id);
+                throw new DomainException("No traveler identity claim found.", 401);
+            if (!Guid.TryParse(id, out var guid))
+                throw new DomainException("Traveler identity claim is not a valid identifier.", 401);
+            return guid;
         }
     }
 }
