@@ -2,6 +2,7 @@ using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Queries.Visa;
 using FlightAssistant.Domain.Common.Exceptions;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 // Alias the two VisaRequirementResult types to avoid ambiguity:
 // the provider DTO (6 params, includes RawPayloadJson) vs the query result DTO (5 params)
 using IVisaRequirementsProvider = FlightAssistant.Application.Interfaces.ExternalServices.IVisaRequirementsProvider;
