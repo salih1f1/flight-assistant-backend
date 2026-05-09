@@ -48,6 +48,10 @@ namespace FlightAssistant.Domain.Lounges.Services
         {
             var programById = programs.ToDictionary(p => p.Id);
             var tierById    = allTiers.ToDictionary(t => t.Id);
+            var today       = DateOnly.FromDateTime(DateTime.UtcNow);
+            var activeMemberships = memberships
+                .Where(m => m.TierExpiryDate is null || m.TierExpiryDate.Value >= today)
+                .ToList();
 
             foreach (var link in lounge.Providers)
             {
@@ -56,14 +60,14 @@ namespace FlightAssistant.Domain.Lounges.Services
                 switch (provider.Kind)
                 {
                     case LoungeProviderKind.Airline:
-                        var airlineMatch = memberships.Any(m =>
+                        var airlineMatch = activeMemberships.Any(m =>
                             programById.TryGetValue(m.ProgramId, out var prog) && prog.Code == provider.Code);
                         if (airlineMatch)
                             return new EligibilityResult(true, provider.Name, LoungeProviderKind.Airline);
                         break;
 
                     case LoungeProviderKind.Alliance:
-                        var allianceMatch = memberships.Any(m =>
+                        var allianceMatch = activeMemberships.Any(m =>
                             m.TierId is not null &&
                             tierById.TryGetValue(m.TierId.Value, out var tier) &&
                             tier.AllianceCode == provider.Code &&
@@ -74,7 +78,7 @@ namespace FlightAssistant.Domain.Lounges.Services
 
                     case LoungeProviderKind.Contract:
                     case LoungeProviderKind.Card:
-                        var contractMatch = memberships.Any(m =>
+                        var contractMatch = activeMemberships.Any(m =>
                             programById.TryGetValue(m.ProgramId, out var prog) && prog.Code == provider.Code);
                         if (contractMatch)
                             return new EligibilityResult(true, provider.Name, provider.Kind);

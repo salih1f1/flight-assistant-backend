@@ -7,36 +7,179 @@ namespace FlightAssistant.Domain.Tests.Lounges
 {
     public class LoungeEligibilityTests
     {
-        private static Lounge BuildLounge(string providerCode, LoungeProviderKind kind)
+        // --- Helpers ---
+
+        private static Lounge BuildLounge(LoungeProviderKind kind, string providerCode,
+            string? minAllianceTierCode = null)
         {
-            // Use reflection to build test entities since constructors are private
-            var provider = BuildProvider(providerCode, kind);
-            var link = BuildLink(kind);
-            SetField(link, "_provider", provider);
-            SetField(link, "_lounge", null!); // not needed for eligibility check
+            var provider = LoungeProvider.Create(providerCode, providerCode + " Lounge", kind);
+            var link = LoungeProviderLink.Create(1, 1, LoungeProviderRole.Operator,
+                minAllianceTierCode: minAllianceTierCode);
 
-            // Set Provider property via reflection
-            var linkProviderProp = typeof(LoungeProviderLink).GetProperty("Provider")!;
-            // Actually, since Provider is { get; private set; }, we need different approach
+            // Provider has private setter — set via reflection (EF Core does the same at runtime)
+            typeof(LoungeProviderLink)
+                .GetProperty(nameof(LoungeProviderLink.Provider))!
+                .SetValue(link, provider);
 
-            // Build using a test-friendly factory or just test the logic directly
-            // For now, let's use a simpler test approach
-            throw new InvalidOperationException("Cannot construct domain entities with private setters in tests. Use domain factory methods.");
+            var lounge = Lounge.Create(1, "Test Lounge");
+            lounge.Providers.Add(link);
+            return lounge;
         }
 
-        private static LoungeProvider BuildProvider(string code, LoungeProviderKind kind) => default!;
-        private static LoungeProviderLink BuildLink(LoungeProviderKind kind) => default!;
-        private static void SetField(object obj, string name, object? val) { }
+        private static TravelerLoyaltyMembership Membership(
+            int programId, string accountNumber = "ACC1",
+            int? tierId = null,
+            DateOnly? tierExpiryDate = null)
+            => TravelerLoyaltyMembership.Create(Guid.NewGuid(), programId, accountNumber, tierId, tierExpiryDate);
+
+        private static LoyaltyProgram Program(int id, string code)
+        {
+            var p = LoyaltyProgram.Create(code, code + " Program", kindId: 1);
+            typeof(LoyaltyProgram).GetProperty(nameof(LoyaltyProgram.Id))!.SetValue(p, id);
+            return p;
+        }
+
+        private static LoyaltyTier Tier(int id, string allianceCode, string allianceTierCode)
+        {
+            var t = LoyaltyTier.Create(1, allianceTierCode, allianceTierCode, 1,
+                allianceCode: allianceCode, allianceTierCode: allianceTierCode);
+            typeof(LoyaltyTier).GetProperty(nameof(LoyaltyTier.Id))!.SetValue(t, id);
+            return t;
+        }
+
+        // --- Airline eligibility ---
 
         [Fact]
-        public void CheckEligibility_WithNoProviders_ReturnsNotEligible()
+        public void CheckEligibility_AirlineMatch_ReturnsEligible()
         {
-            // This test validates the service returns false when the lounge has no providers
-            // We skip entity construction due to private setters; integration tests will cover full eligibility
-            var result = new Domain.Lounges.Services.EligibilityResult(false, null, null);
+            var lounge = BuildLounge(LoungeProviderKind.Airline, "BA");
+            var program = Program(1, "BA");
+            var membership = Membership(programId: 1);
+
+            var result = LoungeEligibilityService.CheckEligibility(
+                lounge, [membership], [program], []);
+
+            Assert.True(result.IsEligible);
+            Assert.Equal(LoungeProviderKind.Airline, result.ProviderKind);
+        }
+
+        [Fact]
+        public void CheckEligibility_NoMatchingAirlineProgram_ReturnsNotEligible()
+        {
+            var lounge = BuildLounge(LoungeProviderKind.Airline, "BA");
+            var program = Program(1, "LH");
+            var membership = Membership(programId: 1);
+
+            var result = LoungeEligibilityService.CheckEligibility(
+                lounge, [membership], [program], []);
+
+            Assert.False(result.IsEligible);
+        }
+
+        // --- Alliance eligibility ---
+
+        [Fact]
+        public void CheckEligibility_AllianceTierMeetsMinimum_ReturnsEligible()
+        {
+            var lounge = BuildLounge(LoungeProviderKind.Alliance, "OW", minAllianceTierCode: "SAPPHIRE");
+            var tier = Tier(10, "OW", "EMERALD"); // rank 3 >= required rank 2
+            var membership = Membership(programId: 1, tierId: 10);
+
+            var result = LoungeEligibilityService.CheckEligibility(
+                lounge, [membership], [], [tier]);
+
+            Assert.True(result.IsEligible);
+            Assert.Equal(LoungeProviderKind.Alliance, result.ProviderKind);
+        }
+
+        [Fact]
+        public void CheckEligibility_AllianceTierBelowMinimum_ReturnsNotEligible()
+        {
+            var lounge = BuildLounge(LoungeProviderKind.Alliance, "OW", minAllianceTierCode: "EMERALD");
+            var tier = Tier(10, "OW", "RUBY"); // rank 1 < required rank 3
+            var membership = Membership(programId: 1, tierId: 10);
+
+            var result = LoungeEligibilityService.CheckEligibility(
+                lounge, [membership], [], [tier]);
+
+            Assert.False(result.IsEligible);
+        }
+
+        // --- Contract / Card eligibility ---
+
+        [Fact]
+        public void CheckEligibility_ContractProgramMatch_ReturnsEligible()
+        {
+            var lounge = BuildLounge(LoungeProviderKind.Contract, "DRAGONPASS");
+            var program = Program(1, "DRAGONPASS");
+            var membership = Membership(programId: 1);
+
+            var result = LoungeEligibilityService.CheckEligibility(
+                lounge, [membership], [program], []);
+
+            Assert.True(result.IsEligible);
+            Assert.Equal(LoungeProviderKind.Contract, result.ProviderKind);
+        }
+
+        // --- Tier expiry ---
+
+        [Fact]
+        public void CheckEligibility_ExpiredTier_ReturnsNotEligible()
+        {
+            var lounge = BuildLounge(LoungeProviderKind.Airline, "BA");
+            var program = Program(1, "BA");
+            var expiredMembership = Membership(programId: 1,
+                tierExpiryDate: DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)));
+
+            var result = LoungeEligibilityService.CheckEligibility(
+                lounge, [expiredMembership], [program], []);
+
+            Assert.False(result.IsEligible);
+        }
+
+        [Fact]
+        public void CheckEligibility_TierExpiringToday_ReturnsEligible()
+        {
+            var lounge = BuildLounge(LoungeProviderKind.Airline, "BA");
+            var program = Program(1, "BA");
+            var expiringToday = Membership(programId: 1,
+                tierExpiryDate: DateOnly.FromDateTime(DateTime.UtcNow));
+
+            var result = LoungeEligibilityService.CheckEligibility(
+                lounge, [expiringToday], [program], []);
+
+            Assert.True(result.IsEligible);
+        }
+
+        [Fact]
+        public void CheckEligibility_NoExpiryDate_ReturnsEligible()
+        {
+            var lounge = BuildLounge(LoungeProviderKind.Airline, "BA");
+            var program = Program(1, "BA");
+            var membership = Membership(programId: 1, tierExpiryDate: null);
+
+            var result = LoungeEligibilityService.CheckEligibility(
+                lounge, [membership], [program], []);
+
+            Assert.True(result.IsEligible);
+        }
+
+        // --- No providers ---
+
+        [Fact]
+        public void CheckEligibility_LoungeHasNoProviders_ReturnsNotEligible()
+        {
+            var lounge = Lounge.Create(1, "Empty Lounge");
+            var membership = Membership(programId: 1);
+
+            var result = LoungeEligibilityService.CheckEligibility(
+                lounge, [membership], [], []);
+
             Assert.False(result.IsEligible);
             Assert.Null(result.Via);
         }
+
+        // --- Existing membership field tests ---
 
         [Fact]
         public void TravelerLoyaltyMembership_Create_SetsFields()
