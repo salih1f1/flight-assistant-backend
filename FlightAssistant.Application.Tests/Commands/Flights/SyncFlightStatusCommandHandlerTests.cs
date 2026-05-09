@@ -3,6 +3,7 @@ using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Flights.Entities;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 using NSubstitute.ReturnsExtensions;
 
 namespace FlightAssistant.Application.Tests.Commands.Flights;
@@ -114,7 +115,7 @@ public class SyncFlightStatusCommandHandlerTests
     {
         _flights.GetFlightByIdAsync(1, Arg.Any<CancellationToken>()).Returns(TestFlight);
         _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
-            .Returns<FlightStatusResult?>(_ => throw new HttpRequestException("provider unavailable"));
+            .ThrowsAsync(new HttpRequestException("provider unavailable"));
 
         await Assert.ThrowsAsync<HttpRequestException>(() =>
             _handler.Handle(new SyncFlightStatusCommand(1), CancellationToken.None));
