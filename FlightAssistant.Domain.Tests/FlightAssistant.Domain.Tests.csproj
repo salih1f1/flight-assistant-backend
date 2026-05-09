@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FlightAssistant.Domain\FlightAssistant.Domain.csproj" />
+    <ProjectReference Include="..\FlightAssistant.API\FlightAssistant.API.csproj" />
   </ItemGroup>
 
 </Project>
