@@ -35,7 +35,8 @@ namespace FlightAssistant.API.Endpoints
                 "Returns loyalty programs linked to the specified airline IATA code (e.g. 'BA'). " +
                 "Use this to populate the program picker when the user knows their airline.")
             .Produces<List<LoyaltyProgramDto>>(200)
-            .ProducesValidationProblem();
+            .ProducesValidationProblem()
+            .RequireRateLimiting("loyalty-programs");
 
             // GET /loyalty/programs — paginated programs with tiers (reference data)
             group.MapGet("programs", async (HttpContext http, [AsParameters] PagedRequest paging, IMediator mediator, CancellationToken ct) =>
@@ -53,7 +54,8 @@ namespace FlightAssistant.API.Endpoints
                 "Returns a paginated list of airline loyalty programs, including their full tier hierarchy. " +
                 "Use this to populate program/tier picker UIs. Supports ?page and ?pageSize (default 50, max 200).")
             .Produces<PagedResult<LoyaltyProgramDto>>(200)
-            .ProducesValidationProblem();
+            .ProducesValidationProblem()
+            .RequireRateLimiting("loyalty-programs");
 
             // GET /loyalty/memberships — traveler's own memberships (paginated)
             group.MapGet("memberships", async (HttpContext http, [AsParameters] PagedRequest paging, IMediator mediator, CancellationToken ct) =>

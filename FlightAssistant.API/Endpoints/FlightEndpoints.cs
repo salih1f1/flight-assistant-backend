@@ -36,7 +36,8 @@ namespace FlightAssistant.API.Endpoints
                 "Query params: from (IATA), to (IATA), date (YYYY-MM-DD).")
             .Produces<List<FlightSearchResultDto>>(200)
             .ProducesValidationProblem()
-            .AllowAnonymous(); // search is public — no auth needed to browse schedules
+            .AllowAnonymous() // search is public — no auth needed to browse schedules
+            .RequireRateLimiting("flight-search");
 
             // GET /flights — paginated list of tracked flights for the authenticated traveler
             group.MapGet("", async (HttpContext http, [AsParameters] PagedRequest paging, IMediator mediator, CancellationToken ct) =>

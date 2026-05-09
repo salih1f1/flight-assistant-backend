@@ -12,12 +12,14 @@ using FlightAssistant.Infrastructure.HealthChecks;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.ApplicationInsights.Extensibility;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.Resource;
 using Microsoft.OpenApi.Models;
 using Serilog;
+using System.Threading.RateLimiting;
 
 // ------------------------------------------------------------
 // 1. Bootstrap & Configuration
@@ -187,6 +189,67 @@ builder.Services.AddAuthorization(options =>
               .RequireRole("admin"));
 });
 
+// Rate limiting — fixed-window per policy; limits are configurable via appsettings.json
+builder.Services.AddRateLimiter(rl =>
+{
+    rl.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    // Flight search — public, partition by client IP
+    var fsLimit = builder.Configuration.GetValue("RateLimiting:FlightSearch:PermitLimit", 20);
+    var fsWindow = builder.Configuration.GetValue("RateLimiting:FlightSearch:WindowSeconds", 60);
+    rl.AddPolicy("flight-search", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        partitionKey: ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        factory: _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = fsLimit,
+            Window = TimeSpan.FromSeconds(fsWindow),
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 0
+        }));
+
+    // Visa — authenticated, partition by user ID
+    var visaLimit = builder.Configuration.GetValue("RateLimiting:Visa:PermitLimit", 30);
+    var visaWindow = builder.Configuration.GetValue("RateLimiting:Visa:WindowSeconds", 60);
+    rl.AddPolicy("visa", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        partitionKey: ctx.User.FindFirst("oid")?.Value
+                      ?? ctx.User.FindFirst("sub")?.Value
+                      ?? ctx.Connection.RemoteIpAddress?.ToString()
+                      ?? "unknown",
+        factory: _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = visaLimit,
+            Window = TimeSpan.FromSeconds(visaWindow),
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 0
+        }));
+
+    // Loyalty programs — authenticated, partition by user ID
+    var loyaltyLimit = builder.Configuration.GetValue("RateLimiting:LoyaltyPrograms:PermitLimit", 60);
+    var loyaltyWindow = builder.Configuration.GetValue("RateLimiting:LoyaltyPrograms:WindowSeconds", 60);
+    rl.AddPolicy("loyalty-programs", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        partitionKey: ctx.User.FindFirst("oid")?.Value
+                      ?? ctx.User.FindFirst("sub")?.Value
+                      ?? ctx.Connection.RemoteIpAddress?.ToString()
+                      ?? "unknown",
+        factory: _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = loyaltyLimit,
+            Window = TimeSpan.FromSeconds(loyaltyWindow),
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 0
+        }));
+
+    // Add Retry-After header on 429
+    rl.OnRejected = async (ctx, ct) =>
+    {
+        if (ctx.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+            ctx.HttpContext.Response.Headers.RetryAfter =
+                ((int)retryAfter.TotalSeconds).ToString();
+        ctx.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        await ctx.HttpContext.Response.WriteAsync("Too many requests. Please try again later.", ct);
+    };
+});
+
 // ------------------------------------------------------------
 // 4. Build App
 // ------------------------------------------------------------
@@ -226,6 +289,7 @@ app.UseHttpsRedirection();
 app.UseCors("AdminPanel");
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 app.UseMiddleware<TravelerContextMiddleware>();
 
 // ------------------------------------------------------------
