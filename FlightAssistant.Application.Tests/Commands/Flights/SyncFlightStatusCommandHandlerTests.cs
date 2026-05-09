@@ -92,4 +92,58 @@ public class SyncFlightStatusCommandHandlerTests
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             _handler.Handle(new SyncFlightStatusCommand(99), CancellationToken.None));
     }
+
+    [Fact]
+    public async Task UnknownStatusCode_Throws()
+    {
+        _flights.GetFlightByIdAsync(1, Arg.Any<CancellationToken>()).Returns(TestFlight);
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(TestStatus with { StatusCode = "UNKNOWN" });
+        _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(false);
+        _flights.GetFlightStatusIdByCodeAsync("UNKNOWN", Arg.Any<CancellationToken>()).ReturnsNull();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _handler.Handle(new SyncFlightStatusCommand(1), CancellationToken.None));
+
+        await _flights.DidNotReceive().AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
+        await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ProviderThrows_ExceptionPropagates()
+    {
+        _flights.GetFlightByIdAsync(1, Arg.Any<CancellationToken>()).Returns(TestFlight);
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns<FlightStatusResult?>(_ => throw new HttpRequestException("provider unavailable"));
+
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            _handler.Handle(new SyncFlightStatusCommand(1), CancellationToken.None));
+
+        await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TwoDistinctStatuses_BothStored()
+    {
+        // First call: not a dedup
+        _flights.GetFlightByIdAsync(1, Arg.Any<CancellationToken>()).Returns(TestFlight);
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(TestStatus);
+        _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(false);
+        _flights.GetFlightStatusIdByCodeAsync("DEP", Arg.Any<CancellationToken>()).Returns(2);
+
+        var first = await _handler.Handle(new SyncFlightStatusCommand(1), CancellationToken.None);
+
+        // Second call: different effective time → different hash → also not a dedup
+        var laterStatus = TestStatus with { EffectiveAtUtc = TestStatus.EffectiveAtUtc.AddMinutes(30) };
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(laterStatus);
+
+        var second = await _handler.Handle(new SyncFlightStatusCommand(1), CancellationToken.None);
+
+        Assert.True(first);
+        Assert.True(second);
+        await _flights.Received(2).AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
+        await _flights.Received(2).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
 }
