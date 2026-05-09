@@ -13,6 +13,16 @@ namespace FlightAssistant.Application.Validators
             RuleFor(x => x.AccountNumber)
                 .NotEmpty()
                 .MaximumLength(64);
+
+            RuleFor(x => x.TierExpiryDate)
+                .GreaterThanOrEqualTo(DateOnly.FromDateTime(DateTime.UtcNow))
+                .WithMessage("Tier expiry date must be today or in the future.")
+                .When(x => x.TierExpiryDate.HasValue);
+
+            RuleFor(x => x.PointsExpiryDate)
+                .GreaterThanOrEqualTo(DateOnly.FromDateTime(DateTime.UtcNow))
+                .WithMessage("Points expiry date must be today or in the future.")
+                .When(x => x.PointsExpiryDate.HasValue);
         }
     }
 }
