@@ -10,6 +10,7 @@ using FlightAssistant.Application.Commands.Admin.Airports;
 using FlightAssistant.Application.Commands.Admin.Lounges;
 using FlightAssistant.Application.Commands.Admin.Loyalty;
 using FlightAssistant.Contracts.Paging;
+using FluentValidation;
 
 namespace FlightAssistant.Application.Tests.Validators;
 
@@ -410,6 +411,3 @@ public class ValidatorEdgeCaseTests
             ScheduledArrivalUtc: now.AddHours(9));
     }
 }
-
-// Make AbstractValidator accessible from FluentValidation namespace
-using AbstractValidator<T> = FluentValidation.AbstractValidator<T>;
