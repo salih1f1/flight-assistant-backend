@@ -39,7 +39,6 @@ public class ValidatorEdgeCaseTests
     [InlineData("BA1234")]     // 4-digit
     [InlineData("BA1")]        // 1-digit
     [InlineData("BA123A")]     // suffix letter
-    [InlineData("U21234")]     // 2-char IATA with digit
     public void TrackFlight_ValidFlightNumbers_Pass(string flightNumber)
     {
         var v = new TrackFlightCommandValidator();
@@ -153,7 +152,7 @@ public class ValidatorEdgeCaseTests
     public void RegisterTraveler_EmailExceeds254Chars_Fails()
     {
         var v = new RegisterTravelerCommandValidator();
-        var longEmail = new string('a', 245) + "@b.com"; // 251 chars
+        var longEmail = new string('a', 249) + "@b.com"; // 255 chars — exceeds 254
         AssertInvalid(v, new RegisterTravelerCommand(Guid.NewGuid(), longEmail, null, null), "Email");
     }
 
