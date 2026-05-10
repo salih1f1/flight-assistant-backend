@@ -3,7 +3,7 @@ using FlightAssistant.Domain.Common.Interfaces;
 
 namespace FlightAssistant.Domain.Loyalty.Entities
 {
-    public sealed class LoyaltyProgram : IAggregateRoot
+    public sealed class LoyaltyProgram : IAggregateRoot, IVerifiable
     {
         public int Id { get; private set; }
         public string Code { get; private set; } = default!;
@@ -14,6 +14,10 @@ namespace FlightAssistant.Domain.Loyalty.Entities
 
         public int? AirlineId { get; private set; }             // FK -> airlines (optional)
         public string? AllianceCode { get; private set; }       // "STAR","OW","ST" (optional)
+
+        public bool IsVerified { get; private set; }
+        public DateTime? VerifiedAt { get; private set; }
+        public string? VerifiedBy { get; private set; }
 
         public ICollection<LoyaltyTier> Tiers { get; private set; } = new List<LoyaltyTier>();
 
@@ -39,6 +43,20 @@ namespace FlightAssistant.Domain.Loyalty.Entities
             KindId = kindId;
             AirlineId = airlineId;
             AllianceCode = allianceCode;
+        }
+
+        public void Verify(string verifiedBy)
+        {
+            IsVerified = true;
+            VerifiedAt = DateTime.UtcNow;
+            VerifiedBy = verifiedBy;
+        }
+
+        public void Unverify()
+        {
+            IsVerified = false;
+            VerifiedAt = null;
+            VerifiedBy = null;
         }
 
         public void AddTier(LoyaltyTier tier) => Tiers.Add(tier);

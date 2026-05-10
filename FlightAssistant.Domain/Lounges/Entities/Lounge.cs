@@ -3,7 +3,7 @@ using FlightAssistant.Domain.Common.Interfaces;
 
 namespace FlightAssistant.Domain.Lounges.Entities
 {
-    public class Lounge : IAggregateRoot
+    public class Lounge : IAggregateRoot, IVerifiable
     {
         public int Id { get; private set; }
         public int AirportId { get; private set; }
@@ -16,7 +16,25 @@ namespace FlightAssistant.Domain.Lounges.Entities
         public bool IsInternationalOnly { get; private set; }
         public string? Amenities { get; private set; }
 
+        public bool IsVerified { get; private set; }
+        public DateTime? VerifiedAt { get; private set; }
+        public string? VerifiedBy { get; private set; }
+
         public ICollection<LoungeProviderLink> Providers { get; private set; } = new List<LoungeProviderLink>();
+
+        public void Verify(string verifiedBy)
+        {
+            IsVerified = true;
+            VerifiedAt = DateTime.UtcNow;
+            VerifiedBy = verifiedBy;
+        }
+
+        public void Unverify()
+        {
+            IsVerified = false;
+            VerifiedAt = null;
+            VerifiedBy = null;
+        }
 
         public static Lounge Create(int airportId, string name, string? terminal = null,
             string? locationHint = null, string? hours = null, bool isAirside = true,
