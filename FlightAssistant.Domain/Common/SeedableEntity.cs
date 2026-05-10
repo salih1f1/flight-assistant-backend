@@ -2,7 +2,7 @@
 
 namespace FlightAssistant.Domain.Common
 {
-    public class SeedableEntity : ISeedableEntity
+    public class SeedableEntity : ISeedableEntity, IVerifiable
     {
         public string SourceType { get; set; } = "seed";
         public string? SourceSystem { get; set; }
@@ -11,5 +11,23 @@ namespace FlightAssistant.Domain.Common
         public DateTime FirstSeenAt { get; set; } =  DateTime.UtcNow;
         public DateTime LastSeenAt { get; set; } = DateTime.UtcNow;
         public string? Notes { get; set; }
+
+        public bool IsVerified { get; private set; } = false;
+        public DateTime? VerifiedAt { get; private set; }
+        public string? VerifiedBy { get; private set; }
+
+        public void Verify(string verifiedBy)
+        {
+            IsVerified = true;
+            VerifiedAt = DateTime.UtcNow;
+            VerifiedBy = verifiedBy;
+        }
+
+        public void Unverify()
+        {
+            IsVerified = false;
+            VerifiedAt = null;
+            VerifiedBy = null;
+        }
     }
 }
