@@ -57,38 +57,23 @@ string Cfg(string key) =>
     builder.Configuration[key] ?? throw new InvalidOperationException($"Missing configuration value: '{key}'.");
 
 var keyVaultUri = builder.Configuration["Azure:KeyVault"];
-if (!string.IsNullOrWhiteSpace(keyVaultUri))
+if (!string.IsNullOrWhiteSpace(keyVaultUri) && !builder.Environment.IsDevelopment())
 {
     TokenCredential kvCredential = new DefaultAzureCredential();
     var kvUri = new Uri(keyVaultUri);
 
-    if (builder.Environment.IsProduction())
-    {
-        // Retry up to 3 times with backoff — guards against transient 403s during
-        // subscription re-activation propagation.
-        for (int attempt = 1; ; attempt++)
-        {
-            try
-            {
-                builder.Configuration.AddAzureKeyVault(kvUri, kvCredential);
-                break;
-            }
-            catch (Exception) when (attempt < 3)
-            {
-                Thread.Sleep(TimeSpan.FromSeconds(attempt * 5));
-            }
-        }
-    }
-    else
+    // Retry up to 3 times with backoff — guards against transient 403s during
+    // subscription re-activation propagation.
+    for (int attempt = 1; ; attempt++)
     {
         try
         {
             builder.Configuration.AddAzureKeyVault(kvUri, kvCredential);
+            break;
         }
-        catch (Exception ex)
+        catch (Exception) when (attempt < 3)
         {
-            Log.Warning(ex, "Azure Key Vault unavailable in {Env} — falling back to local configuration",
-                builder.Environment.EnvironmentName);
+            Thread.Sleep(TimeSpan.FromSeconds(attempt * 5));
         }
     }
 }
