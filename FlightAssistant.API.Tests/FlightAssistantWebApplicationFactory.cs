@@ -31,7 +31,7 @@ public class FlightAssistantWebApplicationFactory : WebApplicationFactory<Progra
                 ["Azure:SignUpSignInPolicyId"]   = "B2C_1_signupsignin",
                 ["Azure:Issuer"]                = "https://test.b2clogin.com/test-tenant-id/v2.0/",
                 ["Azure:Authority"]             = "https://test.b2clogin.com/test-tenant-id/",
-                // Azure:KeyVault intentionally absent — prevents Key Vault access
+                ["Azure:KeyVault"]              = "",  // suppress; Program.cs also guards with IsDevelopment()
             });
         });
 
