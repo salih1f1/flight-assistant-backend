@@ -60,20 +60,35 @@ var keyVaultUri = builder.Configuration["Azure:KeyVault"];
 if (!string.IsNullOrWhiteSpace(keyVaultUri))
 {
     TokenCredential kvCredential = new DefaultAzureCredential();
-
-    // Retry up to 3 times with backoff — guards against transient 403s during
-    // subscription re-activation propagation.
     var kvUri = new Uri(keyVaultUri);
-    for (int attempt = 1; ; attempt++)
+
+    if (builder.Environment.IsProduction())
+    {
+        // Retry up to 3 times with backoff — guards against transient 403s during
+        // subscription re-activation propagation.
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                builder.Configuration.AddAzureKeyVault(kvUri, kvCredential);
+                break;
+            }
+            catch (Exception) when (attempt < 3)
+            {
+                Thread.Sleep(TimeSpan.FromSeconds(attempt * 5));
+            }
+        }
+    }
+    else
     {
         try
         {
             builder.Configuration.AddAzureKeyVault(kvUri, kvCredential);
-            break;
         }
-        catch (Exception) when (attempt < 3)
+        catch (Exception ex)
         {
-            Thread.Sleep(TimeSpan.FromSeconds(attempt * 5));
+            Log.Warning(ex, "Azure Key Vault unavailable in {Env} — falling back to local configuration",
+                builder.Environment.EnvironmentName);
         }
     }
 }
