@@ -3,8 +3,8 @@ using System.Net.Http.Json;
 
 namespace FlightAssistant.API.Tests.Integration;
 
+[Collection("Integration")]
 public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
-    : IClassFixture<FlightAssistantWebApplicationFactory>
 {
     [Fact]
     public async Task GetTrackedFlights_ValidToken_Returns200()

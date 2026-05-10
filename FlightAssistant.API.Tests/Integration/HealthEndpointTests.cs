@@ -1,7 +1,7 @@
 namespace FlightAssistant.API.Tests.Integration;
 
+[Collection("Integration")]
 public class HealthEndpointTests(FlightAssistantWebApplicationFactory factory)
-    : IClassFixture<FlightAssistantWebApplicationFactory>
 {
     private readonly HttpClient _client = factory.CreateClient();
 

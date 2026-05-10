@@ -2,8 +2,8 @@ using System.Net;
 
 namespace FlightAssistant.API.Tests.Integration;
 
+[Collection("Integration")]
 public class VisaEndpointTests(FlightAssistantWebApplicationFactory factory)
-    : IClassFixture<FlightAssistantWebApplicationFactory>
 {
     [Theory]
     [InlineData("gb", "JP")]   // lowercase passport

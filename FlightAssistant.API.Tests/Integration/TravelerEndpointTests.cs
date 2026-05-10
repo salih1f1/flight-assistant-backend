@@ -3,8 +3,8 @@ using System.Net.Http.Json;
 
 namespace FlightAssistant.API.Tests.Integration;
 
+[Collection("Integration")]
 public class TravelerEndpointTests(FlightAssistantWebApplicationFactory factory)
-    : IClassFixture<FlightAssistantWebApplicationFactory>
 {
     [Fact]
     public async Task RegisterTraveler_ValidToken_Returns201()

@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
@@ -15,25 +14,11 @@ public class FlightAssistantWebApplicationFactory : WebApplicationFactory<Progra
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        // Run as Development so APNs validation is skipped and Swagger is enabled
-        builder.UseEnvironment("Development");
-
-        // Supply all values required by Cfg() in Program.cs without hitting Azure
-        builder.ConfigureAppConfiguration(cfg =>
-        {
-            cfg.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["PostgresConnectionString"]    = "Host=localhost;Database=test-placeholder",
-                ["Azure:TenantId"]              = "test-tenant-id",
-                ["Azure:ClientId"]              = "test-client-id",
-                ["Azure:Instance"]              = "https://login.microsoftonline.com/",
-                ["Azure:Domain"]                = "test.onmicrosoft.com",
-                ["Azure:SignUpSignInPolicyId"]   = "B2C_1_signupsignin",
-                ["Azure:Issuer"]                = "https://test.b2clogin.com/test-tenant-id/v2.0/",
-                ["Azure:Authority"]             = "https://test.b2clogin.com/test-tenant-id/",
-                ["Azure:KeyVault"]              = "",  // suppress; Program.cs also guards with IsDevelopment()
-            });
-        });
+        // ConfigureAppConfiguration is applied after builder.Build() — too late for Cfg() calls at
+        // the top of Program.cs (lines 145–153). Instead, UseEnvironment("Testing") is applied
+        // early (before WebApplication.CreateBuilder returns), so appsettings.Testing.json is
+        // loaded as a default configuration source before any Cfg() call executes.
+        builder.UseEnvironment("Testing");
 
         builder.ConfigureServices(services =>
         {
