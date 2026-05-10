@@ -2,8 +2,8 @@ using System.Net;
 
 namespace FlightAssistant.API.Tests.Integration;
 
+[Collection("Integration")]
 public class AuthEndpointTests(FlightAssistantWebApplicationFactory factory)
-    : IClassFixture<FlightAssistantWebApplicationFactory>
 {
     [Fact]
     public async Task ProtectedEndpoint_NoToken_Returns401()
