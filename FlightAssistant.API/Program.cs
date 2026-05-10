@@ -132,8 +132,6 @@ if (!string.IsNullOrWhiteSpace(redisConnStr))
 
 // Hosted services
 
-// Commented out because of slow startup in dev/test environments
-builder.Services.AddHostedService<ReferenceDataSeeder>();
 builder.Services.AddHostedService<FlightStatusSyncBackgroundService>();
 
 // ------------------------------------------------------------
