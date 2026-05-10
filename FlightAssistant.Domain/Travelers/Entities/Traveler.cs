@@ -18,8 +18,9 @@ namespace FlightAssistant.Domain.Travelers.Entities
 
         private Traveler() { } // EF
 
-        private Traveler(string email, string? displayName, string? countryCode)
+        private Traveler(Guid id, string email, string? displayName, string? countryCode)
         {
+            if (id != Guid.Empty) Id = id;
             if (string.IsNullOrWhiteSpace(email)) throw new DomainException("Email is required.");
             Email = email.Trim().ToLowerInvariant();
             DisplayName = string.IsNullOrWhiteSpace(displayName) ? null : displayName!.Trim();
@@ -29,8 +30,11 @@ namespace FlightAssistant.Domain.Travelers.Entities
             Raise(new TravelerRegistered(Id, Email, DateTime.UtcNow));
         }
 
+        public static Traveler Register(Guid id, string email, string? displayName = null, string? countryCode = null)
+            => new(id, email, displayName, countryCode);
+
         public static Traveler Register(string email, string? displayName = null, string? countryCode = null)
-            => new(email, displayName, countryCode);
+            => new(Guid.Empty, email, displayName, countryCode);
 
         public void UpdateProfile(string? displayName, string? countryCode)
         {
