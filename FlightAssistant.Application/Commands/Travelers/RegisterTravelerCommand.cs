@@ -23,7 +23,7 @@ namespace FlightAssistant.Application.Commands.Travelers
             var existing = await _travelers.GetByEmailAsync(cmd.Email, ct);
             if (existing is not null) return existing.Id;
 
-            var traveler = Traveler.Register(cmd.Email, cmd.DisplayName, cmd.CountryCode);
+            var traveler = Traveler.Register(cmd.TravelerId, cmd.Email, cmd.DisplayName, cmd.CountryCode);
             await _travelers.AddAsync(traveler, ct);
             await _travelers.SaveChangesAsync(ct);
             return traveler.Id;
