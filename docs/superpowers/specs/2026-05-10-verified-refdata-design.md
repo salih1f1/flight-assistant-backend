@@ -14,7 +14,7 @@ Deprecate the startup seeder, add a `Verified` flag (with audit metadata) to all
 ## Goals
 
 1. Stop running `ReferenceDataSeeder` at startup — seeded data stays, just no new seeding.
-2. Add `IsVerified`, `VerifiedAt`, `VerifiedBy` to all 7 verifiable entity types.
+2. Add `IsVerified`, `VerifiedAt`, `VerifiedBy` to all 8 verifiable entity types.
 3. Admin API to mark/unmark individual records as verified.
 4. Admin API to export verified records per type as a downloadable JSON file.
 5. Admin API to import that JSON into another environment via upsert.
@@ -32,7 +32,7 @@ Deprecate the startup seeder, add a `Verified` flag (with audit metadata) to all
 
 ## Verifiable Entity Types
 
-7 aggregate types participate in verification. Child entities are covered by their parent aggregate — `LoyaltyTier` is verified by its `LoyaltyProgram`, `LoungeProviderLink` is verified by its `Lounge`.
+8 aggregate types participate in verification. Child entities are covered by their parent aggregate — `LoyaltyTier` is verified by its `LoyaltyProgram`, `LoungeProviderLink` is verified by its `Lounge`.
 
 | Entity | Table | Base Class |
 |---|---|---|
@@ -152,16 +152,14 @@ Returns `204 No Content` on success, `404` if entity not found.
 
 ### Application Layer
 
-File layout follows existing convention: `Application/Commands/Admin/Verify/{EntityType}VerifyCommand.cs` per type, or a single generic command if the handler logic is identical across types.
-
-Since all 7 handlers do exactly the same thing (load entity → call `Verify`/`Unverify` → save), a single generic command is preferred:
+All 8 handlers do exactly the same thing (load entity → call `Verify`/`Unverify` → save), so a single generic command is used:
 
 ```csharp
 public record VerifyEntityCommand<TEntity>(int Id, bool IsVerified, string VerifiedBy)
     : IRequest<Unit> where TEntity : class, IVerifiable;
 ```
 
-One handler per entity type (EF `DbSet<T>` requires a concrete type at the call site), but the handler body is identical across all 7.
+One handler per entity type is still required because EF `DbSet<T>` requires a concrete type at the call site, but the handler body is identical across all 8. File: `Application/Commands/Admin/Verify/VerifyEntityCommand.cs` (shared command record) + one handler file per entity type.
 
 ---
 
@@ -293,13 +291,13 @@ FlightAssistant.Application/
   Commands/
     Admin/
       Verify/
-        VerifyAirportCommand.cs               ← new (×8 types)
+        VerifyEntityCommand.cs                ← new (shared command + 8 handlers)
+      Import/
+        ImportAirportsCommand.cs              ← new (×8 types)
   Queries/
     Admin/
       Export/
         ExportAirportsQuery.cs                ← new (×8 types)
-      Import/
-        ImportAirportsCommand.cs              ← new (×8 types)
 
 FlightAssistant.Infrastructure/
   Persistance/
