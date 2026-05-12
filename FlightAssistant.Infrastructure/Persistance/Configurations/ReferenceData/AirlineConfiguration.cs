@@ -41,6 +41,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.ReferenceDat
                     v => v == null ? null : v.ToUpperInvariant(),
                     v => v);
 
+            b.Property(x => x.IsVerified).HasColumnName("is_verified").HasDefaultValue(false);
+            b.Property(x => x.VerifiedAt).HasColumnName("verified_at");
+            b.Property(x => x.VerifiedBy).HasColumnName("verified_by").HasMaxLength(255);
+
             // Indexes (case-insensitive uniqueness by normalizing value via converters)
             b.HasIndex(x => x.Iata).IsUnique();
             b.HasIndex(x => x.Icao).IsUnique().HasFilter("\"Icao\" IS NOT NULL");

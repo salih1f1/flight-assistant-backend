@@ -22,6 +22,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.ReferenceDat
             b.HasIndex(x => x.Icao).IsUnique().HasFilter("\"Icao\" IS NOT NULL");
             b.HasIndex(x => new { x.CountryCode, x.City });
 
+            b.Property(x => x.IsVerified).HasColumnName("is_verified").HasDefaultValue(false);
+            b.Property(x => x.VerifiedAt).HasColumnName("verified_at");
+            b.Property(x => x.VerifiedBy).HasColumnName("verified_by").HasMaxLength(255);
+
             b.HasOne<Country>()
                 .WithMany()
                 .HasForeignKey(x => x.CountryCode)

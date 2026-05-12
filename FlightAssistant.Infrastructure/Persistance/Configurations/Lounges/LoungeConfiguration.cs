@@ -21,6 +21,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Lounges
               .OnDelete(DeleteBehavior.Cascade);
 
             b.HasIndex(x => new { x.AirportId, x.Terminal, x.Name }).IsUnique();
+
+            b.Property(x => x.IsVerified).HasColumnName("is_verified").HasDefaultValue(false);
+            b.Property(x => x.VerifiedAt).HasColumnName("verified_at");
+            b.Property(x => x.VerifiedBy).HasColumnName("verified_by").HasMaxLength(255);
         }
     }
 }

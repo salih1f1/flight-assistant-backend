@@ -20,6 +20,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.ReferenceDat
 
             b.HasIndex(x => x.Alpha3).IsUnique().HasFilter("\"Alpha3\" IS NOT NULL");
             b.HasIndex(x => x.NumericCode).IsUnique().HasFilter("\"NumericCode\" IS NOT NULL");
+
+            b.Property(x => x.IsVerified).HasColumnName("is_verified").HasDefaultValue(false);
+            b.Property(x => x.VerifiedAt).HasColumnName("verified_at");
+            b.Property(x => x.VerifiedBy).HasColumnName("verified_by").HasMaxLength(255);
         }
     }
 }
