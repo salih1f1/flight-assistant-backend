@@ -9,7 +9,6 @@ using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Http.Resilience;
 using Polly;
 namespace FlightAssistant.Infrastructure
 {
@@ -34,6 +33,7 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<IAirportRepository, AirportRepository>();
             services.AddScoped<ICountryRepository, CountryRepository>();
             services.AddScoped<IAllianceRepository, AllianceRepository>();
+            services.AddScoped(typeof(IVerifiableRepository<>), typeof(EfVerifiableRepository<>));
 
             // Flight status providers — named HttpClients with base addresses from config
             services.AddHttpClient<AeroDataBoxFlightStatusProvider>(client =>
