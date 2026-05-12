@@ -27,6 +27,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Loyalty
                 .WithMany()
                 .HasForeignKey(x => x.AirlineId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            b.Property(x => x.IsVerified).HasColumnName("is_verified").HasDefaultValue(false);
+            b.Property(x => x.VerifiedAt).HasColumnName("verified_at");
+            b.Property(x => x.VerifiedBy).HasColumnName("verified_by").HasMaxLength(255);
         }
     }
 }
