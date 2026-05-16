@@ -54,5 +54,16 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 .Include(l => l.Providers)
                 .OrderBy(l => l.Name)
                 .ToListAsync(ct);
+
+        public Task<Lounge?> FindByNaturalKeyWithProvidersAsync(int airportId, string name, string? terminal, CancellationToken ct = default) =>
+            _db.Lounges
+                .Include(l => l.Providers)
+                .FirstOrDefaultAsync(l => l.AirportId == airportId && l.Name == name && l.Terminal == terminal, ct);
+
+        public Task<LoungeProvider?> FindProviderByCodeAsync(string code, CancellationToken ct = default) =>
+            _db.LoungeProviders.FirstOrDefaultAsync(p => p.Code == code, ct);
+
+        public async Task AddProviderAsync(LoungeProvider provider, CancellationToken ct = default) =>
+            await _db.LoungeProviders.AddAsync(provider, ct);
     }
 }

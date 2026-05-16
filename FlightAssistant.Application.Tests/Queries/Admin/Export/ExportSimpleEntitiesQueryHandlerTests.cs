@@ -36,7 +36,7 @@ public class ExportAlliancesQueryHandlerTests
     {
         var repo = Substitute.For<IVerifiableRepository<Alliance>>();
         repo.GetAllVerifiedAsync(Arg.Any<CancellationToken>())
-            .Returns(new List<Alliance> { new Alliance { Code = "OW", Name = "Oneworld" } });
+            .Returns(new List<Alliance> { Alliance.Create("OW", "Oneworld") });
         var handler = new ExportAlliancesQueryHandler(repo);
 
         var result = await handler.Handle(new ExportAlliancesQuery(), CancellationToken.None);
@@ -56,12 +56,7 @@ public class ExportCountriesQueryHandlerTests
         repo.GetAllVerifiedAsync(Arg.Any<CancellationToken>())
             .Returns(new List<Country>
             {
-                new Country
-                {
-                    Code = "GB", Name = "United Kingdom", Alpha3 = "GBR",
-                    NumericCode = 826, Region = "Europe", Subregion = "Northern Europe",
-                    IsEU = false, IsSchengen = false, IsEEA = false
-                }
+                Country.Create("GB", "United Kingdom", "GBR", 826, "Europe", "Northern Europe", false, false, false)
             });
         var handler = new ExportCountriesQueryHandler(repo);
 

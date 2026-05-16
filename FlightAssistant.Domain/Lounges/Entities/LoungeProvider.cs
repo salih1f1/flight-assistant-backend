@@ -21,6 +21,13 @@ namespace FlightAssistant.Domain.Lounges.Entities
         public static LoungeProvider Create(string code, string name, LoungeProviderKind kind, string? description = null) =>
             new() { Code = code, Name = name, Kind = kind, Description = description };
 
+        public void Update(string name, LoungeProviderKind kind, string? description)
+        {
+            Name = name;
+            Kind = kind;
+            Description = description;
+        }
+
         public void Verify(string verifiedBy)
         {
             IsVerified = true;

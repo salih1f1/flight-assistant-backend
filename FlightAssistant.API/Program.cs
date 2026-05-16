@@ -316,6 +316,7 @@ adminGroup.MapAdminLoyaltyEndpoints();
 adminGroup.MapAdminLoungeEndpoints();
 adminGroup.MapAdminVerifyEndpoints();
 adminGroup.MapAdminExportEndpoints();
+adminGroup.MapAdminImportEndpoints();
 
 // Private endpoints (ping, secure-test, whoami)
 app.MapPrivateEndpoints();

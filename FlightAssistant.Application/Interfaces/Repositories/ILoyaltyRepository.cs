@@ -16,5 +16,8 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         Task<IReadOnlyList<LoyaltyProgram>> SearchProgramsByAirlineIdAsync(int airlineId, CancellationToken ct = default);
         Task<IReadOnlyList<LoyaltyProgram>> GetAllVerifiedWithTiersAsync(CancellationToken ct = default);
         Task<IReadOnlyDictionary<int, string>> GetKindCodeMapAsync(CancellationToken ct = default);
+        Task<LoyaltyProgramKind?> FindKindByCodeAsync(string code, CancellationToken ct = default);
+        Task AddKindAsync(LoyaltyProgramKind kind, CancellationToken ct = default);
+        Task<LoyaltyProgram?> FindProgramByCodeWithTiersAsync(string code, CancellationToken ct = default);
     }
 }

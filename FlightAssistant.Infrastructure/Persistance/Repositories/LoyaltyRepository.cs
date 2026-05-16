@@ -83,5 +83,16 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         public async Task<IReadOnlyDictionary<int, string>> GetKindCodeMapAsync(CancellationToken ct = default) =>
             await _db.LoyaltyProgramKinds
                 .ToDictionaryAsync(k => k.Id, k => k.Code, ct);
+
+        public Task<LoyaltyProgramKind?> FindKindByCodeAsync(string code, CancellationToken ct = default) =>
+            _db.LoyaltyProgramKinds.FirstOrDefaultAsync(k => k.Code == code, ct);
+
+        public async Task AddKindAsync(LoyaltyProgramKind kind, CancellationToken ct = default) =>
+            await _db.LoyaltyProgramKinds.AddAsync(kind, ct);
+
+        public Task<LoyaltyProgram?> FindProgramByCodeWithTiersAsync(string code, CancellationToken ct = default) =>
+            _db.LoyaltyPrograms
+                .Include(p => p.Tiers)
+                .FirstOrDefaultAsync(p => p.Code == code, ct);
     }
 }
