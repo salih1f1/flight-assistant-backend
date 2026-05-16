@@ -72,5 +72,16 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 .OrderBy(p => p.Name)
                 .ToListAsync(ct)
                 .ContinueWith(t => (IReadOnlyList<LoyaltyProgram>)t.Result, ct, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+
+        public async Task<IReadOnlyList<LoyaltyProgram>> GetAllVerifiedWithTiersAsync(CancellationToken ct = default) =>
+            await _db.LoyaltyPrograms
+                .Where(p => p.IsVerified)
+                .Include(p => p.Tiers)
+                .OrderBy(p => p.Name)
+                .ToListAsync(ct);
+
+        public async Task<IReadOnlyDictionary<int, string>> GetKindCodeMapAsync(CancellationToken ct = default) =>
+            await _db.LoyaltyProgramKinds
+                .ToDictionaryAsync(k => k.Id, k => k.Code, ct);
     }
 }

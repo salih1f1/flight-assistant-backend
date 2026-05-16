@@ -47,5 +47,12 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             _db.Lounges.Remove(lounge);
             return Task.CompletedTask;
         }
+
+        public async Task<IReadOnlyList<Lounge>> GetAllVerifiedWithLinksAsync(CancellationToken ct = default) =>
+            await _db.Lounges
+                .Where(l => l.IsVerified)
+                .Include(l => l.Providers)
+                .OrderBy(l => l.Name)
+                .ToListAsync(ct);
     }
 }
