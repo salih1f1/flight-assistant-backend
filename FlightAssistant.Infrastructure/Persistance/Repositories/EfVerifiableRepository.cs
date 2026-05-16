@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Interfaces;
+using Microsoft.EntityFrameworkCore;
 
 namespace FlightAssistant.Infrastructure.Persistance.Repositories
 {
@@ -11,6 +12,9 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
 
         public async Task<TEntity?> FindByIdAsync(int id, CancellationToken ct = default) =>
             await _db.Set<TEntity>().FindAsync(new object[] { id }, ct);
+
+        public async Task<IReadOnlyList<TEntity>> GetAllVerifiedAsync(CancellationToken ct = default) =>
+            await _db.Set<TEntity>().Where(e => e.IsVerified).ToListAsync(ct);
 
         public Task SaveChangesAsync(CancellationToken ct = default) => _db.SaveChangesAsync(ct);
     }

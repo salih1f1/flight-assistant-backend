@@ -43,5 +43,20 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 .Where(a => a.Id == id)
                 .Select(a => (string?)a.Iata)
                 .FirstOrDefaultAsync(ct);
+
+        public async Task<IReadOnlyDictionary<int, string>> GetAirportIataMapAsync(IReadOnlyList<int> ids, CancellationToken ct = default) =>
+            await _db.Airports
+                .Where(a => ids.Contains(a.Id))
+                .ToDictionaryAsync(a => a.Id, a => a.Iata, ct);
+
+        public async Task<IReadOnlyDictionary<int, string>> GetAirlineIataMapAsync(IReadOnlyList<int> ids, CancellationToken ct = default) =>
+            await _db.Airlines
+                .Where(a => ids.Contains(a.Id) && a.Iata != null)
+                .ToDictionaryAsync(a => a.Id, a => a.Iata!, ct);
+
+        public async Task<IReadOnlyDictionary<int, string>> GetLoungeProviderCodeMapAsync(IReadOnlyList<int> ids, CancellationToken ct = default) =>
+            await _db.LoungeProviders
+                .Where(p => ids.Contains(p.Id))
+                .ToDictionaryAsync(p => p.Id, p => p.Code, ct);
     }
 }
