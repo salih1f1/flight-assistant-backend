@@ -57,7 +57,7 @@ string Cfg(string key) =>
     builder.Configuration[key] ?? throw new InvalidOperationException($"Missing configuration value: '{key}'.");
 
 var keyVaultUri = builder.Configuration["Azure:KeyVault"];
-if (!string.IsNullOrWhiteSpace(keyVaultUri) && !builder.Environment.IsDevelopment())
+if (!string.IsNullOrWhiteSpace(keyVaultUri))
 {
     TokenCredential kvCredential = new DefaultAzureCredential();
     var kvUri = new Uri(keyVaultUri);
@@ -316,6 +316,7 @@ adminGroup.MapAdminLoyaltyEndpoints();
 adminGroup.MapAdminLoungeEndpoints();
 adminGroup.MapAdminVerifyEndpoints();
 adminGroup.MapAdminExportEndpoints();
+adminGroup.MapAdminImportEndpoints();
 
 // Private endpoints (ping, secure-test, whoami)
 app.MapPrivateEndpoints();

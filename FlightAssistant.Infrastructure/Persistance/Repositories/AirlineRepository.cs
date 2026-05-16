@@ -20,6 +20,12 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         public Task<Airline?> GetByIdAsync(int id, CancellationToken ct = default) =>
             _db.Airlines.FirstOrDefaultAsync(a => a.Id == id, ct);
 
+        public Task<Airline?> FindByIataAsync(string iata, CancellationToken ct = default) =>
+            _db.Airlines.FirstOrDefaultAsync(a => a.Iata == iata.ToUpperInvariant(), ct);
+
+        public Task<Airline?> FindByIcaoAsync(string icao, CancellationToken ct = default) =>
+            _db.Airlines.FirstOrDefaultAsync(a => a.Icao == icao.ToUpperInvariant(), ct);
+
         public async Task AddAsync(Airline airline, CancellationToken ct = default) =>
             await _db.Airlines.AddAsync(airline, ct);
 

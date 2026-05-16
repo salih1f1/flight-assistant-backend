@@ -11,5 +11,13 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
 
         public async Task<IReadOnlyList<Alliance>> GetAllAsync(CancellationToken ct = default) =>
             await _db.Alliances.OrderBy(a => a.Name).ToListAsync(ct);
+
+        public Task<Alliance?> FindByCodeAsync(string code, CancellationToken ct = default) =>
+            _db.Alliances.FirstOrDefaultAsync(a => a.Code == code, ct);
+
+        public async Task AddAsync(Alliance alliance, CancellationToken ct = default) =>
+            await _db.Alliances.AddAsync(alliance, ct);
+
+        public Task SaveChangesAsync(CancellationToken ct = default) => _db.SaveChangesAsync(ct);
     }
 }

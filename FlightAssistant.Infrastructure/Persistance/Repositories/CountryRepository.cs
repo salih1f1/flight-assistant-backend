@@ -11,5 +11,13 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
 
         public async Task<IReadOnlyList<Country>> GetAllAsync(CancellationToken ct = default) =>
             await _db.Countries.OrderBy(c => c.Name).ToListAsync(ct);
+
+        public Task<Country?> FindByCodeAsync(string code, CancellationToken ct = default) =>
+            _db.Countries.FirstOrDefaultAsync(c => c.Code == code, ct);
+
+        public async Task AddAsync(Country country, CancellationToken ct = default) =>
+            await _db.Countries.AddAsync(country, ct);
+
+        public Task SaveChangesAsync(CancellationToken ct = default) => _db.SaveChangesAsync(ct);
     }
 }

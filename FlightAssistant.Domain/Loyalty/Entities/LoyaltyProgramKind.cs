@@ -19,6 +19,12 @@ namespace FlightAssistant.Domain.Loyalty.Entities
         public static LoyaltyProgramKind Create(string code, string name, string? description = null) =>
             new() { Code = code, Name = name, Description = description };
 
+        public void Update(string name, string? description)
+        {
+            Name = name;
+            Description = description;
+        }
+
         public void Verify(string verifiedBy)
         {
             IsVerified = true;
