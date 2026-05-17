@@ -57,5 +57,6 @@ public class ImportLoungeProvidersCommandHandlerTests
         Assert.Single(result.Errors);
         Assert.Contains("NotAValidKind", result.Errors[0]);
         await _repo.DidNotReceive().AddProviderAsync(Arg.Any<LoungeProvider>(), Arg.Any<CancellationToken>());
+        await _repo.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 }
