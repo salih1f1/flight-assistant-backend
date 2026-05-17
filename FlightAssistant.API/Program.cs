@@ -116,7 +116,9 @@ builder.Services.AddApplication();
 // Infrastructure layer (repositories, external services)
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.IsDevelopment());
 
-builder.Services.AddApplicationInsightsTelemetry();
+var aiConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"];
+if (!string.IsNullOrWhiteSpace(aiConnectionString))
+    builder.Services.AddApplicationInsightsTelemetry();
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddScoped<TravelerContext>();

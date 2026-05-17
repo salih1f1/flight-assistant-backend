@@ -25,11 +25,31 @@ public class FlightAssistantWebApplicationFactory : WebApplicationFactory<Progra
         builder.ConfigureServices(services =>
         {
             // ── Replace PostgreSQL DbContext with in-memory ──────────────────
-            var toRemove = services
-                .Where(d => d.ServiceType == typeof(DbContextOptions<FlightAssistantDbContext>)
-                         || d.ServiceType == typeof(FlightAssistantDbContext))
+            // In EF Core 10, removing DbContextOptions<T> is not sufficient: EF Core
+            // internally shares a service provider keyed on all registered options. When
+            // both the original Npgsql options and the new InMemory options end up visible
+            // to the internal service-provider builder, it throws "Services for database
+            // providers … have been registered". Strip everything EF-Core and DbContext
+            // related so the internal provider is built from scratch with InMemory only.
+            var efCoreAssemblyPrefixes = new[]
+            {
+                "Microsoft.EntityFrameworkCore",
+                "Npgsql.EntityFrameworkCore",
+            };
+            var efToRemove = services
+                .Where(d =>
+                {
+                    if (d.ServiceType == typeof(FlightAssistantDbContext)) return true;
+                    var svcAssembly = d.ServiceType.Assembly.GetName().Name;
+                    if (svcAssembly is not null && efCoreAssemblyPrefixes.Any(p => svcAssembly.StartsWith(p)))
+                        return true;
+                    var implAssembly = d.ImplementationType?.Assembly.GetName().Name;
+                    if (implAssembly is not null && efCoreAssemblyPrefixes.Any(p => implAssembly.StartsWith(p)))
+                        return true;
+                    return false;
+                })
                 .ToList();
-            foreach (var d in toRemove)
+            foreach (var d in efToRemove)
                 services.Remove(d);
 
             services.AddDbContext<FlightAssistantDbContext>(opt =>
@@ -50,6 +70,36 @@ public class FlightAssistantWebApplicationFactory : WebApplicationFactory<Progra
             // ── Remove health checks that require real DB / Redis / APNs ─────
             services.Configure<HealthCheckServiceOptions>(opts =>
                 opts.Registrations.Clear());
+
+            // ── Remove OpenTelemetry providers and their dependents ──────────
+            // Azure.Monitor.OpenTelemetry.Exporter 1.8.x throws at startup when no
+            // ApplicationInsights connection string is configured. Remove all OTel
+            // service registrations so the exporter is never instantiated in tests.
+            var otelAssemblyPrefixes = new[]
+            {
+                "OpenTelemetry",
+                "Azure.Monitor.OpenTelemetry",
+                "Microsoft.Extensions.Diagnostics.Metrics"
+            };
+            var otelToRemove = services
+                .Where(d =>
+                {
+                    // Match on service type assembly
+                    if (d.ServiceType.Assembly.GetName().Name is { } svcName
+                        && otelAssemblyPrefixes.Any(p => svcName.StartsWith(p)))
+                        return true;
+                    // Also match on implementation type assembly (e.g. OpenTelemetryMetricsListener
+                    // registered as IMetricsListener — service type is from M.E.Diagnostics but
+                    // implementation type is from OpenTelemetry, causing MeterProvider to be
+                    // missing after the rest of OTel is stripped out).
+                    if (d.ImplementationType?.Assembly.GetName().Name is { } implName
+                        && otelAssemblyPrefixes.Any(p => implName.StartsWith(p)))
+                        return true;
+                    return false;
+                })
+                .ToList();
+            foreach (var d in otelToRemove)
+                services.Remove(d);
 
             // ── Replace Serilog's ILoggerFactory with standard console logging ─
             // Program.cs uses UseSerilog() which registers a singleton ILoggerFactory
