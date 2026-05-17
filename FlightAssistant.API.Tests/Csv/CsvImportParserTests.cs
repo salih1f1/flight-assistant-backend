@@ -32,7 +32,7 @@ public class CsvImportParserTests
         const string csv = """
             Iata,Icao,Name,City,CountryCode,Latitude,Longitude,ElevationFt,Timezone
             LHR,EGLL,Heathrow,London,GB,51.477,-0.461,83,Europe/London
-            SVO,,Sheremetyevo,Moscow,RU,,,,,
+            SVO,,Sheremetyevo,Moscow,RU,,,,
             """;
         var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
 
@@ -81,5 +81,18 @@ public class CsvImportParserTests
 
         Assert.Single(result);
         Assert.Empty(result[0].Providers);
+    }
+
+    [Fact]
+    public async Task ParseLounges_MalformedProvidersJson_ThrowsCsvHelperException()
+    {
+        const string csv = """
+            Name,AirportIata,Terminal,LocationHint,Hours,IsAirside,IsDomesticOnly,IsInternationalOnly,Amenities,Providers
+            "Bad Lounge",LHR,T5,,24h,true,false,false,,not-valid-json
+            """;
+        var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(csv));
+
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            CsvImportParser.ParseAsync<LoungeImportDto, LoungeImportDtoMap>(stream));
     }
 }

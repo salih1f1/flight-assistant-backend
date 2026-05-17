@@ -16,7 +16,7 @@ public static class CsvImportParser
     public static async Task<IReadOnlyList<T>> ParseAsync<T, TMap>(Stream stream)
         where TMap : ClassMap<T>, new()
     {
-        using var reader = new StreamReader(stream);
+        using var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
         using var csv = new CsvReader(reader, CultureInfo.InvariantCulture);
         // Treat empty CSV cells as null for string and nullable value types
         csv.Context.TypeConverterOptionsCache.AddOptions<string>(
@@ -42,7 +42,14 @@ public static class CsvImportParser
         public override object? ConvertFromString(string? text, IReaderRow row, MemberMapData memberMapData)
         {
             var json = string.IsNullOrWhiteSpace(text) ? "[]" : text;
-            return JsonSerializer.Deserialize(json, _targetType, JsonOpts);
+            try
+            {
+                return JsonSerializer.Deserialize(json, _targetType, JsonOpts);
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                throw new CsvHelper.TypeConversion.TypeConverterException(this, memberMapData, text, row.Context, ex.Message);
+            }
         }
 
         public override string? ConvertToString(object? value, IWriterRow row, MemberMapData memberMapData)
