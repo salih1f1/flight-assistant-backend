@@ -23,7 +23,7 @@ public sealed class ImportAirportsCommandValidator : AbstractValidator<ImportAir
                 .Length(3)
                 .Matches("^[A-Z]{3}$").WithMessage("'{PropertyName}' must be a 3-letter uppercase IATA code.");
             item.RuleFor(d => d.Icao)
-                .Length(4)
+                .Length(4).When(d => d.Icao is not null)
                 .Matches("^[A-Z]{4}$").When(d => d.Icao is not null)
                 .WithMessage("'{PropertyName}' must be a 4-letter uppercase ICAO code.");
             item.RuleFor(d => d.Name).NotEmpty().MaximumLength(200);
