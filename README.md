@@ -1,6 +1,6 @@
 # ✈️ Flight Assistant
 
-[![.NET](https://img.shields.io/badge/.NET-9.0-blueviolet?logo=dotnet)](https://dotnet.microsoft.com/)  
+[![.NET](https://img.shields.io/badge/.NET-10.0-blueviolet?logo=dotnet)](https://dotnet.microsoft.com/)  
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue?logo=postgresql)](https://www.postgresql.org/)  
 [![Redis](https://img.shields.io/badge/Redis-Cache-red?logo=redis)](https://redis.io/)  
 [![Azure](https://img.shields.io/badge/Azure-App%20Service-0089D6?logo=microsoft-azure)](https://azure.microsoft.com/)  
@@ -15,13 +15,13 @@ Flight Assistant is a **cross-platform travel companion app** that helps frequen
 - Manage alliance tiers and loyalty programs  
 - Discover lounge eligibility and airport benefits  
 
-The project starts with a **.NET 9 backend**, an **iOS client (SwiftUI)**, and will expand to **Android & Web**.  
+The project starts with a **.NET 10 backend**, an **iOS client (SwiftUI)**, and will expand to **Android & Web**.  
 
 ---
 
 ## ⚡ Quick Start (local dev)
 
-**Prerequisites:** Docker, .NET 8 SDK, `az login` (for Key Vault)
+**Prerequisites:** Docker, .NET 10 SDK, `az login` (for Key Vault)
 
 ```bash
 # 1. Start Postgres + Redis
@@ -40,7 +40,7 @@ Swagger UI → http://localhost:5000/swagger
 ## 🚀 Tech Stack
 
 **Backend**
-- .NET 9 (ASP.NET Core Web API, Clean Architecture, MediatR, EF Core)  
+- .NET 10 LTS (ASP.NET Core Web API, Clean Architecture, MediatR, EF Core)  
 - PostgreSQL (primary storage)  
 - Redis (caching)  
 - Azure App Service (hosting)  
