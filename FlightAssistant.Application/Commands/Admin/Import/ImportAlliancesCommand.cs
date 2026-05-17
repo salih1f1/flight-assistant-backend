@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.ReferenceData.Entities;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Import;
@@ -7,6 +8,24 @@ namespace FlightAssistant.Application.Commands.Admin.Import;
 public record AllianceImportDto(string Code, string Name);
 
 public record ImportAlliancesCommand(IReadOnlyList<AllianceImportDto> Items) : IRequest<ImportResult>;
+
+public sealed class ImportAlliancesCommandValidator : AbstractValidator<ImportAlliancesCommand>
+{
+    public ImportAlliancesCommandValidator()
+    {
+        RuleFor(x => x.Items).NotEmpty();
+        RuleForEach(x => x.Items).ChildRules(item =>
+        {
+            item.RuleFor(d => d.Code)
+                .NotEmpty()
+                .MaximumLength(8)
+                .Matches("^[A-Z0-9]+$").WithMessage("'{PropertyName}' must be uppercase alphanumeric.");
+            item.RuleFor(d => d.Name)
+                .NotEmpty()
+                .MaximumLength(200);
+        });
+    }
+}
 
 public sealed class ImportAlliancesCommandHandler : IRequestHandler<ImportAlliancesCommand, ImportResult>
 {
