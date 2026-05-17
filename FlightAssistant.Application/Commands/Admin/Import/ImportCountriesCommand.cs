@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.ReferenceData.Entities;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Import;
@@ -9,6 +10,27 @@ public record CountryImportDto(
     string? Region, string? Subregion, bool? IsEU, bool? IsSchengen, bool? IsEEA);
 
 public record ImportCountriesCommand(IReadOnlyList<CountryImportDto> Items) : IRequest<ImportResult>;
+
+public sealed class ImportCountriesCommandValidator : AbstractValidator<ImportCountriesCommand>
+{
+    public ImportCountriesCommandValidator()
+    {
+        RuleFor(x => x.Items).NotEmpty();
+        RuleForEach(x => x.Items).ChildRules(item =>
+        {
+            item.RuleFor(d => d.Code)
+                .NotEmpty()
+                .Length(2)
+                .Matches("^[A-Z]{2}$").WithMessage("'{PropertyName}' must be a 2-letter uppercase ISO code.");
+            item.RuleFor(d => d.Name)
+                .NotEmpty()
+                .MaximumLength(200);
+            item.RuleFor(d => d.Alpha3)
+                .Matches("^[A-Z]{3}$").When(d => d.Alpha3 is not null)
+                .WithMessage("'{PropertyName}' must be a 3-letter uppercase ISO code.");
+        });
+    }
+}
 
 public sealed class ImportCountriesCommandHandler : IRequestHandler<ImportCountriesCommand, ImportResult>
 {

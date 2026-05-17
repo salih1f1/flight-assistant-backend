@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Loyalty.Entities;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Import;
@@ -7,6 +8,20 @@ namespace FlightAssistant.Application.Commands.Admin.Import;
 public record LoyaltyProgramKindImportDto(string Code, string Name, string? Description);
 
 public record ImportLoyaltyProgramKindsCommand(IReadOnlyList<LoyaltyProgramKindImportDto> Items) : IRequest<ImportResult>;
+
+public sealed class ImportLoyaltyProgramKindsCommandValidator : AbstractValidator<ImportLoyaltyProgramKindsCommand>
+{
+    public ImportLoyaltyProgramKindsCommandValidator()
+    {
+        RuleFor(x => x.Items).NotEmpty();
+        RuleForEach(x => x.Items).ChildRules(item =>
+        {
+            item.RuleFor(d => d.Code).NotEmpty().MaximumLength(32);
+            item.RuleFor(d => d.Name).NotEmpty().MaximumLength(200);
+            item.RuleFor(d => d.Description).MaximumLength(500).When(d => d.Description is not null);
+        });
+    }
+}
 
 public sealed class ImportLoyaltyProgramKindsCommandHandler : IRequestHandler<ImportLoyaltyProgramKindsCommand, ImportResult>
 {

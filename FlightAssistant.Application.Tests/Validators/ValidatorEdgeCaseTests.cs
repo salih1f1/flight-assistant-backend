@@ -9,6 +9,7 @@ using FlightAssistant.Application.Commands.Admin.Airlines;
 using FlightAssistant.Application.Commands.Admin.Airports;
 using FlightAssistant.Application.Commands.Admin.Lounges;
 using FlightAssistant.Application.Commands.Admin.Loyalty;
+using FlightAssistant.Application.Commands.Admin.Import;
 using FlightAssistant.Contracts.Paging;
 using FluentValidation;
 
@@ -392,6 +393,157 @@ public class ValidatorEdgeCaseTests
     {
         var v = new SearchFlightsQueryValidator();
         AssertInvalid(v, new SearchFlightsQuery(from, to, DateOnly.FromDateTime(DateTime.UtcNow)));
+    }
+
+    // ── Import: Alliances ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ImportAlliances_EmptyCode_Fails()
+    {
+        var v = new ImportAlliancesCommandValidator();
+        AssertInvalid(v, new ImportAlliancesCommand([new AllianceImportDto("", "Star Alliance")]), "Code");
+    }
+
+    [Fact]
+    public void ImportAlliances_LowercaseCode_Fails()
+    {
+        var v = new ImportAlliancesCommandValidator();
+        AssertInvalid(v, new ImportAlliancesCommand([new AllianceImportDto("sa", "Star Alliance")]), "Code");
+    }
+
+    [Fact]
+    public void ImportAlliances_ValidItem_Passes()
+    {
+        var v = new ImportAlliancesCommandValidator();
+        AssertValid(v, new ImportAlliancesCommand([new AllianceImportDto("SA", "Star Alliance")]));
+    }
+
+    [Fact]
+    public void ImportAlliances_EmptyList_Fails()
+    {
+        var v = new ImportAlliancesCommandValidator();
+        AssertInvalid(v, new ImportAlliancesCommand([]), "Items");
+    }
+
+    // ── Import: Countries ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ImportCountries_InvalidCodeLength_Fails()
+    {
+        var v = new ImportCountriesCommandValidator();
+        AssertInvalid(v, new ImportCountriesCommand([new CountryImportDto("GBR", "UK", null, null, null, null, null, null, null)]), "Code");
+    }
+
+    [Fact]
+    public void ImportCountries_LowercaseCode_Fails()
+    {
+        var v = new ImportCountriesCommandValidator();
+        AssertInvalid(v, new ImportCountriesCommand([new CountryImportDto("gb", "UK", null, null, null, null, null, null, null)]), "Code");
+    }
+
+    [Fact]
+    public void ImportCountries_ValidItem_Passes()
+    {
+        var v = new ImportCountriesCommandValidator();
+        AssertValid(v, new ImportCountriesCommand([new CountryImportDto("GB", "United Kingdom", "GBR", 826, null, null, null, null, null)]));
+    }
+
+    // ── Import: Airports ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ImportAirports_InvalidIataLength_Fails()
+    {
+        var v = new ImportAirportsCommandValidator();
+        AssertInvalid(v, new ImportAirportsCommand([
+            new AirportImportDto("LHRX", null, "Heathrow", "London", "GB", null, null, null, null)]), "Iata");
+    }
+
+    [Fact]
+    public void ImportAirports_LowercaseIata_Fails()
+    {
+        var v = new ImportAirportsCommandValidator();
+        AssertInvalid(v, new ImportAirportsCommand([
+            new AirportImportDto("lhr", null, "Heathrow", "London", "GB", null, null, null, null)]), "Iata");
+    }
+
+    [Fact]
+    public void ImportAirports_ValidItem_Passes()
+    {
+        var v = new ImportAirportsCommandValidator();
+        AssertValid(v, new ImportAirportsCommand([
+            new AirportImportDto("LHR", "EGLL", "Heathrow", "London", "GB", 51.477, -0.461, 83, "Europe/London")]));
+    }
+
+    // ── Import: Airlines ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ImportAirlines_NoBothIataAndIcao_Fails()
+    {
+        var v = new ImportAirlinesCommandValidator();
+        AssertInvalid(v, new ImportAirlinesCommand([
+            new AirlineImportDto(null, null, "British Airways", "GB", null)]));
+    }
+
+    [Fact]
+    public void ImportAirlines_InvalidCountryCode_Fails()
+    {
+        var v = new ImportAirlinesCommandValidator();
+        AssertInvalid(v, new ImportAirlinesCommand([
+            new AirlineImportDto("BA", null, "British Airways", "GBR", null)]), "CountryCode");
+    }
+
+    [Fact]
+    public void ImportAirlines_ValidItemWithIataOnly_Passes()
+    {
+        var v = new ImportAirlinesCommandValidator();
+        AssertValid(v, new ImportAirlinesCommand([
+            new AirlineImportDto("BA", null, "British Airways", "GB", null)]));
+    }
+
+    // ── Import: LoungeProviders ───────────────────────────────────────────────────
+
+    [Fact]
+    public void ImportLoungeProviders_EmptyCode_Fails()
+    {
+        var v = new ImportLoungeProvidersCommandValidator();
+        AssertInvalid(v, new ImportLoungeProvidersCommand([
+            new LoungeProviderImportDto("", "AMEX", "Card", null)]), "Code");
+    }
+
+    [Fact]
+    public void ImportLoungeProviders_InvalidKind_Fails()
+    {
+        var v = new ImportLoungeProvidersCommandValidator();
+        AssertInvalid(v, new ImportLoungeProvidersCommand([
+            new LoungeProviderImportDto("AMEX", "American Express", "NotAKind", null)]), "Kind");
+    }
+
+    // ── Import: LoyaltyPrograms ───────────────────────────────────────────────────
+
+    [Fact]
+    public void ImportLoyaltyPrograms_CodeExceeds16_Fails()
+    {
+        var v = new ImportLoyaltyProgramsCommandValidator();
+        AssertInvalid(v, new ImportLoyaltyProgramsCommand([
+            new LoyaltyProgramImportDto(new string('A', 17), "Club", "AIRLINE", null, null, [])]), "Code");
+    }
+
+    [Fact]
+    public void ImportLoyaltyPrograms_TierWithZeroRank_Fails()
+    {
+        var v = new ImportLoyaltyProgramsCommandValidator();
+        var tier = new LoyaltyTierImportDto("GOLD", "Gold", 0, null, null);
+        AssertInvalid(v, new ImportLoyaltyProgramsCommand([
+            new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", null, null, [tier])]), "Rank");
+    }
+
+    [Fact]
+    public void ImportLoyaltyPrograms_ValidItemWithTiers_Passes()
+    {
+        var v = new ImportLoyaltyProgramsCommandValidator();
+        var tier = new LoyaltyTierImportDto("GOLD", "Gold", 1, null, null);
+        AssertValid(v, new ImportLoyaltyProgramsCommand([
+            new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", "BA", null, [tier])]));
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

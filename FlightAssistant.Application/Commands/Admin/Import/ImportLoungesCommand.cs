@@ -1,6 +1,7 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Lounges.Enums;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Import;
@@ -13,6 +14,29 @@ public record LoungeImportDto(
     IReadOnlyList<LoungeProviderLinkImportDto> Providers);
 
 public record ImportLoungesCommand(IReadOnlyList<LoungeImportDto> Items) : IRequest<ImportResult>;
+
+public sealed class ImportLoungesCommandValidator : AbstractValidator<ImportLoungesCommand>
+{
+    public ImportLoungesCommandValidator()
+    {
+        RuleFor(x => x.Items).NotEmpty();
+        RuleForEach(x => x.Items).ChildRules(item =>
+        {
+            item.RuleFor(d => d.Name).NotEmpty().MaximumLength(200);
+            item.RuleFor(d => d.AirportIata)
+                .NotEmpty()
+                .Length(3)
+                .Matches("^[A-Z]{3}$").WithMessage("'{PropertyName}' must be a 3-letter uppercase IATA code.");
+            item.RuleFor(d => d.Amenities).MaximumLength(1000).When(d => d.Amenities is not null);
+            item.RuleFor(d => d.Providers).NotNull();
+            item.RuleForEach(d => d.Providers).ChildRules(p =>
+            {
+                p.RuleFor(x => x.ProviderCode).NotEmpty().MaximumLength(32);
+                p.RuleFor(x => x.Role).NotEmpty();
+            });
+        });
+    }
+}
 
 public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesCommand, ImportResult>
 {
