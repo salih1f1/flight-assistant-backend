@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Loyalty.Entities;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Import;
@@ -12,6 +13,31 @@ public record LoyaltyProgramImportDto(
     IReadOnlyList<LoyaltyTierImportDto> Tiers);
 
 public record ImportLoyaltyProgramsCommand(IReadOnlyList<LoyaltyProgramImportDto> Items) : IRequest<ImportResult>;
+
+public sealed class ImportLoyaltyProgramsCommandValidator : AbstractValidator<ImportLoyaltyProgramsCommand>
+{
+    public ImportLoyaltyProgramsCommandValidator()
+    {
+        RuleFor(x => x.Items).NotEmpty();
+        RuleForEach(x => x.Items).ChildRules(item =>
+        {
+            item.RuleFor(d => d.Code).NotEmpty().MaximumLength(16);
+            item.RuleFor(d => d.Name).NotEmpty().MaximumLength(200);
+            item.RuleFor(d => d.KindCode).NotEmpty().MaximumLength(32);
+            item.RuleFor(d => d.AirlineIata)
+                .Matches("^[A-Z0-9]{2}$").When(d => d.AirlineIata is not null)
+                .WithMessage("'{PropertyName}' must be a 2-character uppercase IATA code.");
+            item.RuleFor(d => d.AllianceCode).MaximumLength(8).When(d => d.AllianceCode is not null);
+            item.RuleFor(d => d.Tiers).NotNull();
+            item.RuleForEach(d => d.Tiers).ChildRules(t =>
+            {
+                t.RuleFor(x => x.Code).NotEmpty().MaximumLength(16);
+                t.RuleFor(x => x.Name).NotEmpty().MaximumLength(200);
+                t.RuleFor(x => x.Rank).GreaterThan(0);
+            });
+        });
+    }
+}
 
 public sealed class ImportLoyaltyProgramsCommandHandler : IRequestHandler<ImportLoyaltyProgramsCommand, ImportResult>
 {
