@@ -9,10 +9,6 @@ namespace FlightAssistant.API.Csv;
 
 public static class CsvExportWriter
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
 
     public static byte[] Write<T, TMap>(IReadOnlyList<T> data)
         where TMap : ClassMap<T>, new()
@@ -31,9 +27,9 @@ public static class CsvExportWriter
     public sealed class JsonCollectionConverter : DefaultTypeConverter
     {
         public override string? ConvertToString(object? value, IWriterRow row, MemberMapData memberMapData)
-            => value is null ? "[]" : JsonSerializer.Serialize(value, JsonOpts);
+            => value is null ? "[]" : JsonSerializer.Serialize(value, CsvJsonOptions.Default);
 
         public override object? ConvertFromString(string? text, IReaderRow row, MemberMapData memberMapData)
-            => text; // export only; reading not needed
+            => throw new NotSupportedException("JsonCollectionConverter is write-only; use JsonListConverter for import.");
     }
 }

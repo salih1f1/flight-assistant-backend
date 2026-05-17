@@ -8,10 +8,6 @@ namespace FlightAssistant.API.Csv;
 
 public static class CsvImportParser
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
 
     public static async Task<IReadOnlyList<T>> ParseAsync<T, TMap>(Stream stream)
         where TMap : ClassMap<T>, new()
@@ -44,7 +40,7 @@ public static class CsvImportParser
             var json = string.IsNullOrWhiteSpace(text) ? "[]" : text;
             try
             {
-                return JsonSerializer.Deserialize(json, _targetType, JsonOpts);
+                return JsonSerializer.Deserialize(json, _targetType, CsvJsonOptions.Default);
             }
             catch (System.Text.Json.JsonException ex)
             {
@@ -53,6 +49,6 @@ public static class CsvImportParser
         }
 
         public override string? ConvertToString(object? value, IWriterRow row, MemberMapData memberMapData)
-            => value is null ? "[]" : JsonSerializer.Serialize(value, JsonOpts);
+            => value is null ? "[]" : JsonSerializer.Serialize(value, CsvJsonOptions.Default);
     }
 }
