@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Commands.Admin.Airlines;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using NSubstitute;
 using NSubstitute.ReturnsExtensions;
@@ -50,10 +51,11 @@ public class AdminAirlineCommandHandlerTests
         var handler = new UpdateAirlineCommandHandler(_repo);
         _repo.GetByIdAsync(99, Arg.Any<CancellationToken>()).ReturnsNull();
 
-        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(
                 new UpdateAirlineCommand(99, "BA", null, "British Airways", "GB", null),
                 CancellationToken.None));
+        Assert.Equal(404, ex.StatusCode);
 
         await _repo.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
     }
@@ -82,8 +84,9 @@ public class AdminAirlineCommandHandlerTests
         _repo.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(airline);
         _flights.AnyForAirlineAsync(1, Arg.Any<CancellationToken>()).Returns(true);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(new DeleteAirlineCommand(1), CancellationToken.None));
+        Assert.Equal(409, ex.StatusCode);
 
         await _repo.DidNotReceive().DeleteAsync(Arg.Any<Airline>(), Arg.Any<CancellationToken>());
         await _repo.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());

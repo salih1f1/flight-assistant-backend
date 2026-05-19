@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Flights
@@ -14,7 +15,7 @@ namespace FlightAssistant.Application.Commands.Flights
         public async Task Handle(ToggleFlightNotificationCommand cmd, CancellationToken ct)
         {
             var tf = await _flights.GetTravelerFlightAsync(cmd.TravelerId, cmd.FlightId, ct)
-                ?? throw new InvalidOperationException($"Traveler is not tracking flight {cmd.FlightId}.");
+                ?? throw new DomainException($"Traveler is not tracking flight {cmd.FlightId}.", 404);
 
             tf.SetNotify(cmd.Notify);
             await _flights.SaveChangesAsync(ct);

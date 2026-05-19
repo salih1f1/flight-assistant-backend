@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Airlines
@@ -20,7 +21,7 @@ namespace FlightAssistant.Application.Commands.Admin.Airlines
         public async Task Handle(UpdateAirlineCommand cmd, CancellationToken ct)
         {
             var airline = await _repo.GetByIdAsync(cmd.Id, ct)
-                ?? throw new KeyNotFoundException($"Airline {cmd.Id} not found.");
+                ?? throw new DomainException($"Airline {cmd.Id} not found.", 404);
             airline.Update(cmd.Iata, cmd.Icao, cmd.Name, cmd.CountryCode, cmd.AllianceCode);
             await _repo.SaveChangesAsync(ct);
         }

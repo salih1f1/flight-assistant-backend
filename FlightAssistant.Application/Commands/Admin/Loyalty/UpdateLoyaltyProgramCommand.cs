@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Loyalty
@@ -20,7 +21,7 @@ namespace FlightAssistant.Application.Commands.Admin.Loyalty
         public async Task Handle(UpdateLoyaltyProgramCommand cmd, CancellationToken ct)
         {
             var program = await _repo.GetProgramByIdAsync(cmd.Id, ct)
-                ?? throw new KeyNotFoundException($"Loyalty program {cmd.Id} not found.");
+                ?? throw new DomainException($"Loyalty program {cmd.Id} not found.", 404);
             program.Update(cmd.Code, cmd.Name, cmd.KindId, cmd.AirlineId, cmd.AllianceCode);
             await _repo.SaveChangesAsync(ct);
         }

@@ -31,7 +31,7 @@ namespace FlightAssistant.Application.Commands.Flights
             }
 
             var flight = await _flights.GetFlightByIdAsync(cmd.FlightId, ct)
-                ?? throw new InvalidOperationException($"Flight {cmd.FlightId} not found.");
+                ?? throw new DomainException($"Flight {cmd.FlightId} not found.", 404);
 
             // Build the flight number string: e.g. "BA123"
             // We stored flightNumber already normalised in the aggregate.
@@ -44,7 +44,7 @@ namespace FlightAssistant.Application.Commands.Flights
 
             // Look up the FlightStatus row id
             var statusId = await _flights.GetFlightStatusIdByCodeAsync(result.StatusCode, ct)
-                ?? throw new InvalidOperationException($"Unknown flight status code '{result.StatusCode}'.");
+                ?? throw new DomainException($"Unknown flight status code '{result.StatusCode}'.", 404);
 
             var evt = FlightStatusEvent.Create(
                 flight.Id,

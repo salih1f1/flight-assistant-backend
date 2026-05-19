@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Commands.Admin.Loyalty;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Loyalty.Entities;
 using NSubstitute;
 using NSubstitute.ReturnsExtensions;
@@ -47,10 +48,11 @@ public class AdminLoyaltyCommandHandlerTests
         var handler = new UpdateLoyaltyProgramCommandHandler(_repo);
         _repo.GetProgramByIdAsync(99, Arg.Any<CancellationToken>()).ReturnsNull();
 
-        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(
                 new UpdateLoyaltyProgramCommand(99, "BAEC", "BA Executive Club", 1, null, null),
                 CancellationToken.None));
+        Assert.Equal(404, ex.StatusCode);
 
         await _repo.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
     }

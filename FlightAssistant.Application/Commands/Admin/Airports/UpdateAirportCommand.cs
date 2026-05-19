@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Airports
@@ -24,7 +25,7 @@ namespace FlightAssistant.Application.Commands.Admin.Airports
         public async Task Handle(UpdateAirportCommand cmd, CancellationToken ct)
         {
             var airport = await _repo.GetByIdAsync(cmd.Id, ct)
-                ?? throw new KeyNotFoundException($"Airport {cmd.Id} not found.");
+                ?? throw new DomainException($"Airport {cmd.Id} not found.", 404);
             airport.Update(cmd.Iata, cmd.Icao, cmd.Name, cmd.City, cmd.CountryCode,
                 cmd.Latitude, cmd.Longitude, cmd.ElevationFt, cmd.Timezone);
             await _repo.SaveChangesAsync(ct);

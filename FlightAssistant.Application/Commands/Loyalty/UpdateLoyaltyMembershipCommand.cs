@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Loyalty
@@ -21,10 +22,10 @@ namespace FlightAssistant.Application.Commands.Loyalty
         public async Task Handle(UpdateLoyaltyMembershipCommand cmd, CancellationToken ct)
         {
             var membership = await _loyalty.GetMembershipByIdAsync(cmd.MembershipId, ct)
-                ?? throw new InvalidOperationException($"Membership {cmd.MembershipId} not found.");
+                ?? throw new DomainException($"Membership {cmd.MembershipId} not found.", 404);
 
             if (membership.TravelerId != cmd.TravelerId)
-                throw new UnauthorizedAccessException("Cannot update another traveler's membership.");
+                throw new DomainException("Cannot update another traveler's membership.", 403);
 
             membership.Update(cmd.AccountNumber, cmd.TierId, cmd.TierExpiryDate, cmd.PointsExpiryDate);
             await _loyalty.SaveChangesAsync(ct);

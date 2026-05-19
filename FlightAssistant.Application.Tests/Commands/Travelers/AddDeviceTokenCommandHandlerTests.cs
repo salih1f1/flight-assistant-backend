@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Commands.Travelers;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Travelers.Entities;
 using NSubstitute;
 using NSubstitute.ReturnsExtensions;
@@ -52,7 +53,8 @@ public class AddDeviceTokenCommandHandlerTests
     {
         _travelers.GetByIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
             _handler.Handle(new AddDeviceTokenCommand(Guid.NewGuid(), "ios", "tok"), CancellationToken.None));
+        Assert.Equal(404, ex.StatusCode);
     }
 }

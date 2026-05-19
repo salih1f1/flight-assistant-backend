@@ -90,8 +90,9 @@ public class SyncFlightStatusCommandHandlerTests
     {
         _flights.GetFlightByIdAsync(99, Arg.Any<CancellationToken>()).ReturnsNull();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
             _handler.Handle(new SyncFlightStatusCommand(null, 99), CancellationToken.None));
+        Assert.Equal(404, ex.StatusCode);
     }
 
     [Fact]
@@ -103,8 +104,9 @@ public class SyncFlightStatusCommandHandlerTests
         _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(false);
         _flights.GetFlightStatusIdByCodeAsync("UNKNOWN", Arg.Any<CancellationToken>()).ReturnsNull();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
             _handler.Handle(new SyncFlightStatusCommand(null, 1), CancellationToken.None));
+        Assert.Equal(404, ex.StatusCode);
 
         await _flights.DidNotReceive().AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
         await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
