@@ -1,6 +1,7 @@
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Flights.Entities;
 using NSubstitute;
 using NSubstitute.ReturnsExtensions;
@@ -47,7 +48,7 @@ public class SyncFlightStatusCommandHandlerTests
         _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(false);
         _flights.GetFlightStatusIdByCodeAsync("DEP", Arg.Any<CancellationToken>()).Returns(2);
 
-        var result = await _handler.Handle(new SyncFlightStatusCommand(1), CancellationToken.None);
+        var result = await _handler.Handle(new SyncFlightStatusCommand(null, 1), CancellationToken.None);
 
         Assert.True(result);
         await _flights.Received(1).AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
@@ -64,7 +65,7 @@ public class SyncFlightStatusCommandHandlerTests
             .Returns(TestStatus);
         _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(true);
 
-        var result = await _handler.Handle(new SyncFlightStatusCommand(1), CancellationToken.None);
+        var result = await _handler.Handle(new SyncFlightStatusCommand(null, 1), CancellationToken.None);
 
         Assert.False(result);
         await _flights.DidNotReceive().AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
@@ -78,7 +79,7 @@ public class SyncFlightStatusCommandHandlerTests
         _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
             .ReturnsNull();
 
-        var result = await _handler.Handle(new SyncFlightStatusCommand(1), CancellationToken.None);
+        var result = await _handler.Handle(new SyncFlightStatusCommand(null, 1), CancellationToken.None);
 
         Assert.False(result);
         await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
@@ -90,7 +91,7 @@ public class SyncFlightStatusCommandHandlerTests
         _flights.GetFlightByIdAsync(99, Arg.Any<CancellationToken>()).ReturnsNull();
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _handler.Handle(new SyncFlightStatusCommand(99), CancellationToken.None));
+            _handler.Handle(new SyncFlightStatusCommand(null, 99), CancellationToken.None));
     }
 
     [Fact]
@@ -103,7 +104,7 @@ public class SyncFlightStatusCommandHandlerTests
         _flights.GetFlightStatusIdByCodeAsync("UNKNOWN", Arg.Any<CancellationToken>()).ReturnsNull();
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _handler.Handle(new SyncFlightStatusCommand(1), CancellationToken.None));
+            _handler.Handle(new SyncFlightStatusCommand(null, 1), CancellationToken.None));
 
         await _flights.DidNotReceive().AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
         await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
@@ -117,7 +118,7 @@ public class SyncFlightStatusCommandHandlerTests
             .Returns<FlightStatusResult?>(_ => throw new HttpRequestException("provider unavailable"));
 
         await Assert.ThrowsAsync<HttpRequestException>(() =>
-            _handler.Handle(new SyncFlightStatusCommand(1), CancellationToken.None));
+            _handler.Handle(new SyncFlightStatusCommand(null, 1), CancellationToken.None));
 
         await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
     }
@@ -132,18 +133,32 @@ public class SyncFlightStatusCommandHandlerTests
         _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(false);
         _flights.GetFlightStatusIdByCodeAsync("DEP", Arg.Any<CancellationToken>()).Returns(2);
 
-        var first = await _handler.Handle(new SyncFlightStatusCommand(1), CancellationToken.None);
+        var first = await _handler.Handle(new SyncFlightStatusCommand(null, 1), CancellationToken.None);
 
         // Second call: different effective time → different hash → also not a dedup
         var laterStatus = TestStatus with { EffectiveAtUtc = TestStatus.EffectiveAtUtc.AddMinutes(30) };
         _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
             .Returns(laterStatus);
 
-        var second = await _handler.Handle(new SyncFlightStatusCommand(1), CancellationToken.None);
+        var second = await _handler.Handle(new SyncFlightStatusCommand(null, 1), CancellationToken.None);
 
         Assert.True(first);
         Assert.True(second);
         await _flights.Received(2).AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
         await _flights.Received(2).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WithTravelerId_NotTracking_ThrowsDomainException403()
+    {
+        var travelerId = Guid.NewGuid();
+        _flights.GetTravelerFlightAsync(travelerId, 1, Arg.Any<CancellationToken>())
+            .ReturnsNull();
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
+            _handler.Handle(new SyncFlightStatusCommand(travelerId, 1), CancellationToken.None));
+
+        Assert.Equal(403, ex.StatusCode);
+        await _flights.DidNotReceive().GetFlightByIdAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 }

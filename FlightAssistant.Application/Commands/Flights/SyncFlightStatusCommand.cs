@@ -1,12 +1,14 @@
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Flights.Entities;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Flights
 {
     /// <summary>Fetches live status from external providers and persists a FlightStatusEvent if new.</summary>
-    public record SyncFlightStatusCommand(int FlightId) : IRequest<bool>; // returns true if a new event was recorded
+    /// <param name="TravelerId">When set, enforces that the traveler is tracking the flight. Pass null for admin/background callers.</param>
+    public record SyncFlightStatusCommand(Guid? TravelerId, int FlightId) : IRequest<bool>; // returns true if a new event was recorded
 
     public sealed class SyncFlightStatusCommandHandler : IRequestHandler<SyncFlightStatusCommand, bool>
     {
@@ -21,6 +23,13 @@ namespace FlightAssistant.Application.Commands.Flights
 
         public async Task<bool> Handle(SyncFlightStatusCommand cmd, CancellationToken ct)
         {
+            if (cmd.TravelerId is { } travelerId)
+            {
+                var link = await _flights.GetTravelerFlightAsync(travelerId, cmd.FlightId, ct);
+                if (link is null)
+                    throw new DomainException("Not tracking this flight.", 403);
+            }
+
             var flight = await _flights.GetFlightByIdAsync(cmd.FlightId, ct)
                 ?? throw new InvalidOperationException($"Flight {cmd.FlightId} not found.");
 

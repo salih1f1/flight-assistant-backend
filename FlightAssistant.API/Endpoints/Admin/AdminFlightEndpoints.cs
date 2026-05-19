@@ -61,7 +61,7 @@ namespace FlightAssistant.API.Endpoints.Admin
             // POST /admin/flights/{id}/sync
             group.MapPost("{id:int}/sync", async (int id, IMediator mediator, CancellationToken ct) =>
             {
-                var updated = await mediator.Send(new SyncFlightStatusCommand(id), ct);
+                var updated = await mediator.Send(new SyncFlightStatusCommand(null, id), ct);
                 return Results.Ok(new { updated });
             })
             .WithName("AdminSyncFlightStatus")
