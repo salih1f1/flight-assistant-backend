@@ -9,7 +9,8 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.ReferenceDat
         public void Configure(EntityTypeBuilder<Alliance> b)
         {
             b.ToTable("alliances");
-            b.HasKey(x => x.Code);
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).ValueGeneratedOnAdd();
             b.Property(x => x.Code).IsRequired().HasMaxLength(8);
             b.Property(x => x.Name).IsRequired().HasMaxLength(200);
 

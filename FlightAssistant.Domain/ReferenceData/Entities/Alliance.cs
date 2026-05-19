@@ -4,6 +4,7 @@ namespace FlightAssistant.Domain.ReferenceData.Entities
 {
     public class Alliance : SeedableEntity
     {
+        public int Id { get; private set; }
         public string Code { get; private set; } = default!;
         public string Name { get; private set; } = default!;
 

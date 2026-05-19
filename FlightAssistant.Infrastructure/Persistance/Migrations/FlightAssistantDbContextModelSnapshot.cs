@@ -17,7 +17,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "8.0.8")
+                .HasAnnotation("ProductVersion", "10.0.0")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -750,7 +750,14 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
 
             modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Alliance", b =>
                 {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
                     b.Property<string>("Code")
+                        .IsRequired()
                         .HasMaxLength(8)
                         .HasColumnType("character varying(8)");
 
@@ -797,7 +804,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasColumnType("character varying(255)")
                         .HasColumnName("verified_by");
 
-                    b.HasKey("Code");
+                    b.HasKey("Id");
 
                     b.HasIndex("Code")
                         .IsUnique();
@@ -1112,6 +1119,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.HasOne("FlightAssistant.Domain.ReferenceData.Entities.Alliance", "Alliance")
                         .WithMany("Airlines")
                         .HasForeignKey("AllianceCode")
+                        .HasPrincipalKey("Code")
                         .OnDelete(DeleteBehavior.SetNull);
 
                     b.HasOne("FlightAssistant.Domain.ReferenceData.Entities.Country", null)
