@@ -76,7 +76,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
             return await _db.Flights
                 .Where(f => f.ServiceDateUtc >= today &&
-                            _db.TravelerFlights.Any(tf => tf.FlightId == f.Id && tf.Notify))
+                            _db.TravelerFlights.Any(tf => tf.FlightId == f.Id))
                 .ToListAsync(ct);
         }
     }
