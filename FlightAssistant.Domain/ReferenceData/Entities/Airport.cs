@@ -16,6 +16,8 @@ namespace FlightAssistant.Domain.ReferenceData.Entities
         public int? ElevationFt { get; private set; }
         public string? Timezone { get; private set; }
 
+        private Airport() { } // EF
+
         public static Airport Create(string iata, string? icao, string name, string city, string countryCode,
             double? latitude = null, double? longitude = null, int? elevationFt = null, string? timezone = null) =>
             new()

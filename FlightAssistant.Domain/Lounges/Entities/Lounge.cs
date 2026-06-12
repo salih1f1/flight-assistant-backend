@@ -22,6 +22,8 @@ namespace FlightAssistant.Domain.Lounges.Entities
 
         public ICollection<LoungeProviderLink> Providers { get; private set; } = new List<LoungeProviderLink>();
 
+        private Lounge() { } // EF
+
         public void Verify(string verifiedBy)
         {
             IsVerified = true;

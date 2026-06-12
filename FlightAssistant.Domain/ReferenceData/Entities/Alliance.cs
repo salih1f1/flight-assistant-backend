@@ -10,6 +10,8 @@ namespace FlightAssistant.Domain.ReferenceData.Entities
 
         public ICollection<Airline> Airlines { get; private set; } = new List<Airline>();
 
+        private Alliance() { } // EF
+
         public static Alliance Create(string code, string name) => new() { Code = code, Name = name };
         public void Update(string name) { Name = name; }
     }
