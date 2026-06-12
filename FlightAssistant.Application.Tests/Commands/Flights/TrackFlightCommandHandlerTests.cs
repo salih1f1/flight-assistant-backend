@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Flights.Entities;
 using NSubstitute;
 using NSubstitute.ReturnsExtensions;
@@ -92,8 +93,9 @@ public class TrackFlightCommandHandlerTests
     {
         _refData.GetAirlineIdByIataAsync("BA", Arg.Any<CancellationToken>()).ReturnsNull();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
             _handler.Handle(DefaultCmd, CancellationToken.None));
+        Assert.Equal(404, ex.StatusCode);
     }
 
     [Fact]
@@ -101,7 +103,8 @@ public class TrackFlightCommandHandlerTests
     {
         _refData.GetAirportIdByIataAsync("LHR", Arg.Any<CancellationToken>()).ReturnsNull();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
             _handler.Handle(DefaultCmd, CancellationToken.None));
+        Assert.Equal(404, ex.StatusCode);
     }
 }

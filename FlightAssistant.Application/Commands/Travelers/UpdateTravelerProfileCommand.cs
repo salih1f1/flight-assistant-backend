@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Travelers
@@ -20,7 +21,7 @@ namespace FlightAssistant.Application.Commands.Travelers
         public async Task Handle(UpdateTravelerProfileCommand cmd, CancellationToken ct)
         {
             var traveler = await _travelers.GetByIdAsync(cmd.TravelerId, ct)
-                ?? throw new InvalidOperationException($"Traveler {cmd.TravelerId} not found.");
+                ?? throw new DomainException($"Traveler {cmd.TravelerId} not found.", 404);
 
             traveler.UpdateProfile(cmd.DisplayName, cmd.CountryCode);
 

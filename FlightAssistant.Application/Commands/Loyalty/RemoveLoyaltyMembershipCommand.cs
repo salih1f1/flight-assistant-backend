@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Loyalty
@@ -17,7 +18,7 @@ namespace FlightAssistant.Application.Commands.Loyalty
             if (membership is null) return; // already removed — idempotent
 
             if (membership.TravelerId != cmd.TravelerId)
-                throw new UnauthorizedAccessException("Cannot remove another traveler's membership.");
+                throw new DomainException("Cannot remove another traveler's membership.", 403);
 
             await _loyalty.RemoveMembershipAsync(membership, ct);
             await _loyalty.SaveChangesAsync(ct);

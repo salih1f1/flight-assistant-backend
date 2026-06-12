@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Airlines
@@ -23,7 +24,7 @@ namespace FlightAssistant.Application.Commands.Admin.Airlines
 
             var hasFlights = await _flights.AnyForAirlineAsync(cmd.Id, ct);
             if (hasFlights)
-                throw new InvalidOperationException($"Cannot delete airline {cmd.Id}: it has associated flights.");
+                throw new DomainException($"Cannot delete airline {cmd.Id}: it has associated flights.", 409);
 
             await _repo.DeleteAsync(airline, ct);
             await _repo.SaveChangesAsync(ct);

@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Commands.Admin.Lounges;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Lounges.Entities;
 using NSubstitute;
 using NSubstitute.ReturnsExtensions;
@@ -47,10 +48,11 @@ public class AdminLoungeCommandHandlerTests
         var handler = new UpdateLoungeCommandHandler(_repo);
         _repo.GetByIdWithProvidersAsync(99, Arg.Any<CancellationToken>()).ReturnsNull();
 
-        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(
                 new UpdateLoungeCommand(99, "Name", null, null, null, false, false, false, null),
                 CancellationToken.None));
+        Assert.Equal(404, ex.StatusCode);
 
         await _repo.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
     }

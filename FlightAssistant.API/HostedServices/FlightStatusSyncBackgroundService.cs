@@ -65,7 +65,7 @@ namespace FlightAssistant.API.HostedServices
             {
                 try
                 {
-                    await mediator.Send(new SyncFlightStatusCommand(flight.Id), ct);
+                    await mediator.Send(new SyncFlightStatusCommand(null, flight.Id), ct);
                     _log.LogInformation("Synced flight {FlightId} ({FlightNumber})", flight.Id, flight.FlightNumber);
                 }
                 catch (Exception ex)

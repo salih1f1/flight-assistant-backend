@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Commands.Loyalty;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Loyalty.Entities;
 using NSubstitute;
 using NSubstitute.ReturnsExtensions;
@@ -52,7 +53,8 @@ public class RemoveLoyaltyMembershipCommandHandlerTests
 
         var cmd = new RemoveLoyaltyMembershipCommand(Guid.NewGuid() /* different */, membershipId);
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
             _handler.Handle(cmd, CancellationToken.None));
+        Assert.Equal(403, ex.StatusCode);
     }
 }

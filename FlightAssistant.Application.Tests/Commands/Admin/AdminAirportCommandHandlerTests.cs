@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Commands.Admin.Airports;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using NSubstitute;
 using NSubstitute.ReturnsExtensions;
@@ -47,10 +48,11 @@ public class AdminAirportCommandHandlerTests
         var handler = new UpdateAirportCommandHandler(_repo);
         _repo.GetByIdAsync(99, Arg.Any<CancellationToken>()).ReturnsNull();
 
-        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(
                 new UpdateAirportCommand(99, "LHR", null, "Heathrow", "London", "GB", null, null, null, null),
                 CancellationToken.None));
+        Assert.Equal(404, ex.StatusCode);
 
         await _repo.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
     }

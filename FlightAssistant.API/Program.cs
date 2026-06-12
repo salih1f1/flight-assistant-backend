@@ -289,7 +289,6 @@ app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseSerilogRequestLogging();
 app.UseHttpsRedirection();
-app.UseCors("AdminPanel");
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
@@ -308,7 +307,9 @@ app.MapLoungeEndpoints();
 app.MapVisaEndpoints();
 
 // Admin endpoints — shared group carries auth, each file adds its own sub-prefix
-var adminGroup = app.MapGroup("admin").RequireAuthorization("AdminOnly");
+var adminGroup = app.MapGroup("admin")
+    .RequireAuthorization("AdminOnly")
+    .RequireCors("AdminPanel");
 adminGroup.MapAdminTravelerEndpoints();
 adminGroup.MapAdminFlightEndpoints();
 adminGroup.MapAdminAirlineEndpoints();

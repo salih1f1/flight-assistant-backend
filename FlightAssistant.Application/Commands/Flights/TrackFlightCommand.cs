@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Flights.Entities;
 using MediatR;
 
@@ -29,13 +30,13 @@ namespace FlightAssistant.Application.Commands.Flights
         public async Task<int> Handle(TrackFlightCommand cmd, CancellationToken ct)
         {
             var airlineId = await _refData.GetAirlineIdByIataAsync(cmd.AirlineIata, ct)
-                ?? throw new InvalidOperationException($"Airline '{cmd.AirlineIata}' not found.");
+                ?? throw new DomainException($"Airline '{cmd.AirlineIata}' not found.", 404);
 
             var depAirportId = await _refData.GetAirportIdByIataAsync(cmd.DepartureAirportIata, ct)
-                ?? throw new InvalidOperationException($"Airport '{cmd.DepartureAirportIata}' not found.");
+                ?? throw new DomainException($"Airport '{cmd.DepartureAirportIata}' not found.", 404);
 
             var arrAirportId = await _refData.GetAirportIdByIataAsync(cmd.ArrivalAirportIata, ct)
-                ?? throw new InvalidOperationException($"Airport '{cmd.ArrivalAirportIata}' not found.");
+                ?? throw new DomainException($"Airport '{cmd.ArrivalAirportIata}' not found.", 404);
 
             // Look up or create the Flight aggregate
             var flightNumber = cmd.FlightNumber.Trim().ToUpperInvariant();

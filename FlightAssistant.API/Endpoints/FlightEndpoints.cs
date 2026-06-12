@@ -128,7 +128,8 @@ namespace FlightAssistant.API.Endpoints
             group.MapGet("{flightId:int}/status", async (HttpContext http, int flightId, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-                var events = await mediator.Send(new GetFlightStatusQuery(flightId), ct);
+                var travelerId = http.User.GetTravelerId();
+                var events = await mediator.Send(new GetFlightStatusQuery(travelerId, flightId), ct);
                 var dtos = events.Select(e => new FlightStatusEventDto(e.Id, e.StatusCode, e.StatusName, e.EffectiveAtUtc, e.Source, e.Gate, e.Terminal, e.BaggageClaim, e.Remarks));
                 return Results.Ok(dtos);
             })
@@ -145,7 +146,8 @@ namespace FlightAssistant.API.Endpoints
             group.MapPost("{flightId:int}/sync", async (HttpContext http, int flightId, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-                var updated = await mediator.Send(new SyncFlightStatusCommand(flightId), ct);
+                var travelerId = http.User.GetTravelerId();
+                var updated = await mediator.Send(new SyncFlightStatusCommand(travelerId, flightId), ct);
                 return Results.Ok(new { updated });
             })
             .WithName("SyncFlightStatus")
