@@ -5,16 +5,8 @@ using FlightAssistant.Domain.ReferenceData.Entities;
 
 namespace FlightAssistant.Domain.Flights.Entities
 {
-    public class Flight : IAggregateRoot, IHasDomainEvents
+    public sealed class Flight : BaseIntEntity, IAggregateRoot
     {
-        public int Id { get; private set; }
-
-        // Domain events
-        private readonly List<DomainEvent> _domainEvents = new();
-        public IReadOnlyCollection<DomainEvent> DomainEvents => _domainEvents.AsReadOnly();
-        public void ClearDomainEvents() => _domainEvents.Clear();
-        private void Raise(DomainEvent @event) => _domainEvents.Add(@event);
-
         public int AirlineId { get; private set; }
         public string FlightNumber { get; private set; } = default!;
         public int DepartureAirportId { get; private set; }
