@@ -22,7 +22,7 @@ namespace FlightAssistant.Domain.Tests.Lounges
                 .SetValue(link, provider);
 
             var lounge = Lounge.Create(1, "Test Lounge");
-            lounge.Providers.Add(link);
+            lounge.ReplaceAllProviders(new[] { link });
             return lounge;
         }
 

@@ -20,7 +20,8 @@ namespace FlightAssistant.Domain.Lounges.Entities
         public DateTime? VerifiedAt { get; private set; }
         public string? VerifiedBy { get; private set; }
 
-        public ICollection<LoungeProviderLink> Providers { get; private set; } = new List<LoungeProviderLink>();
+        private readonly List<LoungeProviderLink> _providers = new();
+        public IReadOnlyCollection<LoungeProviderLink> Providers => _providers;
 
         private Lounge() { } // EF
 
@@ -68,6 +69,13 @@ namespace FlightAssistant.Domain.Lounges.Entities
             IsDomesticOnly = isDomesticOnly;
             IsInternationalOnly = isInternationalOnly;
             Amenities = amenities;
+        }
+
+        public void ReplaceAllProviders(IEnumerable<LoungeProviderLink> newProviders)
+        {
+            _providers.Clear();
+            foreach (var p in newProviders)
+                _providers.Add(p);
         }
     }
 }

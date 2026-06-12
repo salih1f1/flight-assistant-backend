@@ -16,7 +16,7 @@ public class ExportLoungesQueryHandlerTests
     {
         var lounge = Lounge.Create(1, "Galleries Club", "T3", null, "06:00-22:00", true, false, false, "WiFi");
         var link = LoungeProviderLink.Create(0, 5, LoungeProviderRole.Operator, "Members only", "GOLD");
-        lounge.Providers.Add(link);
+        lounge.ReplaceAllProviders(new[] { link });
 
         _loungeRepo.GetAllVerifiedWithLinksAsync(Arg.Any<CancellationToken>())
             .Returns(new List<Lounge> { lounge });

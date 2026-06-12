@@ -90,9 +90,8 @@ public sealed class ImportLoyaltyProgramsCommandHandler : IRequestHandler<Import
                 else
                 {
                     existing.Update(dto.Code, dto.Name, kind.Id, airlineId, dto.AllianceCode);
-                    existing.Tiers.Clear();
-                    foreach (var t in dto.Tiers)
-                        existing.Tiers.Add(LoyaltyTier.Create(existing.Id, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode));
+                    existing.ReplaceAllTiers(dto.Tiers.Select(t =>
+                        LoyaltyTier.Create(existing.Id, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode)));
                     updated++;
                 }
             }
