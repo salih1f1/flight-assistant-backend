@@ -16,6 +16,8 @@ namespace FlightAssistant.Domain.ReferenceData.Entities
 
         public ICollection<Flight> Flights { get; private set; } = new List<Flight>();
 
+        private Airline() { } // EF
+
         public static Airline Create(string? iata, string? icao, string name, string countryCode, string? allianceCode = null) =>
             new()
             {

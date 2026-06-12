@@ -15,6 +15,8 @@ namespace FlightAssistant.Domain.ReferenceData.Entities
         public bool? IsSchengen { get; private set; }
         public bool? IsEEA { get; private set; }
 
+        private Country() { } // EF
+
         public static Country Create(string code, string name, string? alpha3 = null, int? numericCode = null,
             string? region = null, string? subregion = null, bool? isEU = null, bool? isSchengen = null, bool? isEEA = null) =>
             new() { Code = code, Name = name, Alpha3 = alpha3, NumericCode = numericCode, Region = region, Subregion = subregion, IsEU = isEU, IsSchengen = isSchengen, IsEEA = isEEA };

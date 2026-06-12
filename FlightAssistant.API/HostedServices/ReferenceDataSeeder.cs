@@ -462,8 +462,6 @@ namespace FlightAssistant.API.HostedServices
             if (!await db.Alliances.AnyAsync(x => x.Code == alliance.Code, ct))
             {
                 alliance.SourceType = SeedSourceType;
-                alliance.FirstSeenAt = DateTime.UtcNow;
-                alliance.LastSeenAt = DateTime.UtcNow;
                 await db.Alliances.AddAsync(alliance);
             }
         }
@@ -476,8 +474,6 @@ namespace FlightAssistant.API.HostedServices
             if (!await db.Countries.AnyAsync(x => (x.Code == country.Code || x.Alpha3 == country.Alpha3), ct))
             {
                 country.SourceType = SeedSourceType;
-                country.FirstSeenAt = DateTime.UtcNow;
-                country.LastSeenAt = DateTime.UtcNow;
                 await db.Countries.AddAsync(country);
             }
         }
@@ -490,8 +486,6 @@ namespace FlightAssistant.API.HostedServices
             if (!await db.Airports.AnyAsync(x => (x.Iata == airport.Iata || x.Icao == airport.Icao), ct))
             {
                 airport.SourceType = SeedSourceType;
-                airport.FirstSeenAt = DateTime.UtcNow;
-                airport.LastSeenAt = DateTime.UtcNow;
                 await db.Airports.AddAsync(airport);
             }
         }
@@ -510,8 +504,6 @@ namespace FlightAssistant.API.HostedServices
                 }
 
                 airline.SourceType = SeedSourceType;
-                airline.FirstSeenAt = DateTime.UtcNow;
-                airline.LastSeenAt = DateTime.UtcNow;
                 await db.Airlines.AddAsync(airline);
             }
         }
