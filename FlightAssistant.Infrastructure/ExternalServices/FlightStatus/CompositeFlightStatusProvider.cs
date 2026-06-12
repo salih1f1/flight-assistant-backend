@@ -42,11 +42,11 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightStatus
                 _logger.LogWarning(ex, "AeroDataBox failed for {FlightNumber} {Date}; trying fallback.", flightNumber, serviceDate);
             }
 
+            _lastUsedProviderName = _fallback.ProviderName;
+
             try
             {
-                var fallbackResult = await _fallback.GetStatusAsync(flightNumber, serviceDate, ct);
-                _lastUsedProviderName = _fallback.ProviderName;
-                return fallbackResult;
+                return await _fallback.GetStatusAsync(flightNumber, serviceDate, ct);
             }
             catch (Exception ex)
             {
