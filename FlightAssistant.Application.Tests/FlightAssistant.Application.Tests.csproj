@@ -29,6 +29,7 @@
   <ItemGroup>
     <ProjectReference Include="..\FlightAssistant.Application\FlightAssistant.Application.csproj" />
     <ProjectReference Include="..\FlightAssistant.Domain\FlightAssistant.Domain.csproj" />
+    <ProjectReference Include="..\FlightAssistant.Infrastructure\FlightAssistant.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

@@ -9,8 +9,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightStatus
         private readonly AeroDataBoxFlightStatusProvider _primary;
         private readonly AviationStackFlightStatusProvider _fallback;
         private readonly ILogger<CompositeFlightStatusProvider> _logger;
+        private string _lastUsedProviderName;
 
-        public string ProviderName => _primary.ProviderName;
+        public string ProviderName => _lastUsedProviderName;
 
         public CompositeFlightStatusProvider(
             AeroDataBoxFlightStatusProvider primary,
@@ -20,6 +21,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightStatus
             _primary = primary;
             _fallback = fallback;
             _logger = logger;
+            _lastUsedProviderName = _primary.ProviderName;
         }
 
         public async Task<FlightStatusResult?> GetStatusAsync(string flightNumber, DateOnly serviceDate, CancellationToken ct = default)
@@ -27,7 +29,11 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightStatus
             try
             {
                 var result = await _primary.GetStatusAsync(flightNumber, serviceDate, ct);
-                if (result is not null) return result;
+                if (result is not null)
+                {
+                    _lastUsedProviderName = _primary.ProviderName;
+                    return result;
+                }
 
                 _logger.LogWarning("AeroDataBox returned no result for {FlightNumber} {Date}; trying fallback.", flightNumber, serviceDate);
             }
@@ -38,7 +44,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightStatus
 
             try
             {
-                return await _fallback.GetStatusAsync(flightNumber, serviceDate, ct);
+                var fallbackResult = await _fallback.GetStatusAsync(flightNumber, serviceDate, ct);
+                _lastUsedProviderName = _fallback.ProviderName;
+                return fallbackResult;
             }
             catch (Exception ex)
             {
