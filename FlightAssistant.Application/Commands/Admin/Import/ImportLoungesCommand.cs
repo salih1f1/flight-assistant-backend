@@ -28,6 +28,15 @@ public sealed class ImportLoungesCommandValidator : AbstractValidator<ImportLoun
                 .Length(3)
                 .Matches("^[A-Z]{3}$").WithMessage("'{PropertyName}' must be a 3-letter uppercase IATA code.");
             item.RuleFor(d => d.Amenities).MaximumLength(1000).When(d => d.Amenities is not null);
+            item.RuleFor(d => d.Terminal)
+                .MaximumLength(32)
+                .When(d => d.Terminal is not null);
+            item.RuleFor(d => d.LocationHint)
+                .MaximumLength(200)
+                .When(d => d.LocationHint is not null);
+            item.RuleFor(d => d.Hours)
+                .MaximumLength(200)
+                .When(d => d.Hours is not null);
             item.RuleFor(d => d.Providers).NotNull();
             item.RuleForEach(d => d.Providers).ChildRules(p =>
             {
