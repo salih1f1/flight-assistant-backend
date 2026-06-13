@@ -90,7 +90,7 @@ namespace FlightAssistant.API.Endpoints
             .ProducesValidationProblem();
 
             // PUT /loyalty/memberships/{id} — update a membership
-            group.MapPut("memberships/{id:guid}", async (HttpContext http, Guid id, [FromBody] AddMembershipRequest req, IMediator mediator, CancellationToken ct) =>
+            group.MapPut("memberships/{id:guid}", async (HttpContext http, Guid id, [FromBody] UpdateMembershipRequest req, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();

@@ -23,15 +23,15 @@ namespace FlightAssistant.API.Endpoints
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
-                await mediator.Send(new RegisterTravelerCommand(travelerId, req.Email, req.DisplayName, req.CountryCode), ct);
-                return Results.Created($"/travelers/me", null);
+                var newTravelerId = await mediator.Send(new RegisterTravelerCommand(travelerId, req.Email, req.DisplayName, req.CountryCode), ct);
+                return Results.Created("/travelers/me", new RegisterTravelerResponse(newTravelerId));
             })
             .WithName("RegisterTraveler")
             .WithSummary("Register traveler")
             .WithDescription(
                 "Creates a traveler profile linked to the authenticated Azure AD B2C identity. " +
                 "Idempotent — safe to call on every login; does nothing if the traveler already exists.")
-            .Produces(201)
+            .Produces<RegisterTravelerResponse>(201)
             .ProducesValidationProblem();
 
             // GET /travelers/me — get own profile

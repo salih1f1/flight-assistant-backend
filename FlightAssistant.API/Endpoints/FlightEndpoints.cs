@@ -107,11 +107,11 @@ namespace FlightAssistant.API.Endpoints
             .ProducesProblem(404);
 
             // PATCH /flights/{flightId}/notify — toggle push notifications for a flight
-            group.MapPatch("{flightId:int}/notify", async (HttpContext http, int flightId, [FromBody] bool notify, IMediator mediator, CancellationToken ct) =>
+            group.MapPatch("{flightId:int}/notify", async (HttpContext http, int flightId, [FromBody] ToggleNotifyRequest request, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
-                await mediator.Send(new ToggleFlightNotificationCommand(travelerId, flightId, notify), ct);
+                await mediator.Send(new ToggleFlightNotificationCommand(travelerId, flightId, request.Notify), ct);
                 return Results.NoContent();
             })
             .WithName("ToggleFlightNotifications")
@@ -119,7 +119,7 @@ namespace FlightAssistant.API.Endpoints
             .WithDescription(
                 "Enables or disables push notifications for a tracked flight. " +
                 "Route parameter: flightId — the numeric flight ID. " +
-                "Body: a JSON boolean (true to enable, false to disable). " +
+                "Body: { \"notify\": true } (true to enable, false to disable). " +
                 "Notifications are delivered via APNs to device tokens registered for the traveler.")
             .Produces(204)
             .ProducesProblem(404);
