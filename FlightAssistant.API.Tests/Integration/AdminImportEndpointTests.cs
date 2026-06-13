@@ -35,6 +35,29 @@ public class AdminImportEndpointTests(FlightAssistantWebApplicationFactory facto
     }
 
     [Fact]
+    public async Task ImportLounges_MixOfValidAndInvalidRows_Returns207()
+    {
+        var client = factory.CreateAdminClient();
+
+        const string airportsCsv = """
+            Iata,Icao,Name,City,CountryCode,Latitude,Longitude,ElevationFt,Timezone
+            LHR,EGLL,Heathrow Airport,London,GB,51.4706,-0.461941,83,Europe/London
+            """;
+        var airportsResponse = await client.PostAsync("admin/import/airports", BuildMultipart(airportsCsv));
+        Assert.Equal(HttpStatusCode.OK, airportsResponse.StatusCode);
+
+        const string loungesCsv = """
+            Name,AirportIata,Terminal,LocationHint,Hours,IsAirside,IsDomesticOnly,IsInternationalOnly,Amenities,Providers
+            "Galleries Club",LHR,T5,,24h,true,false,false,,
+            "Unknown Airport Lounge",ZZZ,,,,true,false,false,,
+            """;
+
+        var response = await client.PostAsync("admin/import/lounges", BuildMultipart(loungesCsv));
+
+        Assert.Equal((HttpStatusCode)207, response.StatusCode);
+    }
+
+    [Fact]
     public async Task ImportAlliances_WrongContentType_Returns400()
     {
         var client = factory.CreateAdminClient();

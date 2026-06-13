@@ -16,64 +16,120 @@ public static class AdminImportEndpoints
         {
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<AllianceImportDto, AllianceImportDtoMap>(stream);
-            return Results.Ok(await mediator.Send(new ImportAlliancesCommand(items), ct));
+            var result = await mediator.Send(new ImportAlliancesCommand(items), ct);
+            return result.Errors.Count == 0
+                ? Results.Ok(result)
+                : Results.Json(result, statusCode: 207);
         }).WithName("ImportAlliances")
-          .WithSummary("Import alliances from CSV (run before countries, airports, airlines). Upserts by Code.");
+          .WithSummary("Import alliances from CSV (run before countries, airports, airlines). Upserts by Code.")
+          .Produces<ImportResult>(200)
+          .Produces<ImportResult>(207)
+          .ProducesValidationProblem()
+          .ProducesProblem(400);
 
         group.MapPost("countries", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<CountryImportDto, CountryImportDtoMap>(stream);
-            return Results.Ok(await mediator.Send(new ImportCountriesCommand(items), ct));
+            var result = await mediator.Send(new ImportCountriesCommand(items), ct);
+            return result.Errors.Count == 0
+                ? Results.Ok(result)
+                : Results.Json(result, statusCode: 207);
         }).WithName("ImportCountries")
-          .WithSummary("Import countries from CSV (run after alliances). Upserts by Code.");
+          .WithSummary("Import countries from CSV (run after alliances). Upserts by Code.")
+          .Produces<ImportResult>(200)
+          .Produces<ImportResult>(207)
+          .ProducesValidationProblem()
+          .ProducesProblem(400);
 
         group.MapPost("airports", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<AirportImportDto, AirportImportDtoMap>(stream);
-            return Results.Ok(await mediator.Send(new ImportAirportsCommand(items), ct));
+            var result = await mediator.Send(new ImportAirportsCommand(items), ct);
+            return result.Errors.Count == 0
+                ? Results.Ok(result)
+                : Results.Json(result, statusCode: 207);
         }).WithName("ImportAirports")
-          .WithSummary("Import airports from CSV (run after countries). Upserts by IATA.");
+          .WithSummary("Import airports from CSV (run after countries). Upserts by IATA.")
+          .Produces<ImportResult>(200)
+          .Produces<ImportResult>(207)
+          .ProducesValidationProblem()
+          .ProducesProblem(400);
 
         group.MapPost("airlines", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<AirlineImportDto, AirlineImportDtoMap>(stream);
-            return Results.Ok(await mediator.Send(new ImportAirlinesCommand(items), ct));
+            var result = await mediator.Send(new ImportAirlinesCommand(items), ct);
+            return result.Errors.Count == 0
+                ? Results.Ok(result)
+                : Results.Json(result, statusCode: 207);
         }).WithName("ImportAirlines")
-          .WithSummary("Import airlines from CSV (run after airports). Upserts by IATA, fallback ICAO.");
+          .WithSummary("Import airlines from CSV (run after airports). Upserts by IATA, fallback ICAO.")
+          .Produces<ImportResult>(200)
+          .Produces<ImportResult>(207)
+          .ProducesValidationProblem()
+          .ProducesProblem(400);
 
         group.MapPost("lounge-providers", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<LoungeProviderImportDto, LoungeProviderImportDtoMap>(stream);
-            return Results.Ok(await mediator.Send(new ImportLoungeProvidersCommand(items), ct));
+            var result = await mediator.Send(new ImportLoungeProvidersCommand(items), ct);
+            return result.Errors.Count == 0
+                ? Results.Ok(result)
+                : Results.Json(result, statusCode: 207);
         }).WithName("ImportLoungeProviders")
-          .WithSummary("Import lounge providers from CSV (run after airlines). Upserts by Code.");
+          .WithSummary("Import lounge providers from CSV (run after airlines). Upserts by Code.")
+          .Produces<ImportResult>(200)
+          .Produces<ImportResult>(207)
+          .ProducesValidationProblem()
+          .ProducesProblem(400);
 
         group.MapPost("loyalty-program-kinds", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<LoyaltyProgramKindImportDto, LoyaltyProgramKindImportDtoMap>(stream);
-            return Results.Ok(await mediator.Send(new ImportLoyaltyProgramKindsCommand(items), ct));
+            var result = await mediator.Send(new ImportLoyaltyProgramKindsCommand(items), ct);
+            return result.Errors.Count == 0
+                ? Results.Ok(result)
+                : Results.Json(result, statusCode: 207);
         }).WithName("ImportLoyaltyProgramKinds")
-          .WithSummary("Import loyalty program kinds from CSV (run after airlines). Upserts by Code.");
+          .WithSummary("Import loyalty program kinds from CSV (run after airlines). Upserts by Code.")
+          .Produces<ImportResult>(200)
+          .Produces<ImportResult>(207)
+          .ProducesValidationProblem()
+          .ProducesProblem(400);
 
         group.MapPost("lounges", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<LoungeImportDto, LoungeImportDtoMap>(stream);
-            return Results.Ok(await mediator.Send(new ImportLoungesCommand(items), ct));
+            var result = await mediator.Send(new ImportLoungesCommand(items), ct);
+            return result.Errors.Count == 0
+                ? Results.Ok(result)
+                : Results.Json(result, statusCode: 207);
         }).WithName("ImportLounges")
-          .WithSummary("Import lounges from CSV (run after lounge-providers). Providers column is JSON-encoded. Upserts by Name+AirportIata+Terminal.");
+          .WithSummary("Import lounges from CSV (run after lounge-providers). Providers column is JSON-encoded. Upserts by Name+AirportIata+Terminal.")
+          .Produces<ImportResult>(200)
+          .Produces<ImportResult>(207)
+          .ProducesValidationProblem()
+          .ProducesProblem(400);
 
         group.MapPost("loyalty-programs", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<LoyaltyProgramImportDto, LoyaltyProgramImportDtoMap>(stream);
-            return Results.Ok(await mediator.Send(new ImportLoyaltyProgramsCommand(items), ct));
+            var result = await mediator.Send(new ImportLoyaltyProgramsCommand(items), ct);
+            return result.Errors.Count == 0
+                ? Results.Ok(result)
+                : Results.Json(result, statusCode: 207);
         }).WithName("ImportLoyaltyPrograms")
-          .WithSummary("Import loyalty programs from CSV (run after loyalty-program-kinds and airlines). Tiers column is JSON-encoded. Upserts by Code.");
+          .WithSummary("Import loyalty programs from CSV (run after loyalty-program-kinds and airlines). Tiers column is JSON-encoded. Upserts by Code.")
+          .Produces<ImportResult>(200)
+          .Produces<ImportResult>(207)
+          .ProducesValidationProblem()
+          .ProducesProblem(400);
     }
 }
