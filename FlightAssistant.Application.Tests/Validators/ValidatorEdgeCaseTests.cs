@@ -4,12 +4,12 @@ using FlightAssistant.Application.Commands.Travelers;
 using FlightAssistant.Application.Queries.Flights;
 using FlightAssistant.Application.Queries.Visa;
 using FlightAssistant.Application.Validators;
-using FlightAssistant.Application.Validators.Admin;
 using FlightAssistant.Application.Commands.Admin.Airlines;
 using FlightAssistant.Application.Commands.Admin.Airports;
 using FlightAssistant.Application.Commands.Admin.Lounges;
 using FlightAssistant.Application.Commands.Admin.Loyalty;
 using FlightAssistant.Application.Commands.Admin.Import;
+using FlightAssistant.Application.Commands.Admin.Travelers;
 using FlightAssistant.Contracts.Paging;
 using FluentValidation;
 
@@ -586,6 +586,117 @@ public class ValidatorEdgeCaseTests
         var tier = new LoyaltyTierImportDto("GOLD", "Gold", 1, null, null);
         AssertValid(v, new ImportLoyaltyProgramsCommand([
             new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", "BA", null, [tier])]));
+    }
+
+    // ── Admin: Delete commands ────────────────────────────────────────────────
+
+    [Fact]
+    public void DeleteAirline_Id0_Fails()
+    {
+        var v = new DeleteAirlineCommandValidator();
+        AssertInvalid(v, new DeleteAirlineCommand(0), "Id");
+    }
+
+    [Fact]
+    public void DeleteAirline_ValidId_Passes()
+    {
+        var v = new DeleteAirlineCommandValidator();
+        AssertValid(v, new DeleteAirlineCommand(1));
+    }
+
+    [Fact]
+    public void DeleteAirport_Id0_Fails()
+    {
+        var v = new DeleteAirportCommandValidator();
+        AssertInvalid(v, new DeleteAirportCommand(0), "Id");
+    }
+
+    [Fact]
+    public void DeleteLounge_Id0_Fails()
+    {
+        var v = new DeleteLoungeCommandValidator();
+        AssertInvalid(v, new DeleteLoungeCommand(0), "Id");
+    }
+
+    [Fact]
+    public void DeleteLoyaltyProgram_Id0_Fails()
+    {
+        var v = new DeleteLoyaltyProgramCommandValidator();
+        AssertInvalid(v, new DeleteLoyaltyProgramCommand(0), "Id");
+    }
+
+    [Fact]
+    public void DeleteTraveler_EmptyGuid_Fails()
+    {
+        var v = new DeleteTravelerCommandValidator();
+        AssertInvalid(v, new DeleteTravelerCommand(Guid.Empty), "TravelerId");
+    }
+
+    [Fact]
+    public void DeleteTraveler_ValidGuid_Passes()
+    {
+        var v = new DeleteTravelerCommandValidator();
+        AssertValid(v, new DeleteTravelerCommand(Guid.NewGuid()));
+    }
+
+    // ── Flights: Untrack / Toggle / Sync / GetStatus ────────────────────────────
+
+    [Fact]
+    public void UntrackFlight_FlightId0_Fails()
+    {
+        var v = new UntrackFlightCommandValidator();
+        AssertInvalid(v, new UntrackFlightCommand(Guid.NewGuid(), 0), "FlightId");
+    }
+
+    [Fact]
+    public void UntrackFlight_ValidFlightId_Passes()
+    {
+        var v = new UntrackFlightCommandValidator();
+        AssertValid(v, new UntrackFlightCommand(Guid.NewGuid(), 1));
+    }
+
+    [Fact]
+    public void ToggleFlightNotification_FlightId0_Fails()
+    {
+        var v = new ToggleFlightNotificationCommandValidator();
+        AssertInvalid(v, new ToggleFlightNotificationCommand(Guid.NewGuid(), 0, true), "FlightId");
+    }
+
+    [Fact]
+    public void SyncFlightStatus_FlightId0_Fails()
+    {
+        var v = new SyncFlightStatusCommandValidator();
+        AssertInvalid(v, new SyncFlightStatusCommand(Guid.NewGuid(), 0), "FlightId");
+    }
+
+    [Fact]
+    public void GetFlightStatus_FlightId0_Fails()
+    {
+        var v = new GetFlightStatusQueryValidator();
+        AssertInvalid(v, new GetFlightStatusQuery(Guid.NewGuid(), 0), "FlightId");
+    }
+
+    [Fact]
+    public void GetFlightStatus_ValidFlightId_Passes()
+    {
+        var v = new GetFlightStatusQueryValidator();
+        AssertValid(v, new GetFlightStatusQuery(Guid.NewGuid(), 1));
+    }
+
+    // ── Loyalty: RemoveMembership ───────────────────────────────────────────────
+
+    [Fact]
+    public void RemoveLoyaltyMembership_EmptyMembershipId_Fails()
+    {
+        var v = new RemoveLoyaltyMembershipCommandValidator();
+        AssertInvalid(v, new RemoveLoyaltyMembershipCommand(Guid.NewGuid(), Guid.Empty), "MembershipId");
+    }
+
+    [Fact]
+    public void RemoveLoyaltyMembership_ValidMembershipId_Passes()
+    {
+        var v = new RemoveLoyaltyMembershipCommandValidator();
+        AssertValid(v, new RemoveLoyaltyMembershipCommand(Guid.NewGuid(), Guid.NewGuid()));
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

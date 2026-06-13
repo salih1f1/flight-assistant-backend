@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Queries.Flights
@@ -42,6 +43,14 @@ namespace FlightAssistant.Application.Queries.Flights
                 e.BaggageClaim,
                 e.Remarks
             )).ToList();
+        }
+    }
+
+    public sealed class GetFlightStatusQueryValidator : AbstractValidator<GetFlightStatusQuery>
+    {
+        public GetFlightStatusQueryValidator()
+        {
+            RuleFor(x => x.FlightId).GreaterThan(0);
         }
     }
 }

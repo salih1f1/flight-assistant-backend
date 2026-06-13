@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Loyalty
@@ -22,6 +23,14 @@ namespace FlightAssistant.Application.Commands.Loyalty
 
             await _loyalty.RemoveMembershipAsync(membership, ct);
             await _loyalty.SaveChangesAsync(ct);
+        }
+    }
+
+    public sealed class RemoveLoyaltyMembershipCommandValidator : AbstractValidator<RemoveLoyaltyMembershipCommand>
+    {
+        public RemoveLoyaltyMembershipCommandValidator()
+        {
+            RuleFor(x => x.MembershipId).NotEqual(Guid.Empty);
         }
     }
 }
