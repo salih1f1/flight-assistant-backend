@@ -7,5 +7,6 @@ namespace FlightAssistant.Application.Interfaces.Repositories
     {
         Task<Traveler?> GetByIdAsync(Guid id, CancellationToken ct = default);
         Task<Traveler?> GetByEmailAsync(string email, CancellationToken ct = default);
+        Task<IReadOnlyList<Traveler>> GetByIdsAsync(IReadOnlyList<Guid> ids, CancellationToken ct = default);
     }
 }

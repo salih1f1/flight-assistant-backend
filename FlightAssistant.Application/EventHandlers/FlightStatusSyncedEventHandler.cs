@@ -41,12 +41,16 @@ namespace FlightAssistant.Application.EventHandlers
             var title = $"Flight {notification.FlightNumber} Update";
             var body = GetStatusMessage(notification.StatusCode, notification.ServiceDateUtc);
 
+            // Batch-load all travelers for the notified trackings to avoid N+1 queries
+            var travelerIds = notifyTrackings.Select(t => t.TravelerId).Distinct().ToList();
+            var travelers = await _travelers.GetByIdsAsync(travelerIds, ct);
+            var travelerMap = travelers.ToDictionary(t => t.Id);
+
             // Collect all device tokens from notified travelers
             var tokens = new List<string>();
             foreach (var tracking in notifyTrackings)
             {
-                var traveler = await _travelers.GetByIdAsync(tracking.TravelerId, ct);
-                if (traveler is not null)
+                if (travelerMap.TryGetValue(tracking.TravelerId, out var traveler))
                     tokens.AddRange(traveler.DeviceTokens.Select(d => d.Token));
             }
 
