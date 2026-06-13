@@ -47,12 +47,20 @@ namespace FlightAssistant.Application.Queries.Flights
         {
             var (rows, total) = await _flights.GetTravelerFlightsAsync(query.TravelerId, query.Paging.Page, query.Paging.PageSize, ct);
 
+            var airlineIds = rows.Select(r => r.Flight.AirlineId).Distinct().ToList();
+            var airportIds = rows
+                .SelectMany(r => new[] { r.Flight.DepartureAirportId, r.Flight.ArrivalAirportId })
+                .Distinct().ToList();
+
+            var airlineMap = await _refData.GetAirlineIataMapAsync(airlineIds, ct);
+            var airportMap = await _refData.GetAirportIataMapAsync(airportIds, ct);
+
             var results = new List<TravelerFlightResult>(rows.Count);
             foreach (var r in rows)
             {
-                var airlineIata = await _refData.GetAirlineIataByIdAsync(r.Flight.AirlineId, ct) ?? r.Flight.AirlineId.ToString();
-                var depIata    = await _refData.GetAirportIataByIdAsync(r.Flight.DepartureAirportId, ct) ?? r.Flight.DepartureAirportId.ToString();
-                var arrIata    = await _refData.GetAirportIataByIdAsync(r.Flight.ArrivalAirportId, ct) ?? r.Flight.ArrivalAirportId.ToString();
+                var airlineIata = airlineMap.GetValueOrDefault(r.Flight.AirlineId, r.Flight.AirlineId.ToString());
+                var depIata     = airportMap.GetValueOrDefault(r.Flight.DepartureAirportId, r.Flight.DepartureAirportId.ToString());
+                var arrIata     = airportMap.GetValueOrDefault(r.Flight.ArrivalAirportId, r.Flight.ArrivalAirportId.ToString());
 
                 results.Add(new TravelerFlightResult(
                     r.Flight.Id,
