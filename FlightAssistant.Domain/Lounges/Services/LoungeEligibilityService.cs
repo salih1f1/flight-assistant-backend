@@ -95,7 +95,7 @@ namespace FlightAssistant.Domain.Lounges.Services
             if (minTierCode is null) return true;
             if (memberTierCode is null) return false;
 
-            if (!AllianceTierRanks.TryGetValue(allianceCode, out var ranks)) return true;
+            if (!AllianceTierRanks.TryGetValue(allianceCode, out var ranks)) return false;
 
             var memberRank = ranks.GetValueOrDefault(memberTierCode, 0);
             var minRank    = ranks.GetValueOrDefault(minTierCode, 0);
