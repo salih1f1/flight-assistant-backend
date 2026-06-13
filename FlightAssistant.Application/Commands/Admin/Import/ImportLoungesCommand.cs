@@ -73,8 +73,7 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
                 {
                     var lounge = Lounge.Create(airportId.Value, dto.Name, dto.Terminal, dto.LocationHint,
                         dto.Hours, dto.IsAirside, dto.IsDomesticOnly, dto.IsInternationalOnly, dto.Amenities);
-                    foreach (var link in providerLinks)
-                        lounge.Providers.Add(link);
+                    lounge.ReplaceAllProviders(providerLinks);
                     await _loungeRepo.AddAsync(lounge, ct);
                     inserted++;
                 }
@@ -82,9 +81,7 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
                 {
                     existing.Update(dto.Name, dto.Terminal, dto.LocationHint, dto.Hours,
                         dto.IsAirside, dto.IsDomesticOnly, dto.IsInternationalOnly, dto.Amenities);
-                    existing.Providers.Clear();
-                    foreach (var link in providerLinks)
-                        existing.Providers.Add(link);
+                    existing.ReplaceAllProviders(providerLinks);
                     updated++;
                 }
             }

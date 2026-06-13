@@ -19,7 +19,8 @@ namespace FlightAssistant.Domain.Loyalty.Entities
         public DateTime? VerifiedAt { get; private set; }
         public string? VerifiedBy { get; private set; }
 
-        public ICollection<LoyaltyTier> Tiers { get; private set; } = new List<LoyaltyTier>();
+        private readonly List<LoyaltyTier> _tiers = new();
+        public IReadOnlyCollection<LoyaltyTier> Tiers => _tiers;
 
         public static LoyaltyProgram Create(string code, string name, int kindId, int? airlineId = null, string? allianceCode = null) =>
             new()
@@ -59,12 +60,19 @@ namespace FlightAssistant.Domain.Loyalty.Entities
             VerifiedBy = null;
         }
 
-        public void AddTier(LoyaltyTier tier) => Tiers.Add(tier);
+        public void AddTier(LoyaltyTier tier) => _tiers.Add(tier);
 
         public void RemoveTier(int tierId)
         {
-            var tier = Tiers.FirstOrDefault(t => t.Id == tierId);
-            if (tier is not null) Tiers.Remove(tier);
+            var tier = _tiers.FirstOrDefault(t => t.Id == tierId);
+            if (tier is not null) _tiers.Remove(tier);
+        }
+
+        public void ReplaceAllTiers(IEnumerable<LoyaltyTier> newTiers)
+        {
+            _tiers.Clear();
+            foreach (var t in newTiers)
+                _tiers.Add(t);
         }
     }
 }
