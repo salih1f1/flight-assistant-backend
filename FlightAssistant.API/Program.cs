@@ -289,6 +289,7 @@ app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseSerilogRequestLogging();
 app.UseHttpsRedirection();
+app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
