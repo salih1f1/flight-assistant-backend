@@ -5,6 +5,7 @@ using FlightAssistant.API.Endpoints.Admin;
 using FlightAssistant.API.HostedServices;
 using FlightAssistant.API.Infrastructure;
 using FlightAssistant.API.Middleware;
+using FlightAssistant.API.Telemetry;
 using FlightAssistant.Application;
 using FlightAssistant.Infrastructure;
 using FlightAssistant.Infrastructure.Caching;
@@ -118,7 +119,10 @@ builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.Is
 
 var aiConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"];
 if (!string.IsNullOrWhiteSpace(aiConnectionString))
+{
     builder.Services.AddApplicationInsightsTelemetry();
+    builder.Services.AddApplicationInsightsTelemetryProcessor<SanitizeAviationStackTelemetryProcessor>();
+}
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddScoped<TravelerContext>();
