@@ -518,6 +518,48 @@ public class ValidatorEdgeCaseTests
             new LoungeProviderImportDto("AMEX", "American Express", "NotAKind", null)]), "Kind");
     }
 
+    // ── Import: Lounges ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ImportLounges_TerminalExceeds32_Fails()
+    {
+        var v = new ImportLoungesCommandValidator();
+        var dto = new LoungeImportDto("Test Lounge", "LHR", new string('A', 33), null, null, true, false, false, null, []);
+        AssertInvalid(v, new ImportLoungesCommand([dto]), "Terminal");
+    }
+
+    [Fact]
+    public void ImportLounges_Terminal32Chars_Passes()
+    {
+        var v = new ImportLoungesCommandValidator();
+        var dto = new LoungeImportDto("Test Lounge", "LHR", new string('A', 32), null, null, true, false, false, null, []);
+        AssertValid(v, new ImportLoungesCommand([dto]));
+    }
+
+    [Fact]
+    public void ImportLounges_LocationHintExceeds200_Fails()
+    {
+        var v = new ImportLoungesCommandValidator();
+        var dto = new LoungeImportDto("Test Lounge", "LHR", null, new string('A', 201), null, true, false, false, null, []);
+        AssertInvalid(v, new ImportLoungesCommand([dto]), "LocationHint");
+    }
+
+    [Fact]
+    public void ImportLounges_HoursExceeds200_Fails()
+    {
+        var v = new ImportLoungesCommandValidator();
+        var dto = new LoungeImportDto("Test Lounge", "LHR", null, null, new string('A', 201), true, false, false, null, []);
+        AssertInvalid(v, new ImportLoungesCommand([dto]), "Hours");
+    }
+
+    [Fact]
+    public void ImportLounges_NullTerminalLocationHintHours_Passes()
+    {
+        var v = new ImportLoungesCommandValidator();
+        var dto = new LoungeImportDto("Test Lounge", "LHR", null, null, null, true, false, false, null, []);
+        AssertValid(v, new ImportLoungesCommand([dto]));
+    }
+
     // ── Import: LoyaltyPrograms ───────────────────────────────────────────────────
 
     [Fact]
