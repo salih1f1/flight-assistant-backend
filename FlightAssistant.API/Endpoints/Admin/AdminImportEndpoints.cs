@@ -6,20 +6,14 @@ namespace FlightAssistant.API.Endpoints.Admin;
 
 public static class AdminImportEndpoints
 {
-    private const long MaxFileSizeBytes = 10 * 1024 * 1024; // 10 MB
-
     public static void MapAdminImportEndpoints(this IEndpointRouteBuilder admin)
     {
         var group = admin.MapGroup("import").WithTags("Admin - Import")
-            .DisableAntiforgery();
+            .DisableAntiforgery()
+            .AddEndpointFilter<CsvFileUploadValidationFilter>();
 
         group.MapPost("alliances", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
-            if (!file.ContentType.Equals("text/csv", StringComparison.OrdinalIgnoreCase))
-                return Results.BadRequest("Only text/csv files are accepted.");
-            if (file.Length > MaxFileSizeBytes)
-                return Results.BadRequest("File size exceeds the 10 MB limit.");
-
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<AllianceImportDto, AllianceImportDtoMap>(stream);
             return Results.Ok(await mediator.Send(new ImportAlliancesCommand(items), ct));
@@ -28,11 +22,6 @@ public static class AdminImportEndpoints
 
         group.MapPost("countries", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
-            if (!file.ContentType.Equals("text/csv", StringComparison.OrdinalIgnoreCase))
-                return Results.BadRequest("Only text/csv files are accepted.");
-            if (file.Length > MaxFileSizeBytes)
-                return Results.BadRequest("File size exceeds the 10 MB limit.");
-
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<CountryImportDto, CountryImportDtoMap>(stream);
             return Results.Ok(await mediator.Send(new ImportCountriesCommand(items), ct));
@@ -41,11 +30,6 @@ public static class AdminImportEndpoints
 
         group.MapPost("airports", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
-            if (!file.ContentType.Equals("text/csv", StringComparison.OrdinalIgnoreCase))
-                return Results.BadRequest("Only text/csv files are accepted.");
-            if (file.Length > MaxFileSizeBytes)
-                return Results.BadRequest("File size exceeds the 10 MB limit.");
-
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<AirportImportDto, AirportImportDtoMap>(stream);
             return Results.Ok(await mediator.Send(new ImportAirportsCommand(items), ct));
@@ -54,11 +38,6 @@ public static class AdminImportEndpoints
 
         group.MapPost("airlines", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
-            if (!file.ContentType.Equals("text/csv", StringComparison.OrdinalIgnoreCase))
-                return Results.BadRequest("Only text/csv files are accepted.");
-            if (file.Length > MaxFileSizeBytes)
-                return Results.BadRequest("File size exceeds the 10 MB limit.");
-
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<AirlineImportDto, AirlineImportDtoMap>(stream);
             return Results.Ok(await mediator.Send(new ImportAirlinesCommand(items), ct));
@@ -67,11 +46,6 @@ public static class AdminImportEndpoints
 
         group.MapPost("lounge-providers", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
-            if (!file.ContentType.Equals("text/csv", StringComparison.OrdinalIgnoreCase))
-                return Results.BadRequest("Only text/csv files are accepted.");
-            if (file.Length > MaxFileSizeBytes)
-                return Results.BadRequest("File size exceeds the 10 MB limit.");
-
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<LoungeProviderImportDto, LoungeProviderImportDtoMap>(stream);
             return Results.Ok(await mediator.Send(new ImportLoungeProvidersCommand(items), ct));
@@ -80,11 +54,6 @@ public static class AdminImportEndpoints
 
         group.MapPost("loyalty-program-kinds", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
-            if (!file.ContentType.Equals("text/csv", StringComparison.OrdinalIgnoreCase))
-                return Results.BadRequest("Only text/csv files are accepted.");
-            if (file.Length > MaxFileSizeBytes)
-                return Results.BadRequest("File size exceeds the 10 MB limit.");
-
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<LoyaltyProgramKindImportDto, LoyaltyProgramKindImportDtoMap>(stream);
             return Results.Ok(await mediator.Send(new ImportLoyaltyProgramKindsCommand(items), ct));
@@ -93,11 +62,6 @@ public static class AdminImportEndpoints
 
         group.MapPost("lounges", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
-            if (!file.ContentType.Equals("text/csv", StringComparison.OrdinalIgnoreCase))
-                return Results.BadRequest("Only text/csv files are accepted.");
-            if (file.Length > MaxFileSizeBytes)
-                return Results.BadRequest("File size exceeds the 10 MB limit.");
-
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<LoungeImportDto, LoungeImportDtoMap>(stream);
             return Results.Ok(await mediator.Send(new ImportLoungesCommand(items), ct));
@@ -106,11 +70,6 @@ public static class AdminImportEndpoints
 
         group.MapPost("loyalty-programs", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
-            if (!file.ContentType.Equals("text/csv", StringComparison.OrdinalIgnoreCase))
-                return Results.BadRequest("Only text/csv files are accepted.");
-            if (file.Length > MaxFileSizeBytes)
-                return Results.BadRequest("File size exceeds the 10 MB limit.");
-
             await using var stream = file.OpenReadStream();
             var items = await CsvImportParser.ParseAsync<LoyaltyProgramImportDto, LoyaltyProgramImportDtoMap>(stream);
             return Results.Ok(await mediator.Send(new ImportLoyaltyProgramsCommand(items), ct));

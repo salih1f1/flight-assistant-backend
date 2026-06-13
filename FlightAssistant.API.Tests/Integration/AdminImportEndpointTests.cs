@@ -46,6 +46,26 @@ public class AdminImportEndpointTests(FlightAssistantWebApplicationFactory facto
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    [Theory]
+    [InlineData("alliances")]
+    [InlineData("countries")]
+    [InlineData("airports")]
+    [InlineData("airlines")]
+    [InlineData("lounge-providers")]
+    [InlineData("loyalty-program-kinds")]
+    [InlineData("lounges")]
+    [InlineData("loyalty-programs")]
+    public async Task Import_WrongContentType_Returns400(string route)
+    {
+        var client = factory.CreateAdminClient();
+
+        var response = await client.PostAsync(
+            $"admin/import/{route}",
+            BuildMultipart(ValidAlliancesCsv, contentType: "application/octet-stream"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     [Fact]
     public async Task ImportAlliances_FileTooLarge_Returns400()
     {
