@@ -1,4 +1,3 @@
-using FlightAssistant.Domain.Common.Interfaces;
 using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Lounges.Enums;
@@ -38,10 +37,10 @@ namespace FlightAssistant.API.HostedServices
                 using var scope = sp.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
 
-                await SeedData<Alliance>(db, cancellationToken);
-                await SeedData<Country>(db, cancellationToken);
-                await SeedData<Airport>(db, cancellationToken);
-                await SeedData<Airline>(db, cancellationToken);
+                await SeedAlliancesAsync(db, cancellationToken);
+                await SeedCountriesAsync(db, cancellationToken);
+                await SeedAirportsAsync(db, cancellationToken);
+                await SeedAirlinesAsync(db, cancellationToken);
                 await SeedLoyaltyProgramKindsAsync(db, cancellationToken);
                 await SeedLoyaltyProgramsAsync(db, cancellationToken);
                 await SeedLoungeProvidersAsync(db, cancellationToken);
@@ -60,6 +59,64 @@ namespace FlightAssistant.API.HostedServices
         }
 
         public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        // -----------------------------------------------------------------------
+        // Alliances
+        // -----------------------------------------------------------------------
+
+        private async Task SeedAlliancesAsync(FlightAssistantDbContext db, CancellationToken ct)
+        {
+            const string dataset = "Alliance";
+            await SeedCustomAsync<AllianceSeedDto>(db, dataset, ct, async (dto, d, c) =>
+            {
+                await PopulateAlliancesAsync(Alliance.Create(dto.Code, dto.Name), d, c);
+            });
+        }
+
+        // -----------------------------------------------------------------------
+        // Countries
+        // -----------------------------------------------------------------------
+
+        private async Task SeedCountriesAsync(FlightAssistantDbContext db, CancellationToken ct)
+        {
+            const string dataset = "Country";
+            await SeedCustomAsync<CountrySeedDto>(db, dataset, ct, async (dto, d, c) =>
+            {
+                await PopulateCountriesAsync(
+                    Country.Create(dto.Code, dto.Name, dto.Alpha3, dto.NumericCode, dto.Region, dto.Subregion, dto.IsEU, dto.IsSchengen, dto.IsEEA),
+                    d, c);
+            });
+        }
+
+        // -----------------------------------------------------------------------
+        // Airports
+        // -----------------------------------------------------------------------
+
+        private async Task SeedAirportsAsync(FlightAssistantDbContext db, CancellationToken ct)
+        {
+            const string dataset = "Airport";
+            await SeedCustomAsync<AirportSeedDto>(db, dataset, ct, async (dto, d, c) =>
+            {
+                await PopulateAirportsAsync(
+                    Airport.Create(dto.Iata, dto.Icao, dto.Name, dto.City, dto.CountryCode, dto.Latitude, dto.Longitude, dto.ElevationFt, dto.Timezone),
+                    d, c);
+            });
+        }
+
+        // -----------------------------------------------------------------------
+        // Airlines
+        // -----------------------------------------------------------------------
+
+        private async Task SeedAirlinesAsync(FlightAssistantDbContext db, CancellationToken ct)
+        {
+            const string dataset = "Airline";
+            await SeedCustomAsync<AirlineSeedDto>(db, dataset, ct, async (dto, d, c) =>
+            {
+                await PopulateAirlinesAsync(
+                    Airline.Create(dto.Iata, dto.Icao, dto.Name, dto.CountryCode, dto.AllianceCode),
+                    d, c);
+            });
+        }
 
         // -----------------------------------------------------------------------
         // Loyalty Program Kinds
@@ -382,78 +439,6 @@ namespace FlightAssistant.API.HostedServices
             return false;
         }
 
-        private async Task SeedData<T>(FlightAssistantDbContext db, CancellationToken ct)
-            where T : class, ISeedableEntity
-        {
-            var dataset = typeof(T).Name;
-
-            var folder = Path.Combine(AppContext.BaseDirectory, SeedDataFolderPath, dataset);
-
-            if (!Directory.Exists(folder))
-            {
-                log.LogWarning("Seed folder not found: {Folder}", folder);
-                return;
-            }
-
-            foreach (var filePath in Directory.EnumerateFiles(folder, "*.json", SearchOption.TopDirectoryOnly))
-            {
-                var fileName = Path.GetFileName(filePath);
-
-                if (!TryParseVersion(fileName, out var version))
-                {
-                    log.LogWarning("Skipping seed file without version suffix: {File}", fileName);
-                    continue;
-                }
-
-                if (await AlreadySeeded(db, dataset, version, ct))
-                {
-                    log.LogInformation("Skipping {Dataset} v{Version} from {File}, already applied", dataset, version, fileName);
-                    continue;
-                }
-
-                List<T> items;
-                try
-                {
-                    items = LoadJsonFromPath<T>(filePath);
-                }
-                catch (Exception ex)
-                {
-                    log.LogError(ex, "Failed to read seed file {File}", fileName);
-                    continue;
-                }
-
-                foreach (var item in items)
-                {
-                    switch (item)
-                    {
-                        case Alliance alliance:
-                            await PopulateAlliancesAsync(alliance, db, ct);
-                            break;
-
-                        case Country country:
-                            await PopulateCountriesAsync(country, db, ct);
-                            break;
-
-                        case Airport airport:
-                            await PopulateAirportsAsync(airport, db, ct);
-                            break;
-
-                        case Airline airline:
-                            await PopulateAirlinesAsync(airline, db, ct);
-                            break;
-
-                        default:
-                            log.LogError("Seeding for type {0} is not implemented", dataset);
-                            return;
-                    }
-                }
-
-                await db.SaveChangesAsync(ct);
-                await MarkAsSeeded(db, dataset, version, ct);
-                log.LogInformation("Applied seed {Dataset} v{Version} from {File}", dataset, version, fileName);
-            }
-        }
-
         private async Task PopulateAlliancesAsync(
             Alliance alliance,
             FlightAssistantDbContext db,
@@ -511,6 +496,37 @@ namespace FlightAssistant.API.HostedServices
         // -----------------------------------------------------------------------
         // JSON DTOs (used only for deserialization, not persisted directly)
         // -----------------------------------------------------------------------
+
+        private record AllianceSeedDto(string Code, string Name);
+
+        private record CountrySeedDto(
+            string Code,
+            string Name,
+            string? Alpha3 = null,
+            int? NumericCode = null,
+            string? Region = null,
+            string? Subregion = null,
+            bool? IsEU = null,
+            bool? IsSchengen = null,
+            bool? IsEEA = null);
+
+        private record AirportSeedDto(
+            string Iata,
+            string? Icao,
+            string Name,
+            string City,
+            string CountryCode,
+            double? Latitude = null,
+            double? Longitude = null,
+            int? ElevationFt = null,
+            string? Timezone = null);
+
+        private record AirlineSeedDto(
+            string? Iata,
+            string? Icao,
+            string Name,
+            string CountryCode,
+            string? AllianceCode = null);
 
         private record LoyaltyProgramKindDto(string Code, string Name, string? Description);
 
