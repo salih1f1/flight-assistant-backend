@@ -30,9 +30,10 @@ public class GetTravelerFlightsQueryHandlerTests
         _flights.GetTravelerFlightsAsync(travelerId, 1, 50, Arg.Any<CancellationToken>())
             .Returns(((IReadOnlyList<(TravelerFlight, Flight)>)[(tracking, flight)], 1));
 
-        _refData.GetAirlineIataByIdAsync(1, Arg.Any<CancellationToken>()).Returns("BA");
-        _refData.GetAirportIataByIdAsync(10, Arg.Any<CancellationToken>()).Returns("LHR");
-        _refData.GetAirportIataByIdAsync(20, Arg.Any<CancellationToken>()).Returns("JFK");
+        _refData.GetAirlineIataMapAsync(Arg.Any<IReadOnlyList<int>>(), Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<int, string> { [1] = "BA" });
+        _refData.GetAirportIataMapAsync(Arg.Any<IReadOnlyList<int>>(), Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<int, string> { [10] = "LHR", [20] = "JFK" });
 
         var query = new GetTravelerFlightsQuery(travelerId, new PagedRequest(1, 50));
         var result = await _handler.Handle(query, CancellationToken.None);
@@ -48,11 +49,57 @@ public class GetTravelerFlightsQueryHandlerTests
     }
 
     [Fact]
+    public async Task MultipleRows_CallsBatchMapsOnceRegardlessOfRowCount()
+    {
+        var travelerId = Guid.NewGuid();
+
+        var flight1 = Flight.Create(1, "BA123", 10, 20,
+            DateOnly.FromDateTime(DateTime.Today),
+            DateTime.UtcNow, DateTime.UtcNow.AddHours(8));
+        var flight2 = Flight.Create(1, "BA456", 20, 30,
+            DateOnly.FromDateTime(DateTime.Today),
+            DateTime.UtcNow, DateTime.UtcNow.AddHours(8));
+        var flight3 = Flight.Create(2, "AF789", 10, 30,
+            DateOnly.FromDateTime(DateTime.Today),
+            DateTime.UtcNow, DateTime.UtcNow.AddHours(8));
+
+        var tracking1 = TravelerFlight.Create(travelerId, flight1.Id);
+        var tracking2 = TravelerFlight.Create(travelerId, flight2.Id);
+        var tracking3 = TravelerFlight.Create(travelerId, flight3.Id);
+
+        _flights.GetTravelerFlightsAsync(travelerId, 1, 50, Arg.Any<CancellationToken>())
+            .Returns(((IReadOnlyList<(TravelerFlight, Flight)>)
+                [(tracking1, flight1), (tracking2, flight2), (tracking3, flight3)], 3));
+
+        _refData.GetAirlineIataMapAsync(Arg.Any<IReadOnlyList<int>>(), Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<int, string> { [1] = "BA", [2] = "AF" });
+        _refData.GetAirportIataMapAsync(Arg.Any<IReadOnlyList<int>>(), Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<int, string> { [10] = "LHR", [20] = "JFK", [30] = "CDG" });
+
+        var query = new GetTravelerFlightsQuery(travelerId, new PagedRequest(1, 50));
+        var result = await _handler.Handle(query, CancellationToken.None);
+
+        Assert.Equal(3, result.Total);
+        Assert.Equal(3, result.Items.Count);
+
+        await _refData.Received(1).GetAirlineIataMapAsync(Arg.Any<IReadOnlyList<int>>(), Arg.Any<CancellationToken>());
+        await _refData.Received(1).GetAirportIataMapAsync(Arg.Any<IReadOnlyList<int>>(), Arg.Any<CancellationToken>());
+
+        await _refData.DidNotReceive().GetAirlineIataByIdAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
+        await _refData.DidNotReceive().GetAirportIataByIdAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task EmptyList_ReturnsEmptyPage()
     {
         var travelerId = Guid.NewGuid();
         _flights.GetTravelerFlightsAsync(travelerId, 1, 50, Arg.Any<CancellationToken>())
             .Returns(((IReadOnlyList<(TravelerFlight, Flight)>)[], 0));
+
+        _refData.GetAirlineIataMapAsync(Arg.Any<IReadOnlyList<int>>(), Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<int, string>());
+        _refData.GetAirportIataMapAsync(Arg.Any<IReadOnlyList<int>>(), Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<int, string>());
 
         var query = new GetTravelerFlightsQuery(travelerId, new PagedRequest(1, 50));
         var result = await _handler.Handle(query, CancellationToken.None);
