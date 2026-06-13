@@ -35,14 +35,14 @@ public class FlightStatusChangedNotificationHandlerTests
         var tracking = TravelerFlight.Create(travelerId, 1);
         tracking.SetNotify(true);
 
-        var traveler = Traveler.Register("test@example.com");
+        var traveler = Traveler.Register(travelerId, "test@example.com");
         traveler.AddDeviceToken("ios", "token-aaa-111");
         traveler.AddDeviceToken("ios", "token-bbb-222");
 
         _flights.GetTrackingsByFlightIdAsync(1, Arg.Any<CancellationToken>())
             .Returns(new List<TravelerFlight> { tracking });
-        _travelers.GetByIdAsync(travelerId, Arg.Any<CancellationToken>())
-            .Returns(traveler);
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler> { traveler });
 
         await _handler.Handle(TestEvent, default);
 
@@ -88,12 +88,12 @@ public class FlightStatusChangedNotificationHandlerTests
         var tracking = TravelerFlight.Create(travelerId, 1);
         tracking.SetNotify(true);
 
-        var traveler = Traveler.Register("test@example.com"); // no device tokens
+        var traveler = Traveler.Register(travelerId, "test@example.com"); // no device tokens
 
         _flights.GetTrackingsByFlightIdAsync(1, Arg.Any<CancellationToken>())
             .Returns(new List<TravelerFlight> { tracking });
-        _travelers.GetByIdAsync(travelerId, Arg.Any<CancellationToken>())
-            .Returns(traveler);
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler> { traveler });
 
         await _handler.Handle(TestEvent, default);
 
@@ -109,13 +109,13 @@ public class FlightStatusChangedNotificationHandlerTests
         var tracking = TravelerFlight.Create(travelerId, 1);
         tracking.SetNotify(true);
 
-        var traveler = Traveler.Register("test@example.com");
+        var traveler = Traveler.Register(travelerId, "test@example.com");
         traveler.AddDeviceToken("ios", "token-aaa-111");
 
         _flights.GetTrackingsByFlightIdAsync(1, Arg.Any<CancellationToken>())
             .Returns(new List<TravelerFlight> { tracking });
-        _travelers.GetByIdAsync(travelerId, Arg.Any<CancellationToken>())
-            .Returns(traveler);
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler> { traveler });
         _push.SendAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<string>(),
                 Arg.Any<string>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new Exception("APNs connection error"));
@@ -123,6 +123,40 @@ public class FlightStatusChangedNotificationHandlerTests
         // Should not throw — push failures must not crash the domain event handler
         var ex = await Record.ExceptionAsync(() => _handler.Handle(TestEvent, default));
         Assert.Null(ex);
+    }
+
+    [Fact]
+    public async Task Handle_MultipleTrackings_BatchLoadsTravelersOnce()
+    {
+        var travelerId1 = Guid.NewGuid();
+        var travelerId2 = Guid.NewGuid();
+
+        var tracking1 = TravelerFlight.Create(travelerId1, 1);
+        tracking1.SetNotify(true);
+        var tracking2 = TravelerFlight.Create(travelerId2, 1);
+        tracking2.SetNotify(true);
+        // Duplicate traveler id across two trackings to prove Distinct() dedup
+        var tracking3 = TravelerFlight.Create(travelerId1, 1);
+        tracking3.SetNotify(true);
+
+        var traveler1 = Traveler.Register(travelerId1, "test1@example.com");
+        traveler1.AddDeviceToken("ios", "token-aaa-111");
+        var traveler2 = Traveler.Register(travelerId2, "test2@example.com");
+        traveler2.AddDeviceToken("ios", "token-bbb-222");
+
+        _flights.GetTrackingsByFlightIdAsync(1, Arg.Any<CancellationToken>())
+            .Returns(new List<TravelerFlight> { tracking1, tracking2, tracking3 });
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler> { traveler1, traveler2 });
+
+        await _handler.Handle(TestEvent, default);
+
+        await _push.Received(1).SendAsync(
+            Arg.Is<IEnumerable<string>>(tokens => tokens.Count() == 3),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+
+        await _travelers.Received(1).GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>());
+        await _travelers.DidNotReceive().GetByIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>());
     }
 
     [Theory]
@@ -137,15 +171,15 @@ public class FlightStatusChangedNotificationHandlerTests
         var tracking = TravelerFlight.Create(travelerId, 1);
         tracking.SetNotify(true);
 
-        var traveler = Traveler.Register("test@example.com");
+        var traveler = Traveler.Register(travelerId, "test@example.com");
         traveler.AddDeviceToken("ios", "token-aaa-111");
 
         var evt = TestEvent with { StatusCode = statusCode };
 
         _flights.GetTrackingsByFlightIdAsync(1, Arg.Any<CancellationToken>())
             .Returns(new List<TravelerFlight> { tracking });
-        _travelers.GetByIdAsync(travelerId, Arg.Any<CancellationToken>())
-            .Returns(traveler);
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler> { traveler });
 
         await _handler.Handle(evt, default);
 
