@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Flights
@@ -18,6 +19,14 @@ namespace FlightAssistant.Application.Commands.Flights
 
             await _flights.RemoveTravelerFlightAsync(tf, ct);
             await _flights.SaveChangesAsync(ct);
+        }
+    }
+
+    public sealed class UntrackFlightCommandValidator : AbstractValidator<UntrackFlightCommand>
+    {
+        public UntrackFlightCommandValidator()
+        {
+            RuleFor(x => x.FlightId).GreaterThan(0);
         }
     }
 }

@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Travelers
@@ -16,6 +17,14 @@ namespace FlightAssistant.Application.Commands.Admin.Travelers
             if (traveler is null) return;
             await _repo.DeleteAsync(traveler, ct);
             await _repo.SaveChangesAsync(ct);
+        }
+    }
+
+    public sealed class DeleteTravelerCommandValidator : AbstractValidator<DeleteTravelerCommand>
+    {
+        public DeleteTravelerCommandValidator()
+        {
+            RuleFor(x => x.TravelerId).NotEqual(Guid.Empty);
         }
     }
 }

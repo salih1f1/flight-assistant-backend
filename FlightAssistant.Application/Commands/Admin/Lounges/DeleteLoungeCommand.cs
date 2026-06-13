@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Lounges
@@ -16,6 +17,14 @@ namespace FlightAssistant.Application.Commands.Admin.Lounges
             if (lounge is null) return;
             await _repo.DeleteAsync(lounge, ct);
             await _repo.SaveChangesAsync(ct);
+        }
+    }
+
+    public sealed class DeleteLoungeCommandValidator : AbstractValidator<DeleteLoungeCommand>
+    {
+        public DeleteLoungeCommandValidator()
+        {
+            RuleFor(x => x.Id).GreaterThan(0);
         }
     }
 }

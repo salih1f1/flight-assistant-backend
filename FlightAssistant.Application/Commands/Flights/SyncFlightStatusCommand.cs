@@ -2,6 +2,7 @@ using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Flights.Entities;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Flights
@@ -71,6 +72,14 @@ namespace FlightAssistant.Application.Commands.Flights
             await _flights.SaveChangesAsync(ct);
 
             return true;
+        }
+    }
+
+    public sealed class SyncFlightStatusCommandValidator : AbstractValidator<SyncFlightStatusCommand>
+    {
+        public SyncFlightStatusCommandValidator()
+        {
+            RuleFor(x => x.FlightId).GreaterThan(0);
         }
     }
 }

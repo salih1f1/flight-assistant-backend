@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Airports
@@ -16,6 +17,14 @@ namespace FlightAssistant.Application.Commands.Admin.Airports
             if (airport is null) return;
             await _repo.DeleteAsync(airport, ct);
             await _repo.SaveChangesAsync(ct);
+        }
+    }
+
+    public sealed class DeleteAirportCommandValidator : AbstractValidator<DeleteAirportCommand>
+    {
+        public DeleteAirportCommandValidator()
+        {
+            RuleFor(x => x.Id).GreaterThan(0);
         }
     }
 }

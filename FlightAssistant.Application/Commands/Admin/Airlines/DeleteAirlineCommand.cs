@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Airlines
@@ -28,6 +29,14 @@ namespace FlightAssistant.Application.Commands.Admin.Airlines
 
             await _repo.DeleteAsync(airline, ct);
             await _repo.SaveChangesAsync(ct);
+        }
+    }
+
+    public sealed class DeleteAirlineCommandValidator : AbstractValidator<DeleteAirlineCommand>
+    {
+        public DeleteAirlineCommandValidator()
+        {
+            RuleFor(x => x.Id).GreaterThan(0);
         }
     }
 }

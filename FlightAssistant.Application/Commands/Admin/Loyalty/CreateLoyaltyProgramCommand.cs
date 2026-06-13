@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Loyalty.Entities;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Loyalty
@@ -23,6 +24,17 @@ namespace FlightAssistant.Application.Commands.Admin.Loyalty
             await _repo.AddProgramAsync(program, ct);
             await _repo.SaveChangesAsync(ct);
             return program.Id;
+        }
+    }
+
+    public sealed class CreateLoyaltyProgramCommandValidator : AbstractValidator<CreateLoyaltyProgramCommand>
+    {
+        public CreateLoyaltyProgramCommandValidator()
+        {
+            RuleFor(x => x.Code).NotEmpty().MaximumLength(16);
+            RuleFor(x => x.Name).NotEmpty().MaximumLength(200);
+            RuleFor(x => x.KindId).GreaterThan(0);
+            RuleFor(x => x.AllianceCode).MaximumLength(8).When(x => x.AllianceCode is not null);
         }
     }
 }

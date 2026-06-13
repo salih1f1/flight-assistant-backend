@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
+using FluentValidation;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Flights
@@ -19,6 +20,14 @@ namespace FlightAssistant.Application.Commands.Flights
 
             tf.SetNotify(cmd.Notify);
             await _flights.SaveChangesAsync(ct);
+        }
+    }
+
+    public sealed class ToggleFlightNotificationCommandValidator : AbstractValidator<ToggleFlightNotificationCommand>
+    {
+        public ToggleFlightNotificationCommandValidator()
+        {
+            RuleFor(x => x.FlightId).GreaterThan(0);
         }
     }
 }
