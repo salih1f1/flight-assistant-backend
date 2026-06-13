@@ -120,6 +120,38 @@ namespace FlightAssistant.Domain.Tests.Lounges
             Assert.False(result.IsEligible);
         }
 
+        [Fact]
+        public void CheckEligibility_UnknownAllianceCode_ReturnsNotEligible()
+        {
+            var lounge = BuildLounge(LoungeProviderKind.Alliance, "XX", minAllianceTierCode: "GOLD");
+            var tier = Tier(10, "XX", "GOLD");
+            var membership = Membership(programId: 1, tierId: 10);
+
+            var result = LoungeEligibilityService.CheckEligibility(
+                lounge, [membership], [], [tier]);
+
+            Assert.False(result.IsEligible);
+        }
+
+        [Theory]
+        [InlineData("SA", "SILVER", "SILVER", true)]
+        [InlineData("SA", "SILVER", "GOLD", false)]
+        [InlineData("SA", "GOLD", "SILVER", true)]
+        [InlineData("ST", "ELITE", "ELITE", true)]
+        [InlineData("ST", "ELITE", "ELITE_PLUS", false)]
+        [InlineData("ST", "ELITE_PLUS", "ELITE", true)]
+        public void CheckEligibility_AllianceTierComparisons(string allianceCode, string memberTierCode, string minTierCode, bool expectedEligible)
+        {
+            var lounge = BuildLounge(LoungeProviderKind.Alliance, allianceCode, minAllianceTierCode: minTierCode);
+            var tier = Tier(10, allianceCode, memberTierCode);
+            var membership = Membership(programId: 1, tierId: 10);
+
+            var result = LoungeEligibilityService.CheckEligibility(
+                lounge, [membership], [], [tier]);
+
+            Assert.Equal(expectedEligible, result.IsEligible);
+        }
+
         // --- Contract / Card eligibility ---
 
         [Fact]
