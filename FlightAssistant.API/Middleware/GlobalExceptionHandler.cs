@@ -1,5 +1,5 @@
+using CsvHelper;
 using FlightAssistant.Domain.Common.Exceptions;
-using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 
@@ -16,7 +16,7 @@ namespace FlightAssistant.API.Middleware
         {
             switch (ex)
             {
-                case ValidationException ve:
+                case FluentValidation.ValidationException ve:
                     var errors = ve.Errors
                         .GroupBy(f => f.PropertyName)
                         .ToDictionary(
@@ -44,6 +44,20 @@ namespace FlightAssistant.API.Middleware
 
                     ctx.Response.StatusCode = de.StatusCode;
                     await ctx.Response.WriteAsJsonAsync(domainProblem, ct);
+                    return true;
+
+                case CsvHelperException csvEx:
+                    var csvProblem = new ProblemDetails
+                    {
+                        Status = StatusCodes.Status400BadRequest,
+                        Title = "Invalid CSV file",
+                        Detail = csvEx.Message,
+                        Instance = ctx.Request.Path,
+                        Type = "https://tools.ietf.org/html/rfc7807"
+                    };
+
+                    ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    await ctx.Response.WriteAsJsonAsync(csvProblem, ct);
                     return true;
 
                 default:
