@@ -38,8 +38,8 @@ public class FlightDeletedEventHandlerTests
         t2.AddDeviceToken("ios", "token-bbb");
         t2.AddDeviceToken("ios", "token-ccc");
 
-        _travelers.GetByIdAsync(id1, Arg.Any<CancellationToken>()).Returns(t1);
-        _travelers.GetByIdAsync(id2, Arg.Any<CancellationToken>()).Returns(t2);
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler> { t1, t2 });
 
         await _handler.Handle(Event(id1, id2), default);
 
@@ -59,8 +59,8 @@ public class FlightDeletedEventHandlerTests
         var t2 = Traveler.Register("b@example.com");
         t2.AddDeviceToken("ios", "token-bbb");
 
-        _travelers.GetByIdAsync(id1, Arg.Any<CancellationToken>()).Returns((Traveler?)null);
-        _travelers.GetByIdAsync(id2, Arg.Any<CancellationToken>()).Returns(t2);
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler> { t2 });
 
         await _handler.Handle(Event(id1, id2), default);
 
@@ -75,7 +75,8 @@ public class FlightDeletedEventHandlerTests
         var id = Guid.NewGuid();
         var traveler = Traveler.Register("a@example.com"); // no tokens
 
-        _travelers.GetByIdAsync(id, Arg.Any<CancellationToken>()).Returns(traveler);
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler> { traveler });
 
         await _handler.Handle(Event(id), default);
 
@@ -87,10 +88,40 @@ public class FlightDeletedEventHandlerTests
     [Fact]
     public async Task Handle_EmptyTrackerList_DoesNotSendPush()
     {
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler>());
+
         await _handler.Handle(Event(), default);
 
         await _push.DidNotReceive().SendAsync(
             Arg.Any<IEnumerable<string>>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Handle_DuplicateTravelerIds_BatchLoadsTravelersOnceWithDistinctIds()
+    {
+        var id1 = Guid.NewGuid();
+        var id2 = Guid.NewGuid();
+
+        var t1 = Traveler.Register("a@example.com");
+        t1.AddDeviceToken("ios", "token-aaa");
+
+        var t2 = Traveler.Register("b@example.com");
+        t2.AddDeviceToken("ios", "token-bbb");
+        t2.AddDeviceToken("ios", "token-ccc");
+
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler> { t1, t2 });
+
+        // Duplicate traveler id (id1) to prove Distinct() dedup
+        await _handler.Handle(Event(id1, id1, id2), default);
+
+        await _push.Received(1).SendAsync(
+            Arg.Is<IEnumerable<string>>(tokens => tokens.Count() == 3),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+
+        await _travelers.Received(1).GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>());
+        await _travelers.DidNotReceive().GetByIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>());
     }
 }
