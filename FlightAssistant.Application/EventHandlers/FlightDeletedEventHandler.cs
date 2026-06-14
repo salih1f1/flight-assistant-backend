@@ -27,13 +27,12 @@ namespace FlightAssistant.Application.EventHandlers
             var title = $"Flight {notification.FlightNumber} Removed";
             var body = $"Flight {notification.FlightNumber} is no longer available and has been removed from your tracked flights.";
 
+            var travelerIds = notification.TrackerTravelerIds.Distinct().ToList();
+            var travelers = await _travelers.GetByIdsAsync(travelerIds, ct);
+
             var tokens = new List<string>();
-            foreach (var travelerId in notification.TrackerTravelerIds)
-            {
-                var traveler = await _travelers.GetByIdAsync(travelerId, ct);
-                if (traveler is not null)
-                    tokens.AddRange(traveler.DeviceTokens.Select(d => d.Token));
-            }
+            foreach (var traveler in travelers)
+                tokens.AddRange(traveler.DeviceTokens.Select(d => d.Token));
 
             if (tokens.Count == 0) return;
 
