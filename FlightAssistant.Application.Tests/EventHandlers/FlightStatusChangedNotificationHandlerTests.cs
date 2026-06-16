@@ -160,6 +160,33 @@ public class FlightStatusChangedNotificationHandlerTests
     }
 
     [Theory]
+    [InlineData("SCH")]
+    [InlineData("UNK")]
+    [InlineData("XYZ")]
+    public async Task Handle_NonActionableStatusCodes_DoesNotSendPush(string statusCode)
+    {
+        var travelerId = Guid.NewGuid();
+        var tracking = TravelerFlight.Create(travelerId, 1);
+        tracking.SetNotify(true);
+
+        var traveler = Traveler.Register(travelerId, "test@example.com");
+        traveler.AddDeviceToken("ios", "token-aaa-111");
+
+        var evt = TestEvent with { StatusCode = statusCode };
+
+        _flights.GetTrackingsByFlightIdAsync(1, Arg.Any<CancellationToken>())
+            .Returns(new List<TravelerFlight> { tracking });
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler> { traveler });
+
+        await _handler.Handle(evt, default);
+
+        await _push.DidNotReceive().SendAsync(
+            Arg.Any<IEnumerable<string>>(), Arg.Any<string>(),
+            Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
     [InlineData("DEP", "Your flight has departed.")]
     [InlineData("ARR", "Your flight has landed.")]
     [InlineData("DLY", "Your flight is delayed.")]
