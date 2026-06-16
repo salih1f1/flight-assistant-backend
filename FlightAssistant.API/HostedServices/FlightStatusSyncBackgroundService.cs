@@ -73,13 +73,30 @@ namespace FlightAssistant.API.HostedServices
                     _log.LogError(ex, "Failed to sync flight {FlightId}", flight.Id);
                 }
 
-                if ((flight.ScheduledDepartureUtc - now).TotalHours <= 4)
+                if (IsActiveForFastPoll(flight.ScheduledDepartureUtc, flight.ScheduledArrivalUtc, flight.ActualArrivalUtc, now))
                     hasNearDeparture = true;
             }
 
             var normalInterval = _config.GetValue("FlightSync:Interval", TimeSpan.FromMinutes(10));
             var nearDeptInterval = _config.GetValue("FlightSync:NearDepartureInterval", TimeSpan.FromMinutes(2));
             return hasNearDeparture ? nearDeptInterval : normalInterval;
+        }
+
+        /// <summary>
+        /// Determines whether a flight is within the genuinely-active fast-poll window:
+        /// from 4 hours before scheduled departure THROUGH arrival. Bounds the window so
+        /// flights that have already arrived no longer keep the service in the fast-poll
+        /// cycle (see #242).
+        /// </summary>
+        public static bool IsActiveForFastPoll(
+            DateTime scheduledDepartureUtc,
+            DateTime scheduledArrivalUtc,
+            DateTime? actualArrivalUtc,
+            DateTime now)
+        {
+            var hoursToDeparture = (scheduledDepartureUtc - now).TotalHours;
+            var notYetArrived = (actualArrivalUtc ?? scheduledArrivalUtc) > now;
+            return hoursToDeparture <= 4 && notYetArrived;
         }
     }
 }
