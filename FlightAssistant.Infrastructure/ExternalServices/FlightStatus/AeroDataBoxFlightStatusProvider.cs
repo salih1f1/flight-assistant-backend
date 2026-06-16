@@ -74,7 +74,13 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightStatus
         private static DateTime? TryGetDateTime(JsonElement el, string section, string field)
         {
             if (el.TryGetProperty(section, out var sec) && sec.TryGetProperty(field, out var val))
-                return DateTime.TryParse(val.GetString(), out var dt) ? dt.ToUniversalTime() : null;
+                return DateTime.TryParse(
+                    val.GetString(),
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                    out var dt)
+                        ? dt
+                        : null;
             return null;
         }
 

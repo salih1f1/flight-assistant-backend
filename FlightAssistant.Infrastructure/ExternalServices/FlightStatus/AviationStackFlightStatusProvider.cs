@@ -82,7 +82,13 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightStatus
         {
             if (el.ValueKind == JsonValueKind.Undefined) return null;
             if (el.TryGetProperty(field, out var val) && val.ValueKind != JsonValueKind.Null)
-                return DateTime.TryParse(val.GetString(), out var dt) ? dt.ToUniversalTime() : null;
+                return DateTime.TryParse(
+                    val.GetString(),
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                    out var dt)
+                        ? dt
+                        : null;
             return null;
         }
 
