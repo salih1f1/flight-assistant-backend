@@ -99,6 +99,42 @@ public class FlightDeletedEventHandlerTests
     }
 
     [Fact]
+    public async Task Handle_PushReportsInvalidToken_RemovesItAndSavesOnce()
+    {
+        var id = Guid.NewGuid();
+        var traveler = Traveler.Register("a@example.com");
+        traveler.AddDeviceToken("ios", "token-valid");
+        traveler.AddDeviceToken("ios", "token-invalid");
+
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler> { traveler });
+        _push.SendAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<string>(),
+                Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<string> { "token-invalid" });
+
+        await _handler.Handle(Event(id), default);
+
+        Assert.DoesNotContain(traveler.DeviceTokens, t => t.Token == "token-invalid");
+        Assert.Contains(traveler.DeviceTokens, t => t.Token == "token-valid");
+        await _travelers.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Handle_PushReportsNoInvalidTokens_DoesNotSave()
+    {
+        var id = Guid.NewGuid();
+        var traveler = Traveler.Register("a@example.com");
+        traveler.AddDeviceToken("ios", "token-valid");
+
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler> { traveler });
+
+        await _handler.Handle(Event(id), default);
+
+        await _travelers.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Handle_DuplicateTravelerIds_BatchLoadsTravelersOnceWithDistinctIds()
     {
         var id1 = Guid.NewGuid();
