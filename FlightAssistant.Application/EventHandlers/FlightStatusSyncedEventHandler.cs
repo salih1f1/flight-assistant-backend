@@ -60,14 +60,50 @@ namespace FlightAssistant.Application.EventHandlers
                 "Sending {Count} push notifications for flight {FlightNumber} status {Status}",
                 tokens.Count, notification.FlightNumber, notification.StatusCode);
 
+            IReadOnlyCollection<string> invalidTokens = Array.Empty<string>();
             try
             {
-                await _push.SendAsync(tokens, title, body, ct);
+                invalidTokens = await _push.SendAsync(tokens, title, body, ct);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex,
                     "Failed to send push notifications for flight {FlightNumber}", notification.FlightNumber);
+            }
+
+            await PruneInvalidTokensAsync(travelers, invalidTokens, ct);
+        }
+
+        private async Task PruneInvalidTokensAsync(
+            IReadOnlyCollection<Domain.Travelers.Entities.Traveler> travelers,
+            IReadOnlyCollection<string> invalidTokens,
+            CancellationToken ct)
+        {
+            if (invalidTokens.Count == 0) return;
+
+            try
+            {
+                var invalidSet = new HashSet<string>(invalidTokens);
+                var removedAny = false;
+                foreach (var traveler in travelers)
+                {
+                    var toRemove = traveler.DeviceTokens
+                        .Where(dt => invalidSet.Contains(dt.Token))
+                        .Select(dt => dt.Id)
+                        .ToList();
+                    foreach (var id in toRemove)
+                    {
+                        traveler.RemoveDeviceToken(id);
+                        removedAny = true;
+                    }
+                }
+
+                if (removedAny)
+                    await _travelers.SaveChangesAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to prune invalid device tokens");
             }
         }
 

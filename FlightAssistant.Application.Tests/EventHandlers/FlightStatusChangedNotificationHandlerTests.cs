@@ -159,6 +159,53 @@ public class FlightStatusChangedNotificationHandlerTests
         await _travelers.DidNotReceive().GetByIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task Handle_PushReportsInvalidToken_RemovesItAndSavesOnce()
+    {
+        var travelerId = Guid.NewGuid();
+        var tracking = TravelerFlight.Create(travelerId, 1);
+        tracking.SetNotify(true);
+
+        var traveler = Traveler.Register(travelerId, "test@example.com");
+        traveler.AddDeviceToken("ios", "token-valid");
+        traveler.AddDeviceToken("ios", "token-invalid");
+
+        _flights.GetTrackingsByFlightIdAsync(1, Arg.Any<CancellationToken>())
+            .Returns(new List<TravelerFlight> { tracking });
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler> { traveler });
+        _push.SendAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<string>(),
+                Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<string> { "token-invalid" });
+
+        await _handler.Handle(TestEvent, default);
+
+        Assert.DoesNotContain(traveler.DeviceTokens, t => t.Token == "token-invalid");
+        Assert.Contains(traveler.DeviceTokens, t => t.Token == "token-valid");
+        await _travelers.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Handle_PushReportsNoInvalidTokens_DoesNotSave()
+    {
+        var travelerId = Guid.NewGuid();
+        var tracking = TravelerFlight.Create(travelerId, 1);
+        tracking.SetNotify(true);
+
+        var traveler = Traveler.Register(travelerId, "test@example.com");
+        traveler.AddDeviceToken("ios", "token-valid");
+
+        _flights.GetTrackingsByFlightIdAsync(1, Arg.Any<CancellationToken>())
+            .Returns(new List<TravelerFlight> { tracking });
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler> { traveler });
+        // NSubstitute auto-returns an empty collection for the unconfigured Task result.
+
+        await _handler.Handle(TestEvent, default);
+
+        await _travelers.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
     [Theory]
     [InlineData("DEP", "Your flight has departed.")]
     [InlineData("ARR", "Your flight has landed.")]

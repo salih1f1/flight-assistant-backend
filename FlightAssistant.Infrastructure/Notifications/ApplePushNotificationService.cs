@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using dotAPNS;
 using FlightAssistant.Application.Interfaces.Notifications;
 using Microsoft.Extensions.Logging;
@@ -5,6 +6,8 @@ using Microsoft.Extensions.Options;
 using Polly;
 using Polly.CircuitBreaker;
 using Polly.Retry;
+
+[assembly: InternalsVisibleTo("FlightAssistant.Infrastructure.Tests")]
 
 namespace FlightAssistant.Infrastructure.Notifications
 {
@@ -24,13 +27,28 @@ namespace FlightAssistant.Infrastructure.Notifications
             _pipeline = BuildResiliencePipeline();
         }
 
-        public async Task SendAsync(IEnumerable<string> deviceTokens, string title, string body, CancellationToken ct = default)
+        /// <summary>
+        /// Test seam: injects an already-built APNs client so the reason-to-prune
+        /// mapping can be unit-tested without real APNs credentials.
+        /// </summary>
+        internal ApplePushNotificationService(
+            IApnsClient client,
+            ILogger<ApplePushNotificationService> logger)
         {
+            _logger = logger;
+            _client = new Lazy<IApnsClient?>(() => client);
+            _pipeline = BuildResiliencePipeline();
+        }
+
+        public async Task<IReadOnlyCollection<string>> SendAsync(IEnumerable<string> deviceTokens, string title, string body, CancellationToken ct = default)
+        {
+            var invalidTokens = new List<string>();
+
             var client = _client.Value;
             if (client is null)
             {
                 _logger.LogWarning("APNs is not configured. Skipping push notification: {Title}", title);
-                return;
+                return invalidTokens;
             }
 
             foreach (var token in deviceTokens)
@@ -48,6 +66,14 @@ namespace FlightAssistant.Infrastructure.Notifications
                         var response = await client.SendAsync(push, innerCt);
                         if (!response.IsSuccessful)
                         {
+                            if (IsPermanentTokenFailure(response.Reason))
+                            {
+                                _logger.LogWarning("APNs reported permanently invalid token {Token}: {Reason}",
+                                    maskedToken, response.ReasonString);
+                                invalidTokens.Add(token);
+                                return;
+                            }
+
                             _logger.LogWarning("APNs push failed for {Token}: {Reason}",
                                 maskedToken, response.ReasonString);
                             throw new ApnsDeliveryException(response.ReasonString ?? "Unknown APNs error");
@@ -59,14 +85,25 @@ namespace FlightAssistant.Infrastructure.Notifications
                 catch (BrokenCircuitException)
                 {
                     _logger.LogError("APNs circuit breaker open — stopping sends for notification: {Title}", title);
-                    return;
+                    return invalidTokens;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _logger.LogError(ex, "APNs push failed after retries for token {Token}", maskedToken);
                 }
             }
+
+            return invalidTokens;
         }
+
+        /// <summary>
+        /// True when APNs rejected the token as permanently invalid — it should be
+        /// pruned rather than retried.
+        /// </summary>
+        private static bool IsPermanentTokenFailure(ApnsResponseReason reason) =>
+            reason is ApnsResponseReason.BadDeviceToken
+                or ApnsResponseReason.Unregistered
+                or ApnsResponseReason.DeviceTokenNotForTopic;
 
         private ResiliencePipeline BuildResiliencePipeline() =>
             new ResiliencePipelineBuilder()
