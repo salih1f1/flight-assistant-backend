@@ -1,6 +1,7 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Flights.Entities;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace FlightAssistant.Infrastructure.Persistance.Repositories
 {
@@ -24,6 +25,27 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             _db.Flights.FirstOrDefaultAsync(
                 f => f.AirlineId == airlineId && f.FlightNumber == flightNumber && f.ServiceDateUtc == serviceDate,
                 ct);
+
+        public async Task<Flight> GetOrCreateFlightAsync(Flight candidate, CancellationToken ct = default)
+        {
+            var existing = await GetByFlightNumberAndDateAsync(candidate.AirlineId, candidate.FlightNumber, candidate.ServiceDateUtc, ct);
+            if (existing is not null) return existing;
+
+            await _db.Flights.AddAsync(candidate, ct);
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+                return candidate;
+            }
+            catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+            {
+                // Lost the race — detach our failed insert and return the row the winner created.
+                _db.Entry(candidate).State = EntityState.Detached;
+                var winner = await GetByFlightNumberAndDateAsync(candidate.AirlineId, candidate.FlightNumber, candidate.ServiceDateUtc, ct);
+                if (winner is null) throw;
+                return winner;
+            }
+        }
 
         public async Task<(IReadOnlyList<(TravelerFlight Tracking, Flight Flight)> Items, int Total)> GetTravelerFlightsAsync(Guid travelerId, int page, int pageSize, CancellationToken ct = default)
         {

@@ -106,6 +106,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasDatabaseName("ix_flight_dep_day");
 
                     b.HasIndex("AirlineId", "FlightNumber", "ServiceDateUtc")
+                        .IsUnique()
                         .HasDatabaseName("ix_flight_lookup");
 
                     b.ToTable("flights", (string)null);

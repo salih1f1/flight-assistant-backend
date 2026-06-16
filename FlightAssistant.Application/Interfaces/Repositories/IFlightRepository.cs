@@ -6,6 +6,13 @@ namespace FlightAssistant.Application.Interfaces.Repositories
     public interface IFlightRepository : IRepository<Flight>
     {
         Task<Flight?> GetByFlightNumberAndDateAsync(int airlineId, string flightNumber, DateOnly serviceDate, CancellationToken ct = default);
+
+        /// <summary>
+        /// Returns the existing flight matching the candidate's (AirlineId, FlightNumber, ServiceDateUtc),
+        /// or inserts the candidate. Race-safe: if a concurrent caller inserts the same flight first,
+        /// the unique-violation is caught and the winning row is returned.
+        /// </summary>
+        Task<Flight> GetOrCreateFlightAsync(Flight candidate, CancellationToken ct = default);
         Task<Flight?> GetFlightByIdAsync(int flightId, CancellationToken ct = default);
         Task<(IReadOnlyList<(TravelerFlight Tracking, Flight Flight)> Items, int Total)> GetTravelerFlightsAsync(Guid travelerId, int page, int pageSize, CancellationToken ct = default);
         Task<TravelerFlight?> GetTravelerFlightAsync(Guid travelerId, int flightId, CancellationToken ct = default);

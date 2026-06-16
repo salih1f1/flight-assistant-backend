@@ -38,15 +38,10 @@ namespace FlightAssistant.Application.Commands.Flights
             var arrAirportId = await _refData.GetAirportIdByIataAsync(cmd.ArrivalAirportIata, ct)
                 ?? throw new DomainException($"Airport '{cmd.ArrivalAirportIata}' not found.", 404);
 
-            // Look up or create the Flight aggregate
+            // Look up or create the Flight aggregate (race-safe via the unique ix_flight_lookup index)
             var flightNumber = cmd.FlightNumber.Trim().ToUpperInvariant();
-            var flight = await _flights.GetByFlightNumberAndDateAsync(airlineId, flightNumber, cmd.ServiceDate, ct);
-            if (flight is null)
-            {
-                flight = Flight.Create(airlineId, flightNumber, depAirportId, arrAirportId, cmd.ServiceDate, cmd.ScheduledDepartureUtc, cmd.ScheduledArrivalUtc);
-                await _flights.AddAsync(flight, ct);
-                await _flights.SaveChangesAsync(ct);
-            }
+            var candidate = Flight.Create(airlineId, flightNumber, depAirportId, arrAirportId, cmd.ServiceDate, cmd.ScheduledDepartureUtc, cmd.ScheduledArrivalUtc);
+            var flight = await _flights.GetOrCreateFlightAsync(candidate, ct);
 
             // Idempotent: skip if traveler already tracking this flight
             var existing = await _flights.GetTravelerFlightAsync(cmd.TravelerId, flight.Id, ct);
