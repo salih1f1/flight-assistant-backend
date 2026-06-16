@@ -33,22 +33,19 @@ public class TrackFlightCommandHandlerTests
     }
 
     [Fact]
-    public async Task HappyPath_NewFlightAndTracking_SavesTwiceAndReturnsFlightId()
+    public async Task HappyPath_NewFlightAndTracking_GetsOrCreatesFlightSavesTrackingAndReturnsFlightId()
     {
-        _flights.GetByFlightNumberAndDateAsync(1, "BA123", DefaultCmd.ServiceDate, Arg.Any<CancellationToken>())
-            .ReturnsNull();
+        // GetOrCreateFlightAsync echoes back the candidate it was handed.
+        _flights.GetOrCreateFlightAsync(Arg.Any<Flight>(), Arg.Any<CancellationToken>())
+            .Returns(ci => ci.Arg<Flight>());
         _flights.GetTravelerFlightAsync(DefaultCmd.TravelerId, Arg.Any<int>(), Arg.Any<CancellationToken>())
             .ReturnsNull();
 
-        // Capture the flight added so we can verify the returned id
-        Flight? addedFlight = null;
-        await _flights.AddAsync(Arg.Do<Flight>(f => addedFlight = f), Arg.Any<CancellationToken>());
-
         var result = await _handler.Handle(DefaultCmd, CancellationToken.None);
 
-        await _flights.Received(1).AddAsync(Arg.Any<Flight>(), Arg.Any<CancellationToken>());
+        await _flights.Received(1).GetOrCreateFlightAsync(Arg.Any<Flight>(), Arg.Any<CancellationToken>());
         await _flights.Received(1).AddTravelerFlightAsync(Arg.Any<TravelerFlight>(), Arg.Any<CancellationToken>());
-        await _flights.Received(2).SaveChangesAsync(Arg.Any<CancellationToken>());
+        await _flights.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -57,33 +54,32 @@ public class TrackFlightCommandHandlerTests
         var existingFlight = Flight.Create(1, "BA123", 10, 20, DefaultCmd.ServiceDate,
             DefaultCmd.ScheduledDepartureUtc, DefaultCmd.ScheduledArrivalUtc);
 
-        _flights.GetByFlightNumberAndDateAsync(1, "BA123", DefaultCmd.ServiceDate, Arg.Any<CancellationToken>())
+        _flights.GetOrCreateFlightAsync(Arg.Any<Flight>(), Arg.Any<CancellationToken>())
             .Returns(existingFlight);
         _flights.GetTravelerFlightAsync(DefaultCmd.TravelerId, existingFlight.Id, Arg.Any<CancellationToken>())
             .ReturnsNull();
 
         await _handler.Handle(DefaultCmd, CancellationToken.None);
 
-        await _flights.DidNotReceive().AddAsync(Arg.Any<Flight>(), Arg.Any<CancellationToken>());
+        await _flights.Received(1).GetOrCreateFlightAsync(Arg.Any<Flight>(), Arg.Any<CancellationToken>());
         await _flights.Received(1).AddTravelerFlightAsync(Arg.Any<TravelerFlight>(), Arg.Any<CancellationToken>());
         await _flights.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task AlreadyTracking_IsIdempotent_NoSaves()
+    public async Task AlreadyTracking_IsIdempotent_DoesNotAddTracking()
     {
         var existingFlight = Flight.Create(1, "BA123", 10, 20, DefaultCmd.ServiceDate,
             DefaultCmd.ScheduledDepartureUtc, DefaultCmd.ScheduledArrivalUtc);
         var existingTracking = TravelerFlight.Create(DefaultCmd.TravelerId, existingFlight.Id);
 
-        _flights.GetByFlightNumberAndDateAsync(1, "BA123", DefaultCmd.ServiceDate, Arg.Any<CancellationToken>())
+        _flights.GetOrCreateFlightAsync(Arg.Any<Flight>(), Arg.Any<CancellationToken>())
             .Returns(existingFlight);
         _flights.GetTravelerFlightAsync(DefaultCmd.TravelerId, existingFlight.Id, Arg.Any<CancellationToken>())
             .Returns(existingTracking);
 
         await _handler.Handle(DefaultCmd, CancellationToken.None);
 
-        await _flights.DidNotReceive().AddAsync(Arg.Any<Flight>(), Arg.Any<CancellationToken>());
         await _flights.DidNotReceive().AddTravelerFlightAsync(Arg.Any<TravelerFlight>(), Arg.Any<CancellationToken>());
         await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
     }

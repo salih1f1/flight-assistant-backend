@@ -19,7 +19,9 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Flights
             b.Property(x => x.ServiceDateUtc).HasColumnType("date");
 
             // indexes for fast lookups
-            b.HasIndex(x => new { x.AirlineId, x.FlightNumber, x.ServiceDateUtc }).HasDatabaseName("ix_flight_lookup");
+            b.HasIndex(x => new { x.AirlineId, x.FlightNumber, x.ServiceDateUtc })
+             .IsUnique()
+             .HasDatabaseName("ix_flight_lookup");
             b.HasIndex(x => new { x.DepartureAirportId, x.ServiceDateUtc }).HasDatabaseName("ix_flight_dep_day");
             b.HasIndex(x => new { x.ArrivalAirportId, x.ServiceDateUtc }).HasDatabaseName("ix_flight_arr_day");
 
