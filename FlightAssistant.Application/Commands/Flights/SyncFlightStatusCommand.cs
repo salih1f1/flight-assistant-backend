@@ -39,13 +39,14 @@ namespace FlightAssistant.Application.Commands.Flights
             var result = await _provider.GetStatusAsync(flight.FlightNumber, flight.ServiceDateUtc, ct);
             if (result is null) return false;
 
-            // Dedup check
-            var dedupHash = FlightStatusEvent.ComputeDedupHash(flight.Id, result.StatusCode, result.EffectiveAtUtc, _provider.ProviderName, result.ExternalId);
-            if (await _flights.FlightStatusEventExistsAsync(dedupHash, ct)) return false;
-
-            // Look up the FlightStatus row id
+            // Look up the FlightStatus row id first, so the dedup hash uses the same id-based
+            // formula as the stored hash (see FlightStatusEvent.ComputeDedupHash).
             var statusId = await _flights.GetFlightStatusIdByCodeAsync(result.StatusCode, ct)
                 ?? throw new DomainException($"Unknown flight status code '{result.StatusCode}'.", 404);
+
+            // Dedup check
+            var dedupHash = FlightStatusEvent.ComputeDedupHash(flight.Id, statusId, result.EffectiveAtUtc, _provider.ProviderName, result.ExternalId);
+            if (await _flights.FlightStatusEventExistsAsync(dedupHash, ct)) return false;
 
             var evt = FlightStatusEvent.Create(
                 flight.Id,

@@ -51,19 +51,16 @@ namespace FlightAssistant.Domain.Flights.Entities
                 Remarks = remarks,
                 RawPayloadJson = rawPayloadJson
             };
-            evt.DedupHash = ComputeHash(flightId, statusId, effectiveAtUtc, source, externalId);
+            evt.DedupHash = ComputeDedupHash(flightId, statusId, effectiveAtUtc, source, externalId);
             return evt;
         }
 
-        /// <summary>Computes the dedup hash given raw inputs (before status ID is resolved). Used by handlers for pre-insert dedup checks.</summary>
-        public static string ComputeDedupHash(int flightId, string statusCode, DateTime effectiveAt, string source, string? externalId)
-        {
-            var raw = $"{flightId}|{statusCode}|{effectiveAt:O}|{source}|{externalId}";
-            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
-            return Convert.ToHexString(bytes)[..16];
-        }
-
-        private static string ComputeHash(int flightId, int statusId, DateTime effectiveAt, string source, string? externalId)
+        /// <summary>
+        /// Computes the dedup hash for a logical status event. Used both by <see cref="Create"/> to set the
+        /// stored <see cref="DedupHash"/> and by handlers for the pre-insert dedup existence check — these MUST
+        /// use identical inputs so the pre-check matches the stored hash for the same logical event.
+        /// </summary>
+        public static string ComputeDedupHash(int flightId, int statusId, DateTime effectiveAt, string source, string? externalId)
         {
             var raw = $"{flightId}|{statusId}|{effectiveAt:O}|{source}|{externalId}";
             var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
