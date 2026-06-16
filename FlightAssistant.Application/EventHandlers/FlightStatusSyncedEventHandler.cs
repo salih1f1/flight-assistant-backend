@@ -34,12 +34,23 @@ namespace FlightAssistant.Application.EventHandlers
         public async Task Handle(FlightStatusChanged notification, CancellationToken ct)
         {
             // Find all travelers tracking this flight with notifications enabled
+            var body = GetStatusMessage(notification.StatusCode);
+
+            // Suppress non-actionable status updates (e.g. SCH, UNK) — no meaningful
+            // user-facing message, so skip before doing any tracking/traveler lookups.
+            if (body is null)
+            {
+                _logger.LogInformation(
+                    "Skipping push for flight {FlightNumber}: status {Status} is non-actionable",
+                    notification.FlightNumber, notification.StatusCode);
+                return;
+            }
+
             var trackings = await _flights.GetTrackingsByFlightIdAsync(notification.FlightId, ct);
             var notifyTrackings = trackings.Where(t => t.Notify).ToList();
             if (!notifyTrackings.Any()) return;
 
             var title = $"Flight {notification.FlightNumber} Update";
-            var body = GetStatusMessage(notification.StatusCode, notification.ServiceDateUtc);
 
             // Batch-load all travelers for the notified trackings to avoid N+1 queries
             var travelerIds = notifyTrackings.Select(t => t.TravelerId).Distinct().ToList();
@@ -71,14 +82,14 @@ namespace FlightAssistant.Application.EventHandlers
             }
         }
 
-        private static string GetStatusMessage(string statusCode, DateOnly serviceDate) => statusCode switch
+        private static string? GetStatusMessage(string statusCode) => statusCode switch
         {
             "DEP" => "Your flight has departed.",
             "ARR" => "Your flight has landed.",
             "DLY" => "Your flight is delayed.",
             "CAN" => "Your flight has been cancelled.",
             "DIV" => "Your flight has been diverted.",
-            _ => $"Status update for your flight on {serviceDate}."
+            _ => null
         };
     }
 }
