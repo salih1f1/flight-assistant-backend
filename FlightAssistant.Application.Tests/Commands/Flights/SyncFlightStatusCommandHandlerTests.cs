@@ -63,6 +63,7 @@ public class SyncFlightStatusCommandHandlerTests
         _flights.GetFlightByIdAsync(1, Arg.Any<CancellationToken>()).Returns(TestFlight);
         _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
             .Returns(TestStatus);
+        _flights.GetFlightStatusIdByCodeAsync("DEP", Arg.Any<CancellationToken>()).Returns(2);
         _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(true);
 
         var result = await _handler.Handle(new SyncFlightStatusCommand(null, 1), CancellationToken.None);

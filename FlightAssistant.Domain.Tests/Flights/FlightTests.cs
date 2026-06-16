@@ -84,10 +84,22 @@ namespace FlightAssistant.Domain.Tests.Flights
         public void ComputeDedupHash_DifferentStatus_ProducesDifferentHash()
         {
             var at = new DateTime(2025, 6, 15, 10, 0, 0, DateTimeKind.Utc);
-            var h1 = FlightStatusEvent.ComputeDedupHash(1, "DEP", at, "src", null);
-            var h2 = FlightStatusEvent.ComputeDedupHash(1, "ARR", at, "src", null);
+            var h1 = FlightStatusEvent.ComputeDedupHash(1, 2, at, "src", null);
+            var h2 = FlightStatusEvent.ComputeDedupHash(1, 3, at, "src", null);
 
             Assert.NotEqual(h1, h2);
+        }
+
+        [Fact]
+        public void ComputeDedupHash_MatchesStoredHashFromCreate()
+        {
+            // Regression for #232: the pre-insert dedup check and the stored hash must be
+            // computed over IDENTICAL inputs, otherwise dedup never matches.
+            var at = new DateTime(2025, 6, 15, 10, 0, 0, DateTimeKind.Utc);
+            var precheckHash = FlightStatusEvent.ComputeDedupHash(1, 2, at, "AeroDataBox", "ext-1");
+            var evt = FlightStatusEvent.Create(1, 2, at, "AeroDataBox", "ext-1");
+
+            Assert.Equal(evt.DedupHash, precheckHash);
         }
     }
 }
