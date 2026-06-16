@@ -35,18 +35,5 @@ namespace FlightAssistant.Infrastructure.Caching
         }
 
         public Task RemoveAsync(string key, CancellationToken ct = default) => _cache.RemoveAsync(key, ct);
-
-        public async Task<T> GetOrSetAsync<T>(string key, Func<CancellationToken, Task<T>> factory, TimeSpan? absoluteExpire = null, CancellationToken ct = default)
-        {
-            var cached = await GetAsync<T>(key, ct);
-            if (!Equals(cached, default(T)))
-            {
-                return cached!;
-            }
-
-            var value = await factory(ct);
-            await SetAsync(key, value, absoluteExpire, ct);
-            return value;
-        }
     }
 }

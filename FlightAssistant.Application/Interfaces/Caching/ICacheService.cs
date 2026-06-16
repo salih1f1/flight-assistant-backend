@@ -9,6 +9,5 @@ namespace FlightAssistant.Application.Interfaces.Caching
         Task<T?> GetAsync<T>(string key, CancellationToken ct = default);
         Task SetAsync<T>(string key, T value, TimeSpan? absoluteExpire = null, CancellationToken ct = default);
         Task RemoveAsync(string key, CancellationToken ct = default);
-        Task<T> GetOrSetAsync<T>(string key, Func<CancellationToken, Task<T>> factory, TimeSpan? absoluteExpire = null, CancellationToken ct = default);
     }
 }
