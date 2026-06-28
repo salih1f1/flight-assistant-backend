@@ -36,30 +36,6 @@ namespace FlightAssistant.Domain.Tests.Travelers
         }
 
         [Fact]
-        public void UpdateProfile_ChangingValues_RaisesProfileUpdatedEvent()
-        {
-            var traveler = Traveler.Register("alice@example.com", "Alice");
-            traveler.ClearDomainEvents();
-
-            traveler.UpdateProfile("Bob", "US");
-
-            Assert.Equal("Bob", traveler.DisplayName);
-            Assert.Equal("US", traveler.CountryCode);
-            Assert.Single(traveler.DomainEvents.OfType<TravelerProfileUpdated>());
-        }
-
-        [Fact]
-        public void UpdateProfile_WithSameValues_DoesNotRaiseEvent()
-        {
-            var traveler = Traveler.Register("alice@example.com", "Alice", "US");
-            traveler.ClearDomainEvents();
-
-            traveler.UpdateProfile("Alice", "US");
-
-            Assert.Empty(traveler.DomainEvents.OfType<TravelerProfileUpdated>());
-        }
-
-        [Fact]
         public void SyncFromIdentity_ChangedValues_UpdatesFieldsAndReturnsTrue()
         {
             var traveler = Traveler.Register("alice@example.com", "Alice", "US");

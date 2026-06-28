@@ -4,10 +4,10 @@ using MediatR;
 
 namespace FlightAssistant.Application.Commands.Travelers
 {
+    // DisplayName and CountryCode are owned by Azure AD B2C (source of truth) and are
+    // reconciled on login via Traveler.SyncFromIdentity — they are intentionally not editable here.
     public record UpdateTravelerProfileCommand(
         Guid TravelerId,
-        string? DisplayName,
-        string? CountryCode,
         string? NationalityCountryCode,
         string? ResidenceCountryCode
     ) : IRequest;
@@ -22,8 +22,6 @@ namespace FlightAssistant.Application.Commands.Travelers
         {
             var traveler = await _travelers.GetByIdAsync(cmd.TravelerId, ct)
                 ?? throw new DomainException($"Traveler {cmd.TravelerId} not found.", 404);
-
-            traveler.UpdateProfile(cmd.DisplayName, cmd.CountryCode);
 
             if (cmd.NationalityCountryCode is not null)
                 traveler.UpdatePassportCountry(cmd.NationalityCountryCode);

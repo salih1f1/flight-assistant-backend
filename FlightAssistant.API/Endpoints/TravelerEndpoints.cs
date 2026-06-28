@@ -54,14 +54,16 @@ namespace FlightAssistant.API.Endpoints
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
-                await mediator.Send(new UpdateTravelerProfileCommand(travelerId, req.DisplayName, req.CountryCode, req.NationalityCountryCode, req.ResidenceCountryCode), ct);
+                await mediator.Send(new UpdateTravelerProfileCommand(travelerId, req.NationalityCountryCode, req.ResidenceCountryCode), ct);
                 return Results.NoContent();
             })
             .WithName("UpdateTravelerProfile")
             .WithSummary("Update own profile")
             .WithDescription(
-                "Updates the authenticated traveler's display name and/or country fields. " +
-                "Only fields provided in the request body are updated; omit a field to leave it unchanged.")
+                "Updates the authenticated traveler's nationality and/or residence country. " +
+                "Only fields provided in the request body are updated; omit a field to leave it unchanged. " +
+                "Display name and country are owned by Azure AD B2C and cannot be edited here — they are " +
+                "refreshed from the sign-in token on each login.")
             .Produces(204)
             .ProducesValidationProblem();
 

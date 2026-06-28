@@ -36,23 +36,6 @@ namespace FlightAssistant.Domain.Travelers.Entities
         public static Traveler Register(string email, string? displayName = null, string? countryCode = null)
             => new(Guid.Empty, email, displayName, countryCode);
 
-        public void UpdateProfile(string? displayName, string? countryCode)
-        {
-            var changed = false;
-
-            var normName = string.IsNullOrWhiteSpace(displayName) ? null : displayName!.Trim();
-            var normCountry = string.IsNullOrWhiteSpace(countryCode) ? null : countryCode!.ToUpperInvariant();
-
-            if (DisplayName != normName) { DisplayName = normName; changed = true; }
-            if (CountryCode != normCountry) { CountryCode = normCountry; changed = true; }
-
-            if (changed)
-            {
-                SetUpdated();
-                Raise(new TravelerProfileUpdated(Id, DisplayName, CountryCode, DateTime.UtcNow));
-            }
-        }
-
         public DeviceToken AddDeviceToken(string platform, string token, DateTime? seenUtc = null)
         {
             if (string.IsNullOrWhiteSpace(platform)) throw new DomainException("Platform is required.");

@@ -10,14 +10,6 @@ namespace FlightAssistant.Application.Validators
 
         public UpdateTravelerProfileCommandValidator()
         {
-            RuleFor(x => x.DisplayName)
-                .MaximumLength(100)
-                .When(x => x.DisplayName is not null);
-
-            RuleFor(x => x.CountryCode)
-                .Must(IsValidAlpha2)
-                .WithMessage("CountryCode must be an ISO 3166-1 alpha-2 code.");
-
             RuleFor(x => x.NationalityCountryCode)
                 .Must(IsValidAlpha2)
                 .WithMessage("NationalityCountryCode must be an ISO 3166-1 alpha-2 code.");
