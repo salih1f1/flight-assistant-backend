@@ -3,15 +3,15 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace FlightAssistant.Infrastructure.HealthChecks
 {
-    public sealed class AeroDataBoxHealthCheck : IHealthCheck
+    public sealed class AviationStackHealthCheck : IHealthCheck
     {
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly string _baseUrl;
 
-        public AeroDataBoxHealthCheck(IHttpClientFactory httpClientFactory, IConfiguration config)
+        public AviationStackHealthCheck(IHttpClientFactory httpClientFactory, IConfiguration config)
         {
             _httpClientFactory = httpClientFactory;
-            _baseUrl = config["AeroDataBox:BaseUrl"] ?? "https://aerodatabox.p.rapidapi.com/";
+            _baseUrl = config["AviationStack:BaseUrl"] ?? "http://api.aviationstack.com/v1/";
         }
 
         public async Task<HealthCheckResult> CheckHealthAsync(

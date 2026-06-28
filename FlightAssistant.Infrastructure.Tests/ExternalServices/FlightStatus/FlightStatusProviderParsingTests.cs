@@ -6,12 +6,12 @@ using Microsoft.Extensions.Configuration;
 namespace FlightAssistant.Infrastructure.Tests.ExternalServices.FlightStatus;
 
 /// <summary>
-/// Tests that both flight-status providers parse API timestamps as UTC, regardless of whether
-/// the incoming string carries an explicit timezone designator. An offset-less string such as
-/// "2025-06-15T10:30:00" must be interpreted as UTC (not shifted by the host's local offset),
-/// and an explicit-UTC string such as "2025-06-15T10:30:00Z" must yield the same instant.
+/// Tests that the AviationStack flight-status provider parses API timestamps as UTC, regardless
+/// of whether the incoming string carries an explicit timezone designator. An offset-less string
+/// such as "2025-06-15T10:30:00" must be interpreted as UTC (not shifted by the host's local
+/// offset), and an explicit-UTC string such as "2025-06-15T10:30:00Z" must yield the same instant.
 ///
-/// Each provider is driven through its real <c>GetStatusAsync</c> with a stub
+/// The provider is driven through its real <c>GetStatusAsync</c> with a stub
 /// <see cref="HttpMessageHandler"/> returning a canned JSON payload, so the parsing path
 /// (<c>MapToResult</c> / <c>TryGetDateTime</c>) is exercised end-to-end.
 /// </summary>
@@ -34,34 +34,6 @@ public class FlightStatusProviderParsingTests
 
     private static HttpClient StubClient(string body) =>
         new(new StubHttpMessageHandler(body)) { BaseAddress = new Uri("http://stub/") };
-
-    [Theory]
-    [InlineData("2025-06-15T10:30:00")]  // offset-less: must be assumed UTC, not shifted to UTC from local
-    [InlineData("2025-06-15T10:30:00Z")] // explicit UTC: must yield the same instant
-    public async Task AeroDataBox_ParsesActualDepartureAsUtc(string timestamp)
-    {
-        var body = $$"""
-        [
-          {
-            "number": "BA123",
-            "status": "Departed",
-            "departure": { "actualTimeUtc": "{{timestamp}}" },
-            "arrival": {},
-            "aircraft": { "model": "A320" }
-          }
-        ]
-        """;
-        var provider = new AeroDataBoxFlightStatusProvider(StubClient(body));
-
-        var result = await provider.GetStatusAsync("BA123", new DateOnly(2025, 6, 15));
-
-        Assert.NotNull(result);
-        Assert.NotNull(result!.ActualDepartureUtc);
-        Assert.Equal(ExpectedUtc, result.ActualDepartureUtc);
-        Assert.Equal(DateTimeKind.Utc, result.ActualDepartureUtc!.Value.Kind);
-        Assert.Equal(ExpectedUtc, result.EffectiveAtUtc);
-        Assert.Equal(DateTimeKind.Utc, result.EffectiveAtUtc.Kind);
-    }
 
     [Theory]
     [InlineData("2025-06-15T10:30:00")]  // offset-less: must be assumed UTC, not shifted to UTC from local

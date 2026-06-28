@@ -34,26 +34,8 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<IAllianceRepository, AllianceRepository>();
             services.AddScoped(typeof(IVerifiableRepository<>), typeof(EfVerifiableRepository<>));
 
-            // Flight status providers — named HttpClients with base addresses from config
-            services.AddHttpClient<AeroDataBoxFlightStatusProvider>(client =>
-            {
-                var baseUrl = config["AeroDataBox:BaseUrl"] ?? "https://aerodatabox.p.rapidapi.com/";
-                client.BaseAddress = new Uri(baseUrl);
-                client.Timeout = TimeSpan.FromSeconds(30);
-                var apiKey = config["AeroDataBox:ApiKey"];
-                if (!string.IsNullOrWhiteSpace(apiKey))
-                {
-                    client.DefaultRequestHeaders.Add("X-RapidAPI-Key", apiKey);
-                    client.DefaultRequestHeaders.Add("X-RapidAPI-Host", "aerodatabox.p.rapidapi.com");
-                }
-            }).AddStandardResilienceHandler(options =>
-            {
-                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
-                options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(8);
-                options.Retry.MaxRetryAttempts = 3;
-                options.Retry.BackoffType = DelayBackoffType.Exponential;
-            });
-
+            // Flight status — AviationStack is the sole provider. The IFlightStatusProvider
+            // abstraction is kept so a fallback composite can be reintroduced for production.
             services.AddHttpClient<AviationStackFlightStatusProvider>(client =>
             {
                 client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "http://api.aviationstack.com/v1/");
@@ -66,20 +48,13 @@ namespace FlightAssistant.Infrastructure
                 options.Retry.BackoffType = DelayBackoffType.Exponential;
             });
 
-            services.AddScoped<IFlightStatusProvider, CompositeFlightStatusProvider>();
+            services.AddScoped<IFlightStatusProvider, AviationStackFlightStatusProvider>();
 
-            // Flight search — uses the same AeroDataBox HttpClient base address
-            services.AddHttpClient<AeroDataBoxFlightSearchProvider>(client =>
+            // Flight search — AviationStack filters by both airports server-side in one call.
+            services.AddHttpClient<AviationStackFlightSearchProvider>(client =>
             {
-                var baseUrl = config["AeroDataBox:BaseUrl"] ?? "https://aerodatabox.p.rapidapi.com/";
-                client.BaseAddress = new Uri(baseUrl);
+                client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "http://api.aviationstack.com/v1/");
                 client.Timeout = TimeSpan.FromSeconds(30);
-                var apiKey = config["AeroDataBox:ApiKey"];
-                if (!string.IsNullOrWhiteSpace(apiKey))
-                {
-                    client.DefaultRequestHeaders.Add("X-RapidAPI-Key", apiKey);
-                    client.DefaultRequestHeaders.Add("X-RapidAPI-Host", "aerodatabox.p.rapidapi.com");
-                }
             }).AddStandardResilienceHandler(options =>
             {
                 options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
@@ -87,7 +62,7 @@ namespace FlightAssistant.Infrastructure
                 options.Retry.MaxRetryAttempts = 2;
                 options.Retry.BackoffType = DelayBackoffType.Exponential;
             });
-            services.AddScoped<IFlightSearchProvider, AeroDataBoxFlightSearchProvider>();
+            services.AddScoped<IFlightSearchProvider, AviationStackFlightSearchProvider>();
 
             // Push notifications — singleton so the APNs client is created once and reused
             services.AddOptions<ApnsOptions>()

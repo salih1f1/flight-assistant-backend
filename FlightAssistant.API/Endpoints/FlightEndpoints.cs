@@ -31,7 +31,7 @@ namespace FlightAssistant.API.Endpoints
             .WithName("SearchFlights")
             .WithSummary("Search flights by route and date")
             .WithDescription(
-                "Searches for scheduled flights between two airports on a given date via AeroDataBox. " +
+                "Searches for scheduled flights between two airports on a given date via AviationStack. " +
                 "Use this to populate the 'add flight' picker before calling POST /flights to track a result. " +
                 "Query params: from (IATA), to (IATA), date (YYYY-MM-DD).")
             .Produces<List<FlightSearchResultDto>>(200)
@@ -153,7 +153,7 @@ namespace FlightAssistant.API.Endpoints
             .WithName("SyncFlightStatus")
             .WithSummary("Manually sync flight status")
             .WithDescription(
-                "Triggers an on-demand status refresh for the specified flight by querying the external flight data providers (AeroDataBox, with AviationStack as fallback). " +
+                "Triggers an on-demand status refresh for the specified flight by querying the external flight data provider (AviationStack). " +
                 "Returns { updated: true } if new status data was fetched and persisted, or { updated: false } if the data was already up to date. " +
                 "Route parameter: flightId — the numeric flight ID.")
             .Produces(200)
