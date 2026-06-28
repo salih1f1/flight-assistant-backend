@@ -84,6 +84,29 @@ namespace FlightAssistant.Domain.Travelers.Entities
             }
         }
 
+        // One-way reconciliation of identity fields from the Azure AD B2C token on login.
+        // Returns true if any field changed. Ignores an empty incoming email so a missing
+        // claim never wipes a valid address.
+        public bool SyncFromIdentity(string? email, string? displayName, string? countryCode)
+        {
+            var changed = false;
+
+            if (!string.IsNullOrWhiteSpace(email))
+            {
+                var normEmail = email.Trim().ToLowerInvariant();
+                if (Email != normEmail) { Email = normEmail; changed = true; }
+            }
+
+            var normName = string.IsNullOrWhiteSpace(displayName) ? null : displayName!.Trim();
+            if (DisplayName != normName) { DisplayName = normName; changed = true; }
+
+            var normCountry = string.IsNullOrWhiteSpace(countryCode) ? null : countryCode!.ToUpperInvariant();
+            if (CountryCode != normCountry) { CountryCode = normCountry; changed = true; }
+
+            if (changed) SetUpdated();
+            return changed;
+        }
+
         public void UpdatePassportCountry(string countryCode)
         {
             if (string.IsNullOrWhiteSpace(countryCode) || countryCode.Length != 2)

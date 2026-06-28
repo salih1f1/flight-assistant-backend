@@ -60,6 +60,50 @@ namespace FlightAssistant.Domain.Tests.Travelers
         }
 
         [Fact]
+        public void SyncFromIdentity_ChangedValues_UpdatesFieldsAndReturnsTrue()
+        {
+            var traveler = Traveler.Register("alice@example.com", "Alice", "US");
+
+            var changed = traveler.SyncFromIdentity("alice.new@example.com", "Alice Smith", "GB");
+
+            Assert.True(changed);
+            Assert.Equal("alice.new@example.com", traveler.Email);
+            Assert.Equal("Alice Smith", traveler.DisplayName);
+            Assert.Equal("GB", traveler.CountryCode);
+        }
+
+        [Fact]
+        public void SyncFromIdentity_SameValues_ReturnsFalse()
+        {
+            var traveler = Traveler.Register("alice@example.com", "Alice", "US");
+
+            var changed = traveler.SyncFromIdentity("alice@example.com", "Alice", "US");
+
+            Assert.False(changed);
+        }
+
+        [Fact]
+        public void SyncFromIdentity_NormalizesEmailAndCountry()
+        {
+            var traveler = Traveler.Register("alice@example.com", "Alice", "US");
+
+            traveler.SyncFromIdentity("ALICE.NEW@Example.COM", "Bob", "gb");
+
+            Assert.Equal("alice.new@example.com", traveler.Email);
+            Assert.Equal("GB", traveler.CountryCode);
+        }
+
+        [Fact]
+        public void SyncFromIdentity_EmptyEmail_DoesNotOverwriteExistingEmail()
+        {
+            var traveler = Traveler.Register("alice@example.com", "Alice", "US");
+
+            traveler.SyncFromIdentity("  ", "Alice", "US");
+
+            Assert.Equal("alice@example.com", traveler.Email);
+        }
+
+        [Fact]
         public void AddDeviceToken_AddsToken()
         {
             var traveler = Traveler.Register("alice@example.com");
