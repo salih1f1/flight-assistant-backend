@@ -18,8 +18,7 @@ namespace FlightAssistant.API.Endpoints.Admin
             {
                 var result = await mediator.Send(new GetAllTravelersQuery(paging), ct);
                 var dtos = result.Items.Select(t => new AdminTravelerDto(
-                    t.Id, t.Email, t.DisplayName, t.CountryCode,
-                    t.NationalityCountryCode, t.ResidenceCountryCode, t.CreatedUtc)).ToList();
+                    t.Id, t.Email, t.DisplayName, t.CountryCode, t.CreatedUtc)).ToList();
                 return Results.Ok(new PagedResult<AdminTravelerDto>(dtos, result.Total, result.Page, result.PageSize));
             })
             .WithName("AdminGetAllTravelers")
@@ -33,8 +32,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                 var result = await mediator.Send(new GetAdminTravelerByIdQuery(id), ct);
                 if (result is null) return Results.NotFound();
                 return Results.Ok(new AdminTravelerDto(
-                    result.Id, result.Email, result.DisplayName, result.CountryCode,
-                    result.NationalityCountryCode, result.ResidenceCountryCode, result.CreatedUtc));
+                    result.Id, result.Email, result.DisplayName, result.CountryCode, result.CreatedUtc));
             })
             .WithName("AdminGetTravelerById")
             .WithSummary("Get traveler by ID")

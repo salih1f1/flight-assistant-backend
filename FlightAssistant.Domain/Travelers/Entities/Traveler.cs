@@ -13,8 +13,6 @@ namespace FlightAssistant.Domain.Travelers.Entities
         public string Email { get; private set; }
         public string? DisplayName { get; private set; }
         public string? CountryCode { get; private set; }
-        public string? NationalityCountryCode { get; private set; }
-        public string? ResidenceCountryCode { get; private set; }
 
         private Traveler() { } // EF
 
@@ -35,23 +33,6 @@ namespace FlightAssistant.Domain.Travelers.Entities
 
         public static Traveler Register(string email, string? displayName = null, string? countryCode = null)
             => new(Guid.Empty, email, displayName, countryCode);
-
-        public void UpdateProfile(string? displayName, string? countryCode)
-        {
-            var changed = false;
-
-            var normName = string.IsNullOrWhiteSpace(displayName) ? null : displayName!.Trim();
-            var normCountry = string.IsNullOrWhiteSpace(countryCode) ? null : countryCode!.ToUpperInvariant();
-
-            if (DisplayName != normName) { DisplayName = normName; changed = true; }
-            if (CountryCode != normCountry) { CountryCode = normCountry; changed = true; }
-
-            if (changed)
-            {
-                SetUpdated();
-                Raise(new TravelerProfileUpdated(Id, DisplayName, CountryCode, DateTime.UtcNow));
-            }
-        }
 
         public DeviceToken AddDeviceToken(string platform, string token, DateTime? seenUtc = null)
         {
@@ -84,20 +65,27 @@ namespace FlightAssistant.Domain.Travelers.Entities
             }
         }
 
-        public void UpdatePassportCountry(string countryCode)
+        // One-way reconciliation of identity fields from the Azure AD B2C token on login.
+        // Returns true if any field changed. Ignores an empty incoming email so a missing
+        // claim never wipes a valid address.
+        public bool SyncFromIdentity(string? email, string? displayName, string? countryCode)
         {
-            if (string.IsNullOrWhiteSpace(countryCode) || countryCode.Length != 2)
-                throw new DomainException("Passport country must be ISO alpha-2.");
-            NationalityCountryCode = countryCode.ToUpperInvariant();
-            SetUpdated();
-        }
+            var changed = false;
 
-        public void UpdateResidenceCountry(string? countryCode)
-        {
-            ResidenceCountryCode = string.IsNullOrWhiteSpace(countryCode)
-                ? null
-                : countryCode!.ToUpperInvariant();
-            SetUpdated();
+            if (!string.IsNullOrWhiteSpace(email))
+            {
+                var normEmail = email.Trim().ToLowerInvariant();
+                if (Email != normEmail) { Email = normEmail; changed = true; }
+            }
+
+            var normName = string.IsNullOrWhiteSpace(displayName) ? null : displayName!.Trim();
+            if (DisplayName != normName) { DisplayName = normName; changed = true; }
+
+            var normCountry = string.IsNullOrWhiteSpace(countryCode) ? null : countryCode!.ToUpperInvariant();
+            if (CountryCode != normCountry) { CountryCode = normCountry; changed = true; }
+
+            if (changed) SetUpdated();
+            return changed;
         }
     }
 }

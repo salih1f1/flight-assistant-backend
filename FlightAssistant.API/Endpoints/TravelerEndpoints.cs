@@ -41,29 +41,15 @@ namespace FlightAssistant.API.Endpoints
                 var travelerId = http.User.GetTravelerId();
                 var result = await mediator.Send(new GetTravelerProfileQuery(travelerId), ct);
                 if (result is null) return Results.NotFound();
-                return Results.Ok(new TravelerDto(result.Id, result.Email, result.DisplayName, result.CountryCode, result.NationalityCountryCode, result.ResidenceCountryCode));
+                return Results.Ok(new TravelerDto(result.Id, result.Email, result.DisplayName, result.CountryCode));
             })
             .WithName("GetTravelerProfile")
             .WithSummary("Get own profile")
-            .WithDescription("Returns the authenticated traveler's profile, including display name and country settings.")
+            .WithDescription(
+                "Returns the authenticated traveler's profile. Display name and country are owned by " +
+                "Azure AD B2C and are refreshed from the sign-in token on each login; they are read-only here.")
             .Produces<TravelerDto>(200)
             .ProducesProblem(404);
-
-            // PATCH /travelers/me — update profile
-            group.MapPatch("me", async (HttpContext http, [FromBody] UpdateTravelerProfileRequest req, IMediator mediator, CancellationToken ct) =>
-            {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
-                var travelerId = http.User.GetTravelerId();
-                await mediator.Send(new UpdateTravelerProfileCommand(travelerId, req.DisplayName, req.CountryCode, req.NationalityCountryCode, req.ResidenceCountryCode), ct);
-                return Results.NoContent();
-            })
-            .WithName("UpdateTravelerProfile")
-            .WithSummary("Update own profile")
-            .WithDescription(
-                "Updates the authenticated traveler's display name and/or country fields. " +
-                "Only fields provided in the request body are updated; omit a field to leave it unchanged.")
-            .Produces(204)
-            .ProducesValidationProblem();
 
             // POST /travelers/me/device-tokens — register a push notification token
             group.MapPost("me/device-tokens", async (HttpContext http, [FromBody] AddDeviceTokenRequest req, IMediator mediator, CancellationToken ct) =>

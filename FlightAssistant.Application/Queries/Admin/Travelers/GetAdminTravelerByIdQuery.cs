@@ -15,8 +15,7 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
         {
             var t = await _repo.GetByIdAsync(request.Id, ct);
             if (t is null) return null;
-            return new AdminTravelerResult(t.Id, t.Email, t.DisplayName, t.CountryCode,
-                t.NationalityCountryCode, t.ResidenceCountryCode, t.CreatedUtc);
+            return new AdminTravelerResult(t.Id, t.Email, t.DisplayName, t.CountryCode, t.CreatedUtc);
         }
     }
 }

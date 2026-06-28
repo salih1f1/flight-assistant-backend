@@ -7,9 +7,7 @@ namespace FlightAssistant.Application.Queries.Travelers
         Guid Id,
         string Email,
         string? DisplayName,
-        string? CountryCode,
-        string? NationalityCountryCode,
-        string? ResidenceCountryCode
+        string? CountryCode
     );
 
     public record GetTravelerProfileQuery(Guid TravelerId) : IRequest<TravelerProfileResult?>;
@@ -25,7 +23,7 @@ namespace FlightAssistant.Application.Queries.Travelers
             var t = await _travelers.GetByIdAsync(query.TravelerId, ct);
             if (t is null) return null;
 
-            return new TravelerProfileResult(t.Id, t.Email, t.DisplayName, t.CountryCode, t.NationalityCountryCode, t.ResidenceCountryCode);
+            return new TravelerProfileResult(t.Id, t.Email, t.DisplayName, t.CountryCode);
         }
     }
 }

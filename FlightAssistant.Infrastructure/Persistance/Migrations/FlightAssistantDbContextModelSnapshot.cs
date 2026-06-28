@@ -957,16 +957,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasMaxLength(254)
                         .HasColumnType("character varying(254)");
 
-                    b.Property<string>("NationalityCountryCode")
-                        .HasMaxLength(2)
-                        .HasColumnType("character(2)")
-                        .IsFixedLength();
-
-                    b.Property<string>("ResidenceCountryCode")
-                        .HasMaxLength(2)
-                        .HasColumnType("character(2)")
-                        .IsFixedLength();
-
                     b.Property<Guid?>("UpdatedBy")
                         .HasColumnType("uuid");
 
@@ -977,10 +967,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
 
                     b.HasIndex("Email")
                         .IsUnique();
-
-                    b.HasIndex("NationalityCountryCode");
-
-                    b.HasIndex("ResidenceCountryCode");
 
                     b.ToTable("travelers", (string)null);
                 });
@@ -1148,19 +1134,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasForeignKey("TravelerId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-                });
-
-            modelBuilder.Entity("FlightAssistant.Domain.Travelers.Entities.Traveler", b =>
-                {
-                    b.HasOne("FlightAssistant.Domain.ReferenceData.Entities.Country", null)
-                        .WithMany()
-                        .HasForeignKey("NationalityCountryCode")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("FlightAssistant.Domain.ReferenceData.Entities.Country", null)
-                        .WithMany()
-                        .HasForeignKey("ResidenceCountryCode")
-                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("FlightAssistant.Domain.Lounges.Entities.Lounge", b =>
