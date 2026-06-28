@@ -12,7 +12,7 @@ namespace FlightAssistant.Domain.ReferenceData.Entities
 
         private Alliance() { } // EF
 
-        public static Alliance Create(string code, string name) => new() { Code = code, Name = name };
+        public static Alliance Create(string code, string name) => new() { Code = code.ToCanonicalCode(), Name = name };
         public void Update(string name) { Name = name; }
     }
 }

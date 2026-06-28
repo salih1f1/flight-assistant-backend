@@ -13,7 +13,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             await _db.Alliances.OrderBy(a => a.Name).ToListAsync(ct);
 
         public Task<Alliance?> FindByCodeAsync(string code, CancellationToken ct = default) =>
-            _db.Alliances.FirstOrDefaultAsync(a => a.Code == code, ct);
+            _db.Alliances.FirstOrDefaultAsync(a => a.Code == code.ToUpperInvariant(), ct);
 
         public async Task AddAsync(Alliance alliance, CancellationToken ct = default) =>
             await _db.Alliances.AddAsync(alliance, ct);

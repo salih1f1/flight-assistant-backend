@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Lounges.Enums;
@@ -26,7 +27,7 @@ public sealed class ImportLoungesCommandValidator : AbstractValidator<ImportLoun
             item.RuleFor(d => d.AirportIata)
                 .NotEmpty()
                 .Length(3)
-                .Matches("^[A-Z]{3}$").WithMessage("'{PropertyName}' must be a 3-letter uppercase IATA code.");
+                .Matches("^[A-Z]{3}$", RegexOptions.IgnoreCase).WithMessage("'{PropertyName}' must be a 3-letter IATA code.");
             item.RuleFor(d => d.Amenities).MaximumLength(1000).When(d => d.Amenities is not null);
             item.RuleFor(d => d.Terminal)
                 .MaximumLength(32)

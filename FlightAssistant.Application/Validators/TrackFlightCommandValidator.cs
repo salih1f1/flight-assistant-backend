@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FlightAssistant.Application.Commands.Flights;
 using FluentValidation;
 
@@ -9,7 +10,7 @@ namespace FlightAssistant.Application.Validators
         {
             RuleFor(x => x.FlightNumber)
                 .NotEmpty()
-                .Matches(@"^[A-Z]{2}\d{1,4}[A-Z]?$")
+                .Matches(@"^[A-Z]{2}\d{1,4}[A-Z]?$", RegexOptions.IgnoreCase)
                 .WithMessage("FlightNumber must be in the format AA1234 or AA1234A.");
 
             RuleFor(x => x.ServiceDate)
@@ -18,17 +19,17 @@ namespace FlightAssistant.Application.Validators
 
             RuleFor(x => x.AirlineIata)
                 .NotEmpty()
-                .Matches(@"^[A-Z0-9]{2,3}$")
+                .Matches(@"^[A-Z0-9]{2,3}$", RegexOptions.IgnoreCase)
                 .WithMessage("AirlineIata must be a 2–3 character IATA code.");
 
             RuleFor(x => x.DepartureAirportIata)
                 .NotEmpty()
-                .Matches(@"^[A-Z]{3}$")
+                .Matches(@"^[A-Z]{3}$", RegexOptions.IgnoreCase)
                 .WithMessage("DepartureAirportIata must be a 3-letter IATA code.");
 
             RuleFor(x => x.ArrivalAirportIata)
                 .NotEmpty()
-                .Matches(@"^[A-Z]{3}$")
+                .Matches(@"^[A-Z]{3}$", RegexOptions.IgnoreCase)
                 .WithMessage("ArrivalAirportIata must be a 3-letter IATA code.");
 
             RuleFor(x => x.ScheduledDepartureUtc)

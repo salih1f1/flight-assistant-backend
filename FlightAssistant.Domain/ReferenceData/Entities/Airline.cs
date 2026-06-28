@@ -21,21 +21,21 @@ namespace FlightAssistant.Domain.ReferenceData.Entities
         public static Airline Create(string? iata, string? icao, string name, string countryCode, string? allianceCode = null) =>
             new()
             {
-                Iata = iata,
-                Icao = icao,
+                Iata = iata.ToCanonicalCodeOrNull(),
+                Icao = icao.ToCanonicalCodeOrNull(),
                 Name = name,
-                CountryCode = countryCode,
-                AllianceCode = allianceCode,
+                CountryCode = countryCode.ToCanonicalCode(),
+                AllianceCode = allianceCode.ToCanonicalCodeOrNull(),
                 SourceType = "admin"
             };
 
         public void Update(string? iata, string? icao, string name, string countryCode, string? allianceCode)
         {
-            Iata = iata;
-            Icao = icao;
+            Iata = iata.ToCanonicalCodeOrNull();
+            Icao = icao.ToCanonicalCodeOrNull();
             Name = name;
-            CountryCode = countryCode;
-            AllianceCode = allianceCode;
+            CountryCode = countryCode.ToCanonicalCode();
+            AllianceCode = allianceCode.ToCanonicalCodeOrNull();
         }
     }
 }

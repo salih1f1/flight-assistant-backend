@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FluentValidation;
@@ -20,15 +21,15 @@ public sealed class ImportAirlinesCommandValidator : AbstractValidator<ImportAir
                 .Must(d => !string.IsNullOrWhiteSpace(d.Iata) || !string.IsNullOrWhiteSpace(d.Icao))
                 .WithMessage("Each airline must have at least one of Iata or Icao.");
             item.RuleFor(d => d.Iata)
-                .Matches("^[A-Z0-9]{2}$").When(d => d.Iata is not null)
-                .WithMessage("'{PropertyName}' must be a 2-character uppercase IATA code.");
+                .Matches("^[A-Z0-9]{2}$", RegexOptions.IgnoreCase).When(d => d.Iata is not null)
+                .WithMessage("'{PropertyName}' must be a 2-character IATA code.");
             item.RuleFor(d => d.Icao)
-                .Matches("^[A-Z]{3}$").When(d => d.Icao is not null)
-                .WithMessage("'{PropertyName}' must be a 3-letter uppercase ICAO code.");
+                .Matches("^[A-Z]{3}$", RegexOptions.IgnoreCase).When(d => d.Icao is not null)
+                .WithMessage("'{PropertyName}' must be a 3-letter ICAO code.");
             item.RuleFor(d => d.Name).NotEmpty().MaximumLength(200);
             item.RuleFor(d => d.CountryCode)
                 .NotEmpty()
-                .Matches("^[A-Z]{2}$").WithMessage("'{PropertyName}' must be a 2-letter uppercase ISO country code.");
+                .Matches("^[A-Z]{2}$", RegexOptions.IgnoreCase).WithMessage("'{PropertyName}' must be a 2-letter ISO country code.");
             item.RuleFor(d => d.AllianceCode)
                 .MaximumLength(8).When(d => d.AllianceCode is not null);
         });

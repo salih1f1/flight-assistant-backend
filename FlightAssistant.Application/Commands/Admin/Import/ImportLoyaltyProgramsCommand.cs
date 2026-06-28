@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FluentValidation;
@@ -25,8 +26,8 @@ public sealed class ImportLoyaltyProgramsCommandValidator : AbstractValidator<Im
             item.RuleFor(d => d.Name).NotEmpty().MaximumLength(200);
             item.RuleFor(d => d.KindCode).NotEmpty().MaximumLength(32);
             item.RuleFor(d => d.AirlineIata)
-                .Matches("^[A-Z0-9]{2}$").When(d => d.AirlineIata is not null)
-                .WithMessage("'{PropertyName}' must be a 2-character uppercase IATA code.");
+                .Matches("^[A-Z0-9]{2}$", RegexOptions.IgnoreCase).When(d => d.AirlineIata is not null)
+                .WithMessage("'{PropertyName}' must be a 2-character IATA code.");
             item.RuleFor(d => d.AllianceCode).MaximumLength(8).When(d => d.AllianceCode is not null);
             item.RuleFor(d => d.Tiers).NotNull();
             item.RuleForEach(d => d.Tiers).ChildRules(t =>

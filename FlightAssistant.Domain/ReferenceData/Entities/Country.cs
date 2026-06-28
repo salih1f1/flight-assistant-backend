@@ -19,12 +19,12 @@ namespace FlightAssistant.Domain.ReferenceData.Entities
 
         public static Country Create(string code, string name, string? alpha3 = null, int? numericCode = null,
             string? region = null, string? subregion = null, bool? isEU = null, bool? isSchengen = null, bool? isEEA = null) =>
-            new() { Code = code, Name = name, Alpha3 = alpha3, NumericCode = numericCode, Region = region, Subregion = subregion, IsEU = isEU, IsSchengen = isSchengen, IsEEA = isEEA };
+            new() { Code = code.ToCanonicalCode(), Name = name, Alpha3 = alpha3.ToCanonicalCodeOrNull(), NumericCode = numericCode, Region = region, Subregion = subregion, IsEU = isEU, IsSchengen = isSchengen, IsEEA = isEEA };
 
         public void Update(string name, string? alpha3, int? numericCode, string? region, string? subregion, bool? isEU, bool? isSchengen, bool? isEEA)
         {
             Name = name;
-            Alpha3 = alpha3;
+            Alpha3 = alpha3.ToCanonicalCodeOrNull();
             NumericCode = numericCode;
             Region = region;
             Subregion = subregion;

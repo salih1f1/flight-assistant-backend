@@ -13,7 +13,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             await _db.Countries.OrderBy(c => c.Name).ToListAsync(ct);
 
         public Task<Country?> FindByCodeAsync(string code, CancellationToken ct = default) =>
-            _db.Countries.FirstOrDefaultAsync(c => c.Code == code, ct);
+            _db.Countries.FirstOrDefaultAsync(c => c.Code == code.ToUpperInvariant(), ct);
 
         public async Task AddAsync(Country country, CancellationToken ct = default) =>
             await _db.Countries.AddAsync(country, ct);
