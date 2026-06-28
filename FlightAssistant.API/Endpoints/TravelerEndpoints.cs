@@ -18,19 +18,27 @@ namespace FlightAssistant.API.Endpoints
         {
             var group = app.MapGroup("travelers").RequireAuthorization().WithTags("Travelers");
 
-            // POST /travelers — register (idempotent, called on first login)
-            group.MapPost("", async (HttpContext http, [FromBody] RegisterTravelerRequest req, IMediator mediator, CancellationToken ct) =>
+            // POST /travelers — register (idempotent, called on every login)
+            // Takes no body: identity (email, name, country) is read from the verified token,
+            // never from client input, so Azure AD B2C stays the single source of truth.
+            group.MapPost("", async (HttpContext http, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
-                var newTravelerId = await mediator.Send(new RegisterTravelerCommand(travelerId, req.Email, req.DisplayName, req.CountryCode), ct);
+                var newTravelerId = await mediator.Send(new RegisterTravelerCommand(
+                    travelerId,
+                    http.User.GetEmail() ?? string.Empty,
+                    http.User.GetDisplayName(),
+                    http.User.GetCountryCode()), ct);
                 return Results.Created("/travelers/me", new RegisterTravelerResponse(newTravelerId));
             })
             .WithName("RegisterTraveler")
             .WithSummary("Register traveler")
             .WithDescription(
                 "Creates a traveler profile linked to the authenticated Azure AD B2C identity. " +
-                "Idempotent — safe to call on every login; does nothing if the traveler already exists.")
+                "Takes no request body — email, display name, and country are derived from the sign-in token. " +
+                "Idempotent — safe to call on every login; reconciles the profile from the token and does " +
+                "nothing if the traveler already exists and is unchanged.")
             .Produces<RegisterTravelerResponse>(201)
             .ProducesValidationProblem();
 
