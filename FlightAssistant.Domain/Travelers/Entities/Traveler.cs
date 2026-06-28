@@ -22,7 +22,8 @@ namespace FlightAssistant.Domain.Travelers.Entities
             Email = email.Trim().ToLowerInvariant();
             DisplayName = string.IsNullOrWhiteSpace(displayName) ? null : displayName!.Trim();
 
-            SetCreated();
+            // Self-service registration: the traveler is the actor, so stamp their own id.
+            SetCreated(Id);
             Raise(new TravelerRegistered(Id, Email, DateTime.UtcNow));
         }
 
@@ -42,13 +43,13 @@ namespace FlightAssistant.Domain.Travelers.Entities
             if (existing is not null)
             {
                 existing.Touch(seenUtc ?? DateTime.UtcNow);
-                SetUpdated();
+                SetUpdated(Id);
                 return existing;
             }
 
             var dt = new DeviceToken(Id, platform.Trim(), token.Trim(), seenUtc ?? DateTime.UtcNow);
             _deviceTokens.Add(dt);
-            SetUpdated();
+            SetUpdated(Id);
             Raise(new DeviceTokenAdded(Id, dt.Id, dt.Platform, dt.Token, DateTime.UtcNow));
             return dt;
         }
@@ -58,7 +59,7 @@ namespace FlightAssistant.Domain.Travelers.Entities
             var removed = _deviceTokens.RemoveAll(x => x.Id == deviceTokenId) > 0;
             if (removed)
             {
-                SetUpdated();
+                SetUpdated(Id);
                 Raise(new DeviceTokenRemoved(Id, deviceTokenId, DateTime.UtcNow));
             }
         }
@@ -79,7 +80,7 @@ namespace FlightAssistant.Domain.Travelers.Entities
             var normName = string.IsNullOrWhiteSpace(displayName) ? null : displayName!.Trim();
             if (DisplayName != normName) { DisplayName = normName; changed = true; }
 
-            if (changed) SetUpdated();
+            if (changed) SetUpdated(Id);
             return changed;
         }
     }

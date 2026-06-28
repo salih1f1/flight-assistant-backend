@@ -19,18 +19,22 @@ namespace FlightAssistant.API.Endpoints
             var group = app.MapGroup("travelers").RequireAuthorization().WithTags("Travelers");
 
             // POST /travelers — register (idempotent, called on first login)
-            group.MapPost("", async (HttpContext http, [FromBody] RegisterTravelerRequest req, IMediator mediator, CancellationToken ct) =>
+            group.MapPost("", async (HttpContext http, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
-                var newTravelerId = await mediator.Send(new RegisterTravelerCommand(travelerId, req.Email, req.DisplayName), ct);
+                // Identity (email/display name) comes from the verified token, never the client —
+                // Azure AD B2C is the single source of truth.
+                var newTravelerId = await mediator.Send(
+                    new RegisterTravelerCommand(travelerId, http.User.GetEmail() ?? string.Empty, http.User.GetDisplayName()), ct);
                 return Results.Created("/travelers/me", new RegisterTravelerResponse(newTravelerId));
             })
             .WithName("RegisterTraveler")
             .WithSummary("Register traveler")
             .WithDescription(
-                "Creates a traveler profile linked to the authenticated Azure AD B2C identity. " +
-                "Idempotent — safe to call on every login; does nothing if the traveler already exists.")
+                "Creates a traveler profile from the authenticated Azure AD B2C identity. Takes no request " +
+                "body — id, email, and display name are read from the verified token. " +
+                "Idempotent — safe to call on every login; reconciles identity fields if the traveler already exists.")
             .Produces<RegisterTravelerResponse>(201)
             .ProducesValidationProblem();
 
