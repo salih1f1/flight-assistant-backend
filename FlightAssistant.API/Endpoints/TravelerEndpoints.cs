@@ -23,7 +23,7 @@ namespace FlightAssistant.API.Endpoints
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
-                var newTravelerId = await mediator.Send(new RegisterTravelerCommand(travelerId, req.Email, req.DisplayName, req.CountryCode), ct);
+                var newTravelerId = await mediator.Send(new RegisterTravelerCommand(travelerId, req.Email, req.DisplayName), ct);
                 return Results.Created("/travelers/me", new RegisterTravelerResponse(newTravelerId));
             })
             .WithName("RegisterTraveler")
@@ -41,13 +41,13 @@ namespace FlightAssistant.API.Endpoints
                 var travelerId = http.User.GetTravelerId();
                 var result = await mediator.Send(new GetTravelerProfileQuery(travelerId), ct);
                 if (result is null) return Results.NotFound();
-                return Results.Ok(new TravelerDto(result.Id, result.Email, result.DisplayName, result.CountryCode));
+                return Results.Ok(new TravelerDto(result.Id, result.Email, result.DisplayName));
             })
             .WithName("GetTravelerProfile")
             .WithSummary("Get own profile")
             .WithDescription(
-                "Returns the authenticated traveler's profile. Display name and country are owned by " +
-                "Azure AD B2C and are refreshed from the sign-in token on each login; they are read-only here.")
+                "Returns the authenticated traveler's profile. Display name is owned by " +
+                "Azure AD B2C and is refreshed from the sign-in token on each login; it is read-only here.")
             .Produces<TravelerDto>(200)
             .ProducesProblem(404);
 

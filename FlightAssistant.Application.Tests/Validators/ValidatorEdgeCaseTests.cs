@@ -108,44 +108,13 @@ public class ValidatorEdgeCaseTests
         AssertInvalid(v, cmd, "DepartureAirportIata");
     }
 
-    // ── Country codes ─────────────────────────────────────────────────────────
-
-    [Theory]
-    [InlineData("GB")]
-    [InlineData("US")]
-    public void RegisterTraveler_ValidCountryCode_Passes(string code)
-    {
-        var v = new RegisterTravelerCommandValidator();
-        var cmd = new RegisterTravelerCommand(Guid.NewGuid(), "test@example.com", null, code);
-        AssertValid(v, cmd);
-    }
-
-    [Theory]
-    [InlineData("gb")]     // lowercase
-    [InlineData("GBR")]    // alpha-3
-    [InlineData("G1")]     // digit
-    public void RegisterTraveler_InvalidCountryCode_Fails(string code)
-    {
-        var v = new RegisterTravelerCommandValidator();
-        var cmd = new RegisterTravelerCommand(Guid.NewGuid(), "test@example.com", null, code);
-        AssertInvalid(v, cmd, "CountryCode");
-    }
-
-    [Fact]
-    public void RegisterTraveler_NullCountryCode_Passes()
-    {
-        var v = new RegisterTravelerCommandValidator();
-        var cmd = new RegisterTravelerCommand(Guid.NewGuid(), "test@example.com", null, null);
-        AssertValid(v, cmd);
-    }
-
     // ── Email ─────────────────────────────────────────────────────────────────
 
     [Fact]
     public void RegisterTraveler_ValidEmail_Passes()
     {
         var v = new RegisterTravelerCommandValidator();
-        AssertValid(v, new RegisterTravelerCommand(Guid.NewGuid(), "user@example.com", null, null));
+        AssertValid(v, new RegisterTravelerCommand(Guid.NewGuid(), "user@example.com", null));
     }
 
     [Fact]
@@ -153,7 +122,7 @@ public class ValidatorEdgeCaseTests
     {
         var v = new RegisterTravelerCommandValidator();
         var longEmail = new string('a', 249) + "@b.com"; // 255 chars — exceeds 254
-        AssertInvalid(v, new RegisterTravelerCommand(Guid.NewGuid(), longEmail, null, null), "Email");
+        AssertInvalid(v, new RegisterTravelerCommand(Guid.NewGuid(), longEmail, null), "Email");
     }
 
     [Theory]
@@ -163,7 +132,7 @@ public class ValidatorEdgeCaseTests
     public void RegisterTraveler_InvalidEmail_Fails(string email)
     {
         var v = new RegisterTravelerCommandValidator();
-        AssertInvalid(v, new RegisterTravelerCommand(Guid.NewGuid(), email, null, null), "Email");
+        AssertInvalid(v, new RegisterTravelerCommand(Guid.NewGuid(), email, null), "Email");
     }
 
     // ── Paging ────────────────────────────────────────────────────────────────

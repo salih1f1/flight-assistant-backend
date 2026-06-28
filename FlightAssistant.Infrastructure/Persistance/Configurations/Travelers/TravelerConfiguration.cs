@@ -15,7 +15,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Travelers
             b.HasIndex(x => x.Email).IsUnique();
 
             b.Property(x => x.DisplayName).HasMaxLength(100);
-            b.Property(x => x.CountryCode).HasMaxLength(2).IsFixedLength();
 
             b.Property(x => x.CreatedUtc).HasColumnType("timestamptz");
             b.Property(x => x.UpdatedUtc).HasColumnType("timestamptz");

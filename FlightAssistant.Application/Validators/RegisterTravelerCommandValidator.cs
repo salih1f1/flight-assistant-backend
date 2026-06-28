@@ -15,11 +15,6 @@ namespace FlightAssistant.Application.Validators
             RuleFor(x => x.DisplayName)
                 .MaximumLength(100)
                 .When(x => x.DisplayName is not null);
-
-            RuleFor(x => x.CountryCode)
-                .Matches(@"^[A-Z]{2}$")
-                .WithMessage("CountryCode must be an ISO 3166-1 alpha-2 code.")
-                .When(x => x.CountryCode is not null);
         }
     }
 }

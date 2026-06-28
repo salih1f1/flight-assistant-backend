@@ -12,27 +12,25 @@ namespace FlightAssistant.Domain.Travelers.Entities
 
         public string Email { get; private set; }
         public string? DisplayName { get; private set; }
-        public string? CountryCode { get; private set; }
 
         private Traveler() { } // EF
 
-        private Traveler(Guid id, string email, string? displayName, string? countryCode)
+        private Traveler(Guid id, string email, string? displayName)
         {
             if (id != Guid.Empty) Id = id;
             if (string.IsNullOrWhiteSpace(email)) throw new DomainException("Email is required.");
             Email = email.Trim().ToLowerInvariant();
             DisplayName = string.IsNullOrWhiteSpace(displayName) ? null : displayName!.Trim();
-            CountryCode = string.IsNullOrWhiteSpace(countryCode) ? null : countryCode!.ToUpperInvariant();
 
             SetCreated();
             Raise(new TravelerRegistered(Id, Email, DateTime.UtcNow));
         }
 
-        public static Traveler Register(Guid id, string email, string? displayName = null, string? countryCode = null)
-            => new(id, email, displayName, countryCode);
+        public static Traveler Register(Guid id, string email, string? displayName = null)
+            => new(id, email, displayName);
 
-        public static Traveler Register(string email, string? displayName = null, string? countryCode = null)
-            => new(Guid.Empty, email, displayName, countryCode);
+        public static Traveler Register(string email, string? displayName = null)
+            => new(Guid.Empty, email, displayName);
 
         public DeviceToken AddDeviceToken(string platform, string token, DateTime? seenUtc = null)
         {
@@ -68,7 +66,7 @@ namespace FlightAssistant.Domain.Travelers.Entities
         // One-way reconciliation of identity fields from the Azure AD B2C token on login.
         // Returns true if any field changed. Ignores an empty incoming email so a missing
         // claim never wipes a valid address.
-        public bool SyncFromIdentity(string? email, string? displayName, string? countryCode)
+        public bool SyncFromIdentity(string? email, string? displayName)
         {
             var changed = false;
 
@@ -80,9 +78,6 @@ namespace FlightAssistant.Domain.Travelers.Entities
 
             var normName = string.IsNullOrWhiteSpace(displayName) ? null : displayName!.Trim();
             if (DisplayName != normName) { DisplayName = normName; changed = true; }
-
-            var normCountry = string.IsNullOrWhiteSpace(countryCode) ? null : countryCode!.ToUpperInvariant();
-            if (CountryCode != normCountry) { CountryCode = normCountry; changed = true; }
 
             if (changed) SetUpdated();
             return changed;

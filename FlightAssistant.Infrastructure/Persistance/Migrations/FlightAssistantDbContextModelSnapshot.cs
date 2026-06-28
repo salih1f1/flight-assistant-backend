@@ -937,11 +937,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("CountryCode")
-                        .HasMaxLength(2)
-                        .HasColumnType("character(2)")
-                        .IsFixedLength();
-
                     b.Property<Guid?>("CreatedBy")
                         .HasColumnType("uuid");
 
