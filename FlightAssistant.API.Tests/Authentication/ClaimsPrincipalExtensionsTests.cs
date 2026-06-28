@@ -69,4 +69,58 @@ public class ClaimsPrincipalExtensionsTests
 
         Assert.Equal(401, ex.StatusCode);
     }
+
+    [Fact]
+    public void GetEmail_EmailClaim_ReturnsValue()
+    {
+        var user = UserWith("email", "alice@example.com");
+        Assert.Equal("alice@example.com", user.GetEmail());
+    }
+
+    [Fact]
+    public void GetEmail_B2cEmailsClaim_ReturnsValue()
+    {
+        // Azure AD B2C emits the address in the plural "emails" claim.
+        var user = UserWith("emails", "alice@example.com");
+        Assert.Equal("alice@example.com", user.GetEmail());
+    }
+
+    [Fact]
+    public void GetEmail_FallsBackToPreferredUsername()
+    {
+        var user = UserWith("preferred_username", "alice@example.com");
+        Assert.Equal("alice@example.com", user.GetEmail());
+    }
+
+    [Fact]
+    public void GetEmail_NoEmailClaim_ReturnsNull()
+    {
+        Assert.Null(UserWithNoClaims().GetEmail());
+    }
+
+    [Fact]
+    public void GetDisplayName_NameClaim_ReturnsValue()
+    {
+        var user = UserWith("name", "Alice Smith");
+        Assert.Equal("Alice Smith", user.GetDisplayName());
+    }
+
+    [Fact]
+    public void GetDisplayName_NoNameClaim_ReturnsNull()
+    {
+        Assert.Null(UserWithNoClaims().GetDisplayName());
+    }
+
+    [Fact]
+    public void GetCountryCode_CountryClaim_ReturnsValue()
+    {
+        var user = UserWith("country", "GB");
+        Assert.Equal("GB", user.GetCountryCode());
+    }
+
+    [Fact]
+    public void GetCountryCode_NoCountryClaim_ReturnsNull()
+    {
+        Assert.Null(UserWithNoClaims().GetCountryCode());
+    }
 }

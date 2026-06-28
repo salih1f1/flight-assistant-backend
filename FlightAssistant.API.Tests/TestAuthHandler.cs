@@ -30,6 +30,10 @@ public class TestAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions
         var claims = new List<Claim>
         {
             new("oid", userId),
+            // Identity profile claims the API derives the traveler from (mirrors a B2C token).
+            new("emails", $"{userId}@example.com"),
+            new("name", "Test User"),
+            new("country", "GB"),
             // Both scope claim forms for compatibility with VerifyUserHasAnyAcceptedScope
             new("scp", "access_as_user"),
             new("http://schemas.microsoft.com/identity/claims/scope", "access_as_user"),
