@@ -4,8 +4,6 @@ namespace FlightAssistant.Contracts.Responses.Travelers
         Guid Id,
         string Email,
         string? DisplayName,
-        string? CountryCode,
-        string? NationalityCountryCode,
-        string? ResidenceCountryCode
+        string? CountryCode
     );
 }

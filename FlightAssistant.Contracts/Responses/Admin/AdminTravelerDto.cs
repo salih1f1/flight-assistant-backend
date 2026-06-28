@@ -5,8 +5,6 @@ namespace FlightAssistant.Contracts.Responses.Admin
         string Email,
         string? DisplayName,
         string? CountryCode,
-        string? NationalityCountryCode,
-        string? ResidenceCountryCode,
         DateTime CreatedUtc
     );
 }

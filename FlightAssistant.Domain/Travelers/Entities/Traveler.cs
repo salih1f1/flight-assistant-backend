@@ -13,8 +13,6 @@ namespace FlightAssistant.Domain.Travelers.Entities
         public string Email { get; private set; }
         public string? DisplayName { get; private set; }
         public string? CountryCode { get; private set; }
-        public string? NationalityCountryCode { get; private set; }
-        public string? ResidenceCountryCode { get; private set; }
 
         private Traveler() { } // EF
 
@@ -88,22 +86,6 @@ namespace FlightAssistant.Domain.Travelers.Entities
 
             if (changed) SetUpdated();
             return changed;
-        }
-
-        public void UpdatePassportCountry(string countryCode)
-        {
-            if (string.IsNullOrWhiteSpace(countryCode) || countryCode.Length != 2)
-                throw new DomainException("Passport country must be ISO alpha-2.");
-            NationalityCountryCode = countryCode.ToUpperInvariant();
-            SetUpdated();
-        }
-
-        public void UpdateResidenceCountry(string? countryCode)
-        {
-            ResidenceCountryCode = string.IsNullOrWhiteSpace(countryCode)
-                ? null
-                : countryCode!.ToUpperInvariant();
-            SetUpdated();
         }
     }
 }

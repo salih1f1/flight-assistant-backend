@@ -104,20 +104,5 @@ namespace FlightAssistant.Domain.Tests.Travelers
             traveler.RemoveDeviceToken(token.Id);
             Assert.Empty(traveler.DeviceTokens);
         }
-
-        [Fact]
-        public void UpdatePassportCountry_InvalidCode_ThrowsDomainException()
-        {
-            var traveler = Traveler.Register("alice@example.com");
-            Assert.Throws<DomainException>(() => traveler.UpdatePassportCountry("GBR")); // must be 2 chars
-        }
-
-        [Fact]
-        public void UpdatePassportCountry_ValidCode_NormalizesToUppercase()
-        {
-            var traveler = Traveler.Register("alice@example.com");
-            traveler.UpdatePassportCountry("gb");
-            Assert.Equal("GB", traveler.NationalityCountryCode);
-        }
     }
 }
