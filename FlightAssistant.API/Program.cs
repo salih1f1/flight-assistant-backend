@@ -214,22 +214,6 @@ builder.Services.AddRateLimiter(rl =>
             QueueLimit = 0
         }));
 
-    // Visa — authenticated, partition by user ID
-    var visaLimit = builder.Configuration.GetValue("RateLimiting:Visa:PermitLimit", 30);
-    var visaWindow = builder.Configuration.GetValue("RateLimiting:Visa:WindowSeconds", 60);
-    rl.AddPolicy("visa", ctx => RateLimitPartition.GetFixedWindowLimiter(
-        partitionKey: ctx.User.FindFirst("oid")?.Value
-                      ?? ctx.User.FindFirst("sub")?.Value
-                      ?? ctx.Connection.RemoteIpAddress?.ToString()
-                      ?? "unknown",
-        factory: _ => new FixedWindowRateLimiterOptions
-        {
-            PermitLimit = visaLimit,
-            Window = TimeSpan.FromSeconds(visaWindow),
-            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-            QueueLimit = 0
-        }));
-
     // Loyalty programs — authenticated, partition by user ID
     var loyaltyLimit = builder.Configuration.GetValue("RateLimiting:LoyaltyPrograms:PermitLimit", 60);
     var loyaltyWindow = builder.Configuration.GetValue("RateLimiting:LoyaltyPrograms:WindowSeconds", 60);
@@ -309,7 +293,6 @@ app.MapTravelerEndpoints();
 app.MapFlightEndpoints();
 app.MapLoyaltyEndpoints();
 app.MapLoungeEndpoints();
-app.MapVisaEndpoints();
 
 // Admin endpoints — shared group carries auth, each file adds its own sub-prefix
 var adminGroup = app.MapGroup("admin")

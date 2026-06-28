@@ -681,39 +681,6 @@
       ]
     },
     {
-      "name": "Visa",
-      "item": [
-        {
-          "name": "Visa requirements",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/visa?passportCountry=GB&destinationCountry=JP",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "visa"
-              ],
-              "query": [
-                {
-                  "key": "passportCountry",
-                  "value": "GB"
-                },
-                {
-                  "key": "destinationCountry",
-                  "value": "JP"
-                }
-              ]
-            },
-            "description": "ISO alpha-2 uppercase codes. Sherpa-backed, cached. Rate limited 30/60s."
-          },
-          "response": []
-        }
-      ]
-    },
-    {
       "name": "Admin (admin token required)",
       "item": [
         {

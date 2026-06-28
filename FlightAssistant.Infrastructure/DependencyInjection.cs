@@ -3,7 +3,6 @@ using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Infrastructure.ExternalServices.FlightSearch;
 using FlightAssistant.Infrastructure.ExternalServices.FlightStatus;
-using FlightAssistant.Infrastructure.ExternalServices.Visa;
 using FlightAssistant.Infrastructure.Notifications;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
@@ -89,20 +88,6 @@ namespace FlightAssistant.Infrastructure
                 options.Retry.BackoffType = DelayBackoffType.Exponential;
             });
             services.AddScoped<IFlightSearchProvider, AeroDataBoxFlightSearchProvider>();
-
-            // Visa requirements provider — Sherpa°
-            services.AddHttpClient<SherpaVisaRequirementsProvider>(client =>
-            {
-                client.BaseAddress = new Uri(config["Sherpa:BaseUrl"] ?? "https://requirements-api.joinsherpa.com/v2/");
-                client.Timeout = TimeSpan.FromSeconds(30);
-            }).AddStandardResilienceHandler(options =>
-            {
-                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
-                options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(8);
-                options.Retry.MaxRetryAttempts = 3;
-                options.Retry.BackoffType = DelayBackoffType.Exponential;
-            });
-            services.AddScoped<IVisaRequirementsProvider, SherpaVisaRequirementsProvider>();
 
             // Push notifications — singleton so the APNs client is created once and reused
             services.AddOptions<ApnsOptions>()

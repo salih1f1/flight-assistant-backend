@@ -8,11 +8,9 @@
 
 ## Key use-cases
 - Track flight manually (flight number + date) -> fetch status -> persist -> notify on changes.
-- Visa lookup -> cache result -> attach to itinerary / destination.
 - Lounge eligibility -> evaluate based on loyalty tier + airline + terminal.
 
 ## Bounded Contexts (initial)
 - Flights
-- Visa
 - Loyalty
 - Lounges
