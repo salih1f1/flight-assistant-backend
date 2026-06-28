@@ -2,7 +2,6 @@ using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Commands.Loyalty;
 using FlightAssistant.Application.Commands.Travelers;
 using FlightAssistant.Application.Queries.Flights;
-using FlightAssistant.Application.Queries.Visa;
 using FlightAssistant.Application.Validators;
 using FlightAssistant.Application.Commands.Admin.Airlines;
 using FlightAssistant.Application.Commands.Admin.Airports;
@@ -202,28 +201,6 @@ public class ValidatorEdgeCaseTests
     {
         var v = new PagedRequestValidator();
         AssertValid(v, new PagedRequest { Page = 1, PageSize = 200 });
-    }
-
-    // ── Visa query ────────────────────────────────────────────────────────────
-
-    [Theory]
-    [InlineData("GB", "JP")]
-    [InlineData("US", "DE")]
-    public void VisaQuery_ValidCodes_Pass(string passport, string destination)
-    {
-        var v = new GetVisaRequirementsQueryValidator();
-        AssertValid(v, new GetVisaRequirementsQuery(passport, destination));
-    }
-
-    [Theory]
-    [InlineData("gb", "JP")]   // lowercase passport
-    [InlineData("GB", "jp")]   // lowercase destination
-    [InlineData("GBR", "JP")]  // alpha-3
-    [InlineData("", "JP")]     // empty
-    public void VisaQuery_InvalidCodes_Fail(string passport, string destination)
-    {
-        var v = new GetVisaRequirementsQueryValidator();
-        AssertInvalid(v, new GetVisaRequirementsQuery(passport, destination));
     }
 
     // ── Loyalty membership ────────────────────────────────────────────────────

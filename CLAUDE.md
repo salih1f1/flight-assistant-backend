@@ -46,7 +46,7 @@ ASP.NET Core Web API using **Clean Architecture + CQRS** (MediatR) with **Domain
 - `FlightAssistant.Contracts` — Request/response DTOs. No dependencies on other layers.
 - `FlightAssistant.SharedKernel` — Currently empty; base classes live in `Domain/Common/` instead.
 
-**Bounded contexts:** Travelers, Flights, Loyalty, Lounges, Visa, Configuration (reference data).
+**Bounded contexts:** Travelers, Flights, Loyalty, Lounges, Configuration (reference data).
 
 ## Domain Base Classes
 
@@ -119,7 +119,6 @@ Most values are pulled from Azure Key Vault in deployed environments; for local 
 | `Azure:Instance`, `Azure:Domain`, `Azure:Issuer`, `Azure:Authority` | B2C endpoint URLs |
 | `AeroDataBox:ApiKey` | RapidAPI key |
 | `AviationStack:ApiKey` | Fallback flight provider |
-| `Sherpa:ApiKey` | Visa requirements API |
 | `Apns:BundleId`, `Apns:KeyId`, `Apns:TeamId`, `Apns:P8KeyContent` | iOS push; `Apns:UseSandbox=true` for dev |
 | `AdminPanel:AllowedOrigin` | CORS origin for admin UI (default: `http://localhost:5173`) |
 
@@ -128,7 +127,7 @@ Most values are pulled from Azure Key Vault in deployed environments; for local 
 - **.NET 8**, ASP.NET Core Minimal APIs, PostgreSQL 16, Redis
 - **Auth:** Azure AD B2C / Entra External ID (JWT Bearer via `Microsoft.Identity.Web`)
 - **Cloud:** Azure App Service, Key Vault, Application Insights
-- **External APIs:** AeroDataBox, AviationStack, Sherpa (visa), OpenFlights (reference data seed)
+- **External APIs:** AeroDataBox, AviationStack, OpenFlights (reference data seed)
 - **Push notifications:** APNs via dotAPNS (iOS only)
 - **CI/CD:** GitHub Actions → Azure Web App on push to `development`; EF migration bundle applied before deploy
 

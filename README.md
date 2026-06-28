@@ -11,7 +11,6 @@
 Flight Assistant is a **cross-platform travel companion app** that helps frequent flyers:  
 
 - Track flights with live status updates  
-- Check visa & entry requirements  
 - Manage alliance tiers and loyalty programs  
 - Discover lounge eligibility and airport benefits  
 
@@ -55,7 +54,6 @@ Swagger UI → http://localhost:5000/swagger
 
 **Data Sources**
 - Flight Status → AeroDataBox / AviationStack  
-- Visa Rules → Sherpa API  
 - Alliances & Airports → OpenFlights + curated JSON  
 - Lounge Info → curated static list  
 
@@ -66,13 +64,13 @@ Swagger UI → http://localhost:5000/swagger
 ### ✅ MVP
 - Add flights manually (number + date)  
 - Get **live flight status** updates  
-- Visa & entry requirements lookup  
 - View **alliance tiers & benefits**  
 - Lounge eligibility evaluator (tier + airline + terminal)  
 - Push notifications for flight status changes (iOS / APNs)  
 - Offline access with cached data  
 
 ### 🔮 Future
+- Visa & entry requirements lookup  
 - Auto-import flights from Gmail / Outlook  
 - Sync loyalty accounts via AwardWallet  
 - Higher-reliability APIs (FlightAware, Cirium)  
