@@ -25,7 +25,7 @@ public class RegisterTravelerCommandHandlerTests
         Traveler? added = null;
         await _travelers.AddAsync(Arg.Do<Traveler>(t => added = t), Arg.Any<CancellationToken>());
 
-        var cmd = new RegisterTravelerCommand(oid, "alice@example.com", "Alice", null);
+        var cmd = new RegisterTravelerCommand(oid, "alice@example.com", "Alice");
         var id = await _handler.Handle(cmd, CancellationToken.None);
 
         Assert.Equal(oid, id);
@@ -37,10 +37,10 @@ public class RegisterTravelerCommandHandlerTests
     public async Task ExistingTraveler_UnchangedIdentity_ReturnsExistingIdWithoutSaving()
     {
         var oid = Guid.NewGuid();
-        var existing = Traveler.Register(oid, "alice@example.com", "Alice", "US");
+        var existing = Traveler.Register(oid, "alice@example.com", "Alice");
         _travelers.GetByIdAsync(oid, Arg.Any<CancellationToken>()).Returns(existing);
 
-        var cmd = new RegisterTravelerCommand(oid, "alice@example.com", "Alice", "US");
+        var cmd = new RegisterTravelerCommand(oid, "alice@example.com", "Alice");
         var id = await _handler.Handle(cmd, CancellationToken.None);
 
         Assert.Equal(oid, id);
@@ -52,16 +52,15 @@ public class RegisterTravelerCommandHandlerTests
     public async Task ExistingTraveler_ChangedIdentity_SyncsAndSaves()
     {
         var oid = Guid.NewGuid();
-        var existing = Traveler.Register(oid, "old@example.com", "Old Name", "US");
+        var existing = Traveler.Register(oid, "old@example.com", "Old Name");
         _travelers.GetByIdAsync(oid, Arg.Any<CancellationToken>()).Returns(existing);
 
-        var cmd = new RegisterTravelerCommand(oid, "new@example.com", "New Name", "GB");
+        var cmd = new RegisterTravelerCommand(oid, "new@example.com", "New Name");
         var id = await _handler.Handle(cmd, CancellationToken.None);
 
         Assert.Equal(oid, id);
         Assert.Equal("new@example.com", existing.Email);
         Assert.Equal("New Name", existing.DisplayName);
-        Assert.Equal("GB", existing.CountryCode);
         await _travelers.DidNotReceive().AddAsync(Arg.Any<Traveler>(), Arg.Any<CancellationToken>());
         await _travelers.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }

@@ -4,7 +4,6 @@ namespace FlightAssistant.Contracts.Responses.Admin
         Guid Id,
         string Email,
         string? DisplayName,
-        string? CountryCode,
         DateTime CreatedUtc
     );
 }

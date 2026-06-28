@@ -10,7 +10,6 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
         Guid Id,
         string Email,
         string? DisplayName,
-        string? CountryCode,
         DateTime CreatedUtc
     );
 
@@ -33,7 +32,7 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
         {
             var (travelers, total) = await _repo.GetAllAsync(request.Paging.Page, request.Paging.PageSize, ct);
             var items = travelers.Select(t => new AdminTravelerResult(
-                t.Id, t.Email, t.DisplayName, t.CountryCode, t.CreatedUtc
+                t.Id, t.Email, t.DisplayName, t.CreatedUtc
             )).ToList();
             return new PagedResult<AdminTravelerResult>(items, total, request.Paging.Page, request.Paging.PageSize);
         }

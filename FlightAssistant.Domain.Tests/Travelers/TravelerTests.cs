@@ -38,43 +38,41 @@ namespace FlightAssistant.Domain.Tests.Travelers
         [Fact]
         public void SyncFromIdentity_ChangedValues_UpdatesFieldsAndReturnsTrue()
         {
-            var traveler = Traveler.Register("alice@example.com", "Alice", "US");
+            var traveler = Traveler.Register("alice@example.com", "Alice");
 
-            var changed = traveler.SyncFromIdentity("alice.new@example.com", "Alice Smith", "GB");
+            var changed = traveler.SyncFromIdentity("alice.new@example.com", "Alice Smith");
 
             Assert.True(changed);
             Assert.Equal("alice.new@example.com", traveler.Email);
             Assert.Equal("Alice Smith", traveler.DisplayName);
-            Assert.Equal("GB", traveler.CountryCode);
         }
 
         [Fact]
         public void SyncFromIdentity_SameValues_ReturnsFalse()
         {
-            var traveler = Traveler.Register("alice@example.com", "Alice", "US");
+            var traveler = Traveler.Register("alice@example.com", "Alice");
 
-            var changed = traveler.SyncFromIdentity("alice@example.com", "Alice", "US");
+            var changed = traveler.SyncFromIdentity("alice@example.com", "Alice");
 
             Assert.False(changed);
         }
 
         [Fact]
-        public void SyncFromIdentity_NormalizesEmailAndCountry()
+        public void SyncFromIdentity_NormalizesEmail()
         {
-            var traveler = Traveler.Register("alice@example.com", "Alice", "US");
+            var traveler = Traveler.Register("alice@example.com", "Alice");
 
-            traveler.SyncFromIdentity("ALICE.NEW@Example.COM", "Bob", "gb");
+            traveler.SyncFromIdentity("ALICE.NEW@Example.COM", "Bob");
 
             Assert.Equal("alice.new@example.com", traveler.Email);
-            Assert.Equal("GB", traveler.CountryCode);
         }
 
         [Fact]
         public void SyncFromIdentity_EmptyEmail_DoesNotOverwriteExistingEmail()
         {
-            var traveler = Traveler.Register("alice@example.com", "Alice", "US");
+            var traveler = Traveler.Register("alice@example.com", "Alice");
 
-            traveler.SyncFromIdentity("  ", "Alice", "US");
+            traveler.SyncFromIdentity("  ", "Alice");
 
             Assert.Equal("alice@example.com", traveler.Email);
         }
