@@ -354,6 +354,42 @@ public class ValidatorEdgeCaseTests
         AssertInvalid(v, new SearchFlightsQuery(from, to, DateOnly.FromDateTime(DateTime.UtcNow)));
     }
 
+    [Theory]
+    [InlineData("BA123")]
+    [InlineData("U23456")] // numeric-containing airline prefix
+    [InlineData("ba123")]  // lowercase — normalized, not rejected
+    public void SearchFlights_FlightNumberOnly_Passes(string flightNumber)
+    {
+        var v = new SearchFlightsQueryValidator();
+        AssertValid(v, new SearchFlightsQuery(null, null, DateOnly.FromDateTime(DateTime.UtcNow), flightNumber));
+    }
+
+    [Fact]
+    public void SearchFlights_NoRouteAndNoFlightNumber_Fails()
+    {
+        var v = new SearchFlightsQueryValidator();
+        AssertInvalid(v, new SearchFlightsQuery(null, null, DateOnly.FromDateTime(DateTime.UtcNow)));
+    }
+
+    [Theory]
+    [InlineData("LHR", null)] // only From
+    [InlineData(null, "JFK")] // only To
+    public void SearchFlights_HalfRoute_Fails(string? from, string? to)
+    {
+        var v = new SearchFlightsQueryValidator();
+        AssertInvalid(v, new SearchFlightsQuery(from, to, DateOnly.FromDateTime(DateTime.UtcNow)));
+    }
+
+    [Theory]
+    [InlineData("BA")]       // missing number
+    [InlineData("B")]        // too short
+    [InlineData("BA12345")]  // number too long
+    public void SearchFlights_InvalidFlightNumber_Fails(string flightNumber)
+    {
+        var v = new SearchFlightsQueryValidator();
+        AssertInvalid(v, new SearchFlightsQuery(null, null, DateOnly.FromDateTime(DateTime.UtcNow), flightNumber));
+    }
+
     // ── Import: Alliances ─────────────────────────────────────────────────────────
 
     [Fact]

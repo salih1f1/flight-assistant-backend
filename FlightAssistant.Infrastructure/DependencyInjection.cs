@@ -38,7 +38,7 @@ namespace FlightAssistant.Infrastructure
             // abstraction is kept so a fallback composite can be reintroduced for production.
             services.AddHttpClient<AviationStackFlightStatusProvider>(client =>
             {
-                client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "http://api.aviationstack.com/v1/");
+                client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "https://api.aviationstack.com/v1/");
                 client.Timeout = TimeSpan.FromSeconds(30);
             }).AddStandardResilienceHandler(options =>
             {
@@ -48,12 +48,16 @@ namespace FlightAssistant.Infrastructure
                 options.Retry.BackoffType = DelayBackoffType.Exponential;
             });
 
-            services.AddScoped<IFlightStatusProvider, AviationStackFlightStatusProvider>();
+            // Resolve via the typed client so the configured HttpClient (BaseAddress, timeout,
+            // resilience handler) is used. Re-activating the concrete type directly would inject
+            // a default, unconfigured HttpClient with no BaseAddress.
+            services.AddScoped<IFlightStatusProvider>(sp =>
+                sp.GetRequiredService<AviationStackFlightStatusProvider>());
 
             // Flight search — AviationStack filters by both airports server-side in one call.
             services.AddHttpClient<AviationStackFlightSearchProvider>(client =>
             {
-                client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "http://api.aviationstack.com/v1/");
+                client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "https://api.aviationstack.com/v1/");
                 client.Timeout = TimeSpan.FromSeconds(30);
             }).AddStandardResilienceHandler(options =>
             {
@@ -62,7 +66,8 @@ namespace FlightAssistant.Infrastructure
                 options.Retry.MaxRetryAttempts = 2;
                 options.Retry.BackoffType = DelayBackoffType.Exponential;
             });
-            services.AddScoped<IFlightSearchProvider, AviationStackFlightSearchProvider>();
+            services.AddScoped<IFlightSearchProvider>(sp =>
+                sp.GetRequiredService<AviationStackFlightSearchProvider>());
 
             // Push notifications — singleton so the APNs client is created once and reused
             services.AddOptions<ApnsOptions>()

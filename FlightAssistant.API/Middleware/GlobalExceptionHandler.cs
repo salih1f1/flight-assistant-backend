@@ -43,6 +43,9 @@ namespace FlightAssistant.API.Middleware
                     };
 
                     ctx.Response.StatusCode = de.StatusCode;
+                    // For upstream throttling (503), hint clients when to retry.
+                    if (de.StatusCode == StatusCodes.Status503ServiceUnavailable)
+                        ctx.Response.Headers.RetryAfter = "60";
                     await ctx.Response.WriteAsJsonAsync(domainProblem, ct);
                     return true;
 
