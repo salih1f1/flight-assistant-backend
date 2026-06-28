@@ -20,8 +20,15 @@ namespace FlightAssistant.API.Authentication
         public static string? GetEmail(this ClaimsPrincipal user)
             => FirstNonEmptyClaim(user, "email", "emails", "preferred_username");
 
+        // Prefer a real "name", but Entra External ID emits the placeholder "unknown" when the
+        // user has no name set — treat that (and empty) as missing and fall back to the username.
         public static string? GetDisplayName(this ClaimsPrincipal user)
-            => FirstNonEmptyClaim(user, "name");
+        {
+            var name = user.FindFirstValue("name");
+            if (!string.IsNullOrWhiteSpace(name) && !name.Trim().Equals("unknown", StringComparison.OrdinalIgnoreCase))
+                return name.Trim();
+            return FirstNonEmptyClaim(user, "preferred_username");
+        }
 
         private static string? FirstNonEmptyClaim(ClaimsPrincipal user, params string[] claimTypes)
         {

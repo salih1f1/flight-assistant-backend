@@ -18,6 +18,12 @@ public class ClaimsPrincipalExtensionsTests
         return new ClaimsPrincipal(identity);
     }
 
+    private static ClaimsPrincipal UserWithClaims(params (string Type, string Value)[] claims)
+    {
+        var identity = new ClaimsIdentity(claims.Select(c => new Claim(c.Type, c.Value)), "test");
+        return new ClaimsPrincipal(identity);
+    }
+
     [Fact]
     public void GetTravelerId_ValidOidClaim_ReturnsGuid()
     {
@@ -91,14 +97,31 @@ public class ClaimsPrincipalExtensionsTests
     }
 
     [Fact]
-    public void GetDisplayName_NameClaim_ReturnsValue()
+    public void GetDisplayName_RealNameClaim_ReturnsName()
     {
-        var user = UserWith("name", "Alice Smith");
+        var user = UserWithClaims(("name", "Alice Smith"), ("preferred_username", "alice@example.com"));
         Assert.Equal("Alice Smith", user.GetDisplayName());
     }
 
+    [Theory]
+    [InlineData("unknown")]
+    [InlineData("Unknown")]
+    [InlineData("  ")]
+    public void GetDisplayName_NamePlaceholderOrEmpty_FallsBackToPreferredUsername(string name)
+    {
+        var user = UserWithClaims(("name", name), ("preferred_username", "bob@example.com"));
+        Assert.Equal("bob@example.com", user.GetDisplayName());
+    }
+
     [Fact]
-    public void GetDisplayName_NoNameClaim_ReturnsNull()
+    public void GetDisplayName_NoNameClaim_FallsBackToPreferredUsername()
+    {
+        var user = UserWith("preferred_username", "carol@example.com");
+        Assert.Equal("carol@example.com", user.GetDisplayName());
+    }
+
+    [Fact]
+    public void GetDisplayName_NoNameOrUsername_ReturnsNull()
     {
         Assert.Null(UserWithNoClaims().GetDisplayName());
     }
