@@ -129,7 +129,7 @@ builder.Services.AddScoped<TravelerContext>();
 
 var hcBuilder = builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("database")
-    .AddCheck<AeroDataBoxHealthCheck>("aerodatabox", tags: ["external"])
+    .AddCheck<AviationStackHealthCheck>("aviationstack", tags: ["external"])
     .AddCheck<ApnsHealthCheck>("apns", tags: ["external"]);
 
 var redisConnStr = builder.Configuration.GetConnectionString("Redis");

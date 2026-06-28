@@ -73,7 +73,7 @@ All live in `FlightAssistant.Domain/Common/`, **not** SharedKernel (which is emp
 
 **Caching:** `ICacheService` abstraction. Redis is used when `ConnectionString:Redis` is configured; falls back to `IMemoryCache` otherwise. Injected directly into handlers — no decorator or pipeline pattern.
 
-**Flight status providers:** `CompositeFlightStatusProvider` tries AeroDataBox first, falls back to AviationStack on failure. Both clients use Polly: 3 retries, exponential backoff, 30 s timeout.
+**Flight data provider:** AviationStack is the sole external provider for both flight status (`AviationStackFlightStatusProvider`) and flight search (`AviationStackFlightSearchProvider`). The `IFlightStatusProvider` / `IFlightSearchProvider` abstractions are kept so a fallback composite can be reintroduced for production. Clients use Polly: 3 retries (status) / 2 retries (search), exponential backoff, 30 s timeout. Search calls `/v1/flights` with `dep_iata` + `arr_iata` + `flight_date`, filtering by both airports server-side in a single request.
 
 **Paging:** Input `PagedRequest(Page=1, PageSize=50)`, output `PagedResult<T>(Items, Total, Page, PageSize)`. Validated by `PagedRequestValidator` (Page ≥ 1, PageSize 1–100). Reuse `PagedRequestValidator` in query validators via `.SetValidator(new PagedRequestValidator())`.
 
@@ -117,8 +117,8 @@ Most values are pulled from Azure Key Vault in deployed environments; for local 
 | `ConnectionString:Redis` | Optional; falls back to in-memory cache |
 | `Azure:TenantId`, `Azure:ClientId` | B2C tenant and API app registration |
 | `Azure:Instance`, `Azure:Domain`, `Azure:Issuer`, `Azure:Authority` | B2C endpoint URLs |
-| `AeroDataBox:ApiKey` | RapidAPI key |
-| `AviationStack:ApiKey` | Fallback flight provider |
+| `AviationStack:ApiKey` | Required; sole flight data provider (status + search) |
+| `AviationStack:BaseUrl` | Optional; defaults to `http://api.aviationstack.com/v1/` |
 | `Apns:BundleId`, `Apns:KeyId`, `Apns:TeamId`, `Apns:P8KeyContent` | iOS push; `Apns:UseSandbox=true` for dev |
 | `AdminPanel:AllowedOrigin` | CORS origin for admin UI (default: `http://localhost:5173`) |
 
@@ -127,7 +127,7 @@ Most values are pulled from Azure Key Vault in deployed environments; for local 
 - **.NET 8**, ASP.NET Core Minimal APIs, PostgreSQL 16, Redis
 - **Auth:** Azure AD B2C / Entra External ID (JWT Bearer via `Microsoft.Identity.Web`)
 - **Cloud:** Azure App Service, Key Vault, Application Insights
-- **External APIs:** AeroDataBox, AviationStack, OpenFlights (reference data seed)
+- **External APIs:** AviationStack (flight status + search), OpenFlights (reference data seed)
 - **Push notifications:** APNs via dotAPNS (iOS only)
 - **CI/CD:** GitHub Actions → Azure Web App on push to `development`; EF migration bundle applied before deploy
 

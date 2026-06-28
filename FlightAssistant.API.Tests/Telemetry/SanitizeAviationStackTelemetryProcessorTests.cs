@@ -31,7 +31,7 @@ public class SanitizeAviationStackTelemetryProcessorTests
     {
         var next = Substitute.For<ITelemetryProcessor>();
         var sut = new SanitizeAviationStackTelemetryProcessor(next);
-        const string originalData = "https://aerodatabox.p.rapidapi.com/flights/BA123/2026-06-13";
+        const string originalData = "http://api.aviationstack.com/v1/flights?flight_iata=BA123";
         var dependency = new DependencyTelemetry
         {
             Data = originalData
@@ -95,14 +95,14 @@ public class SanitizeAviationStackTelemetryProcessorTests
     {
         var next = Substitute.For<ITelemetryProcessor>();
         var sut = new SanitizeAviationStackTelemetryProcessor(next);
-        const string originalMessage = "Resilience event occurred for AeroDataBoxFlightStatusProvider";
+        const string originalMessage = "Resilience event occurred for AviationStackFlightStatusProvider";
         var trace = new TraceTelemetry(originalMessage);
-        trace.Properties["Result"] = "StatusCode: 200, RequestUri: https://aerodatabox.p.rapidapi.com/flights/BA123/2026-06-13";
+        trace.Properties["Result"] = "StatusCode: 200, RequestUri: http://api.aviationstack.com/v1/flights?flight_iata=BA123";
 
         sut.Process(trace);
 
         Assert.Equal(originalMessage, trace.Message);
-        Assert.Equal("StatusCode: 200, RequestUri: https://aerodatabox.p.rapidapi.com/flights/BA123/2026-06-13", trace.Properties["Result"]);
+        Assert.Equal("StatusCode: 200, RequestUri: http://api.aviationstack.com/v1/flights?flight_iata=BA123", trace.Properties["Result"]);
         next.Received(1).Process(trace);
     }
 }
