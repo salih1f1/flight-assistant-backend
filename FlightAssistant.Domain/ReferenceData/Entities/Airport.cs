@@ -22,11 +22,11 @@ namespace FlightAssistant.Domain.ReferenceData.Entities
             double? latitude = null, double? longitude = null, int? elevationFt = null, string? timezone = null) =>
             new()
             {
-                Iata = iata,
-                Icao = icao,
+                Iata = iata.ToCanonicalCode(),
+                Icao = icao.ToCanonicalCodeOrNull(),
                 Name = name,
                 City = city,
-                CountryCode = countryCode,
+                CountryCode = countryCode.ToCanonicalCode(),
                 Latitude = latitude,
                 Longitude = longitude,
                 ElevationFt = elevationFt,
@@ -37,11 +37,11 @@ namespace FlightAssistant.Domain.ReferenceData.Entities
         public void Update(string iata, string? icao, string name, string city, string countryCode,
             double? latitude, double? longitude, int? elevationFt, string? timezone)
         {
-            Iata = iata;
-            Icao = icao;
+            Iata = iata.ToCanonicalCode();
+            Icao = icao.ToCanonicalCodeOrNull();
             Name = name;
             City = city;
-            CountryCode = countryCode;
+            CountryCode = countryCode.ToCanonicalCode();
             Latitude = latitude;
             Longitude = longitude;
             ElevationFt = elevationFt;

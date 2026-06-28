@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FluentValidation;
@@ -21,13 +22,13 @@ public sealed class ImportCountriesCommandValidator : AbstractValidator<ImportCo
             item.RuleFor(d => d.Code)
                 .NotEmpty()
                 .Length(2)
-                .Matches("^[A-Z]{2}$").WithMessage("'{PropertyName}' must be a 2-letter uppercase ISO code.");
+                .Matches("^[A-Z]{2}$", RegexOptions.IgnoreCase).WithMessage("'{PropertyName}' must be a 2-letter ISO code.");
             item.RuleFor(d => d.Name)
                 .NotEmpty()
                 .MaximumLength(200);
             item.RuleFor(d => d.Alpha3)
-                .Matches("^[A-Z]{3}$").When(d => d.Alpha3 is not null)
-                .WithMessage("'{PropertyName}' must be a 3-letter uppercase ISO code.");
+                .Matches("^[A-Z]{3}$", RegexOptions.IgnoreCase).When(d => d.Alpha3 is not null)
+                .WithMessage("'{PropertyName}' must be a 3-letter ISO code.");
         });
     }
 }

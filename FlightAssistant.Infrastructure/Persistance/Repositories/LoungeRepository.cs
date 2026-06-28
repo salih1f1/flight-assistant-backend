@@ -19,7 +19,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
 
         public async Task<IReadOnlyList<Lounge>> GetByAirportAsync(string airportIata, CancellationToken ct = default) =>
             await _db.Lounges
-                .Where(l => _db.Airports.Any(a => a.Iata == airportIata && a.Id == l.AirportId))
+                .Where(l => _db.Airports.Any(a => a.Iata == airportIata.ToUpperInvariant() && a.Id == l.AirportId))
                 .Include(l => l.Providers)
                     .ThenInclude(link => link.Provider)
                 .OrderBy(l => l.Name)

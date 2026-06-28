@@ -2,6 +2,7 @@ using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Commands.Loyalty;
 using FlightAssistant.Application.Commands.Travelers;
 using FlightAssistant.Application.Queries.Flights;
+using FlightAssistant.Application.Queries.Lounges;
 using FlightAssistant.Application.Validators;
 using FlightAssistant.Application.Commands.Admin.Airlines;
 using FlightAssistant.Application.Commands.Admin.Airports;
@@ -39,6 +40,8 @@ public class ValidatorEdgeCaseTests
     [InlineData("BA1234")]     // 4-digit
     [InlineData("BA1")]        // 1-digit
     [InlineData("BA123A")]     // suffix letter
+    [InlineData("ba123")]      // lowercase — normalized, not rejected
+    [InlineData("bA123a")]     // mixed case
     public void TrackFlight_ValidFlightNumbers_Pass(string flightNumber)
     {
         var v = new TrackFlightCommandValidator();
@@ -47,7 +50,6 @@ public class ValidatorEdgeCaseTests
     }
 
     [Theory]
-    [InlineData("ba123")]      // lowercase
     [InlineData("BA12345")]    // 5 digits
     [InlineData("B1234")]      // single letter prefix
     [InlineData("123")]        // no letters
@@ -89,6 +91,8 @@ public class ValidatorEdgeCaseTests
     [InlineData("LHR")]
     [InlineData("JFK")]
     [InlineData("SYD")]
+    [InlineData("lhr")]    // lowercase — normalized, not rejected
+    [InlineData("jFk")]    // mixed case
     public void TrackFlight_ValidAirportIata_Pass(string iata)
     {
         var v = new TrackFlightCommandValidator();
@@ -97,7 +101,6 @@ public class ValidatorEdgeCaseTests
     }
 
     [Theory]
-    [InlineData("lhr")]    // lowercase
     [InlineData("LHRX")]   // 4 chars
     [InlineData("LH")]     // 2 chars
     [InlineData("1LH")]    // digit prefix
@@ -261,10 +264,10 @@ public class ValidatorEdgeCaseTests
     }
 
     [Fact]
-    public void CreateAirline_LowercaseIata_Fails()
+    public void CreateAirline_LowercaseIata_Passes()
     {
         var v = new CreateAirlineCommandValidator();
-        AssertInvalid(v, new CreateAirlineCommand("ba", null, "British Airways", "GB", null), "Iata");
+        AssertValid(v, new CreateAirlineCommand("ba", null, "British Airways", "gb", null));
     }
 
     [Fact]
@@ -277,10 +280,10 @@ public class ValidatorEdgeCaseTests
     // ── Admin: Airport ────────────────────────────────────────────────────────
 
     [Fact]
-    public void CreateAirport_LowercaseIata_Fails()
+    public void CreateAirport_LowercaseIata_Passes()
     {
         var v = new CreateAirportCommandValidator();
-        AssertInvalid(v, new CreateAirportCommand("lhr", null, "Heathrow", "London", "GB", null, null, null, null), "Iata");
+        AssertValid(v, new CreateAirportCommand("lhr", "egll", "Heathrow", "London", "gb", null, null, null, null));
     }
 
     [Fact]
@@ -332,9 +335,19 @@ public class ValidatorEdgeCaseTests
     }
 
     [Theory]
-    [InlineData("lhr", "JFK")] // lowercase From
-    [InlineData("LH", "JFK")]  // 2-char From
+    [InlineData("lhr", "JFK")] // lowercase From — normalized, not rejected
     [InlineData("LHR", "jfk")] // lowercase To
+    [InlineData("lhr", "jfk")] // both lowercase
+    [InlineData("lHr", "jFk")] // mixed case
+    public void SearchFlights_AnyCaseIata_Passes(string from, string to)
+    {
+        var v = new SearchFlightsQueryValidator();
+        AssertValid(v, new SearchFlightsQuery(from, to, DateOnly.FromDateTime(DateTime.UtcNow)));
+    }
+
+    [Theory]
+    [InlineData("LH", "JFK")]   // 2-char From
+    [InlineData("LHR", "JFKK")] // 4-char To
     public void SearchFlights_InvalidIata_Fails(string from, string to)
     {
         var v = new SearchFlightsQueryValidator();
@@ -351,10 +364,10 @@ public class ValidatorEdgeCaseTests
     }
 
     [Fact]
-    public void ImportAlliances_LowercaseCode_Fails()
+    public void ImportAlliances_LowercaseCode_Passes()
     {
         var v = new ImportAlliancesCommandValidator();
-        AssertInvalid(v, new ImportAlliancesCommand([new AllianceImportDto("sa", "Star Alliance")]), "Code");
+        AssertValid(v, new ImportAlliancesCommand([new AllianceImportDto("sa", "Star Alliance")]));
     }
 
     [Fact]
@@ -381,10 +394,10 @@ public class ValidatorEdgeCaseTests
     }
 
     [Fact]
-    public void ImportCountries_LowercaseCode_Fails()
+    public void ImportCountries_LowercaseCode_Passes()
     {
         var v = new ImportCountriesCommandValidator();
-        AssertInvalid(v, new ImportCountriesCommand([new CountryImportDto("gb", "UK", null, null, null, null, null, null, null)]), "Code");
+        AssertValid(v, new ImportCountriesCommand([new CountryImportDto("gb", "UK", "gbr", null, null, null, null, null, null)]));
     }
 
     [Fact]
@@ -405,11 +418,11 @@ public class ValidatorEdgeCaseTests
     }
 
     [Fact]
-    public void ImportAirports_LowercaseIata_Fails()
+    public void ImportAirports_LowercaseIata_Passes()
     {
         var v = new ImportAirportsCommandValidator();
-        AssertInvalid(v, new ImportAirportsCommand([
-            new AirportImportDto("lhr", null, "Heathrow", "London", "GB", null, null, null, null)]), "Iata");
+        AssertValid(v, new ImportAirportsCommand([
+            new AirportImportDto("lhr", "egll", "Heathrow", "London", "gb", null, null, null, null)]));
     }
 
     [Fact]
@@ -643,6 +656,70 @@ public class ValidatorEdgeCaseTests
     {
         var v = new RemoveLoyaltyMembershipCommandValidator();
         AssertValid(v, new RemoveLoyaltyMembershipCommand(Guid.NewGuid(), Guid.NewGuid()));
+    }
+
+    // ── Case-insensitive code inputs (#265) ─────────────────────────────────────
+
+    [Fact]
+    public void TrackFlight_LowercaseAirlineIata_Passes()
+    {
+        var v = new TrackFlightCommandValidator();
+        AssertValid(v, ValidTrackFlightCommand() with { AirlineIata = "ba" });
+    }
+
+    [Theory]
+    [InlineData("lhr")]
+    [InlineData("jFk")]
+    public void GetLoungesAtAirport_AnyCaseIata_Passes(string iata)
+    {
+        var v = new GetLoungesAtAirportQueryValidator();
+        AssertValid(v, new GetLoungesAtAirportQuery(iata, null));
+    }
+
+    [Fact]
+    public void GetLoungesAtAirport_WrongLength_Fails()
+    {
+        var v = new GetLoungesAtAirportQueryValidator();
+        AssertInvalid(v, new GetLoungesAtAirportQuery("lh", null), "AirportIata");
+    }
+
+    [Fact]
+    public void UpdateAirport_LowercaseCodes_Passes()
+    {
+        var v = new UpdateAirportCommandValidator();
+        AssertValid(v, new UpdateAirportCommand(1, "lhr", "egll", "Heathrow", "London", "gb", null, null, null, null));
+    }
+
+    [Fact]
+    public void UpdateAirline_LowercaseCodes_Passes()
+    {
+        var v = new UpdateAirlineCommandValidator();
+        AssertValid(v, new UpdateAirlineCommand(1, "ba", "baw", "British Airways", "gb", null));
+    }
+
+    [Fact]
+    public void ImportAirlines_LowercaseCodes_Passes()
+    {
+        var v = new ImportAirlinesCommandValidator();
+        AssertValid(v, new ImportAirlinesCommand([
+            new AirlineImportDto("ba", "baw", "British Airways", "gb", null)]));
+    }
+
+    [Fact]
+    public void ImportLounges_LowercaseIata_Passes()
+    {
+        var v = new ImportLoungesCommandValidator();
+        var dto = new LoungeImportDto("Test Lounge", "lhr", null, null, null, true, false, false, null, []);
+        AssertValid(v, new ImportLoungesCommand([dto]));
+    }
+
+    [Fact]
+    public void ImportLoyaltyPrograms_LowercaseAirlineIata_Passes()
+    {
+        var v = new ImportLoyaltyProgramsCommandValidator();
+        var tier = new LoyaltyTierImportDto("GOLD", "Gold", 1, null, null);
+        AssertValid(v, new ImportLoyaltyProgramsCommand([
+            new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", "ba", null, [tier])]));
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

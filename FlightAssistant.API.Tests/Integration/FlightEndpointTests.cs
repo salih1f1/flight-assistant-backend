@@ -76,8 +76,8 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
         var client = factory.CreateUserClient();
         var date = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
 
-        // lowercase IATA code should fail validation
-        var response = await client.GetAsync($"flights/search?from=lhr&to=JFK&date={date}");
+        // wrong-length IATA code should fail validation (case is normalized, not rejected)
+        var response = await client.GetAsync($"flights/search?from=LH&to=JFK&date={date}");
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 }

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FluentValidation;
 using MediatR;
@@ -14,12 +15,12 @@ namespace FlightAssistant.Application.Queries.Flights
             RuleFor(x => x.From)
                 .NotEmpty()
                 .Length(3)
-                .Matches("^[A-Z]{3}$").WithMessage("'From' must be a 3-letter uppercase IATA airport code.");
+                .Matches("^[A-Z]{3}$", RegexOptions.IgnoreCase).WithMessage("'From' must be a 3-letter IATA airport code.");
 
             RuleFor(x => x.To)
                 .NotEmpty()
                 .Length(3)
-                .Matches("^[A-Z]{3}$").WithMessage("'To' must be a 3-letter uppercase IATA airport code.");
+                .Matches("^[A-Z]{3}$", RegexOptions.IgnoreCase).WithMessage("'To' must be a 3-letter IATA airport code.");
 
             RuleFor(x => x.Date)
                 .Must(d => d >= DateOnly.FromDateTime(DateTime.UtcNow.AddYears(-1)))

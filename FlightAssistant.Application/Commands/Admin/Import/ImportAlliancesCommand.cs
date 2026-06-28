@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FluentValidation;
@@ -19,7 +20,7 @@ public sealed class ImportAlliancesCommandValidator : AbstractValidator<ImportAl
             item.RuleFor(d => d.Code)
                 .NotEmpty()
                 .MaximumLength(8)
-                .Matches("^[A-Z0-9]+$").WithMessage("'{PropertyName}' must be uppercase alphanumeric.");
+                .Matches("^[A-Z0-9]+$", RegexOptions.IgnoreCase).WithMessage("'{PropertyName}' must be alphanumeric.");
             item.RuleFor(d => d.Name)
                 .NotEmpty()
                 .MaximumLength(200);
