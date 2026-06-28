@@ -36,6 +36,36 @@ namespace FlightAssistant.Domain.Tests.Travelers
         }
 
         [Fact]
+        public void Register_StampsCreatedByWithOwnId()
+        {
+            var id = Guid.NewGuid();
+            var traveler = Traveler.Register(id, "alice@example.com");
+            Assert.Equal(id, traveler.CreatedBy);
+        }
+
+        [Fact]
+        public void SyncFromIdentity_Changed_StampsUpdatedByWithOwnId()
+        {
+            var id = Guid.NewGuid();
+            var traveler = Traveler.Register(id, "alice@example.com", "Alice");
+
+            traveler.SyncFromIdentity("alice@example.com", "Alice Smith");
+
+            Assert.Equal(id, traveler.UpdatedBy);
+        }
+
+        [Fact]
+        public void AddDeviceToken_StampsUpdatedByWithOwnId()
+        {
+            var id = Guid.NewGuid();
+            var traveler = Traveler.Register(id, "alice@example.com");
+
+            traveler.AddDeviceToken("ios", "token123");
+
+            Assert.Equal(id, traveler.UpdatedBy);
+        }
+
+        [Fact]
         public void SyncFromIdentity_ChangedValues_UpdatesFieldsAndReturnsTrue()
         {
             var traveler = Traveler.Register("alice@example.com", "Alice");

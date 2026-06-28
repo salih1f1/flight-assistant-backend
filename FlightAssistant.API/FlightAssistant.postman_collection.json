@@ -136,12 +136,7 @@
           "name": "Register traveler",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "header": [],
             "url": {
               "raw": "{{baseUrl}}/travelers",
               "host": [
@@ -151,16 +146,7 @@
                 "travelers"
               ]
             },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"qa@example.com\",\n  \"displayName\": \"QA User\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "description": "Idempotent. Returns 201 { travelerId }."
+            "description": "No request body — id, email, and display name are read from the verified token. Idempotent. Returns 201 { travelerId }."
           },
           "response": []
         },

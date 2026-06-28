@@ -69,4 +69,37 @@ public class ClaimsPrincipalExtensionsTests
 
         Assert.Equal(401, ex.StatusCode);
     }
+
+    [Fact]
+    public void GetEmail_EmailClaim_ReturnsValue()
+    {
+        var user = UserWith("email", "alice@example.com");
+        Assert.Equal("alice@example.com", user.GetEmail());
+    }
+
+    [Fact]
+    public void GetEmail_NoEmailClaim_FallsBackToPreferredUsername()
+    {
+        var user = UserWith("preferred_username", "bob@example.com");
+        Assert.Equal("bob@example.com", user.GetEmail());
+    }
+
+    [Fact]
+    public void GetEmail_NoClaims_ReturnsNull()
+    {
+        Assert.Null(UserWithNoClaims().GetEmail());
+    }
+
+    [Fact]
+    public void GetDisplayName_NameClaim_ReturnsValue()
+    {
+        var user = UserWith("name", "Alice Smith");
+        Assert.Equal("Alice Smith", user.GetDisplayName());
+    }
+
+    [Fact]
+    public void GetDisplayName_NoNameClaim_ReturnsNull()
+    {
+        Assert.Null(UserWithNoClaims().GetDisplayName());
+    }
 }

@@ -30,6 +30,9 @@ public class TestAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions
         var claims = new List<Claim>
         {
             new("oid", userId),
+            // Identity profile claims — mirror a B2C token so token-sourced registration works.
+            new("preferred_username", $"{userId}@example.com"),
+            new("name", "Test User"),
             // Both scope claim forms for compatibility with VerifyUserHasAnyAcceptedScope
             new("scp", "access_as_user"),
             new("http://schemas.microsoft.com/identity/claims/scope", "access_as_user"),
