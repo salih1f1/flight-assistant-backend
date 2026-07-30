@@ -19,23 +19,36 @@ namespace FlightAssistant.API.Endpoints
         {
             var group = app.MapGroup("flights").RequireAuthorization().WithTags("Flights");
 
-            // GET /flights/search?from=LHR&to=JFK&date=2025-06-01 — search for flights before tracking
-            group.MapGet("search", async (string from, string to, DateOnly date, IMediator mediator, CancellationToken ct) =>
+            // GET /flights/search?date=2025-06-01&from=LHR&to=JFK
+            // GET /flights/search?date=2025-06-01&flightNumber=BA123
+            group.MapGet("search", async (DateOnly date, IMediator mediator, CancellationToken ct, string? from = null, string? to = null, string? flightNumber = null) =>
             {
-                var results = await mediator.Send(new SearchFlightsQuery(from, to, date), ct);
+                var results = await mediator.Send(new SearchFlightsQuery(from, to, date, flightNumber), ct);
                 var dtos = results.Select(r => new FlightSearchResultDto(
                     r.FlightNumber, r.AirlineIata, r.DepartureIata, r.ArrivalIata,
                     r.ServiceDate, r.ScheduledDepartureUtc, r.ScheduledArrivalUtc, r.EquipmentIcao)).ToList();
                 return Results.Ok(dtos);
             })
             .WithName("SearchFlights")
-            .WithSummary("Search flights by route and date")
+            .WithSummary("Search flights by route or flight number on a date")
             .WithDescription(
-                "Searches for scheduled flights between two airports on a given date via AviationStack. " +
-                "Use this to populate the 'add flight' picker before calling POST /flights to track a result. " +
-                "Query params: from (IATA), to (IATA), date (YYYY-MM-DD).")
+                "Searches scheduled flights via AviationStack to populate the 'add flight' picker before calling POST /flights to track a result.\n\n" +
+                "Search criteria (query params):\n" +
+                "- date (required): the departure date in YYYY-MM-DD format. Must not be more than 1 year in the past.\n" +
+                "- from / to (optional): departure and arrival airport as 3-letter IATA codes (e.g. LHR, JFK). Case-insensitive. Must be supplied together.\n" +
+                "- flightNumber (optional): an IATA flight code, e.g. BA123 (2-character airline prefix + 1–4 digit number). Case-insensitive.\n\n" +
+                "You must provide either a full route (both from and to) OR a flightNumber, in addition to date; otherwise the request is rejected with 400.\n\n" +
+                "Responses:\n" +
+                "- 200: list of matching flights (empty list when the provider responds successfully but nothing matches).\n" +
+                "- 400: invalid/insufficient parameters.\n" +
+                "- 500: server-side configuration issue with the flight data provider.\n" +
+                "- 502: the flight data provider was unreachable or returned an unexpected error.\n" +
+                "- 503: the flight data provider is throttling requests; retry after the period in the Retry-After header.")
             .Produces<List<FlightSearchResultDto>>(200)
             .ProducesValidationProblem()
+            .ProducesProblem(500)
+            .ProducesProblem(502)
+            .ProducesProblem(503)
             .AllowAnonymous() // search is public — no auth needed to browse schedules
             .RequireRateLimiting("flight-search");
 
