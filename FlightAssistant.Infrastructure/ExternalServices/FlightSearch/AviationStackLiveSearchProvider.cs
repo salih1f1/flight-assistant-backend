@@ -35,17 +35,20 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
 
         private readonly HttpClient _http;
         private readonly IRefDataRepository _refData;
+        private readonly AviationStackAirportTimezoneLookup _timezones;
         private readonly ILogger<AviationStackLiveSearchProvider> _logger;
         private readonly string _apiKey;
 
         public AviationStackLiveSearchProvider(
             HttpClient http,
             IRefDataRepository refData,
+            AviationStackAirportTimezoneLookup timezones,
             IConfiguration config,
             ILogger<AviationStackLiveSearchProvider> logger)
         {
             _http = http;
             _refData = refData;
+            _timezones = timezones;
             _logger = logger;
             _apiKey = config["AviationStack:ApiKey"] ?? string.Empty;
         }
@@ -77,7 +80,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
                 data.ValueKind != JsonValueKind.Array)
                 return [];
 
-            var zones = new AirportTimeZoneResolver(_refData, _logger);
+            var zones = new AirportTimeZoneResolver(_refData, _timezones, _logger);
             var rows = new List<LiveRow>();
             foreach (var flight in data.EnumerateArray())
             {

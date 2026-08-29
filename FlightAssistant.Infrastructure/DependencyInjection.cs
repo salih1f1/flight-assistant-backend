@@ -1,6 +1,7 @@
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Infrastructure.ExternalServices.AviationStack;
 using FlightAssistant.Infrastructure.ExternalServices.FlightSearch;
 using FlightAssistant.Infrastructure.ExternalServices.FlightStatus;
 using FlightAssistant.Infrastructure.Notifications;
@@ -62,7 +63,8 @@ namespace FlightAssistant.Infrastructure
                      {
                          typeof(AviationStackLiveSearchProvider),
                          typeof(AviationStackScheduleSearchProvider),
-                         typeof(AviationStackRouteResolver)
+                         typeof(AviationStackRouteResolver),
+                         typeof(AviationStackAirportTimezoneLookup)
                      })
             {
                 services.AddHttpClient(clientType.Name, client =>
@@ -83,9 +85,15 @@ namespace FlightAssistant.Infrastructure
                 sp.GetRequiredService<IConfiguration>(),
                 sp.GetRequiredService<ILogger<AviationStackRouteResolver>>()));
 
+            services.AddScoped(sp => new AviationStackAirportTimezoneLookup(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackAirportTimezoneLookup)),
+                sp.GetRequiredService<IConfiguration>(),
+                sp.GetRequiredService<ILogger<AviationStackAirportTimezoneLookup>>()));
+
             services.AddScoped(sp => new AviationStackLiveSearchProvider(
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackLiveSearchProvider)),
                 sp.GetRequiredService<IRefDataRepository>(),
+                sp.GetRequiredService<AviationStackAirportTimezoneLookup>(),
                 sp.GetRequiredService<IConfiguration>(),
                 sp.GetRequiredService<ILogger<AviationStackLiveSearchProvider>>()));
 
@@ -93,6 +101,7 @@ namespace FlightAssistant.Infrastructure
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackScheduleSearchProvider)),
                 sp.GetRequiredService<AviationStackRouteResolver>(),
                 sp.GetRequiredService<IRefDataRepository>(),
+                sp.GetRequiredService<AviationStackAirportTimezoneLookup>(),
                 sp.GetRequiredService<IConfiguration>(),
                 sp.GetRequiredService<ILogger<AviationStackScheduleSearchProvider>>()));
 

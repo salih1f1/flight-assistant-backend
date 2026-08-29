@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Domain.Common.Exceptions;
+using FlightAssistant.Infrastructure.ExternalServices.AviationStack;
 using FlightAssistant.Infrastructure.ExternalServices.FlightSearch;
 using FlightAssistant.Application.Interfaces.Repositories;
 using Microsoft.Extensions.Configuration;
@@ -47,8 +48,24 @@ public class AviationStackLiveSearchProviderTests
             .AddInMemoryCollection(new Dictionary<string, string?> { ["AviationStack:ApiKey"] = "dummy" })
             .Build();
         return new AviationStackLiveSearchProvider(
-            http, refData ?? NoRefData(), config, NullLogger<AviationStackLiveSearchProvider>.Instance);
+            http, refData ?? NoRefData(), TimezoneLookup(), config,
+            NullLogger<AviationStackLiveSearchProvider>.Instance);
     }
+
+    /// <summary>
+    /// A provider timezone lookup wired to a stub that returns nothing, so tests exercise the
+    /// reference-data path only. Pass a real body to exercise the provider fallback.
+    /// </summary>
+    private static AviationStackAirportTimezoneLookup TimezoneLookup(string body = """{ "data": [] }""")
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["AviationStack:ApiKey"] = "dummy" })
+            .Build();
+        return new AviationStackAirportTimezoneLookup(
+            new HttpClient(new StubHttpMessageHandler(body)) { BaseAddress = new Uri("http://stub/") },
+            config, NullLogger<AviationStackAirportTimezoneLookup>.Instance);
+    }
+
 
     /// <summary>
     /// Reference data that knows no airport, so tests rely on the timezone the payload itself

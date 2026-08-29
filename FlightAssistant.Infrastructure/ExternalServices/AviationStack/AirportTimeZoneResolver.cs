@@ -11,16 +11,29 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AviationStack
     /// gives <c>"2026-08-29T20:05:00+00:00"</c> — where the <c>+00:00</c> is decoration, not an
     /// offset. Reading the latter as UTC turns a 7h45m LHR→JFK flight into a 2h45m one.
     ///
-    /// Zones come from the response itself when present (the real-time endpoint supplies a
-    /// <c>timezone</c> per airport), falling back to our own airport reference data. When neither
-    /// yields a usable zone the caller drops the flight: a time that is silently hours wrong is
-    /// worse than an absent one.
+    /// Zones are resolved in order: the <c>timezone</c> the response itself supplies (the
+    /// real-time endpoint provides one per airport), then our own airport reference data, then
+    /// AviationStack's airport lookup. That last step exists because <c>Airport.Timezone</c> is
+    /// not guaranteed to be populated, and without it every schedules row would be discarded —
+    /// turning a reference-data gap into an empty search result.
+    ///
+    /// When no source yields a usable zone the row is dropped rather than reported at a wrong
+    /// time, and <see cref="UnresolvedAirports"/> records why so the caller can tell "no flights"
+    /// apart from "we could not place these flights in time".
     ///
     /// Resolution is cached per instance, so one search resolves each airport once however many
     /// rows mention it.
     /// </summary>
-    internal sealed class AirportTimeZoneResolver(IRefDataRepository refData, ILogger logger)
+    internal sealed class AirportTimeZoneResolver(
+        IRefDataRepository refData,
+        AviationStackAirportTimezoneLookup? providerLookup,
+        ILogger logger)
     {
+        private readonly HashSet<string> _unresolved = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Airports whose timezone could not be established, in encounter order.</summary>
+        public IReadOnlyCollection<string> UnresolvedAirports => _unresolved;
+
         private readonly Dictionary<string, TimeZoneInfo?> _cache = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
@@ -55,16 +68,27 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AviationStack
         {
             if (_cache.TryGetValue(iata, out var cached)) return cached;
 
-            var id = !string.IsNullOrWhiteSpace(timezoneFromPayload)
-                ? timezoneFromPayload
-                : await refData.GetAirportTimezoneByIataAsync(iata, ct);
+            var id = timezoneFromPayload;
+
+            if (string.IsNullOrWhiteSpace(id))
+                id = await refData.GetAirportTimezoneByIataAsync(iata, ct);
+
+            if (string.IsNullOrWhiteSpace(id) && providerLookup is not null)
+            {
+                id = await providerLookup.TryGetTimezoneAsync(iata, ct);
+                if (!string.IsNullOrWhiteSpace(id))
+                    logger.LogInformation(
+                        "Airport {Iata} has no timezone in reference data; used the provider's ({Timezone}). "
+                        + "Backfilling reference data would avoid this lookup.",
+                        iata, id);
+            }
 
             TimeZoneInfo? zone = null;
 
             if (string.IsNullOrWhiteSpace(id))
             {
                 logger.LogWarning(
-                    "No timezone available for airport {Iata}; its flights are omitted from search results",
+                    "No timezone available for airport {Iata} from any source; its flights are omitted",
                     iata);
             }
             else
@@ -80,6 +104,8 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AviationStack
                         iata, id);
                 }
             }
+
+            if (zone is null) _unresolved.Add(iata);
 
             _cache[iata] = zone;
             return zone;

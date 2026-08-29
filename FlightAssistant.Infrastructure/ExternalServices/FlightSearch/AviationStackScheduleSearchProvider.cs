@@ -37,9 +37,13 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
         // 502 Bad Gateway — the provider was unreachable.
         private const int StatusCode502BadGateway = 502;
 
+        // 500 Internal Server Error — our own reference data cannot place the flights in time.
+        private const int StatusCode500InternalError = 500;
+
         private readonly HttpClient _http;
         private readonly AviationStackRouteResolver _routes;
         private readonly IRefDataRepository _refData;
+        private readonly AviationStackAirportTimezoneLookup _timezones;
         private readonly ILogger<AviationStackScheduleSearchProvider> _logger;
         private readonly string _apiKey;
 
@@ -47,12 +51,14 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
             HttpClient http,
             AviationStackRouteResolver routes,
             IRefDataRepository refData,
+            AviationStackAirportTimezoneLookup timezones,
             IConfiguration config,
             ILogger<AviationStackScheduleSearchProvider> logger)
         {
             _http = http;
             _routes = routes;
             _refData = refData;
+            _timezones = timezones;
             _logger = logger;
             _apiKey = config["AviationStack:ApiKey"] ?? string.Empty;
         }
@@ -100,8 +106,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
                 data.ValueKind != JsonValueKind.Array)
                 return [];
 
-            var zones = new AirportTimeZoneResolver(_refData, _logger);
+            var zones = new AirportTimeZoneResolver(_refData, _timezones, _logger);
             var rows = new List<ScheduleRow>();
+            var matched = 0;
 
             foreach (var element in data.EnumerateArray())
             {
@@ -109,12 +116,37 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
                 if (row is null) continue;
                 if (!Matches(row, criteria)) continue;
 
+                matched++;
                 var converted = await ToUtcAsync(row, zones, fallbackTimezone, ct);
                 if (converted is not null)
                     rows.Add(converted);
             }
 
+            ThrowIfEverythingWasDroppedForTimezones(rows, matched, zones, criteria);
+
             return Group(rows, criteria);
+        }
+
+        /// <summary>
+        /// Distinguishes "this route has no flights" from "we could not place any of the flights we
+        /// received in time". Returning an empty list for the latter is what made the original
+        /// defect so hard to spot, so it is now an error naming the airports at fault.
+        /// </summary>
+        private void ThrowIfEverythingWasDroppedForTimezones(
+            List<ScheduleRow> kept, int matched, AirportTimeZoneResolver zones, FlightSearchCriteria criteria)
+        {
+            if (kept.Count > 0 || matched == 0 || zones.UnresolvedAirports.Count == 0) return;
+
+            var airports = string.Join(", ", zones.UnresolvedAirports);
+            _logger.LogError(
+                "Dropped all {Count} matching flights for {Criteria}: no timezone for {Airports}",
+                matched, Describe(criteria), airports);
+
+            throw new DomainException(
+                "Flight search is unavailable for this route because the server is missing timezone data for one of its airports.",
+                StatusCode500InternalError,
+                $"No IANA timezone could be resolved for: {airports}. Times could not be converted to UTC, "
+                + "so every matching flight was discarded. Backfill Airport.Timezone for these airports.");
         }
 
         /// <summary>A schedules row with times still in airport-local form.</summary>

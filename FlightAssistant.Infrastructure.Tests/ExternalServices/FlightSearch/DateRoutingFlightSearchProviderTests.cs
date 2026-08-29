@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Infrastructure.ExternalServices.AviationStack;
 using FlightAssistant.Infrastructure.ExternalServices.FlightSearch;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -42,9 +43,13 @@ public class DateRoutingFlightSearchProviderTests
         var liveHandler = new RecordingHandler("""{ "data": [] }""");
         var scheduleHandler = new RecordingHandler("""{ "data": [] }""");
 
+        var timezones = new AviationStackAirportTimezoneLookup(
+            new HttpClient(new RecordingHandler("""{ "data": [] }""")) { BaseAddress = new Uri("http://stub/") },
+            config, NullLogger<AviationStackAirportTimezoneLookup>.Instance);
+
         var live = new AviationStackLiveSearchProvider(
             new HttpClient(liveHandler) { BaseAddress = new Uri("http://stub/") },
-            Substitute.For<IRefDataRepository>(),
+            Substitute.For<IRefDataRepository>(), timezones,
             config, NullLogger<AviationStackLiveSearchProvider>.Instance);
 
         var resolver = new AviationStackRouteResolver(
@@ -53,7 +58,7 @@ public class DateRoutingFlightSearchProviderTests
 
         var schedule = new AviationStackScheduleSearchProvider(
             new HttpClient(scheduleHandler) { BaseAddress = new Uri("http://stub/") },
-            resolver, Substitute.For<IRefDataRepository>(), config,
+            resolver, Substitute.For<IRefDataRepository>(), timezones, config,
             NullLogger<AviationStackScheduleSearchProvider>.Instance);
 
         var provider = new DateRoutingFlightSearchProvider(

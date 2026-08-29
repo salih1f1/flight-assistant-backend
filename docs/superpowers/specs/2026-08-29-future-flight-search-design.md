@@ -149,8 +149,15 @@ Zone resolution, in order:
 1. The `timezone` the response supplies per airport (the real-time endpoint provides it; the
    schedules endpoint does not).
 2. `Airport.Timezone` from our reference data.
-3. Otherwise **exclude the result and log a warning.** Emitting a time that is silently hours
-   wrong is worse than omitting the flight.
+3. AviationStack's own `/v1/airports` lookup, cached per search.
+4. Otherwise exclude that row. Emitting a time that is silently hours wrong is worse than
+   omitting the flight — **but if every matching row is dropped this way, throw a 500 naming the
+   airports** rather than returning an empty list.
+
+Step 3 and the throw in step 4 were added after the first implementation shipped an empty result
+for a route with a fully populated timetable: reference data had no timezones, so all 106 rows
+were discarded silently. That is the exact failure mode this issue exists to eliminate, and
+relying on `Airport.Timezone` being populated was the wrong assumption.
 
 Departure and arrival are converted using their own zones, since a flight crossing zones has a
 different one at each end. Times falling in a DST spring-forward gap are nudged forward by an

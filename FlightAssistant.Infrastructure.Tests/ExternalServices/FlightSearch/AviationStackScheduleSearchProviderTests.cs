@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Infrastructure.ExternalServices.AviationStack;
 using FlightAssistant.Infrastructure.ExternalServices.FlightSearch;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -66,7 +67,8 @@ public class AviationStackScheduleSearchProviderTests
     private static AviationStackScheduleSearchProvider Provider(
         StubHttpMessageHandler handler,
         IRefDataRepository? refData = null,
-        AviationStackRouteResolver? resolver = null)
+        AviationStackRouteResolver? resolver = null,
+        AviationStackAirportTimezoneLookup? timezones = null)
     {
         var http = new HttpClient(handler) { BaseAddress = new Uri("http://stub/") };
         var config = new ConfigurationBuilder()
@@ -80,9 +82,24 @@ public class AviationStackScheduleSearchProviderTests
             NullLogger<AviationStackRouteResolver>.Instance);
 
         return new AviationStackScheduleSearchProvider(
-            http, resolver, refData, config,
+            http, resolver, refData, timezones ?? TimezoneLookup(), config,
             NullLogger<AviationStackScheduleSearchProvider>.Instance);
     }
+
+    /// <summary>
+    /// A provider timezone lookup wired to a stub that returns nothing, so tests exercise the
+    /// reference-data path only. Pass a real body to exercise the provider fallback.
+    /// </summary>
+    private static AviationStackAirportTimezoneLookup TimezoneLookup(string body = """{ "data": [] }""")
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["AviationStack:ApiKey"] = "dummy" })
+            .Build();
+        return new AviationStackAirportTimezoneLookup(
+            new HttpClient(new StubHttpMessageHandler(body)) { BaseAddress = new Uri("http://stub/") },
+            config, NullLogger<AviationStackAirportTimezoneLookup>.Instance);
+    }
+
 
     private static IRefDataRepository RefDataWith(params (string Iata, string? Tz)[] airports)
     {
@@ -211,24 +228,56 @@ public class AviationStackScheduleSearchProviderTests
     }
 
     [Fact]
-    public async Task SearchAsync_OmitsFlightsWhoseAirportHasNoTimezone()
+    public async Task SearchAsync_FallsBackToTheProvidersOwnTimezoneData()
     {
-        // Emitting a time that is silently hours wrong is worse than omitting the flight.
-        var refData = RefDataWith(("SOF", "Europe/Sofia"), ("IST", null));
+        // Reference data knows nothing about these airports. Rather than discarding every flight —
+        // the defect that made a populated timetable look like an empty route — ask AviationStack.
         var handler = new StubHttpMessageHandler(SofBody);
+        var lookup = TimezoneLookup("""{ "data": [ { "iata_code": "SOF", "timezone": "Europe/Sofia" } ] }""");
 
-        var results = await Provider(handler, refData).SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10)));
+        var results = await Provider(handler, RefDataWith(), timezones: lookup)
+            .SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10)));
 
-        Assert.Empty(results);
+        Assert.Equal(2, results.Count);
+        Assert.Equal(new DateTime(2026, 10, 10, 6, 35, 0, DateTimeKind.Utc), results[0].ScheduledDepartureUtc);
     }
 
     [Fact]
-    public async Task SearchAsync_OmitsFlightsWhoseTimezoneIsUnusable()
+    public async Task SearchAsync_Throws_WhenEveryMatchIsDroppedForMissingTimezones()
+    {
+        // Silently returning [] here is indistinguishable from "this route has no flights", which
+        // is precisely how the original bug hid. It must be loud, and name the airport.
+        var refData = RefDataWith(("SOF", "Europe/Sofia"), ("IST", null));
+        var handler = new StubHttpMessageHandler(SofBody);
+
+        var ex = await Assert.ThrowsAsync<FlightAssistant.Domain.Common.Exceptions.DomainException>(
+            () => Provider(handler, refData).SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10))));
+
+        Assert.Equal(500, ex.StatusCode);
+        Assert.Contains("IST", ex.DiagnosticDetail);
+        Assert.DoesNotContain("IST", ex.Message); // the client-facing text stays generic
+    }
+
+    [Fact]
+    public async Task SearchAsync_Throws_WhenTimezoneIsUnusable()
     {
         var refData = RefDataWith(("SOF", "Europe/Sofia"), ("IST", "Not/AZone"));
         var handler = new StubHttpMessageHandler(SofBody);
 
-        var results = await Provider(handler, refData).SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10)));
+        var ex = await Assert.ThrowsAsync<FlightAssistant.Domain.Common.Exceptions.DomainException>(
+            () => Provider(handler, refData).SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10))));
+
+        Assert.Equal(500, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task SearchAsync_ReturnsEmpty_WhenTheRouteGenuinelyHasNoFlights()
+    {
+        // No matches at all is a legitimate empty result, and must NOT be confused with the
+        // timezone failure above.
+        var handler = new StubHttpMessageHandler(SofBody);
+
+        var results = await Provider(handler).SearchAsync(Route("SOF", "LHR", new DateOnly(2026, 10, 10)));
 
         Assert.Empty(results);
     }
