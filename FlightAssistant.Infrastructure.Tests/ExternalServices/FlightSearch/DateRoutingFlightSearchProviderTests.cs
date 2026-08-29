@@ -57,7 +57,11 @@ public class DateRoutingFlightSearchProviderTests
 
         var schedule = new AviationStackScheduleSearchProvider(
             new HttpClient(scheduleHandler) { BaseAddress = new Uri("http://stub/") },
-            resolver, timezones, config,
+            resolver,
+            new OperatingCarrierResolver(
+                new HttpClient(new RecordingHandler("""{ "data": [] }""")) { BaseAddress = new Uri("http://stub/") },
+                config, NullLogger<OperatingCarrierResolver>.Instance),
+            timezones, config,
             NullLogger<AviationStackScheduleSearchProvider>.Instance);
 
         var provider = new DateRoutingFlightSearchProvider(

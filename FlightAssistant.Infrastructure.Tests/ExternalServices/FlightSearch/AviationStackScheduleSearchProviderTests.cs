@@ -67,7 +67,8 @@ public class AviationStackScheduleSearchProviderTests
     private static AviationStackScheduleSearchProvider Provider(
         StubHttpMessageHandler handler,
         AviationStackRouteResolver? resolver = null,
-        AviationStackAirportTimezoneLookup? timezones = null)
+        AviationStackAirportTimezoneLookup? timezones = null,
+        string operatingReferenceBody = """{ "data": [] }""")
     {
         var http = new HttpClient(handler) { BaseAddress = new Uri("http://stub/") };
         var config = new ConfigurationBuilder()
@@ -79,8 +80,12 @@ public class AviationStackScheduleSearchProviderTests
             config,
             NullLogger<AviationStackRouteResolver>.Instance);
 
+        var operators = new OperatingCarrierResolver(
+            new HttpClient(new StubHttpMessageHandler(operatingReferenceBody)) { BaseAddress = new Uri("http://stub/") },
+            config, NullLogger<OperatingCarrierResolver>.Instance);
+
         return new AviationStackScheduleSearchProvider(
-            http, resolver, timezones ?? AllZones(), config,
+            http, resolver, operators, timezones ?? AllZones(), config,
             NullLogger<AviationStackScheduleSearchProvider>.Instance);
     }
 
@@ -239,6 +244,83 @@ public class AviationStackScheduleSearchProviderTests
         Assert.Contains("iataCode=SOF", query);
         Assert.Contains("type=departure", query);
         Assert.Contains("date=2026-10-10", query);
+    }
+
+    /// <summary>
+    /// A real-time response for the reference weekday: `codeshared` marks the marketing rows, so
+    /// only TK1028 and TK1030 name operators.
+    /// </summary>
+    private const string ReferenceDayBody = """
+    {
+      "data": [
+        { "departure": { "iata": "SOF", "timezone": "Europe/Sofia", "scheduled": "2026-10-03T09:35:00+00:00" },
+          "arrival": { "iata": "IST", "timezone": "Europe/Istanbul", "scheduled": "2026-10-03T11:05:00+00:00" },
+          "airline": { "iata": "TK" }, "flight": { "iata": "TK1028", "codeshared": null } },
+        { "departure": { "iata": "SOF", "timezone": "Europe/Sofia", "scheduled": "2026-10-03T09:35:00+00:00" },
+          "arrival": { "iata": "IST", "timezone": "Europe/Istanbul", "scheduled": "2026-10-03T11:05:00+00:00" },
+          "airline": { "iata": "6E" }, "flight": { "iata": "6E4120", "codeshared": { "flight_iata": "tk1028" } } },
+        { "departure": { "iata": "SOF", "timezone": "Europe/Sofia", "scheduled": "2026-10-03T21:10:00+00:00" },
+          "arrival": { "iata": "IST", "timezone": "Europe/Istanbul", "scheduled": "2026-10-03T22:40:00+00:00" },
+          "airline": { "iata": "TK" }, "flight": { "iata": "TK1030", "codeshared": null } }
+      ]
+    }
+    """;
+
+    [Fact]
+    public async Task SearchAsync_LearnsTheOperatingCarrierFromAMatchingWeekday()
+    {
+        // flightsFuture hides the operator; the real-time endpoint states it. Schedules repeat
+        // weekly, so a recent same-weekday query answers it.
+        var results = await Provider(new StubHttpMessageHandler(SofBody), operatingReferenceBody: ReferenceDayBody)
+            .SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10)));
+
+        Assert.Equal("TK1028", results[0].OperatingFlightNumber);
+        Assert.Equal("TK", results[0].AirlineIata);
+        Assert.Equal("TK1030", results[1].OperatingFlightNumber);
+    }
+
+    [Fact]
+    public async Task SearchAsync_LeavesOperatorNull_WhenTheReferenceDayTellsUsNothing()
+    {
+        var results = await Provider(new StubHttpMessageHandler(SofBody))
+            .SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10)));
+
+        Assert.All(results, r => Assert.Null(r.OperatingFlightNumber));
+        Assert.All(results, r => Assert.Null(r.AirlineIata));
+    }
+
+    [Fact]
+    public async Task SearchAsync_RejectsALearnedOperatorThatIsNotInTheGroup()
+    {
+        // The timetable drifted: the reference day ran a different flight in that slot. Better to
+        // report nothing than to attribute the departure to a carrier that is not on it.
+        const string drifted = """
+        {
+          "data": [
+            { "departure": { "iata": "SOF", "timezone": "Europe/Sofia", "scheduled": "2026-10-03T09:35:00+00:00" },
+              "arrival": { "iata": "IST", "timezone": "Europe/Istanbul", "scheduled": "2026-10-03T11:05:00+00:00" },
+              "airline": { "iata": "PC" }, "flight": { "iata": "PC9999", "codeshared": null } }
+          ]
+        }
+        """;
+
+        var results = await Provider(new StubHttpMessageHandler(SofBody), operatingReferenceBody: drifted)
+            .SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10)));
+
+        Assert.Null(results[0].OperatingFlightNumber);
+    }
+
+    [Fact]
+    public async Task SearchAsync_SucceedsWhenTheOperatingLookupFails()
+    {
+        // Best-effort enrichment must never fail the search itself.
+        var results = await Provider(
+                new StubHttpMessageHandler(SofBody),
+                operatingReferenceBody: """{ "error": { "code": "rate_limit_reached", "message": "throttled" } }""")
+            .SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10)));
+
+        Assert.Equal(2, results.Count);
+        Assert.All(results, r => Assert.Null(r.OperatingFlightNumber));
     }
 
     [Fact]

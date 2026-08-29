@@ -25,8 +25,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
     /// <item>Times are airport-local with no offset, and unlike the real-time endpoint this one
     /// supplies no <c>timezone</c>, so zones come from the provider's airport lookup.</item>
     /// <item>All values are lowercase.</item>
-    /// <item>There is no codeshare marker, so <c>OperatingFlightNumber</c> is left null rather than
-    /// guessed. Rows are grouped by route and scheduled times instead.</item>
+    /// <item>There is no codeshare marker, so rows are grouped by route and scheduled times, and
+    /// the operating carrier is learned separately via <see cref="OperatingCarrierResolver"/>
+    /// rather than guessed.</item>
     /// </list>
     /// </summary>
     public sealed class AviationStackScheduleSearchProvider : IFlightSearchProvider
@@ -41,6 +42,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
 
         private readonly HttpClient _http;
         private readonly AviationStackRouteResolver _routes;
+        private readonly OperatingCarrierResolver _operators;
         private readonly AviationStackAirportTimezoneLookup _timezones;
         private readonly ILogger<AviationStackScheduleSearchProvider> _logger;
         private readonly string _apiKey;
@@ -48,12 +50,14 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
         public AviationStackScheduleSearchProvider(
             HttpClient http,
             AviationStackRouteResolver routes,
+            OperatingCarrierResolver operators,
             AviationStackAirportTimezoneLookup timezones,
             IConfiguration config,
             ILogger<AviationStackScheduleSearchProvider> logger)
         {
             _http = http;
             _routes = routes;
+            _operators = operators;
             _timezones = timezones;
             _logger = logger;
             _apiKey = config["AviationStack:ApiKey"] ?? string.Empty;
@@ -120,7 +124,13 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
 
             ThrowIfEverythingWasDroppedForTimezones(rows, matched, zones, criteria);
 
-            return Group(rows, criteria);
+            // The schedules endpoint hides which carrier operates each departure; the real-time
+            // endpoint states it. Learn it from a matching weekday, best-effort.
+            var operators = rows.Count > 0
+                ? await _operators.LearnAsync(airport, criteria.ArrivalIata, criteria.Date, ct)
+                : ReadOnlyEmpty;
+
+            return Group(rows, criteria, operators);
         }
 
         /// <summary>
@@ -165,28 +175,45 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
         /// the provider's own data shows: the TK1028 and 6E4120 records for a given date are
         /// identical apart from their airline and flight blocks.
         /// </summary>
-        private static List<FlightSearchResult> Group(List<ScheduleRow> rows, FlightSearchCriteria criteria)
+        private static List<FlightSearchResult> Group(
+            List<ScheduleRow> rows,
+            FlightSearchCriteria criteria,
+            IReadOnlyDictionary<string, string> operators)
         {
             return rows
                 .GroupBy(r => (r.DepartureIata, r.ArrivalIata, r.ScheduledDepartureUtc, r.ScheduledArrivalUtc))
-                .Select(g => new FlightSearchResult(
-                    FlightNumbers: g.Select(r => r.FlightNumber)
+                .Select(g =>
+                {
+                    var numbers = g.Select(r => r.FlightNumber)
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .OrderBy(n => n, StringComparer.Ordinal)
-                        .ToList(),
-                    // The schedules endpoint does not say which carrier operates the aircraft, and
-                    // picking one would be a guess presented as fact.
-                    OperatingFlightNumber: null,
-                    AirlineIata: null,
+                        .ToList();
+
+                    // Only accept a learned operator that is actually one of this group's numbers —
+                    // otherwise the reference day's timetable has drifted and the match is wrong.
+                    var slot = g.First().ScheduledDepartureLocal.ToString("HH:mm", CultureInfo.InvariantCulture);
+                    var operating = operators.TryGetValue(slot, out var op)
+                        && numbers.Contains(op, StringComparer.OrdinalIgnoreCase)
+                            ? op
+                            : null;
+
+                    return new FlightSearchResult(
+                    FlightNumbers: numbers,
+                    OperatingFlightNumber: operating,
+                    AirlineIata: operating is { Length: >= 2 } ? operating[..2] : null,
                     DepartureIata: g.Key.DepartureIata,
                     ArrivalIata: g.Key.ArrivalIata,
                     ServiceDate: criteria.Date,
                     ScheduledDepartureUtc: g.Key.ScheduledDepartureUtc,
                     ScheduledArrivalUtc: g.Key.ScheduledArrivalUtc,
-                    EquipmentIcao: g.Select(r => r.EquipmentIcao).FirstOrDefault(e => e is not null)))
+                    EquipmentIcao: g.Select(r => r.EquipmentIcao).FirstOrDefault(e => e is not null));
+                })
                 .OrderBy(r => r.ScheduledDepartureUtc)
                 .ToList();
         }
+
+        private static readonly IReadOnlyDictionary<string, string> ReadOnlyEmpty =
+            new Dictionary<string, string>(StringComparer.Ordinal);
 
         /// <summary>
         /// Applies the filters the provider ignores. A flight-number search matches any number on

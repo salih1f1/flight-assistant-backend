@@ -69,6 +69,9 @@ TK1028  codeshared = null
 MS9668  codeshared = { flight_iata: "tk1028" }
 ```
 
+`/v1/flightsFuture` carries no equivalent, so the operating carrier is learned from a matching
+weekday instead — see "Operating carrier" below.
+
 `/v1/flightsFuture` carries no equivalent. The 6E4120 and TK1028 records for 2026-10-10 are
 identical apart from their `airline` and `flight` blocks — same gate, terminal, aircraft, and
 times. **The operating carrier cannot be determined from future data.** The design admits this
@@ -138,6 +141,21 @@ routes to the schedules endpoint and lands in the gap.
 An earlier draft of this spec called that boundary ambiguity harmless on the grounds that both
 providers return correct data near it. That was wrong — the schedules endpoint returns nothing
 there. Tracked separately rather than fixed here.
+
+### Operating carrier
+
+Schedules repeat weekly and the real-time endpoint marks codeshares exactly, so
+`OperatingCarrierResolver` queries the same route on the most recent matching weekday, builds a
+map of local departure time → operating flight number, and applies it to the future date.
+
+A learned operator is only accepted when it is one of that group's own flight numbers; otherwise
+the reference day's timetable has drifted and the field stays null. The lookup is best-effort —
+a failure or an unrecognised route leaves the field null and never fails the search.
+
+`/v1/routes` was evaluated for this and rejected. It resembles an operating/marketing
+discriminator on small samples but is not one: 6E4122 is a confirmed codeshare of TK1030 (per the
+real-time endpoint's own `codeshared` field) and still returns a route. Its coverage is merely
+patchy, so two samples agreeing was luck.
 
 ### Timezone conversion
 

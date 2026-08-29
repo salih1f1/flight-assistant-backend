@@ -65,7 +65,8 @@ namespace FlightAssistant.Infrastructure
                          typeof(AviationStackLiveSearchProvider),
                          typeof(AviationStackScheduleSearchProvider),
                          typeof(AviationStackRouteResolver),
-                         typeof(AviationStackAirportTimezoneLookup)
+                         typeof(AviationStackAirportTimezoneLookup),
+                         typeof(OperatingCarrierResolver)
                      })
             {
                 services.AddHttpClient(clientType.Name, client =>
@@ -92,6 +93,11 @@ namespace FlightAssistant.Infrastructure
                 sp.GetRequiredService<IConfiguration>(),
                 sp.GetRequiredService<ILogger<AviationStackAirportTimezoneLookup>>()));
 
+            services.AddScoped(sp => new OperatingCarrierResolver(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(OperatingCarrierResolver)),
+                sp.GetRequiredService<IConfiguration>(),
+                sp.GetRequiredService<ILogger<OperatingCarrierResolver>>()));
+
             services.AddScoped(sp => new AviationStackLiveSearchProvider(
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackLiveSearchProvider)),
                 sp.GetRequiredService<AviationStackAirportTimezoneLookup>(),
@@ -101,6 +107,7 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped(sp => new AviationStackScheduleSearchProvider(
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackScheduleSearchProvider)),
                 sp.GetRequiredService<AviationStackRouteResolver>(),
+                sp.GetRequiredService<OperatingCarrierResolver>(),
                 sp.GetRequiredService<AviationStackAirportTimezoneLookup>(),
                 sp.GetRequiredService<IConfiguration>(),
                 sp.GetRequiredService<ILogger<AviationStackScheduleSearchProvider>>()));
