@@ -45,10 +45,25 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AviationStack
 
                 using var doc = JsonDocument.Parse(json);
 
+                // Report why we came back empty. Silently returning null here would leave the
+                // caller unable to tell a throttled lookup from an unknown airport.
+                if (doc.RootElement.TryGetProperty("error", out var error))
+                {
+                    _logger.LogWarning(
+                        "Airport timezone lookup for {Iata} failed (HTTP {StatusCode}): {Error}",
+                        iata, (int)response.StatusCode, error.ToString());
+                    return null;
+                }
+
                 if (!doc.RootElement.TryGetProperty("data", out var data) ||
                     data.ValueKind != JsonValueKind.Array ||
                     data.GetArrayLength() == 0)
+                {
+                    _logger.LogWarning(
+                        "Airport timezone lookup for {Iata} returned no airport (HTTP {StatusCode})",
+                        iata, (int)response.StatusCode);
                     return null;
+                }
 
                 return data[0].TryGetProperty("timezone", out var tz) && tz.ValueKind == JsonValueKind.String
                     ? tz.GetString()

@@ -259,7 +259,7 @@ public class AviationStackScheduleSearchProviderTests
     }
 
     [Fact]
-    public async Task SearchAsync_Throws_WhenTimezoneIsUnusable()
+    public async Task SearchAsync_Throws_WhenTimezoneIsUnusableAndNoFallbackHelps()
     {
         var refData = RefDataWith(("SOF", "Europe/Sofia"), ("IST", "Not/AZone"));
         var handler = new StubHttpMessageHandler(SofBody);
@@ -268,6 +268,26 @@ public class AviationStackScheduleSearchProviderTests
             () => Provider(handler, refData).SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10))));
 
         Assert.Equal(500, ex.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("2")]            // OpenFlights ships a numeric GMT offset beside the IANA column
+    [InlineData("+02:00")]
+    [InlineData("Not/AZone")]
+    [InlineData("   ")]
+    public async Task SearchAsync_FallsThroughWhenReferenceDataHoldsAnUnusableTimezone(string stored)
+    {
+        // A present-but-invalid value must not block the remaining sources. Accepting the first
+        // merely non-empty candidate is what made a populated timetable fail outright.
+        var refData = RefDataWith(("SOF", stored), ("IST", stored));
+        var handler = new StubHttpMessageHandler(SofBody);
+        var lookup = TimezoneLookup("""{ "data": [ { "iata_code": "X", "timezone": "Europe/Sofia" } ] }""");
+
+        var results = await Provider(handler, refData, timezones: lookup)
+            .SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10)));
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal(new DateTime(2026, 10, 10, 6, 35, 0, DateTimeKind.Utc), results[0].ScheduledDepartureUtc);
     }
 
     [Fact]

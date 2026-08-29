@@ -64,51 +64,66 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AviationStack
             return TimeZoneInfo.ConvertTimeToUtc(unspecified, zone);
         }
 
+        /// <summary>
+        /// Tries each source in turn and accepts the first that yields a *usable* zone.
+        ///
+        /// Each candidate must survive <see cref="TimeZoneInfo.FindSystemTimeZoneById"/> before the
+        /// chain stops. Accepting the first merely non-empty value instead would let a present but
+        /// invalid entry block the remaining sources — which is exactly what a numeric GMT offset
+        /// ("2") in <c>Airport.Timezone</c> does, and OpenFlights ships that column right beside
+        /// the IANA one.
+        /// </summary>
         private async Task<TimeZoneInfo?> ResolveAsync(string iata, string? timezoneFromPayload, CancellationToken ct)
         {
             if (_cache.TryGetValue(iata, out var cached)) return cached;
 
-            var id = timezoneFromPayload;
+            TimeZoneInfo? zone =
+                TryZone(timezoneFromPayload, iata, "the provider response")
+                ?? TryZone(await refData.GetAirportTimezoneByIataAsync(iata, ct), iata, "reference data");
 
-            if (string.IsNullOrWhiteSpace(id))
-                id = await refData.GetAirportTimezoneByIataAsync(iata, ct);
-
-            if (string.IsNullOrWhiteSpace(id) && providerLookup is not null)
+            if (zone is null && providerLookup is not null)
             {
-                id = await providerLookup.TryGetTimezoneAsync(iata, ct);
-                if (!string.IsNullOrWhiteSpace(id))
+                zone = TryZone(await providerLookup.TryGetTimezoneAsync(iata, ct), iata, "the provider's airport lookup");
+                if (zone is not null)
                     logger.LogInformation(
-                        "Airport {Iata} has no timezone in reference data; used the provider's ({Timezone}). "
-                        + "Backfilling reference data would avoid this lookup.",
-                        iata, id);
+                        "Airport {Iata}: usable timezone came from the provider's airport lookup ({Timezone}). "
+                        + "Backfilling Airport.Timezone with IANA ids would avoid this extra call.",
+                        iata, zone.Id);
             }
 
-            TimeZoneInfo? zone = null;
-
-            if (string.IsNullOrWhiteSpace(id))
+            if (zone is null)
             {
                 logger.LogWarning(
-                    "No timezone available for airport {Iata} from any source; its flights are omitted",
+                    "No usable IANA timezone for airport {Iata} from any source; its flights are omitted",
                     iata);
+                _unresolved.Add(iata);
             }
-            else
-            {
-                try
-                {
-                    zone = TimeZoneInfo.FindSystemTimeZoneById(id);
-                }
-                catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
-                {
-                    logger.LogWarning(ex,
-                        "Airport {Iata} has an unusable timezone {Timezone}; its flights are omitted",
-                        iata, id);
-                }
-            }
-
-            if (zone is null) _unresolved.Add(iata);
 
             _cache[iata] = zone;
             return zone;
+        }
+
+        /// <summary>
+        /// Turns a candidate id into a zone, or null if it is absent or not a usable IANA id.
+        /// A rejected candidate is logged with its source, because the common cause — the wrong
+        /// column imported into reference data — is otherwise invisible.
+        /// </summary>
+        private TimeZoneInfo? TryZone(string? id, string iata, string source)
+        {
+            if (string.IsNullOrWhiteSpace(id)) return null;
+
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(id.Trim());
+            }
+            catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
+            {
+                logger.LogWarning(
+                    "Airport {Iata}: {Source} gave {Timezone}, which is not a usable IANA timezone id. "
+                    + "Falling through to the next source. ({Reason})",
+                    iata, source, id, ex.Message);
+                return null;
+            }
         }
     }
 }
