@@ -25,7 +25,8 @@ namespace FlightAssistant.API.Endpoints
             {
                 var results = await mediator.Send(new SearchFlightsQuery(from, to, date, flightNumber), ct);
                 var dtos = results.Select(r => new FlightSearchResultDto(
-                    r.FlightNumber, r.AirlineIata, r.DepartureIata, r.ArrivalIata,
+                    r.FlightNumbers, r.OperatingFlightNumber, r.AirlineIata,
+                    r.DepartureIata, r.ArrivalIata,
                     r.ServiceDate, r.ScheduledDepartureUtc, r.ScheduledArrivalUtc, r.EquipmentIcao)).ToList();
                 return Results.Ok(dtos);
             })
@@ -34,10 +35,14 @@ namespace FlightAssistant.API.Endpoints
             .WithDescription(
                 "Searches scheduled flights via AviationStack to populate the 'add flight' picker before calling POST /flights to track a result.\n\n" +
                 "Search criteria (query params):\n" +
-                "- date (required): the departure date in YYYY-MM-DD format. Must not be more than 1 year in the past.\n" +
+                "- date (required): the departure date in YYYY-MM-DD format. Must not be more than 1 year in the past, nor more than 11 months in the future.\n" +
                 "- from / to (optional): departure and arrival airport as 3-letter IATA codes (e.g. LHR, JFK). Case-insensitive. Must be supplied together.\n" +
                 "- flightNumber (optional): an IATA flight code, e.g. BA123 (2-character airline prefix + 1–4 digit number). Case-insensitive.\n\n" +
                 "You must provide either a full route (both from and to) OR a flightNumber, in addition to date; otherwise the request is rejected with 400.\n\n" +
+                "Each result is one physical departure. Airlines sell the same aircraft under several flight numbers, " +
+                "so 'flightNumbers' lists all of them (e.g. TK1028 is also 6E4120, MS9668, RJ3710 and SQ6228) rather than " +
+                "returning a near-duplicate row per marketing carrier. 'operatingFlightNumber' names the carrier actually " +
+                "flying the aircraft where the data source discloses it, and is null for future dates.\n\n" +
                 "Responses:\n" +
                 "- 200: list of matching flights (empty list when the provider responds successfully but nothing matches).\n" +
                 "- 400: invalid/insufficient parameters.\n" +

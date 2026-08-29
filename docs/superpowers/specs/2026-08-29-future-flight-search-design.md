@@ -132,16 +132,34 @@ for it.
 
 ### Timezone conversion
 
-`flightsFuture` returns airport-local times with no offset. Convert using `Airport.Timezone`
-(IANA, already in reference data), resolved for the **departure** airport for departure times and
-the **arrival** airport for arrival times — a flight crossing a timezone has different zones at
-each end.
+**Both** endpoints report airport-local wall-clock time, never UTC. This was discovered during
+implementation and is broader than first scoped:
 
-Fallback chain when an airport has no timezone recorded:
-1. `Airport.Timezone` from reference data.
-2. The `timezone` field in the `/v1/routes` response, when that call was already made.
+- `flightsFuture` gives a bare `"2026-10-10 09:35:00"`, obviously local.
+- `/v1/flights` gives `"2026-08-29T20:05:00+00:00"` — and **the `+00:00` is decoration**. A live
+  LHR→JFK query returns `dep 20:05+00:00, arr 22:50+00:00`, which as UTC is a 2h45m
+  transatlantic flight. Read as local (BST→EDT) it is 7h45m, which is correct.
+
+The pre-existing live provider parsed these with `AssumeUniversal`, so **search results have
+always been wrong by the departure airport's UTC offset**. Left unfixed, the two providers would
+disagree about the same flight either side of today, so the conversion is shared:
+`AirportTimeZoneResolver` handles both.
+
+Zone resolution, in order:
+1. The `timezone` the response supplies per airport (the real-time endpoint provides it; the
+   schedules endpoint does not).
+2. `Airport.Timezone` from our reference data.
 3. Otherwise **exclude the result and log a warning.** Emitting a time that is silently hours
    wrong is worse than omitting the flight.
+
+Departure and arrival are converted using their own zones, since a flight crossing zones has a
+different one at each end. Times falling in a DST spring-forward gap are nudged forward by an
+hour rather than dropped.
+
+Timestamps are parsed with `DateTimeOffset.TryParse(...).DateTime` to take the wall-clock reading
+verbatim. `DateTime.TryParse` would rebase an offset-bearing string onto the *host machine's*
+timezone, which makes results depend on where the server runs — and would pass on a UTC CI
+machine while failing in any other zone.
 
 ### Flight-number-only search on future dates
 

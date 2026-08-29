@@ -8,6 +8,7 @@ using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Polly;
 namespace FlightAssistant.Infrastructure
 {
@@ -54,20 +55,51 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<IFlightStatusProvider>(sp =>
                 sp.GetRequiredService<AviationStackFlightStatusProvider>());
 
-            // Flight search — AviationStack filters by both airports server-side in one call.
-            services.AddHttpClient<AviationStackFlightSearchProvider>(client =>
+            // Flight search — AviationStack splits its data across two endpoints: /v1/flights holds
+            // past and present, /v1/flightsFuture holds future schedules, with no overlap.
+            // DateRoutingFlightSearchProvider picks between them; nothing above this layer knows.
+            foreach (var clientType in new[]
+                     {
+                         typeof(AviationStackLiveSearchProvider),
+                         typeof(AviationStackScheduleSearchProvider),
+                         typeof(AviationStackRouteResolver)
+                     })
             {
-                client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "https://api.aviationstack.com/v1/");
-                client.Timeout = TimeSpan.FromSeconds(30);
-            }).AddStandardResilienceHandler(options =>
-            {
-                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
-                options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(8);
-                options.Retry.MaxRetryAttempts = 2;
-                options.Retry.BackoffType = DelayBackoffType.Exponential;
-            });
-            services.AddScoped<IFlightSearchProvider>(sp =>
-                sp.GetRequiredService<AviationStackFlightSearchProvider>());
+                services.AddHttpClient(clientType.Name, client =>
+                {
+                    client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "https://api.aviationstack.com/v1/");
+                    client.Timeout = TimeSpan.FromSeconds(30);
+                }).AddStandardResilienceHandler(options =>
+                {
+                    options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
+                    options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(8);
+                    options.Retry.MaxRetryAttempts = 2;
+                    options.Retry.BackoffType = DelayBackoffType.Exponential;
+                });
+            }
+
+            services.AddScoped(sp => new AviationStackRouteResolver(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackRouteResolver)),
+                sp.GetRequiredService<IConfiguration>(),
+                sp.GetRequiredService<ILogger<AviationStackRouteResolver>>()));
+
+            services.AddScoped(sp => new AviationStackLiveSearchProvider(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackLiveSearchProvider)),
+                sp.GetRequiredService<IRefDataRepository>(),
+                sp.GetRequiredService<IConfiguration>(),
+                sp.GetRequiredService<ILogger<AviationStackLiveSearchProvider>>()));
+
+            services.AddScoped(sp => new AviationStackScheduleSearchProvider(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackScheduleSearchProvider)),
+                sp.GetRequiredService<AviationStackRouteResolver>(),
+                sp.GetRequiredService<IRefDataRepository>(),
+                sp.GetRequiredService<IConfiguration>(),
+                sp.GetRequiredService<ILogger<AviationStackScheduleSearchProvider>>()));
+
+            services.AddScoped<IFlightSearchProvider>(sp => new DateRoutingFlightSearchProvider(
+                sp.GetRequiredService<AviationStackLiveSearchProvider>(),
+                sp.GetRequiredService<AviationStackScheduleSearchProvider>(),
+                sp.GetRequiredService<ILogger<DateRoutingFlightSearchProvider>>()));
 
             // Push notifications — singleton so the APNs client is created once and reused
             services.AddOptions<ApnsOptions>()

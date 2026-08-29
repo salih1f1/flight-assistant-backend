@@ -18,6 +18,10 @@ namespace FlightAssistant.Application.Queries.Flights
         // IATA flight code: 2-char airline prefix (alphanumeric, e.g. "BA", "U2") + 1-4 digit number.
         private const string FlightNumberPattern = "^[A-Z0-9]{2}[0-9]{1,4}$";
 
+        // AviationStack's schedules endpoint rejects dates past a rolling horizon (observed as
+        // ~11.5 months out). Stay just inside it so the window's drift never turns into a 502.
+        private const int MaxFutureMonths = 11;
+
         public SearchFlightsQueryValidator()
         {
             // A search must be anchored on a full route OR a flight number — otherwise the result
@@ -60,6 +64,12 @@ namespace FlightAssistant.Application.Queries.Flights
             RuleFor(x => x.Date)
                 .Must(d => d >= DateOnly.FromDateTime(DateTime.UtcNow.AddYears(-1)))
                 .WithMessage("Date must not be more than 1 year in the past.");
+
+            // The provider's schedules endpoint refuses dates beyond a rolling horizon roughly a
+            // year out. Rejecting them here turns an upstream 502 into a clear 400.
+            RuleFor(x => x.Date)
+                .Must(d => d <= DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(MaxFutureMonths)))
+                .WithMessage($"Date must not be more than {MaxFutureMonths} months in the future.");
         }
 
         private static bool HasRouteOrFlightNumber(SearchFlightsQuery q) =>

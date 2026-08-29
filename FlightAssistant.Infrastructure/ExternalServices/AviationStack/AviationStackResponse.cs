@@ -63,13 +63,31 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AviationStack
                     $"AviationStack returned HTTP {status} with a body that is not valid JSON.");
             }
 
-            // AviationStack reports errors via an `error` object in the body, sometimes under HTTP 200.
-            if (doc.RootElement.TryGetProperty("error", out var error) &&
-                error.ValueKind == JsonValueKind.Object)
+            // AviationStack reports errors via an `error` property in the body, sometimes under
+            // HTTP 200. It takes two shapes: an object carrying a `code`, and — on the schedules
+            // endpoint — a bare string such as {"error":"date must be before 2027-08-15"}, which
+            // is often the single most useful sentence in the response.
+            if (doc.RootElement.TryGetProperty("error", out var error))
             {
-                var mapped = MapUpstreamError(error, status, operation, context, logger);
-                doc.Dispose();
-                throw mapped;
+                if (error.ValueKind == JsonValueKind.Object)
+                {
+                    var mapped = MapUpstreamError(error, status, operation, context, logger);
+                    doc.Dispose();
+                    throw mapped;
+                }
+
+                if (error.ValueKind == JsonValueKind.String)
+                {
+                    var text = error.GetString();
+                    doc.Dispose();
+                    logger.LogError(
+                        "AviationStack {Operation} returned an error (HTTP {StatusCode}: {Message}) for {Context}",
+                        operation, status, text, context);
+                    throw new DomainException(
+                        $"{operation} is temporarily unavailable. Please try again shortly.",
+                        StatusCode502BadGateway,
+                        $"AviationStack returned HTTP {status}: {text}");
+                }
             }
 
             if (!response.IsSuccessStatusCode)

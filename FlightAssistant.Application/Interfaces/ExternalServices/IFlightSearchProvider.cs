@@ -1,8 +1,22 @@
 namespace FlightAssistant.Application.Interfaces.ExternalServices
 {
+    /// <summary>
+    /// One physical departure. Airlines sell the same aircraft under several flight numbers
+    /// (TK1028 is also 6E4120, MS9668, RJ3710 and SQ6228), so a result groups every number that
+    /// covers the same departure rather than repeating it once per marketing carrier.
+    /// </summary>
+    /// <param name="FlightNumbers">Every IATA flight code on this departure, uppercase and sorted.
+    /// Always contains at least one entry, and always contains the traveler's own number whichever
+    /// carrier issued their ticket.</param>
+    /// <param name="OperatingFlightNumber">The carrier actually flying the aircraft, when the
+    /// provider discloses it. <c>null</c> for future-dated searches: the AviationStack schedules
+    /// endpoint carries no codeshare marker, and guessing would be wrong often enough to matter.</param>
+    /// <param name="AirlineIata">Operating airline's IATA code, when known. <c>null</c> whenever
+    /// <paramref name="OperatingFlightNumber"/> is.</param>
     public record FlightSearchResult(
-        string FlightNumber,
-        string AirlineIata,
+        IReadOnlyList<string> FlightNumbers,
+        string? OperatingFlightNumber,
+        string? AirlineIata,
         string DepartureIata,
         string ArrivalIata,
         DateOnly ServiceDate,
@@ -25,7 +39,8 @@ namespace FlightAssistant.Application.Interfaces.ExternalServices
     public interface IFlightSearchProvider
     {
         /// <summary>
-        /// Searches for scheduled flights matching the given <paramref name="criteria"/>.
+        /// Searches for scheduled flights matching the given <paramref name="criteria"/>, returning
+        /// one result per physical departure.
         /// Results are not persisted — callers use them to populate a picker before tracking.
         /// Returns an empty list (not null) when the provider responds successfully but no flights match.
         /// Throws <see cref="FlightAssistant.Domain.Common.Exceptions.DomainException"/> when the

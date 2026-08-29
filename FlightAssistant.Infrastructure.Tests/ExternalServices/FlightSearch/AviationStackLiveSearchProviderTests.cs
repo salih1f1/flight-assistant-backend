@@ -3,17 +3,19 @@ using System.Text;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Infrastructure.ExternalServices.FlightSearch;
+using FlightAssistant.Application.Interfaces.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
 
 namespace FlightAssistant.Infrastructure.Tests.ExternalServices.FlightSearch;
 
 /// <summary>
-/// Drives <see cref="AviationStackFlightSearchProvider"/> through its real <c>SearchAsync</c>
+/// Drives <see cref="AviationStackLiveSearchProvider"/> through its real <c>SearchAsync</c>
 /// with a stub <see cref="HttpMessageHandler"/> returning a canned AviationStack
 /// <c>/v1/flights</c> payload, so the mapping and error-handling paths are exercised end-to-end.
 /// </summary>
-public class AviationStackFlightSearchProviderTests
+public class AviationStackLiveSearchProviderTests
 {
     private sealed class StubHttpMessageHandler : HttpMessageHandler
     {
@@ -37,13 +39,27 @@ public class AviationStackFlightSearchProviderTests
         }
     }
 
-    private static AviationStackFlightSearchProvider Provider(StubHttpMessageHandler handler)
+    private static AviationStackLiveSearchProvider Provider(
+        StubHttpMessageHandler handler, IRefDataRepository? refData = null)
     {
         var http = new HttpClient(handler) { BaseAddress = new Uri("http://stub/") };
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["AviationStack:ApiKey"] = "dummy" })
             .Build();
-        return new AviationStackFlightSearchProvider(http, config, NullLogger<AviationStackFlightSearchProvider>.Instance);
+        return new AviationStackLiveSearchProvider(
+            http, refData ?? NoRefData(), config, NullLogger<AviationStackLiveSearchProvider>.Instance);
+    }
+
+    /// <summary>
+    /// Reference data that knows no airport, so tests rely on the timezone the payload itself
+    /// carries — which is what the real API supplies on this endpoint.
+    /// </summary>
+    private static IRefDataRepository NoRefData()
+    {
+        var repo = Substitute.For<IRefDataRepository>();
+        repo.GetAirportTimezoneByIataAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>(null));
+        return repo;
     }
 
     private static FlightSearchCriteria Route(string from, string to, DateOnly date) => new(from, to, date, null);
@@ -57,8 +73,8 @@ public class AviationStackFlightSearchProviderTests
             {
               "flight_date": "2025-06-15",
               "flight_status": "scheduled",
-              "departure": { "iata": "LHR", "scheduled": "2025-06-15T10:30:00+00:00" },
-              "arrival":   { "iata": "JFK", "scheduled": "2025-06-15T13:45:00+00:00" },
+              "departure": { "iata": "LHR", "timezone": "Europe/London", "scheduled": "2025-06-15T10:30:00+00:00" },
+              "arrival":   { "iata": "JFK", "timezone": "America/New_York", "scheduled": "2025-06-15T13:45:00+00:00" },
               "airline":   { "iata": "BA" },
               "flight":    { "number": "117", "iata": "BA117" },
               "aircraft":  { "icao": "B772" }
@@ -71,13 +87,16 @@ public class AviationStackFlightSearchProviderTests
         var results = await Provider(handler).SearchAsync(Route("LHR", "JFK", new DateOnly(2025, 6, 15)));
 
         var flight = Assert.Single(results);
-        Assert.Equal("BA117", flight.FlightNumber);
+        Assert.Equal(["BA117"], flight.FlightNumbers);
+        Assert.Equal("BA117", flight.OperatingFlightNumber);
         Assert.Equal("BA", flight.AirlineIata);
         Assert.Equal("LHR", flight.DepartureIata);
         Assert.Equal("JFK", flight.ArrivalIata);
         Assert.Equal(new DateOnly(2025, 6, 15), flight.ServiceDate);
-        Assert.Equal(new DateTime(2025, 6, 15, 10, 30, 0, DateTimeKind.Utc), flight.ScheduledDepartureUtc);
-        Assert.Equal(new DateTime(2025, 6, 15, 13, 45, 0, DateTimeKind.Utc), flight.ScheduledArrivalUtc);
+        // "+00:00" in the payload is decoration: 10:30 is London local (BST, UTC+1) and 13:45 is
+        // New York local (EDT, UTC-4), giving a 7h15m flight rather than an impossible 3h15m.
+        Assert.Equal(new DateTime(2025, 6, 15, 9, 30, 0, DateTimeKind.Utc), flight.ScheduledDepartureUtc);
+        Assert.Equal(new DateTime(2025, 6, 15, 17, 45, 0, DateTimeKind.Utc), flight.ScheduledArrivalUtc);
         Assert.Equal("B772", flight.EquipmentIcao);
     }
 
@@ -204,14 +223,14 @@ public class AviationStackFlightSearchProviderTests
     }
 
     [Fact]
-    public async Task SearchAsync_ParsesOffsetlessTimestampAsUtc()
+    public async Task SearchAsync_TreatsOffsetlessTimestampAsAirportLocal()
     {
         const string body = """
         {
           "data": [
             {
-              "departure": { "iata": "LHR", "scheduled": "2025-06-15T10:30:00" },
-              "arrival":   { "iata": "JFK", "scheduled": "2025-06-15T13:45:00" },
+              "departure": { "iata": "LHR", "timezone": "Europe/London", "scheduled": "2025-06-15T10:30:00" },
+              "arrival":   { "iata": "JFK", "timezone": "America/New_York", "scheduled": "2025-06-15T13:45:00" },
               "airline":   { "iata": "BA" },
               "flight":    { "iata": "BA117" }
             }
@@ -223,8 +242,120 @@ public class AviationStackFlightSearchProviderTests
         var results = await Provider(handler).SearchAsync(Route("LHR", "JFK", new DateOnly(2025, 6, 15)));
 
         var flight = Assert.Single(results);
-        Assert.Equal(new DateTime(2025, 6, 15, 10, 30, 0, DateTimeKind.Utc), flight.ScheduledDepartureUtc);
+        Assert.Equal(new DateTime(2025, 6, 15, 9, 30, 0, DateTimeKind.Utc), flight.ScheduledDepartureUtc);
         Assert.Equal(DateTimeKind.Utc, flight.ScheduledDepartureUtc.Kind);
+    }
+
+    /// <summary>
+    /// Mirrors a real SOF→IST response: three physical departures, each sold under several
+    /// numbers, with `codeshared` naming the operating flight on every marketing row.
+    /// </summary>
+    private const string CodeshareBody = """
+    {
+      "data": [
+        { "departure": { "iata": "SOF", "timezone": "Europe/Sofia", "scheduled": "2026-08-29T06:35:00+00:00" },
+          "arrival":   { "iata": "IST", "timezone": "Europe/Istanbul", "scheduled": "2026-08-29T08:05:00+00:00" },
+          "airline": { "iata": "TK" },
+          "flight": { "iata": "TK1028", "codeshared": null },
+          "aircraft": { "icao": "A21N" } },
+        { "departure": { "iata": "SOF", "timezone": "Europe/Sofia", "scheduled": "2026-08-29T06:35:00+00:00" },
+          "arrival":   { "iata": "IST", "timezone": "Europe/Istanbul", "scheduled": "2026-08-29T08:05:00+00:00" },
+          "airline": { "iata": "6E" },
+          "flight": { "iata": "6E4120", "codeshared": { "flight_iata": "tk1028" } } },
+        { "departure": { "iata": "SOF", "timezone": "Europe/Sofia", "scheduled": "2026-08-29T06:35:00+00:00" },
+          "arrival":   { "iata": "IST", "timezone": "Europe/Istanbul", "scheduled": "2026-08-29T08:05:00+00:00" },
+          "airline": { "iata": "MS" },
+          "flight": { "iata": "MS9668", "codeshared": { "flight_iata": "tk1028" } } },
+        { "departure": { "iata": "SOF", "timezone": "Europe/Sofia", "scheduled": "2026-08-29T12:50:00+00:00" },
+          "arrival":   { "iata": "IST", "timezone": "Europe/Istanbul", "scheduled": "2026-08-29T14:20:00+00:00" },
+          "airline": { "iata": "TK" },
+          "flight": { "iata": "TK1032", "codeshared": null } },
+        { "departure": { "iata": "SOF", "timezone": "Europe/Sofia", "scheduled": "2026-08-29T12:50:00+00:00" },
+          "arrival":   { "iata": "IST", "timezone": "Europe/Istanbul", "scheduled": "2026-08-29T14:20:00+00:00" },
+          "airline": { "iata": "6E" },
+          "flight": { "iata": "6E4118", "codeshared": { "flight_iata": "tk1032" } } }
+      ]
+    }
+    """;
+
+    [Fact]
+    public async Task SearchAsync_CollapsesCodesharesOntoTheOperatingFlight()
+    {
+        var handler = new StubHttpMessageHandler(CodeshareBody);
+
+        var results = await Provider(handler).SearchAsync(Route("SOF", "IST", new DateOnly(2026, 8, 29)));
+
+        // Five provider rows are two physical departures.
+        Assert.Equal(2, results.Count);
+
+        var first = results[0];
+        Assert.Equal("TK1028", first.OperatingFlightNumber);
+        Assert.Equal("TK", first.AirlineIata);
+        Assert.Equal(["6E4120", "MS9668", "TK1028"], first.FlightNumbers);
+        // The aircraft is only on the operating row, but belongs to the whole group.
+        Assert.Equal("A21N", first.EquipmentIcao);
+
+        Assert.Equal("TK1032", results[1].OperatingFlightNumber);
+        Assert.Equal(["6E4118", "TK1032"], results[1].FlightNumbers);
+    }
+
+    [Fact]
+    public async Task SearchAsync_OrdersGroupsByDepartureTime()
+    {
+        var handler = new StubHttpMessageHandler(CodeshareBody);
+
+        var results = await Provider(handler).SearchAsync(Route("SOF", "IST", new DateOnly(2026, 8, 29)));
+
+        Assert.True(results[0].ScheduledDepartureUtc < results[1].ScheduledDepartureUtc);
+    }
+
+    [Fact]
+    public async Task SearchAsync_FlightNumberSearchForACodeshare_StillReturnsIt()
+    {
+        // Searching "6E4120" returns only the marketing row — the operating row is absent, so the
+        // group must still be built from the `codeshared` pointer rather than dropped.
+        const string body = """
+        {
+          "data": [
+            { "departure": { "iata": "SOF", "timezone": "Europe/Sofia", "scheduled": "2026-08-29T06:35:00+00:00" },
+              "arrival":   { "iata": "IST", "timezone": "Europe/Istanbul", "scheduled": "2026-08-29T08:05:00+00:00" },
+              "airline": { "iata": "6E" },
+              "flight": { "iata": "6E4120", "codeshared": { "flight_iata": "tk1028" } } }
+          ]
+        }
+        """;
+        var handler = new StubHttpMessageHandler(body);
+
+        var results = await Provider(handler).SearchAsync(
+            new FlightSearchCriteria(null, null, new DateOnly(2026, 8, 29), "6E4120"));
+
+        var flight = Assert.Single(results);
+        Assert.Contains("6E4120", flight.FlightNumbers);
+        Assert.Equal("TK1028", flight.OperatingFlightNumber);
+    }
+
+    [Fact]
+    public async Task SearchAsync_DoesNotMergeDistinctFlightsSharingATimetableSlot()
+    {
+        // Two genuinely separate aircraft leaving at the same minute on the same route: neither
+        // is a codeshare of the other, so they must stay apart.
+        const string body = """
+        {
+          "data": [
+            { "departure": { "iata": "SOF", "timezone": "Europe/Sofia", "scheduled": "2026-08-29T06:35:00+00:00" },
+              "arrival":   { "iata": "IST", "timezone": "Europe/Istanbul", "scheduled": "2026-08-29T08:05:00+00:00" },
+              "airline": { "iata": "TK" }, "flight": { "iata": "TK1028", "codeshared": null } },
+            { "departure": { "iata": "SOF", "timezone": "Europe/Sofia", "scheduled": "2026-08-29T06:35:00+00:00" },
+              "arrival":   { "iata": "IST", "timezone": "Europe/Istanbul", "scheduled": "2026-08-29T08:05:00+00:00" },
+              "airline": { "iata": "PC" }, "flight": { "iata": "PC1234", "codeshared": null } }
+          ]
+        }
+        """;
+        var handler = new StubHttpMessageHandler(body);
+
+        var results = await Provider(handler).SearchAsync(Route("SOF", "IST", new DateOnly(2026, 8, 29)));
+
+        Assert.Equal(2, results.Count);
     }
 
     [Fact]

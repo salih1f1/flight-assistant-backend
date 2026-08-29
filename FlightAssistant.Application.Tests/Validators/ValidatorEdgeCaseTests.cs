@@ -365,6 +365,22 @@ public class ValidatorEdgeCaseTests
     }
 
     [Fact]
+    public void SearchFlights_FutureDateWithinProviderHorizon_Passes()
+    {
+        var v = new SearchFlightsQueryValidator();
+        AssertValid(v, new SearchFlightsQuery("LHR", "JFK", DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(6))));
+    }
+
+    [Fact]
+    public void SearchFlights_DateBeyondProviderHorizon_Fails()
+    {
+        // The schedules endpoint refuses dates past a rolling ~1-year horizon; rejecting here
+        // turns what would be an upstream 502 into a clear 400.
+        var v = new SearchFlightsQueryValidator();
+        AssertInvalid(v, new SearchFlightsQuery("LHR", "JFK", DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(13))));
+    }
+
+    [Fact]
     public void SearchFlights_NoRouteAndNoFlightNumber_Fails()
     {
         var v = new SearchFlightsQueryValidator();
