@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CsvHelper;
 using FlightAssistant.Domain.Common.Exceptions;
 using Microsoft.AspNetCore.Diagnostics;
@@ -8,8 +9,13 @@ namespace FlightAssistant.API.Middleware
     public class GlobalExceptionHandler : IExceptionHandler
     {
         private readonly ILogger<GlobalExceptionHandler> _log;
+        private readonly IHostEnvironment _env;
 
-        public GlobalExceptionHandler(ILogger<GlobalExceptionHandler> log) => _log = log;
+        public GlobalExceptionHandler(ILogger<GlobalExceptionHandler> log, IHostEnvironment env)
+        {
+            _log = log;
+            _env = env;
+        }
 
         public async ValueTask<bool> TryHandleAsync(
             HttpContext ctx, Exception ex, CancellationToken ct)
@@ -30,8 +36,7 @@ namespace FlightAssistant.API.Middleware
                         Instance = ctx.Request.Path
                     };
 
-                    ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
-                    await ctx.Response.WriteAsJsonAsync(validationProblem, ct);
+                    await WriteAsync(ctx, validationProblem, StatusCodes.Status400BadRequest, ct);
                     return true;
 
                 case DomainException de:
@@ -39,14 +44,18 @@ namespace FlightAssistant.API.Middleware
                     {
                         Status = de.StatusCode,
                         Title = de.Message,
-                        Instance = ctx.Request.Path
+                        Instance = ctx.Request.Path,
+                        // The underlying cause is for operators, not end users: outside Production
+                        // it is surfaced here to make failures diagnosable from the response alone,
+                        // while Production callers get only the title and the trace id.
+                        Detail = _env.IsProduction() ? null : de.DiagnosticDetail
                     };
 
-                    ctx.Response.StatusCode = de.StatusCode;
                     // For upstream throttling (503), hint clients when to retry.
                     if (de.StatusCode == StatusCodes.Status503ServiceUnavailable)
                         ctx.Response.Headers.RetryAfter = "60";
-                    await ctx.Response.WriteAsJsonAsync(domainProblem, ct);
+
+                    await WriteAsync(ctx, domainProblem, de.StatusCode, ct);
                     return true;
 
                 case CsvHelperException csvEx:
@@ -59,8 +68,7 @@ namespace FlightAssistant.API.Middleware
                         Type = "https://tools.ietf.org/html/rfc7807"
                     };
 
-                    ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
-                    await ctx.Response.WriteAsJsonAsync(csvProblem, ct);
+                    await WriteAsync(ctx, csvProblem, StatusCodes.Status400BadRequest, ct);
                     return true;
 
                 default:
@@ -74,10 +82,20 @@ namespace FlightAssistant.API.Middleware
                         Instance = ctx.Request.Path
                     };
 
-                    ctx.Response.StatusCode = StatusCodes.Status500InternalServerError;
-                    await ctx.Response.WriteAsJsonAsync(serverProblem, ct);
+                    await WriteAsync(ctx, serverProblem, StatusCodes.Status500InternalServerError, ct);
                     return true;
             }
+        }
+
+        /// <summary>
+        /// Stamps every problem response with the current trace id so a caller can quote it and an
+        /// operator can find the matching log entry, then writes it at the given status code.
+        /// </summary>
+        private static Task WriteAsync(HttpContext ctx, ProblemDetails problem, int statusCode, CancellationToken ct)
+        {
+            problem.Extensions["traceId"] = Activity.Current?.Id ?? ctx.TraceIdentifier;
+            ctx.Response.StatusCode = statusCode;
+            return ctx.Response.WriteAsJsonAsync(problem, problem.GetType(), options: null, contentType: null, ct);
         }
     }
 }
