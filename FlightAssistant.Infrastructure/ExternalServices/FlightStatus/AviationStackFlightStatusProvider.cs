@@ -1,40 +1,57 @@
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Infrastructure.ExternalServices.AviationStack;
 using Microsoft.Extensions.Configuration;
-using System.Net.Http.Json;
+using Microsoft.Extensions.Logging;
 using System.Text.Json;
 
 namespace FlightAssistant.Infrastructure.ExternalServices.FlightStatus
 {
-    /// <summary>Calls AviationStack API to get live flight status (used as fallback).</summary>
+    /// <summary>
+    /// Calls AviationStack API to get live flight status.
+    ///
+    /// Upstream failures are classified by <see cref="AviationStackResponse"/> (shared with the
+    /// flight search provider) and thrown, so a provider outage is never silently mistaken for
+    /// "no status available". A successful response with an empty <c>data</c> array does return
+    /// <c>null</c> — that genuinely means no status has been published yet.
+    /// </summary>
     public sealed class AviationStackFlightStatusProvider : IFlightStatusProvider
     {
+        private const string Operation = "Flight status";
+
         private readonly HttpClient _http;
+        private readonly ILogger<AviationStackFlightStatusProvider> _logger;
         private readonly string _apiKey;
 
         public string ProviderName => "AviationStack";
 
-        public AviationStackFlightStatusProvider(HttpClient http, IConfiguration config)
+        public AviationStackFlightStatusProvider(
+            HttpClient http,
+            IConfiguration config,
+            ILogger<AviationStackFlightStatusProvider> logger)
         {
             _http = http;
+            _logger = logger;
             _apiKey = config["AviationStack:ApiKey"] ?? string.Empty;
         }
 
         public async Task<FlightStatusResult?> GetStatusAsync(string flightNumber, DateOnly serviceDate, CancellationToken ct = default)
         {
-            var response = await _http.GetAsync(
-                $"flights?access_key={_apiKey}&flight_iata={flightNumber}&flight_date={serviceDate:yyyy-MM-dd}", ct);
+            var url = $"flights?access_key={Uri.EscapeDataString(_apiKey)}" +
+                      $"&flight_iata={Uri.EscapeDataString(flightNumber)}" +
+                      $"&flight_date={serviceDate:yyyy-MM-dd}";
 
-            if (!response.IsSuccessStatusCode) return null;
+            var response = await _http.GetAsync(url, ct);
 
-            var json = await response.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(json);
+            var context = $"{flightNumber} {serviceDate:yyyy-MM-dd}";
+            using var doc = await AviationStackResponse.ReadOrThrowAsync(
+                response, Operation, context, _logger, ct);
 
             if (!doc.RootElement.TryGetProperty("data", out var data)
                 || data.ValueKind != JsonValueKind.Array
                 || data.GetArrayLength() == 0)
                 return null;
 
-            return MapToResult(data[0], json);
+            return MapToResult(data[0], doc.RootElement.GetRawText());
         }
 
         private static FlightStatusResult MapToResult(JsonElement flight, string rawJson)

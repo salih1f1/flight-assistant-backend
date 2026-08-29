@@ -226,4 +226,56 @@ public class AviationStackFlightSearchProviderTests
         Assert.Equal(new DateTime(2025, 6, 15, 10, 30, 0, DateTimeKind.Utc), flight.ScheduledDepartureUtc);
         Assert.Equal(DateTimeKind.Utc, flight.ScheduledDepartureUtc.Kind);
     }
+
+    [Fact]
+    public async Task SearchAsync_CarriesUpstreamCauseInDiagnosticDetail()
+    {
+        // The exact failure that motivated this: a plan restriction returned as HTTP 403.
+        var handler = new StubHttpMessageHandler(
+            """{ "error": { "code": "function_access_restricted", "message": "Your current subscription plan does not support this API function." } }""",
+            HttpStatusCode.Forbidden);
+
+        var ex = await Assert.ThrowsAsync<DomainException>(
+            () => Provider(handler).SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10))));
+
+        Assert.Equal(500, ex.StatusCode);
+        Assert.NotNull(ex.DiagnosticDetail);
+        Assert.Contains("403", ex.DiagnosticDetail);
+        Assert.Contains("function_access_restricted", ex.DiagnosticDetail);
+        Assert.Contains("does not support this API function", ex.DiagnosticDetail);
+    }
+
+    [Theory]
+    [InlineData("rate_limit_reached", HttpStatusCode.TooManyRequests)]
+    [InlineData("invalid_access_key", HttpStatusCode.Unauthorized)]
+    [InlineData("validation_error", HttpStatusCode.BadRequest)]
+    [InlineData("internal_error", HttpStatusCode.InternalServerError)]
+    public async Task SearchAsync_DiagnosticDetail_NeverLeaksTheApiKey(string code, HttpStatusCode status)
+    {
+        // DiagnosticDetail is rendered into the response body outside Production, so it must never
+        // pick up the request URL, which carries access_key.
+        var handler = new StubHttpMessageHandler($$"""{ "error": { "code": "{{code}}", "message": "boom" } }""", status);
+
+        var ex = await Assert.ThrowsAsync<DomainException>(
+            () => Provider(handler).SearchAsync(Route("LHR", "JFK", new DateOnly(2025, 6, 15))));
+
+        Assert.NotNull(ex.DiagnosticDetail);
+        // "access_key=" is the query-parameter form: its presence would mean the request URL
+        // leaked in. The bare token also appears inside the legitimate error code
+        // "invalid_access_key", so matching on it alone would be a false positive.
+        Assert.DoesNotContain("access_key=", ex.DiagnosticDetail);
+        Assert.DoesNotContain("dummy", ex.DiagnosticDetail);
+    }
+
+    [Fact]
+    public async Task SearchAsync_UnparseableBody_Throws502_WithDiagnosticDetail()
+    {
+        var handler = new StubHttpMessageHandler("<html>gateway timeout</html>", HttpStatusCode.GatewayTimeout);
+
+        var ex = await Assert.ThrowsAsync<DomainException>(
+            () => Provider(handler).SearchAsync(Route("LHR", "JFK", new DateOnly(2025, 6, 15))));
+
+        Assert.Equal(502, ex.StatusCode);
+        Assert.Contains("504", ex.DiagnosticDetail);
+    }
 }

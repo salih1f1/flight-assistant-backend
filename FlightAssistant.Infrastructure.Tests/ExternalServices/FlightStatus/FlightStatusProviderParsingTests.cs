@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using FlightAssistant.Infrastructure.ExternalServices.FlightStatus;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FlightAssistant.Infrastructure.Tests.ExternalServices.FlightStatus;
 
@@ -55,7 +56,8 @@ public class FlightStatusProviderParsingTests
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["AviationStack:ApiKey"] = "dummy" })
             .Build();
-        var provider = new AviationStackFlightStatusProvider(StubClient(body), config);
+        var provider = new AviationStackFlightStatusProvider(
+            StubClient(body), config, NullLogger<AviationStackFlightStatusProvider>.Instance);
 
         var result = await provider.GetStatusAsync("BA123", new DateOnly(2025, 6, 15));
 
