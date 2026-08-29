@@ -1,0 +1,196 @@
+# Flight Search Across the Full Date Range
+
+**Date:** 2026-08-29
+**Status:** Approved
+
+## Problem
+
+`GET /flights/search` returns an empty list for every future date. Its purpose is to populate
+the "add flight" picker before `POST /flights`, so searching for a flight you intend to take —
+the primary use case — silently returns nothing.
+
+Cause: the provider calls AviationStack `/v1/flights`, which serves **past and present only**.
+Verified against a live key for SOF→IST:
+
+| `flight_date` | Result |
+|---|---|
+| 2026-02-20 (6 months back) | 9 flights |
+| 2026-08-20 (9 days back) | 9 flights |
+| 2026-08-29 (today) | 9 flights |
+| 2026-08-30 (tomorrow) | **0** |
+| 2026-10-10 | **0** |
+
+The cutoff sits exactly between today and tomorrow. AviationStack does not document this as a
+limitation; it is inferable only from the endpoint's name, the FAQ's description of a backward
+"3 month sliding window", and the existence of a separate future endpoint. The empty result is
+indistinguishable from "no flights on this route", which is why it went unnoticed.
+
+Note the FAQ's 3-month historical claim understates reality — 6 months back returns data — so
+the existing "not more than 1 year in the past" validation rule stays as-is.
+
+## Goals
+
+- `/flights/search` returns correct results for any date the provider can serve, past or future.
+- Results are deduplicated to one entry per physical departure, consistently across both ranges.
+- Out-of-range dates are rejected with a 400, not an upstream error or a misleading empty list.
+
+## Non-goals
+
+- Live status, gates, or terminals in search results. Those are not in the search contract today
+  and belong to the status-sync flow.
+- Replacing AviationStack.
+
+## Key findings
+
+`/v1/flightsFuture` is the documented future-schedules endpoint and works on the current plan.
+Behaviour established by probing, since the vendor's rendered docs are not machine-readable:
+
+| Property | Value |
+|---|---|
+| Required params | `iataCode`, `type` (`departure`\|`arrival`), `date` |
+| Forward limit | `date must be before 2027-08-15` — ~11.5 months out, rolling |
+| Route filtering | **Not supported.** `arr_iata` / `arr_iataCode` silently ignored |
+| Flight-number filtering | **Not supported.** `flight_iata` silently ignored |
+| Airline filtering | Supported — `airline_iata` narrowed 106 → 3 |
+| Airport required | Yes. Omitting `iataCode` returns `validation_error` |
+| Times | Airport-local, no offset: `"2026-10-10 09:35:00"` |
+| Casing | All values lowercase (`"sof"`, `"tk1028"`) |
+| Codeshare marker | **None** |
+| Error shapes | Two: `{"error":{"code":...}}` (HTTP 400) and `{"error":"...text..."}` (HTTP 500) |
+
+### Codeshares
+
+`/v1/flights` marks them exactly — `flight.codeshared` names the operating flight, and
+`codeshared == null` identifies the operating row:
+
+```
+TK1028  codeshared = null
+6E4120  codeshared = { flight_iata: "tk1028" }
+MS9668  codeshared = { flight_iata: "tk1028" }
+```
+
+`/v1/flightsFuture` carries no equivalent. The 6E4120 and TK1028 records for 2026-10-10 are
+identical apart from their `airline` and `flight` blocks — same gate, terminal, aircraft, and
+times. **The operating carrier cannot be determined from future data.** The design admits this
+rather than guessing.
+
+Nine SOF→IST rows on 2026-10-10 are three physical departures.
+
+## Design
+
+### Contract
+
+One endpoint, one DTO, one entry per physical departure:
+
+```csharp
+FlightSearchResultDto(
+    string[] FlightNumbers,          // every number on this departure, uppercase, sorted
+    string?  OperatingFlightNumber,  // known for past/today; null for future
+    string?  AirlineIata,            // operating airline when known
+    string   DepartureIata,
+    string   ArrivalIata,
+    DateOnly ServiceDate,
+    DateTime ScheduledDepartureUtc,
+    DateTime ScheduledArrivalUtc,
+    string?  EquipmentIcao)
+```
+
+`OperatingFlightNumber` is nullable by design: it reports what the provider disclosed instead of
+inventing a winner among codeshares. `FlightNumbers` always contains the traveler's number,
+whichever carrier issued their ticket.
+
+**This is a breaking change** for consumers of `/flights/search`. `FlightNumber` (singular) and
+the non-nullable `AirlineIata` are gone.
+
+The internal `FlightSearchResult` record (`Application/Interfaces/ExternalServices`) changes to
+match, since it is the shape every provider produces and the endpoint maps straight from it.
+
+The endpoint keeps its name and route. The two upstream endpoints are a provider implementation
+detail; every field above is obtainable from both.
+
+### Providers
+
+```
+IFlightSearchProvider
+└── DateRoutingFlightSearchProvider
+    ├── AviationStackLiveSearchProvider      → /v1/flights
+    └── AviationStackScheduleSearchProvider  → /v1/flightsFuture
+        └── AviationStackRouteResolver       → /v1/routes
+```
+
+Grouping lives inside each leaf provider, because only it knows how to group its own payload:
+
+- **Live**: group by `flight.codeshared?.flight_iata ?? flight.iata`. Exact.
+  `OperatingFlightNumber` = the row with `codeshared == null`.
+- **Schedule**: group by `(DepartureIata, ArrivalIata, ScheduledDepartureUtc, ScheduledArrivalUtc)`
+  after UTC conversion. `OperatingFlightNumber` = `null`.
+
+`DateRoutingFlightSearchProvider` picks by `criteria.Date <= DateOnly.FromDateTime(DateTime.UtcNow)`
+→ live, else schedule. UTC-today is the boundary; a late-evening departure whose local date
+differs from the UTC date may be served by either provider, both of which return correct data
+for it.
+
+### Timezone conversion
+
+`flightsFuture` returns airport-local times with no offset. Convert using `Airport.Timezone`
+(IANA, already in reference data), resolved for the **departure** airport for departure times and
+the **arrival** airport for arrival times — a flight crossing a timezone has different zones at
+each end.
+
+Fallback chain when an airport has no timezone recorded:
+1. `Airport.Timezone` from reference data.
+2. The `timezone` field in the `/v1/routes` response, when that call was already made.
+3. Otherwise **exclude the result and log a warning.** Emitting a time that is silently hours
+   wrong is worse than omitting the flight.
+
+### Flight-number-only search on future dates
+
+`flightsFuture` requires an airport, so `?date=<future>&flightNumber=TK1028` cannot be served
+directly. `AviationStackRouteResolver` calls `/v1/routes?airline_iata=TK&flight_number=1028` to
+resolve the departure airport, then queries `flightsFuture` for it.
+
+`/v1/routes` returns a coarser schedule than `flightsFuture` (10:00 vs the actual 09:35), so it
+is used **only** to resolve the airport — never for times.
+
+When the route cannot be resolved, return an empty list. The flight genuinely isn't findable.
+
+### Validation
+
+`SearchFlightsQueryValidator` gains a forward bound rejecting dates more than 11 months ahead,
+with a message naming the limit. Configurable via `AviationStack:MaxFutureSearchMonths`
+(default 11) since the upstream limit is a rolling window.
+
+The existing 1-year backward rule is unchanged.
+
+### Error handling
+
+`AviationStackResponse.ReadOrThrowAsync` (from #273) currently matches only object-shaped
+`error` bodies. `flightsFuture` also returns string-shaped ones under HTTP 500, e.g.
+`{"error":"date must be before 2027-08-15"}`. Extend the helper to handle a string `error`,
+mapping it to 502 with the text carried in `DiagnosticDetail`. Without this the most useful
+diagnostic sentence is discarded.
+
+## Testing
+
+| Area | Test |
+|---|---|
+| Routing | Past/today date → live provider; future date → schedule provider; boundary at UTC today |
+| Live grouping | 9 canned rows with `codeshared` → 3 results; `OperatingFlightNumber` = the `codeshared == null` row |
+| Live grouping | Flight-number search for a codeshare (`6E4120`) still returns its group |
+| Schedule grouping | 9 canned `flightsFuture` rows → 3 results, `OperatingFlightNumber` null, all 9 numbers present across groups |
+| Schedule mapping | Lowercase values uppercased; `aircraft.modelCode` → `EquipmentIcao` |
+| Timezone | `"2026-10-10 09:35:00"` at SOF (Europe/Sofia, UTC+3 in October) → `06:35Z`; arrival converted using the arrival airport's zone |
+| Timezone | Airport with no timezone → result excluded, warning logged |
+| Route resolver | Future + flightNumber-only resolves the departure airport; unresolvable → empty list |
+| Validation | Date beyond the forward bound → 400 naming the limit |
+| Error handling | String-shaped `error` body → 502 with the text in `DiagnosticDetail` |
+
+## Risks
+
+- **Timezone conversion is the highest-risk element.** An error makes every future flight wrong
+  by hours while looking plausible. It gets dedicated tests including a DST boundary.
+- **Breaking DTO change** requires a coordinated iOS release.
+- **Extra upstream call** for future flight-number searches (routes, then flightsFuture),
+  against a rate-limited plan.
+- **The forward limit is a rolling window**, so a hardcoded bound drifts. Configurable, and the
+  upstream error is surfaced rather than swallowed if it is exceeded.
