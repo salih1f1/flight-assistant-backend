@@ -126,9 +126,18 @@ Grouping lives inside each leaf provider, because only it knows how to group its
   after UTC conversion. `OperatingFlightNumber` = `null`.
 
 `DateRoutingFlightSearchProvider` picks by `criteria.Date <= DateOnly.FromDateTime(DateTime.UtcNow)`
-→ live, else schedule. UTC-today is the boundary; a late-evening departure whose local date
-differs from the UTC date may be served by either provider, both of which return correct data
-for it.
+→ live, else schedule.
+
+**Known gap.** The two endpoints do not meet. `/v1/flights` stops at today, while
+`/v1/flightsFuture` refuses roughly the next three days (observed: 2026-08-31 through 09-02
+rejected, 09-03 accepted — and its error text, "date must be above 2026-09-05", is itself wrong).
+Dates in between currently surface an upstream 502. For a user east of UTC this also affects
+*their* today during the hours when UTC is still on the previous date: searching "today" locally
+routes to the schedules endpoint and lands in the gap.
+
+An earlier draft of this spec called that boundary ambiguity harmless on the grounds that both
+providers return correct data near it. That was wrong — the schedules endpoint returns nothing
+there. Tracked separately rather than fixed here.
 
 ### Timezone conversion
 
