@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text;
 using FlightAssistant.Application.Interfaces.ExternalServices;
-using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Infrastructure.ExternalServices.AviationStack;
 using FlightAssistant.Infrastructure.ExternalServices.FlightSearch;
 using Microsoft.Extensions.Configuration;
@@ -45,12 +45,11 @@ public class DateRoutingFlightSearchProviderTests
 
         var timezones = new AviationStackAirportTimezoneLookup(
             new HttpClient(new RecordingHandler("""{ "data": [] }""")) { BaseAddress = new Uri("http://stub/") },
-            config, NullLogger<AviationStackAirportTimezoneLookup>.Instance);
+            Substitute.For<ICacheService>(), config, NullLogger<AviationStackAirportTimezoneLookup>.Instance);
 
         var live = new AviationStackLiveSearchProvider(
             new HttpClient(liveHandler) { BaseAddress = new Uri("http://stub/") },
-            Substitute.For<IRefDataRepository>(), timezones,
-            config, NullLogger<AviationStackLiveSearchProvider>.Instance);
+            timezones, config, NullLogger<AviationStackLiveSearchProvider>.Instance);
 
         var resolver = new AviationStackRouteResolver(
             new HttpClient(new RecordingHandler("""{ "data": [] }""")) { BaseAddress = new Uri("http://stub/") },
@@ -58,7 +57,7 @@ public class DateRoutingFlightSearchProviderTests
 
         var schedule = new AviationStackScheduleSearchProvider(
             new HttpClient(scheduleHandler) { BaseAddress = new Uri("http://stub/") },
-            resolver, Substitute.For<IRefDataRepository>(), timezones, config,
+            resolver, timezones, config,
             NullLogger<AviationStackScheduleSearchProvider>.Instance);
 
         var provider = new DateRoutingFlightSearchProvider(

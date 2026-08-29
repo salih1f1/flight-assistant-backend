@@ -4,7 +4,7 @@ using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Infrastructure.ExternalServices.AviationStack;
 using FlightAssistant.Infrastructure.ExternalServices.FlightSearch;
-using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Interfaces.Caching;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -41,43 +41,35 @@ public class AviationStackLiveSearchProviderTests
     }
 
     private static AviationStackLiveSearchProvider Provider(
-        StubHttpMessageHandler handler, IRefDataRepository? refData = null)
+        StubHttpMessageHandler handler, AviationStackAirportTimezoneLookup? timezones = null)
     {
         var http = new HttpClient(handler) { BaseAddress = new Uri("http://stub/") };
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["AviationStack:ApiKey"] = "dummy" })
             .Build();
         return new AviationStackLiveSearchProvider(
-            http, refData ?? NoRefData(), TimezoneLookup(), config,
+            http, timezones ?? TimezoneLookup(), config,
             NullLogger<AviationStackLiveSearchProvider>.Instance);
     }
 
     /// <summary>
-    /// A provider timezone lookup wired to a stub that returns nothing, so tests exercise the
-    /// reference-data path only. Pass a real body to exercise the provider fallback.
+    /// A provider timezone lookup over a stub. The cache is a pass-through substitute, so each
+    /// test controls resolution purely through the canned response body.
     /// </summary>
     private static AviationStackAirportTimezoneLookup TimezoneLookup(string body = """{ "data": [] }""")
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["AviationStack:ApiKey"] = "dummy" })
             .Build();
+        var cache = Substitute.For<ICacheService>();
+        cache.GetAsync<string>(Arg.Any<string>(), Arg.Any<CancellationToken>())
+             .Returns(Task.FromResult<string?>(null));
         return new AviationStackAirportTimezoneLookup(
             new HttpClient(new StubHttpMessageHandler(body)) { BaseAddress = new Uri("http://stub/") },
-            config, NullLogger<AviationStackAirportTimezoneLookup>.Instance);
+            cache, config, NullLogger<AviationStackAirportTimezoneLookup>.Instance);
     }
 
 
-    /// <summary>
-    /// Reference data that knows no airport, so tests rely on the timezone the payload itself
-    /// carries — which is what the real API supplies on this endpoint.
-    /// </summary>
-    private static IRefDataRepository NoRefData()
-    {
-        var repo = Substitute.For<IRefDataRepository>();
-        repo.GetAirportTimezoneByIataAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<string?>(null));
-        return repo;
-    }
 
     private static FlightSearchCriteria Route(string from, string to, DateOnly date) => new(from, to, date, null);
 

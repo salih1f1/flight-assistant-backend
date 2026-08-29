@@ -154,19 +154,24 @@ always been wrong by the departure airport's UTC offset**. Left unfixed, the two
 disagree about the same flight either side of today, so the conversion is shared:
 `AirportTimeZoneResolver` handles both.
 
-Zone resolution, in order:
-1. The `timezone` the response supplies per airport (the real-time endpoint provides it; the
-   schedules endpoint does not).
-2. `Airport.Timezone` from our reference data.
-3. AviationStack's own `/v1/airports` lookup, cached per search.
-4. Otherwise exclude that row. Emitting a time that is silently hours wrong is worse than
-   omitting the flight — **but if every matching row is dropped this way, throw a 500 naming the
-   airports** rather than returning an empty list.
+Zone resolution comes **entirely from the provider**, never from our own reference data:
+1. The `timezone` the response supplies per airport (the real-time endpoint provides it).
+2. AviationStack's `/v1/airports` lookup, for the schedules endpoint, which supplies none.
+   Cached for 30 days through `ICacheService`, so this costs at most one call per airport per
+   cache window on a rate-limited plan.
+3. Otherwise exclude that row — a time silently hours wrong is worse than an absent flight —
+   **and if every matching row is dropped this way, throw a 500 naming the airports** rather
+   than returning an empty list.
 
-Step 3 and the throw in step 4 were added after the first implementation shipped an empty result
-for a route with a fully populated timetable: reference data had no timezones, so all 106 rows
-were discarded silently. That is the exact failure mode this issue exists to eliminate, and
-relying on `Airport.Timezone` being populated was the wrong assumption.
+Each candidate must survive `TimeZoneInfo.FindSystemTimeZoneById` before it is accepted. A
+present-but-invalid value is worse than a missing one, because it looks authoritative.
+
+`Airport.Timezone` is deliberately **not** consulted, though the column exists. It is imported by
+hand, so it can be absent, stale, or hold the wrong thing outright — OpenFlights ships a numeric
+GMT offset column beside the IANA one. Two successive defects came from trusting it: first an
+empty result for a fully populated timetable when the column was blank, then a hard failure when
+a present-but-invalid value shadowed the fallback. The timestamps being converted come from
+AviationStack, so the zone that interprets them comes from AviationStack too.
 
 Departure and arrival are converted using their own zones, since a flight crossing zones has a
 different one at each end. Times falling in a DST spring-forward gap are nudged forward by an

@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text;
 using FlightAssistant.Application.Interfaces.ExternalServices;
-using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Infrastructure.ExternalServices.AviationStack;
 using FlightAssistant.Infrastructure.ExternalServices.FlightSearch;
 using Microsoft.Extensions.Configuration;
@@ -66,7 +66,6 @@ public class AviationStackScheduleSearchProviderTests
 
     private static AviationStackScheduleSearchProvider Provider(
         StubHttpMessageHandler handler,
-        IRefDataRepository? refData = null,
         AviationStackRouteResolver? resolver = null,
         AviationStackAirportTimezoneLookup? timezones = null)
     {
@@ -75,44 +74,59 @@ public class AviationStackScheduleSearchProviderTests
             .AddInMemoryCollection(new Dictionary<string, string?> { ["AviationStack:ApiKey"] = "dummy" })
             .Build();
 
-        refData ??= RefDataWith(("SOF", "Europe/Sofia"), ("IST", "Europe/Istanbul"), ("CDG", "Europe/Paris"));
         resolver ??= new AviationStackRouteResolver(
             new HttpClient(new StubHttpMessageHandler("""{ "data": [] }""")) { BaseAddress = new Uri("http://stub/") },
             config,
             NullLogger<AviationStackRouteResolver>.Instance);
 
         return new AviationStackScheduleSearchProvider(
-            http, resolver, refData, timezones ?? TimezoneLookup(), config,
+            http, resolver, timezones ?? AllZones(), config,
             NullLogger<AviationStackScheduleSearchProvider>.Instance);
     }
 
     /// <summary>
-    /// A provider timezone lookup wired to a stub that returns nothing, so tests exercise the
-    /// reference-data path only. Pass a real body to exercise the provider fallback.
+    /// Answers /v1/airports per requested IATA code, so each airport can resolve differently — a
+    /// null entry stands for "the provider knows no timezone for this one".
     /// </summary>
-    private static AviationStackAirportTimezoneLookup TimezoneLookup(string body = """{ "data": [] }""")
+    private sealed class TimezoneStub(Dictionary<string, string?> zones) : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Calls++;
+            var query = System.Web.HttpUtility.ParseQueryString(request.RequestUri!.Query);
+            var iata = query["iata_code"] ?? "";
+            var body = zones.TryGetValue(iata, out var tz) && tz is not null
+                ? $$"""{ "data": [ { "iata_code": "{{iata}}", "timezone": "{{tz}}" } ] }"""
+                : """{ "data": [] }""";
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
+    private static AviationStackAirportTimezoneLookup TimezoneLookup(TimezoneStub stub)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["AviationStack:ApiKey"] = "dummy" })
             .Build();
+        var cache = Substitute.For<ICacheService>();
+        cache.GetAsync<string>(Arg.Any<string>(), Arg.Any<CancellationToken>())
+             .Returns(Task.FromResult<string?>(null));
         return new AviationStackAirportTimezoneLookup(
-            new HttpClient(new StubHttpMessageHandler(body)) { BaseAddress = new Uri("http://stub/") },
-            config, NullLogger<AviationStackAirportTimezoneLookup>.Instance);
+            new HttpClient(stub) { BaseAddress = new Uri("http://stub/") },
+            cache, config, NullLogger<AviationStackAirportTimezoneLookup>.Instance);
     }
 
+    private static AviationStackAirportTimezoneLookup ZonesFor(params (string Iata, string? Tz)[] zones) =>
+        TimezoneLookup(new TimezoneStub(zones.ToDictionary(z => z.Iata, z => z.Tz)));
 
-    private static IRefDataRepository RefDataWith(params (string Iata, string? Tz)[] airports)
-    {
-        var repo = Substitute.For<IRefDataRepository>();
-        repo.GetAirportTimezoneByIataAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(call =>
-            {
-                var iata = call.Arg<string>();
-                var match = airports.FirstOrDefault(a => a.Iata.Equals(iata, StringComparison.OrdinalIgnoreCase));
-                return Task.FromResult(match.Iata is null ? null : match.Tz);
-            });
-        return repo;
-    }
+    /// <summary>The real zones for every airport these fixtures mention.</summary>
+    private static AviationStackAirportTimezoneLookup AllZones() =>
+        ZonesFor(("SOF", "Europe/Sofia"), ("IST", "Europe/Istanbul"), ("CDG", "Europe/Paris"));
 
     private static FlightSearchCriteria Route(string from, string to, DateOnly date) => new(from, to, date, null);
 
@@ -228,18 +242,30 @@ public class AviationStackScheduleSearchProviderTests
     }
 
     [Fact]
-    public async Task SearchAsync_FallsBackToTheProvidersOwnTimezoneData()
+    public async Task SearchAsync_ResolvesZonesFromTheProvider_NotLocalReferenceData()
     {
-        // Reference data knows nothing about these airports. Rather than discarding every flight —
-        // the defect that made a populated timetable look like an empty route — ask AviationStack.
+        // The schedules payload carries no timezone, so every zone here came from /v1/airports.
         var handler = new StubHttpMessageHandler(SofBody);
-        var lookup = TimezoneLookup("""{ "data": [ { "iata_code": "SOF", "timezone": "Europe/Sofia" } ] }""");
 
-        var results = await Provider(handler, RefDataWith(), timezones: lookup)
-            .SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10)));
+        var results = await Provider(handler).SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10)));
 
         Assert.Equal(2, results.Count);
         Assert.Equal(new DateTime(2026, 10, 10, 6, 35, 0, DateTimeKind.Utc), results[0].ScheduledDepartureUtc);
+    }
+
+    [Fact]
+    public async Task SearchAsync_LooksUpEachAirportOnce_HoweverManyRowsMentionIt()
+    {
+        // Five rows over three airports must not cost five lookups on a rate-limited plan.
+        var stub = new TimezoneStub(new Dictionary<string, string?>
+        {
+            ["SOF"] = "Europe/Sofia", ["IST"] = "Europe/Istanbul", ["CDG"] = "Europe/Paris"
+        });
+
+        await Provider(new StubHttpMessageHandler(SofBody), timezones: TimezoneLookup(stub))
+            .SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10)));
+
+        Assert.Equal(2, stub.Calls); // SOF and IST only; the CDG row is filtered out before conversion
     }
 
     [Fact]
@@ -247,47 +273,32 @@ public class AviationStackScheduleSearchProviderTests
     {
         // Silently returning [] here is indistinguishable from "this route has no flights", which
         // is precisely how the original bug hid. It must be loud, and name the airport.
-        var refData = RefDataWith(("SOF", "Europe/Sofia"), ("IST", null));
         var handler = new StubHttpMessageHandler(SofBody);
+        var lookup = ZonesFor(("SOF", "Europe/Sofia"), ("IST", null));
 
         var ex = await Assert.ThrowsAsync<FlightAssistant.Domain.Common.Exceptions.DomainException>(
-            () => Provider(handler, refData).SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10))));
+            () => Provider(handler, timezones: lookup).SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10))));
 
         Assert.Equal(500, ex.StatusCode);
         Assert.Contains("IST", ex.DiagnosticDetail);
         Assert.DoesNotContain("IST", ex.Message); // the client-facing text stays generic
     }
 
-    [Fact]
-    public async Task SearchAsync_Throws_WhenTimezoneIsUnusableAndNoFallbackHelps()
-    {
-        var refData = RefDataWith(("SOF", "Europe/Sofia"), ("IST", "Not/AZone"));
-        var handler = new StubHttpMessageHandler(SofBody);
-
-        var ex = await Assert.ThrowsAsync<FlightAssistant.Domain.Common.Exceptions.DomainException>(
-            () => Provider(handler, refData).SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10))));
-
-        Assert.Equal(500, ex.StatusCode);
-    }
-
     [Theory]
-    [InlineData("2")]            // OpenFlights ships a numeric GMT offset beside the IANA column
+    [InlineData("2")]            // a numeric GMT offset, not an IANA id
     [InlineData("+02:00")]
     [InlineData("Not/AZone")]
-    [InlineData("   ")]
-    public async Task SearchAsync_FallsThroughWhenReferenceDataHoldsAnUnusableTimezone(string stored)
+    public async Task SearchAsync_Throws_WhenTheZoneIsPresentButUnusable(string unusable)
     {
-        // A present-but-invalid value must not block the remaining sources. Accepting the first
-        // merely non-empty candidate is what made a populated timetable fail outright.
-        var refData = RefDataWith(("SOF", stored), ("IST", stored));
+        // A present-but-invalid value must never be accepted as authoritative — it would place
+        // every flight at the wrong instant while looking correct.
         var handler = new StubHttpMessageHandler(SofBody);
-        var lookup = TimezoneLookup("""{ "data": [ { "iata_code": "X", "timezone": "Europe/Sofia" } ] }""");
+        var lookup = ZonesFor(("SOF", "Europe/Sofia"), ("IST", unusable));
 
-        var results = await Provider(handler, refData, timezones: lookup)
-            .SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10)));
+        var ex = await Assert.ThrowsAsync<FlightAssistant.Domain.Common.Exceptions.DomainException>(
+            () => Provider(handler, timezones: lookup).SearchAsync(Route("SOF", "IST", new DateOnly(2026, 10, 10))));
 
-        Assert.Equal(2, results.Count);
-        Assert.Equal(new DateTime(2026, 10, 10, 6, 35, 0, DateTimeKind.Utc), results[0].ScheduledDepartureUtc);
+        Assert.Equal(500, ex.StatusCode);
     }
 
     [Fact]

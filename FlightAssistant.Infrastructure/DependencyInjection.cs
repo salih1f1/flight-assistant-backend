@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Infrastructure.ExternalServices.AviationStack;
@@ -87,12 +88,12 @@ namespace FlightAssistant.Infrastructure
 
             services.AddScoped(sp => new AviationStackAirportTimezoneLookup(
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackAirportTimezoneLookup)),
+                sp.GetRequiredService<ICacheService>(),
                 sp.GetRequiredService<IConfiguration>(),
                 sp.GetRequiredService<ILogger<AviationStackAirportTimezoneLookup>>()));
 
             services.AddScoped(sp => new AviationStackLiveSearchProvider(
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackLiveSearchProvider)),
-                sp.GetRequiredService<IRefDataRepository>(),
                 sp.GetRequiredService<AviationStackAirportTimezoneLookup>(),
                 sp.GetRequiredService<IConfiguration>(),
                 sp.GetRequiredService<ILogger<AviationStackLiveSearchProvider>>()));
@@ -100,7 +101,6 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped(sp => new AviationStackScheduleSearchProvider(
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackScheduleSearchProvider)),
                 sp.GetRequiredService<AviationStackRouteResolver>(),
-                sp.GetRequiredService<IRefDataRepository>(),
                 sp.GetRequiredService<AviationStackAirportTimezoneLookup>(),
                 sp.GetRequiredService<IConfiguration>(),
                 sp.GetRequiredService<ILogger<AviationStackScheduleSearchProvider>>()));

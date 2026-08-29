@@ -1,4 +1,3 @@
-using FlightAssistant.Application.Interfaces.Repositories;
 using Microsoft.Extensions.Logging;
 
 namespace FlightAssistant.Infrastructure.ExternalServices.AviationStack
@@ -11,11 +10,14 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AviationStack
     /// gives <c>"2026-08-29T20:05:00+00:00"</c> — where the <c>+00:00</c> is decoration, not an
     /// offset. Reading the latter as UTC turns a 7h45m LHR→JFK flight into a 2h45m one.
     ///
-    /// Zones are resolved in order: the <c>timezone</c> the response itself supplies (the
-    /// real-time endpoint provides one per airport), then our own airport reference data, then
-    /// AviationStack's airport lookup. That last step exists because <c>Airport.Timezone</c> is
-    /// not guaranteed to be populated, and without it every schedules row would be discarded —
-    /// turning a reference-data gap into an empty search result.
+    /// Zones come from the provider, never from our own reference data: first the <c>timezone</c>
+    /// the response itself supplies (the real-time endpoint gives one per airport), then
+    /// AviationStack's airport lookup for the schedules endpoint, which supplies none.
+    ///
+    /// <c>Airport.Timezone</c> is deliberately not consulted. It is imported by hand, so it can be
+    /// absent, stale, or hold the wrong thing outright — and a present-but-invalid value is worse
+    /// than a missing one, because it looks authoritative. The timestamps being converted come
+    /// from AviationStack, so the zone that interprets them comes from AviationStack too.
     ///
     /// When no source yields a usable zone the row is dropped rather than reported at a wrong
     /// time, and <see cref="UnresolvedAirports"/> records why so the caller can tell "no flights"
@@ -25,7 +27,6 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AviationStack
     /// rows mention it.
     /// </summary>
     internal sealed class AirportTimeZoneResolver(
-        IRefDataRepository refData,
         AviationStackAirportTimezoneLookup? providerLookup,
         ILogger logger)
     {
@@ -65,31 +66,19 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AviationStack
         }
 
         /// <summary>
-        /// Tries each source in turn and accepts the first that yields a *usable* zone.
-        ///
-        /// Each candidate must survive <see cref="TimeZoneInfo.FindSystemTimeZoneById"/> before the
-        /// chain stops. Accepting the first merely non-empty value instead would let a present but
-        /// invalid entry block the remaining sources — which is exactly what a numeric GMT offset
-        /// ("2") in <c>Airport.Timezone</c> does, and OpenFlights ships that column right beside
-        /// the IANA one.
+        /// Takes the zone from the response when it carries one, otherwise asks the provider's
+        /// airport lookup. Each candidate must survive
+        /// <see cref="TimeZoneInfo.FindSystemTimeZoneById"/> before it is accepted, so a malformed
+        /// value falls through rather than blocking the next source.
         /// </summary>
         private async Task<TimeZoneInfo?> ResolveAsync(string iata, string? timezoneFromPayload, CancellationToken ct)
         {
             if (_cache.TryGetValue(iata, out var cached)) return cached;
 
-            TimeZoneInfo? zone =
-                TryZone(timezoneFromPayload, iata, "the provider response")
-                ?? TryZone(await refData.GetAirportTimezoneByIataAsync(iata, ct), iata, "reference data");
+            var zone = TryZone(timezoneFromPayload, iata, "the provider response");
 
             if (zone is null && providerLookup is not null)
-            {
                 zone = TryZone(await providerLookup.TryGetTimezoneAsync(iata, ct), iata, "the provider's airport lookup");
-                if (zone is not null)
-                    logger.LogInformation(
-                        "Airport {Iata}: usable timezone came from the provider's airport lookup ({Timezone}). "
-                        + "Backfilling Airport.Timezone with IANA ids would avoid this extra call.",
-                        iata, zone.Id);
-            }
 
             if (zone is null)
             {

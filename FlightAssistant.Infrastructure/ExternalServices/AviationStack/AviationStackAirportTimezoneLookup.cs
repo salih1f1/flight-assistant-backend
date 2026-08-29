@@ -1,39 +1,70 @@
 using System.Text.Json;
+using FlightAssistant.Application.Interfaces.Caching;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace FlightAssistant.Infrastructure.ExternalServices.AviationStack
 {
     /// <summary>
-    /// Last-resort source for an airport's IANA timezone, from AviationStack's own airport lookup.
+    /// Resolves an airport's IANA timezone from AviationStack's airport lookup.
     ///
     /// Endpoint: GET /v1/airports?access_key={key}&amp;iata_code={iata}
     ///
-    /// Our reference data carries a <c>Timezone</c> per airport, but it is not guaranteed to be
-    /// populated — and when it is missing, timetable rows cannot be converted to UTC and would
-    /// otherwise be dropped. Asking the provider keeps search working regardless of the state of
-    /// our own reference data.
+    /// This is the authority for interpreting AviationStack timestamps, deliberately in preference
+    /// to our own <c>Airport.Timezone</c> reference data: that column is imported by hand, so it
+    /// can be absent, stale, or hold the wrong thing entirely — OpenFlights ships a numeric GMT
+    /// offset column right beside the IANA one, and importing that yields a value that is present
+    /// but useless. The times being converted come from AviationStack, so the zone that interprets
+    /// them should too.
     ///
-    /// Failures here are never fatal: this is a fallback, so an unreachable or unhelpful response
-    /// returns null and lets the caller decide.
+    /// Results are cached (airport timezones effectively never change) so this costs at most one
+    /// call per airport per cache window, which matters on a rate-limited plan.
+    ///
+    /// Failures are never fatal: this returns null and lets the caller decide.
     /// </summary>
     public sealed class AviationStackAirportTimezoneLookup
     {
+        /// <summary>
+        /// Airport timezone assignments change on the order of once a decade, per country, by
+        /// legislation. A month is comfortably shorter than that and keeps quota use negligible.
+        /// </summary>
+        private static readonly TimeSpan CacheDuration = TimeSpan.FromDays(30);
+
         private readonly HttpClient _http;
+        private readonly ICacheService _cache;
         private readonly ILogger<AviationStackAirportTimezoneLookup> _logger;
         private readonly string _apiKey;
 
         public AviationStackAirportTimezoneLookup(
             HttpClient http,
+            ICacheService cache,
             IConfiguration config,
             ILogger<AviationStackAirportTimezoneLookup> logger)
         {
             _http = http;
+            _cache = cache;
             _logger = logger;
             _apiKey = config["AviationStack:ApiKey"] ?? string.Empty;
         }
 
         public async Task<string?> TryGetTimezoneAsync(string iata, CancellationToken ct = default)
+        {
+            var key = $"airport-tz:{iata.ToUpperInvariant()}";
+
+            var cached = await _cache.GetAsync<string>(key, ct);
+            if (!string.IsNullOrWhiteSpace(cached)) return cached;
+
+            var timezone = await FetchAsync(iata, ct);
+
+            // Only successes are cached. Caching a miss would keep an airport broken for a month
+            // over what may have been a single throttled request.
+            if (!string.IsNullOrWhiteSpace(timezone))
+                await _cache.SetAsync(key, timezone, CacheDuration, ct);
+
+            return timezone;
+        }
+
+        private async Task<string?> FetchAsync(string iata, CancellationToken ct)
         {
             try
             {
@@ -45,8 +76,8 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AviationStack
 
                 using var doc = JsonDocument.Parse(json);
 
-                // Report why we came back empty. Silently returning null here would leave the
-                // caller unable to tell a throttled lookup from an unknown airport.
+                // Report why we came back empty. Silently returning null would leave the caller
+                // unable to tell a throttled lookup from an unknown airport.
                 if (doc.RootElement.TryGetProperty("error", out var error))
                 {
                     _logger.LogWarning(

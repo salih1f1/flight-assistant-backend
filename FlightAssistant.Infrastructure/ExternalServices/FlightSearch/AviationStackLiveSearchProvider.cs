@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
 using FlightAssistant.Application.Interfaces.ExternalServices;
-using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Infrastructure.ExternalServices.AviationStack;
 using Microsoft.Extensions.Configuration;
@@ -34,20 +33,17 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
         private const int StatusCode502BadGateway = 502;
 
         private readonly HttpClient _http;
-        private readonly IRefDataRepository _refData;
         private readonly AviationStackAirportTimezoneLookup _timezones;
         private readonly ILogger<AviationStackLiveSearchProvider> _logger;
         private readonly string _apiKey;
 
         public AviationStackLiveSearchProvider(
             HttpClient http,
-            IRefDataRepository refData,
             AviationStackAirportTimezoneLookup timezones,
             IConfiguration config,
             ILogger<AviationStackLiveSearchProvider> logger)
         {
             _http = http;
-            _refData = refData;
             _timezones = timezones;
             _logger = logger;
             _apiKey = config["AviationStack:ApiKey"] ?? string.Empty;
@@ -80,7 +76,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
                 data.ValueKind != JsonValueKind.Array)
                 return [];
 
-            var zones = new AirportTimeZoneResolver(_refData, _timezones, _logger);
+            var zones = new AirportTimeZoneResolver(_timezones, _logger);
             var rows = new List<LiveRow>();
             foreach (var flight in data.EnumerateArray())
             {

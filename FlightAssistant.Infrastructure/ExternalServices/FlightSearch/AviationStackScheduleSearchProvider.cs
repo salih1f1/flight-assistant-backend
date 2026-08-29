@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
 using FlightAssistant.Application.Interfaces.ExternalServices;
-using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Infrastructure.ExternalServices.AviationStack;
 using Microsoft.Extensions.Configuration;
@@ -23,8 +22,8 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
     /// <see cref="AviationStackRouteResolver"/>.</item>
     /// <item>Neither <c>arr_iata</c> nor <c>flight_iata</c> filter anything; both are silently
     /// ignored. Route and flight-number matching happen here, client-side.</item>
-    /// <item>Times are airport-local with no offset, so they are converted using each airport's
-    /// IANA timezone from reference data.</item>
+    /// <item>Times are airport-local with no offset, and unlike the real-time endpoint this one
+    /// supplies no <c>timezone</c>, so zones come from the provider's airport lookup.</item>
     /// <item>All values are lowercase.</item>
     /// <item>There is no codeshare marker, so <c>OperatingFlightNumber</c> is left null rather than
     /// guessed. Rows are grouped by route and scheduled times instead.</item>
@@ -42,7 +41,6 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
 
         private readonly HttpClient _http;
         private readonly AviationStackRouteResolver _routes;
-        private readonly IRefDataRepository _refData;
         private readonly AviationStackAirportTimezoneLookup _timezones;
         private readonly ILogger<AviationStackScheduleSearchProvider> _logger;
         private readonly string _apiKey;
@@ -50,14 +48,12 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
         public AviationStackScheduleSearchProvider(
             HttpClient http,
             AviationStackRouteResolver routes,
-            IRefDataRepository refData,
             AviationStackAirportTimezoneLookup timezones,
             IConfiguration config,
             ILogger<AviationStackScheduleSearchProvider> logger)
         {
             _http = http;
             _routes = routes;
-            _refData = refData;
             _timezones = timezones;
             _logger = logger;
             _apiKey = config["AviationStack:ApiKey"] ?? string.Empty;
@@ -106,7 +102,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.FlightSearch
                 data.ValueKind != JsonValueKind.Array)
                 return [];
 
-            var zones = new AirportTimeZoneResolver(_refData, _timezones, _logger);
+            var zones = new AirportTimeZoneResolver(_timezones, _logger);
             var rows = new List<ScheduleRow>();
             var matched = 0;
 

@@ -32,12 +32,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 .Select(a => (int?)a.Id)
                 .FirstOrDefaultAsync(ct);
 
-        public Task<string?> GetAirportTimezoneByIataAsync(string iata, CancellationToken ct = default) =>
-            _db.Airports
-                .Where(a => a.Iata == iata.ToUpperInvariant())
-                .Select(a => a.Timezone)
-                .FirstOrDefaultAsync(ct);
-
         public Task<string?> GetAirlineIataByIdAsync(int id, CancellationToken ct = default) =>
             _db.Airlines
                 .Where(a => a.Id == id)

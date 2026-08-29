@@ -14,13 +14,6 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         Task<int?> GetAirportIdByIataAsync(string iata, CancellationToken ct = default);
         Task<string?> GetAirlineIataByIdAsync(int id, CancellationToken ct = default);
         Task<string?> GetAirportIataByIdAsync(int id, CancellationToken ct = default);
-
-        /// <summary>
-        /// The airport's IANA timezone (e.g. <c>"Europe/Sofia"</c>), or null when the airport is
-        /// unknown or has no timezone recorded. Needed to interpret provider timetables, which
-        /// give airport-local times with no UTC offset.
-        /// </summary>
-        Task<string?> GetAirportTimezoneByIataAsync(string iata, CancellationToken ct = default);
         Task<IReadOnlyDictionary<int, string>> GetAirportIataMapAsync(IReadOnlyList<int> ids, CancellationToken ct = default);
         Task<IReadOnlyDictionary<int, string>> GetAirlineIataMapAsync(IReadOnlyList<int> ids, CancellationToken ct = default);
         Task<IReadOnlyDictionary<int, string>> GetLoungeProviderCodeMapAsync(IReadOnlyList<int> ids, CancellationToken ct = default);
