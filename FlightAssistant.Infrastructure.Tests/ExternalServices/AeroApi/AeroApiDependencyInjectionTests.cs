@@ -123,6 +123,50 @@ public class AeroApiDependencyInjectionTests
     }
 
     [Fact]
+    public void AddInfrastructure_ResolvesIFlightStatusProvider_AsAeroApiFlightStatusProvider()
+    {
+        using var provider = BuildContainer();
+
+        // The regression this test exists to catch: task 3 replaced the AviationStack status
+        // registration, but every one of AeroApiFlightStatusProviderTests' own tests constructs
+        // AeroApiFlightStatusProvider directly with a hand-supplied HttpClient/TimeProvider/logger
+        // — none go through DI, so a wrong lifetime, a missing dependency (this constructor needs
+        // TimeProvider, which nothing but AddInfrastructure's own TryAddSingleton call supplies),
+        // or the registration being dropped entirely would be invisible until a real status sync
+        // hit it in production.
+        var statusProvider = provider.GetRequiredService<IFlightStatusProvider>();
+
+        Assert.IsType<AeroApiFlightStatusProvider>(statusProvider);
+    }
+
+    [Fact]
+    public void AddInfrastructure_ResolvesAeroApiFlightStatusProvider_AsAScopedInstancePerScope()
+    {
+        using var root = BuildContainer();
+
+        using (var scopeA = root.CreateScope())
+        {
+            var first = scopeA.ServiceProvider.GetRequiredService<AeroApiFlightStatusProvider>();
+            var second = scopeA.ServiceProvider.GetRequiredService<AeroApiFlightStatusProvider>();
+            Assert.Same(first, second); // same within a scope
+
+            using var scopeB = root.CreateScope();
+            var third = scopeB.ServiceProvider.GetRequiredService<AeroApiFlightStatusProvider>();
+            Assert.NotSame(first, third); // different across scopes — proves it's Scoped, not Singleton
+        }
+    }
+
+    [Fact]
+    public void AddInfrastructure_ResolvesAeroApiFlightStatusProvider_AsAeroApi_NotAviationStack()
+    {
+        using var provider = BuildContainer();
+
+        var statusProvider = provider.GetRequiredService<IFlightStatusProvider>();
+
+        Assert.Equal("AeroAPI", statusProvider.ProviderName);
+    }
+
+    [Fact]
     public void AddInfrastructure_ResolvesAeroApiFlightSearchProvider_AsAScopedInstancePerScope()
     {
         using var root = BuildContainer();

@@ -42,8 +42,9 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<IAllianceRepository, AllianceRepository>();
             services.AddScoped(typeof(IVerifiableRepository<>), typeof(EfVerifiableRepository<>));
 
-            // Flight status — AviationStack is the sole provider. The IFlightStatusProvider
-            // abstraction is kept so a fallback composite can be reintroduced for production.
+            // Flight status — AviationStack's own typed client stays registered (unused by
+            // IFlightStatusProvider below) so its existing tests, which construct it directly,
+            // keep passing. Task 5 (#280) deletes both the class and this registration.
             services.AddHttpClient<AviationStackFlightStatusProvider>(client =>
             {
                 client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "https://api.aviationstack.com/v1/");
@@ -55,12 +56,6 @@ namespace FlightAssistant.Infrastructure
                 options.Retry.MaxRetryAttempts = 3;
                 options.Retry.BackoffType = DelayBackoffType.Exponential;
             });
-
-            // Resolve via the typed client so the configured HttpClient (BaseAddress, timeout,
-            // resilience handler) is used. Re-activating the concrete type directly would inject
-            // a default, unconfigured HttpClient with no BaseAddress.
-            services.AddScoped<IFlightStatusProvider>(sp =>
-                sp.GetRequiredService<AviationStackFlightStatusProvider>());
 
             // Flight search — AviationStack splits its data across two endpoints: /v1/flights holds
             // past and present, /v1/flightsFuture holds future schedules, with no overlap.
@@ -186,6 +181,21 @@ namespace FlightAssistant.Infrastructure
 
             services.AddScoped<IFlightSearchProvider>(sp =>
                 sp.GetRequiredService<AeroApiFlightSearchProvider>());
+
+            // Flight status (issue #280 / task 3) — AeroAPI replaces AviationStack here.
+            // ProviderName changes from "AviationStack" to "AeroAPI", which feeds the stored
+            // FlightStatusEvent dedup hash (see SyncFlightStatusCommand.cs) — existing stored
+            // events keep hashes computed under the old name, so each tracked flight may emit one
+            // duplicate status event the first time it is synced after this deploys. Accepted, not
+            // migrated; see AeroApiFlightStatusProviderTests for the documenting test.
+            services.AddScoped(sp => new AeroApiFlightStatusProvider(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
+                sp.GetRequiredService<IOptions<AeroApiOptions>>(),
+                sp.GetRequiredService<TimeProvider>(),
+                sp.GetRequiredService<ILogger<AeroApiFlightStatusProvider>>()));
+
+            services.AddScoped<IFlightStatusProvider>(sp =>
+                sp.GetRequiredService<AeroApiFlightStatusProvider>());
 
             // Push notifications — singleton so the APNs client is created once and reused
             services.AddOptions<ApnsOptions>()
