@@ -77,7 +77,7 @@ Authorization: Bearer {{token}}
 
 ###
 
-### Search flights (no auth — uses AviationStack)
+### Search flights (no auth — uses AeroAPI)
 # Expected: 200 OK  [ { "flightNumber": "BA123", "departure": ..., "arrival": ... }, ... ]
 GET {{baseUrl}}/flights/search?from=LHR&to=JFK&date=2026-05-10
 

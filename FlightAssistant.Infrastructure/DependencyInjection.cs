@@ -4,8 +4,6 @@ using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
-using FlightAssistant.Infrastructure.ExternalServices.AviationStack;
-using FlightAssistant.Infrastructure.ExternalServices.FlightStatus;
 using FlightAssistant.Infrastructure.Notifications;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
@@ -15,7 +13,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Polly;
 namespace FlightAssistant.Infrastructure
 {
     public static class DependencyInjection
@@ -41,52 +38,9 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<IAllianceRepository, AllianceRepository>();
             services.AddScoped(typeof(IVerifiableRepository<>), typeof(EfVerifiableRepository<>));
 
-            // Flight status — AviationStack's own typed client stays registered (unused by
-            // IFlightStatusProvider below) so its existing tests, which construct it directly,
-            // keep passing. Task 5 (#280) deletes both the class and this registration.
-            services.AddHttpClient<AviationStackFlightStatusProvider>(client =>
-            {
-                client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "https://api.aviationstack.com/v1/");
-                client.Timeout = TimeSpan.FromSeconds(30);
-            }).AddStandardResilienceHandler(options =>
-            {
-                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
-                options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(8);
-                options.Retry.MaxRetryAttempts = 3;
-                options.Retry.BackoffType = DelayBackoffType.Exponential;
-            });
-
-            // Flight search — AviationStack's live/future split (DateRoutingFlightSearchProvider,
-            // AviationStackLiveSearchProvider, AviationStackScheduleSearchProvider,
-            // AviationStackRouteResolver, OperatingCarrierResolver) has been fully replaced by
-            // AeroApiFlightSearchProvider below (issue #280 / tasks 2 and 4 — task 4's contract
-            // reshape removed the grouped FlightSearchResult shape those classes were built
-            // around, so they could no longer compile unchanged and were deleted rather than
-            // patched to a shape they no longer fit). AviationStackAirportTimezoneLookup has no
-            // remaining consumer but stays registered here; Task 5 removes it along with the rest
-            // of the AviationStack/ directory.
-            services.AddHttpClient(nameof(AviationStackAirportTimezoneLookup), client =>
-            {
-                client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "https://api.aviationstack.com/v1/");
-                client.Timeout = TimeSpan.FromSeconds(30);
-            }).AddStandardResilienceHandler(options =>
-            {
-                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
-                options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(8);
-                options.Retry.MaxRetryAttempts = 2;
-                options.Retry.BackoffType = DelayBackoffType.Exponential;
-            });
-
-            services.AddScoped(sp => new AviationStackAirportTimezoneLookup(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackAirportTimezoneLookup)),
-                sp.GetRequiredService<ICacheService>(),
-                sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<ILogger<AviationStackAirportTimezoneLookup>>()));
-
-            // AeroAPI — replacing AviationStack as the flight data provider (issue #280). This wires
-            // the HTTP foundation: options, error mapping (AeroApiResponse), and the shared outbound
-            // throttle. IFlightStatusProvider still points at AviationStack — task 3 switches that
-            // over; the AviationStack status registration above stays in place until then.
+            // AeroAPI — the sole flight data provider (issue #280). This wires the HTTP
+            // foundation: options, error mapping (AeroApiResponse), and the shared outbound
+            // throttle.
             services.AddOptions<AeroApiOptions>()
                 .BindConfiguration("AeroApi")
                 .ValidateDataAnnotations()
@@ -155,12 +109,11 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<IFlightSearchProvider>(sp =>
                 sp.GetRequiredService<AeroApiFlightSearchProvider>());
 
-            // Flight status (issue #280 / task 3) — AeroAPI replaces AviationStack here.
-            // ProviderName changes from "AviationStack" to "AeroAPI", which feeds the stored
-            // FlightStatusEvent dedup hash (see SyncFlightStatusCommand.cs) — existing stored
-            // events keep hashes computed under the old name, so each tracked flight may emit one
-            // duplicate status event the first time it is synced after this deploys. Accepted, not
-            // migrated; see AeroApiFlightStatusProviderTests for the documenting test.
+            // Flight status (issue #280). ProviderName ("AeroAPI") feeds the stored
+            // FlightStatusEvent dedup hash (see SyncFlightStatusCommand.cs) — the prior provider's
+            // stored events keep hashes computed under its own name, so each tracked flight may
+            // emit one duplicate status event the first time it is synced after this deploy.
+            // Accepted, not migrated; see AeroApiFlightStatusProviderTests for the documenting test.
             services.AddScoped(sp => new AeroApiFlightStatusProvider(
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),

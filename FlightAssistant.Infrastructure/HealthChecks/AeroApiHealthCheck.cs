@@ -1,17 +1,18 @@
-using Microsoft.Extensions.Configuration;
+using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 
 namespace FlightAssistant.Infrastructure.HealthChecks
 {
-    public sealed class AviationStackHealthCheck : IHealthCheck
+    public sealed class AeroApiHealthCheck : IHealthCheck
     {
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly string _baseUrl;
 
-        public AviationStackHealthCheck(IHttpClientFactory httpClientFactory, IConfiguration config)
+        public AeroApiHealthCheck(IHttpClientFactory httpClientFactory, IOptions<AeroApiOptions> options)
         {
             _httpClientFactory = httpClientFactory;
-            _baseUrl = config["AviationStack:BaseUrl"] ?? "http://api.aviationstack.com/v1/";
+            _baseUrl = options.Value.BaseUrl;
         }
 
         public async Task<HealthCheckResult> CheckHealthAsync(

@@ -136,8 +136,8 @@ public class AeroApiDependencyInjectionTests
     {
         using var provider = BuildContainer();
 
-        // The regression this test exists to catch: task 3 replaced the AviationStack status
-        // registration, but every one of AeroApiFlightStatusProviderTests' own tests constructs
+        // The regression this test exists to catch: every one of AeroApiFlightStatusProviderTests'
+        // own tests constructs
         // AeroApiFlightStatusProvider directly with a hand-supplied HttpClient/TimeProvider/logger
         // — none go through DI, so a wrong lifetime, a missing dependency (this constructor needs
         // TimeProvider, which nothing but AddInfrastructure's own TryAddSingleton call supplies),
@@ -166,7 +166,7 @@ public class AeroApiDependencyInjectionTests
     }
 
     [Fact]
-    public void AddInfrastructure_ResolvesAeroApiFlightStatusProvider_AsAeroApi_NotAviationStack()
+    public void AddInfrastructure_ResolvesIFlightStatusProvider_WithAeroApiProviderName()
     {
         using var provider = BuildContainer();
 

@@ -15,16 +15,15 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     /// <c>scheduled_out</c>'s UTC calendar date.
     ///
     /// <para>
-    /// <b>Status is prose, not a code.</b> Unlike AviationStack's <c>flight_status</c> enum
-    /// ("scheduled", "active", "landed", …), AeroAPI's <c>status</c> field is a human-readable
+    /// <b>Status is prose, not a code.</b> AeroAPI's <c>status</c> field is a human-readable
     /// string — observed values include <c>"Scheduled"</c> and <c>"Arrived / Gate Arrival"</c>;
     /// FlightAware's own documentation and other integrations additionally show <c>"En Route"</c>,
     /// <c>"Delayed"</c>, <c>"Diverted"</c> and <c>"Cancelled"</c> qualified with a "/ …" suffix
     /// (e.g. <c>"En Route / On Time"</c>). <see cref="MapStatusCode"/> matches only the leading
     /// segment before any "/" against the small set of prefixes this provider has actually seen or
     /// can find documented, case-insensitively. Anything else is logged at Warning — not silently
-    /// coerced — and reported as <c>"UNK"</c>, the same "not actionable" fallback AviationStack
-    /// already used for its own unmapped statuses. <c>cancelled: true</c> always wins over
+    /// coerced — and reported as <c>"UNK"</c>, the "not actionable" fallback for any status this
+    /// provider does not recognise. <c>cancelled: true</c> always wins over
     /// <c>status</c> text, since AeroAPI can report a stale "Scheduled"/"En Route" string on a
     /// flight that has in fact been cancelled.
     /// </para>
@@ -135,8 +134,8 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
 
         /// <summary>
         /// Normalises AeroAPI's prose <c>status</c> to the <c>FlightStatus.Code</c> vocabulary
-        /// (<c>SCH</c>/<c>DEP</c>/<c>ARR</c>/<c>DLY</c>/<c>CAN</c>/<c>DIV</c>/<c>UNK</c>) that
-        /// <c>AviationStackFlightStatusProvider</c> already established. <paramref name="cancelled"/>
+        /// (<c>SCH</c>/<c>DEP</c>/<c>ARR</c>/<c>DLY</c>/<c>CAN</c>/<c>DIV</c>/<c>UNK</c>).
+        /// <paramref name="cancelled"/>
         /// is checked first and unconditionally wins. Only the segment before the first "/" is
         /// matched (AeroAPI qualifies some statuses, e.g. <c>"Arrived / Gate Arrival"</c>), compared
         /// case-insensitively against a deliberately small, documented set — anything outside it is
@@ -171,7 +170,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         }
 
         /// <summary>Parses an AeroAPI <c>...Z</c> timestamp, which is already UTC — no timezone
-        /// conversion needed, unlike AviationStack's timezone-naive local times.</summary>
+        /// conversion needed.</summary>
         private static DateTime? TryGetUtcDateTime(JsonElement el, string field)
         {
             if (!el.TryGetProperty(field, out var val) || val.ValueKind != JsonValueKind.String) return null;

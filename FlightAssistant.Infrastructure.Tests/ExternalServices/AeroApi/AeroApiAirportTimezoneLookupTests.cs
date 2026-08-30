@@ -10,8 +10,8 @@ namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroApi;
 
 /// <summary>
 /// Drives <see cref="AeroApiAirportTimezoneLookup"/> against stubbed <c>/airports/{id}</c>
-/// responses. Mirrors <c>AviationStackAirportTimezoneLookup</c>'s own (untested-in-isolation)
-/// contract: cache successes for 30 days, never cache a miss, never let a failure propagate.
+/// responses, pinning its contract: cache successes for 30 days, never cache a miss, never let a
+/// failure propagate.
 /// </summary>
 public class AeroApiAirportTimezoneLookupTests
 {

@@ -7,9 +7,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroApi;
 
 /// <summary>
-/// AeroAPI signals failures with real HTTP status codes (no <c>error</c> body under HTTP 200 the
-/// way AviationStack does), so these tests drive <see cref="AeroApiResponse.ReadOrThrowAsync"/>
-/// directly against <see cref="HttpResponseMessage"/> instances rather than a stubbed client.
+/// AeroAPI signals failures with real HTTP status codes (no <c>error</c> body under HTTP 200), so
+/// these tests drive <see cref="AeroApiResponse.ReadOrThrowAsync"/> directly against
+/// <see cref="HttpResponseMessage"/> instances rather than a stubbed client.
 ///
 /// <see cref="AeroApiResponse"/> is shared by every AeroAPI caller (future flight search, future
 /// flight status), so <c>operation</c> is varied across these tests to prove the client-facing

@@ -11,14 +11,13 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     ///
     /// Endpoint: GET /airports/{id}
     ///
-    /// Mirrors <c>AviationStackAirportTimezoneLookup</c>'s caching pattern (read it for the
-    /// original rationale): results are cached under <c>ICacheService</c> for 30 days, successes
-    /// only, because airport timezone assignments change on the order of once a decade.
+    /// Results are cached under <c>ICacheService</c> for 30 days, successes only, because airport
+    /// timezone assignments change on the order of once a decade.
     ///
-    /// Unlike AviationStack, AeroAPI's <c>scheduled_out</c>/<c>scheduled_in</c> timestamps are
-    /// already UTC — this lookup exists purely to resolve the *origin's local day* for
+    /// AeroAPI's <c>scheduled_out</c>/<c>scheduled_in</c> timestamps are already UTC — this
+    /// lookup exists purely to resolve the *origin's local day* for
     /// <see cref="AeroApiFlightSearchProvider"/>'s UTC window shift, not to reinterpret a
-    /// timezone-naive timestamp the way its AviationStack counterpart did.
+    /// timezone-naive timestamp.
     ///
     /// Failures are never fatal: this returns null and lets the caller fall back. A timezone
     /// lookup is supporting infrastructure for a search, not a user-facing operation in its own

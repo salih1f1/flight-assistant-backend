@@ -9,10 +9,10 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     /// <summary>
     /// Shared response handling for the FlightAware AeroAPI.
     ///
-    /// Unlike AviationStack (see <c>AviationStackResponse</c>), AeroAPI signals failures with real
-    /// HTTP status codes rather than an <c>error</c> object hidden inside an HTTP 200 body, so there
-    /// is no need to inspect a successful body for a failure marker. Both the future flight status
-    /// and flight search providers go through here so their error behaviour cannot drift apart.
+    /// AeroAPI signals failures with real HTTP status codes rather than an <c>error</c> object
+    /// hidden inside an HTTP 200 body, so there is no need to inspect a successful body for a
+    /// failure marker. Both the flight status and flight search providers go through here so
+    /// their error behaviour cannot drift apart.
     /// </summary>
     internal static class AeroApiResponse
     {

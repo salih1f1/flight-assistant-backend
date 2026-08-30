@@ -324,7 +324,7 @@
             "auth": {
               "type": "noauth"
             },
-            "description": "Public. AviationStack-backed. Rate limited 20/60s."
+            "description": "Public. AeroAPI-backed. Rate limited 20/60s."
           },
           "response": []
         },

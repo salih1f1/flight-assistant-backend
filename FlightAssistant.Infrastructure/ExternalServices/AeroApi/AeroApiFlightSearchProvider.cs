@@ -41,9 +41,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     /// possible UTC offset) and, after the results come back, filters each row using <i>its own</i>
     /// <c>origin_iata</c>'s zone — resolved and cached the same way, and now knowable because the
     /// row supplies it. If a row's own zone still cannot be resolved even at that point, the row is
-    /// kept rather than silently dropped (the philosophy #275 established for AviationStack: an
-    /// unplaceable time is worse omitted than approximated), falling back to comparing the UTC
-    /// calendar date directly as a last-resort approximation.
+    /// kept rather than silently dropped (the philosophy #275 established: an unplaceable time is
+    /// worse omitted than approximated), falling back to comparing the UTC calendar date directly
+    /// as a last-resort approximation.
     /// </para>
     /// </summary>
     public sealed class AeroApiFlightSearchProvider : IFlightSearchProvider
@@ -382,7 +382,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         }
 
         /// <summary>Parses an AeroAPI <c>...Z</c> timestamp, which is already UTC — no timezone
-        /// conversion needed, unlike AviationStack's timezone-naive local times.</summary>
+        /// conversion needed.</summary>
         private static DateTime? TryGetUtcDateTime(JsonElement el, string field)
         {
             if (!el.TryGetProperty(field, out var val) || val.ValueKind != JsonValueKind.String) return null;

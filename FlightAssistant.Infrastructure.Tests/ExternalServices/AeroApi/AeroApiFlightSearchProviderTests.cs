@@ -49,7 +49,7 @@ public class AeroApiFlightSearchProviderTests
     }
 
     /// <summary>Answers <c>/airports/{iata}</c> with a fixed timezone per code; an absent entry
-    /// means "the provider knows no timezone for this one" (mirrors the AviationStack test helper).</summary>
+    /// means "the provider knows no timezone for this one".</summary>
     private sealed class TimezoneStub(Dictionary<string, string?> zones) : HttpMessageHandler
     {
         public int Calls { get; private set; }
@@ -294,8 +294,8 @@ public class AeroApiFlightSearchProviderTests
     [Fact]
     public async Task SearchAsync_KeepsTheRow_WhenTheOriginZoneNeverResolves()
     {
-        // #275 established the principle for AviationStack: an unplaceable time is worse omitted
-        // than approximated. The AeroAPI provider keeps the same contract for its own degraded
+        // #275 established the principle: an unplaceable time is worse omitted than
+        // approximated. The AeroAPI provider keeps the same contract for its own degraded
         // path — falling back to a UTC-calendar-date comparison rather than dropping the row.
         const string body = """
         {

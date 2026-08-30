@@ -93,25 +93,27 @@ public class AeroApiFlightStatusProviderTests
     }
 
     /// <summary>
-    /// Documents the consequence of the AviationStack -&gt; AeroAPI provider-name change:
+    /// Documents the consequence of a flight-status provider rename (issue #280 switched the
+    /// provider that feeds this data, changing <c>ProviderName</c> in the process):
     /// <c>FlightStatusEvent.ComputeDedupHash</c> folds <c>source</c> (== <c>ProviderName</c>) into
-    /// the stored hash, so a hash computed under the old name never matches one computed under the
-    /// new one for the same logical event, even with every other input identical. Existing stored
-    /// events are not migrated, so after this deploys, the first sync of each already-tracked
-    /// flight is expected to record one duplicate <see cref="FlightStatusEvent"/> before dedup
-    /// catches up under the new name. This is accepted, not a bug to fix here.
+    /// the stored hash, so a hash computed under the prior provider's name never matches one
+    /// computed under the current one for the same logical event, even with every other input
+    /// identical. Existing stored events are not migrated on a rename, so after such a deploy, the
+    /// first sync of each already-tracked flight is expected to record one duplicate
+    /// <see cref="FlightStatusEvent"/> before dedup catches up under the new name. This is
+    /// accepted, not a bug to fix here.
     /// </summary>
     [Fact]
-    public void ComputeDedupHash_DiffersBetweenAviationStackAndAeroApiSource_ForAnOtherwiseIdenticalEvent()
+    public void ComputeDedupHash_DiffersAcrossAProviderRename_ForAnOtherwiseIdenticalEvent()
     {
         var effectiveAt = new DateTime(2026, 8, 30, 6, 35, 0, DateTimeKind.Utc);
 
-        var oldHash = FlightStatusEvent.ComputeDedupHash(
-            flightId: 1, statusId: 2, effectiveAt: effectiveAt, source: "AviationStack", externalId: "TK1028");
-        var newHash = FlightStatusEvent.ComputeDedupHash(
+        var priorProviderHash = FlightStatusEvent.ComputeDedupHash(
+            flightId: 1, statusId: 2, effectiveAt: effectiveAt, source: "PriorProvider", externalId: "TK1028");
+        var currentProviderHash = FlightStatusEvent.ComputeDedupHash(
             flightId: 1, statusId: 2, effectiveAt: effectiveAt, source: "AeroAPI", externalId: "TK1028");
 
-        Assert.NotEqual(oldHash, newHash);
+        Assert.NotEqual(priorProviderHash, currentProviderHash);
     }
 
     // ------------------------------------------------------------------

@@ -5,7 +5,6 @@ using FlightAssistant.API.Endpoints.Admin;
 using FlightAssistant.API.HostedServices;
 using FlightAssistant.API.Infrastructure;
 using FlightAssistant.API.Middleware;
-using FlightAssistant.API.Telemetry;
 using FlightAssistant.Application;
 using FlightAssistant.Infrastructure;
 using FlightAssistant.Infrastructure.Caching;
@@ -121,7 +120,6 @@ var aiConnectionString = builder.Configuration["ApplicationInsights:ConnectionSt
 if (!string.IsNullOrWhiteSpace(aiConnectionString))
 {
     builder.Services.AddApplicationInsightsTelemetry();
-    builder.Services.AddApplicationInsightsTelemetryProcessor<SanitizeAviationStackTelemetryProcessor>();
 }
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
@@ -129,7 +127,7 @@ builder.Services.AddScoped<TravelerContext>();
 
 var hcBuilder = builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("database")
-    .AddCheck<AviationStackHealthCheck>("aviationstack", tags: ["external"])
+    .AddCheck<AeroApiHealthCheck>("aeroapi", tags: ["external"])
     .AddCheck<ApnsHealthCheck>("apns", tags: ["external"]);
 
 var redisConnStr = builder.Configuration.GetConnectionString("Redis");
