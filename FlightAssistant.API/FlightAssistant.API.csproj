@@ -4,6 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Local dev secrets (provider API keys). Never commit keys to appsettings.* -->
+    <UserSecretsId>flight-assistant-backend</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
