@@ -5,7 +5,6 @@ using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AviationStack;
-using FlightAssistant.Infrastructure.ExternalServices.FlightSearch;
 using FlightAssistant.Infrastructure.ExternalServices.FlightStatus;
 using FlightAssistant.Infrastructure.Notifications;
 using FlightAssistant.Infrastructure.Persistance;
@@ -57,65 +56,32 @@ namespace FlightAssistant.Infrastructure
                 options.Retry.BackoffType = DelayBackoffType.Exponential;
             });
 
-            // Flight search — AviationStack splits its data across two endpoints: /v1/flights holds
-            // past and present, /v1/flightsFuture holds future schedules, with no overlap.
-            // DateRoutingFlightSearchProvider picks between them; nothing above this layer knows.
-            foreach (var clientType in new[]
-                     {
-                         typeof(AviationStackLiveSearchProvider),
-                         typeof(AviationStackScheduleSearchProvider),
-                         typeof(AviationStackRouteResolver),
-                         typeof(AviationStackAirportTimezoneLookup),
-                         typeof(OperatingCarrierResolver)
-                     })
+            // Flight search — AviationStack's live/future split (DateRoutingFlightSearchProvider,
+            // AviationStackLiveSearchProvider, AviationStackScheduleSearchProvider,
+            // AviationStackRouteResolver, OperatingCarrierResolver) has been fully replaced by
+            // AeroApiFlightSearchProvider below (issue #280 / tasks 2 and 4 — task 4's contract
+            // reshape removed the grouped FlightSearchResult shape those classes were built
+            // around, so they could no longer compile unchanged and were deleted rather than
+            // patched to a shape they no longer fit). AviationStackAirportTimezoneLookup has no
+            // remaining consumer but stays registered here; Task 5 removes it along with the rest
+            // of the AviationStack/ directory.
+            services.AddHttpClient(nameof(AviationStackAirportTimezoneLookup), client =>
             {
-                services.AddHttpClient(clientType.Name, client =>
-                {
-                    client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "https://api.aviationstack.com/v1/");
-                    client.Timeout = TimeSpan.FromSeconds(30);
-                }).AddStandardResilienceHandler(options =>
-                {
-                    options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
-                    options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(8);
-                    options.Retry.MaxRetryAttempts = 2;
-                    options.Retry.BackoffType = DelayBackoffType.Exponential;
-                });
-            }
-
-            services.AddScoped(sp => new AviationStackRouteResolver(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackRouteResolver)),
-                sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<ILogger<AviationStackRouteResolver>>()));
+                client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "https://api.aviationstack.com/v1/");
+                client.Timeout = TimeSpan.FromSeconds(30);
+            }).AddStandardResilienceHandler(options =>
+            {
+                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
+                options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(8);
+                options.Retry.MaxRetryAttempts = 2;
+                options.Retry.BackoffType = DelayBackoffType.Exponential;
+            });
 
             services.AddScoped(sp => new AviationStackAirportTimezoneLookup(
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackAirportTimezoneLookup)),
                 sp.GetRequiredService<ICacheService>(),
                 sp.GetRequiredService<IConfiguration>(),
                 sp.GetRequiredService<ILogger<AviationStackAirportTimezoneLookup>>()));
-
-            services.AddScoped(sp => new OperatingCarrierResolver(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(OperatingCarrierResolver)),
-                sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<ILogger<OperatingCarrierResolver>>()));
-
-            services.AddScoped(sp => new AviationStackLiveSearchProvider(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackLiveSearchProvider)),
-                sp.GetRequiredService<AviationStackAirportTimezoneLookup>(),
-                sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<ILogger<AviationStackLiveSearchProvider>>()));
-
-            services.AddScoped(sp => new AviationStackScheduleSearchProvider(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackScheduleSearchProvider)),
-                sp.GetRequiredService<AviationStackRouteResolver>(),
-                sp.GetRequiredService<OperatingCarrierResolver>(),
-                sp.GetRequiredService<AviationStackAirportTimezoneLookup>(),
-                sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<ILogger<AviationStackScheduleSearchProvider>>()));
-
-            // DateRoutingFlightSearchProvider is no longer wired to IFlightSearchProvider — see the
-            // AeroApiFlightSearchProvider registration below (issue #280 / task 2). The class and
-            // its own tests stay on disk untouched; Task 5 deletes them once the status provider
-            // (task 3) and contract reshape (task 4) are also done.
 
             // AeroAPI — replacing AviationStack as the flight data provider (issue #280). This wires
             // the HTTP foundation: options, error mapping (AeroApiResponse), and the shared outbound
@@ -125,6 +91,13 @@ namespace FlightAssistant.Infrastructure
                 .BindConfiguration("AeroApi")
                 .ValidateDataAnnotations()
                 .ValidateOnStart();
+
+            // SearchFlightsQueryValidator (Application layer) needs the configured search horizon
+            // to bound requests against, but Application must never reference Infrastructure —
+            // AeroApiOptions implements IFlightSearchHorizonOptions (defined in Application) so
+            // this is a plain translation, not a leak of AeroApiOptions itself.
+            services.AddScoped<IFlightSearchHorizonOptions>(sp =>
+                sp.GetRequiredService<IOptions<AeroApiOptions>>().Value);
 
             // AeroApiThrottleGate's constructor requires a TimeProvider, and nothing else in this
             // solution (nor AddStandardResilienceHandler, nor the generic host) registers one —

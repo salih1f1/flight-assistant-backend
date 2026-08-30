@@ -107,7 +107,7 @@ public class AeroApiFlightSearchProviderTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task SearchAsync_MapsEachCodeshareRow_WithTheOperatingFlightNumberFromActualIdentIata()
+    public async Task SearchAsync_ReturnsOneRowPerFlightDesignator_NoGrouping()
     {
         var handler = new ScriptedHttpMessageHandler(
             (HttpStatusCode.OK, ReadFixture("schedules-codeshares-on.json")));
@@ -118,24 +118,17 @@ public class AeroApiFlightSearchProviderTests
 
         Assert.Equal(5, results.Count);
 
-        var byIdent = results.ToDictionary(r => r.FlightNumbers.Single());
-        Assert.Equal("TK1028", byIdent["RJ3710"].OperatingFlightNumber);
-        Assert.Equal("TK1028", byIdent["MS9668"].OperatingFlightNumber);
-        Assert.Equal("TK1028", byIdent["6E4120"].OperatingFlightNumber);
-        Assert.Equal("TK1028", byIdent["SQ6228"].OperatingFlightNumber);
-        // actual_ident_iata is null on the operating row itself — falls back to its own ident.
-        Assert.Equal("TK1028", byIdent["TK1028"].OperatingFlightNumber);
-
-        // AirlineIata is the first two characters of THIS row's own ident_iata, per the interim
-        // one-row-per-departure mapping — not the operating carrier's code.
-        Assert.Equal("RJ", byIdent["RJ3710"].AirlineIata);
-        Assert.Equal("TK", byIdent["TK1028"].AirlineIata);
+        var byIdent = results.ToDictionary(r => r.FlightNumber);
+        Assert.Contains("RJ3710", byIdent.Keys);
+        Assert.Contains("MS9668", byIdent.Keys);
+        Assert.Contains("6E4120", byIdent.Keys);
+        Assert.Contains("SQ6228", byIdent.Keys);
+        Assert.Contains("TK1028", byIdent.Keys);
 
         Assert.All(results, r =>
         {
-            Assert.Equal("SOF", r.DepartureIata);
-            Assert.Equal("IST", r.ArrivalIata);
-            Assert.Equal("A321", r.EquipmentIcao);
+            Assert.Equal("SOF", r.DepartureAirportIata);
+            Assert.Equal("IST", r.ArrivalAirportIata);
         });
     }
 
@@ -147,10 +140,26 @@ public class AeroApiFlightSearchProviderTests
         var timezones = TimezoneLookup(("SOF", "Europe/Sofia"));
 
         await Provider(handler, timezones).SearchAsync(
-            new FlightSearchCriteria("SOF", "IST", new DateOnly(2026, 9, 29), null));
+            new FlightSearchCriteria("SOF", "IST", new DateOnly(2026, 9, 29), null, IncludeCodeshares: true));
 
         Assert.Single(handler.Requests);
         Assert.Contains("include_codeshares=true", handler.Requests[0].Query);
+    }
+
+    [Fact]
+    public async Task SearchAsync_IncludeCodesharesFalse_ReachesTheUrl()
+    {
+        // Proves the flag is actually wired through to AeroAPI rather than hardcoded — before
+        // this, the query string always said "true" no matter what the criteria asked for.
+        var handler = new ScriptedHttpMessageHandler(
+            (HttpStatusCode.OK, ReadFixture("schedules-codeshares-on.json")));
+        var timezones = TimezoneLookup(("SOF", "Europe/Sofia"));
+
+        await Provider(handler, timezones).SearchAsync(
+            new FlightSearchCriteria("SOF", "IST", new DateOnly(2026, 9, 29), null, IncludeCodeshares: false));
+
+        Assert.Single(handler.Requests);
+        Assert.Contains("include_codeshares=false", handler.Requests[0].Query);
     }
 
     [Fact]
@@ -198,7 +207,7 @@ public class AeroApiFlightSearchProviderTests
         var results = await Provider(handler, timezones).SearchAsync(
             new FlightSearchCriteria("LHR", "JFK", new DateOnly(2026, 9, 29), null));
 
-        var idents = results.Select(r => r.FlightNumbers.Single()).OrderBy(i => i).ToList();
+        var idents = results.Select(r => r.FlightNumber).OrderBy(i => i).ToList();
         Assert.Equal(["BA100", "BA105"], idents);
     }
 
@@ -247,7 +256,7 @@ public class AeroApiFlightSearchProviderTests
         Assert.Contains(expectedEnd.ToString("yyyy-MM-ddTHH:mm:ssZ"), handler.Requests[0].AbsolutePath);
 
         Assert.Equal(11, results.Count);
-        Assert.All(missedByTheNaiveQuery, ident => Assert.Contains(results, r => r.FlightNumbers.Single() == ident));
+        Assert.All(missedByTheNaiveQuery, ident => Assert.Contains(results, r => r.FlightNumber == ident));
     }
 
     [Fact]

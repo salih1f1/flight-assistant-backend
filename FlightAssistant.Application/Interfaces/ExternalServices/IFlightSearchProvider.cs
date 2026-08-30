@@ -1,51 +1,57 @@
 namespace FlightAssistant.Application.Interfaces.ExternalServices
 {
     /// <summary>
-    /// One physical departure. Airlines sell the same aircraft under several flight numbers
-    /// (TK1028 is also 6E4120, MS9668, RJ3710 and SQ6228), so a result groups every number that
-    /// covers the same departure rather than repeating it once per marketing carrier.
+    /// One scheduled flight row, shaped so it can be posted straight to <c>POST /flights</c>
+    /// (<c>TrackFlightRequest</c>) with no client-side transformation — same six fields, same
+    /// names, same order. Deliberately excludes any notion of an operating carrier or codeshare
+    /// grouping: the provider returns one result per flight designator, and the airline is derived
+    /// from <see cref="FlightNumber"/>'s own first two characters wherever it is needed downstream.
     /// </summary>
-    /// <param name="FlightNumbers">Every IATA flight code on this departure, uppercase and sorted.
-    /// Always contains at least one entry, and always contains the traveler's own number whichever
-    /// carrier issued their ticket.</param>
-    /// <param name="OperatingFlightNumber">The carrier actually flying the aircraft, when the
-    /// provider discloses it. <c>null</c> for future-dated searches: the AviationStack schedules
-    /// endpoint carries no codeshare marker, and guessing would be wrong often enough to matter.</param>
-    /// <param name="AirlineIata">Operating airline's IATA code, when known. <c>null</c> whenever
-    /// <paramref name="OperatingFlightNumber"/> is.</param>
     public record FlightSearchResult(
-        IReadOnlyList<string> FlightNumbers,
-        string? OperatingFlightNumber,
-        string? AirlineIata,
-        string DepartureIata,
-        string ArrivalIata,
+        string FlightNumber,
         DateOnly ServiceDate,
+        string DepartureAirportIata,
+        string ArrivalAirportIata,
         DateTime ScheduledDepartureUtc,
-        DateTime ScheduledArrivalUtc,
-        string? EquipmentIcao
-    );
+        DateTime ScheduledArrivalUtc);
 
     /// <summary>
     /// Criteria for a flight search. A search is anchored on a <see cref="Date"/> plus either a
     /// full route (<see cref="DepartureIata"/> and <see cref="ArrivalIata"/>) or a specific
     /// <see cref="FlightNumber"/>. Airport codes are 3-letter IATA codes.
     /// </summary>
+    /// <param name="IncludeCodeshares">When <c>true</c>, includes codeshare-marketed rows for the
+    /// same physical departure alongside the operating flight's own row; when <c>false</c>, only
+    /// the operating flight's row is returned.</param>
     public record FlightSearchCriteria(
         string? DepartureIata,
         string? ArrivalIata,
         DateOnly Date,
-        string? FlightNumber);
+        string? FlightNumber,
+        bool IncludeCodeshares = true);
+
+    /// <summary>
+    /// The provider's search horizon, exposed here (in the Application layer) so the query
+    /// validator can bound requests against the real configured limits without depending on the
+    /// Infrastructure-layer options class that owns them — Application never references
+    /// Infrastructure. The concrete provider options type implements this interface.
+    /// </summary>
+    public interface IFlightSearchHorizonOptions
+    {
+        int MaxFutureMonths { get; }
+        int MaxPastMonths { get; }
+    }
 
     public interface IFlightSearchProvider
     {
         /// <summary>
         /// Searches for scheduled flights matching the given <paramref name="criteria"/>, returning
-        /// one result per physical departure.
+        /// one result per flight designator.
         /// Results are not persisted — callers use them to populate a picker before tracking.
         /// Returns an empty list (not null) when the provider responds successfully but no flights match.
         /// Throws <see cref="FlightAssistant.Domain.Common.Exceptions.DomainException"/> when the
-        /// provider cannot be reached or returns an error (502/503/500 depending on the cause) —
-        /// this is distinct from a successful empty result.
+        /// provider cannot be reached or returns an error — this is distinct from a successful
+        /// empty result.
         /// </summary>
         Task<IReadOnlyList<FlightSearchResult>> SearchAsync(
             FlightSearchCriteria criteria,

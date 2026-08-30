@@ -1,6 +1,7 @@
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Commands.Loyalty;
 using FlightAssistant.Application.Commands.Travelers;
+using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Queries.Flights;
 using FlightAssistant.Application.Queries.Lounges;
 using FlightAssistant.Application.Validators;
@@ -50,9 +51,9 @@ public class ValidatorEdgeCaseTests
     }
 
     [Theory]
-    [InlineData("BA12345")]    // 5 digits
-    [InlineData("B1234")]      // single letter prefix
-    [InlineData("123")]        // no letters
+    [InlineData("BA12345")]    // 5 digits — exceeds the 1-4 digit run
+    [InlineData("BA")]         // prefix only, no digits at all
+    [InlineData("BA1234AA")]   // two trailing letters — only one is allowed
     [InlineData("")]           // empty
     public void TrackFlight_InvalidFlightNumbers_Fail(string flightNumber)
     {
@@ -330,7 +331,7 @@ public class ValidatorEdgeCaseTests
     [Fact]
     public void SearchFlights_ValidQuery_Passes()
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertValid(v, new SearchFlightsQuery("LHR", "JFK", DateOnly.FromDateTime(DateTime.UtcNow)));
     }
 
@@ -341,7 +342,7 @@ public class ValidatorEdgeCaseTests
     [InlineData("lHr", "jFk")] // mixed case
     public void SearchFlights_AnyCaseIata_Passes(string from, string to)
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertValid(v, new SearchFlightsQuery(from, to, DateOnly.FromDateTime(DateTime.UtcNow)));
     }
 
@@ -350,7 +351,7 @@ public class ValidatorEdgeCaseTests
     [InlineData("LHR", "JFKK")] // 4-char To
     public void SearchFlights_InvalidIata_Fails(string from, string to)
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertInvalid(v, new SearchFlightsQuery(from, to, DateOnly.FromDateTime(DateTime.UtcNow)));
     }
 
@@ -360,14 +361,14 @@ public class ValidatorEdgeCaseTests
     [InlineData("ba123")]  // lowercase — normalized, not rejected
     public void SearchFlights_FlightNumberOnly_Passes(string flightNumber)
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertValid(v, new SearchFlightsQuery(null, null, DateOnly.FromDateTime(DateTime.UtcNow), flightNumber));
     }
 
     [Fact]
     public void SearchFlights_FutureDateWithinProviderHorizon_Passes()
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertValid(v, new SearchFlightsQuery("LHR", "JFK", DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(6))));
     }
 
@@ -376,14 +377,14 @@ public class ValidatorEdgeCaseTests
     {
         // The schedules endpoint refuses dates past a rolling ~1-year horizon; rejecting here
         // turns what would be an upstream 502 into a clear 400.
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertInvalid(v, new SearchFlightsQuery("LHR", "JFK", DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(13))));
     }
 
     [Fact]
     public void SearchFlights_NoRouteAndNoFlightNumber_Fails()
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertInvalid(v, new SearchFlightsQuery(null, null, DateOnly.FromDateTime(DateTime.UtcNow)));
     }
 
@@ -392,7 +393,7 @@ public class ValidatorEdgeCaseTests
     [InlineData(null, "JFK")] // only To
     public void SearchFlights_HalfRoute_Fails(string? from, string? to)
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertInvalid(v, new SearchFlightsQuery(from, to, DateOnly.FromDateTime(DateTime.UtcNow)));
     }
 
@@ -402,7 +403,7 @@ public class ValidatorEdgeCaseTests
     [InlineData("BA12345")]  // number too long
     public void SearchFlights_InvalidFlightNumber_Fails(string flightNumber)
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertInvalid(v, new SearchFlightsQuery(null, null, DateOnly.FromDateTime(DateTime.UtcNow), flightNumber));
     }
 
@@ -712,11 +713,20 @@ public class ValidatorEdgeCaseTests
 
     // ── Case-insensitive code inputs (#265) ─────────────────────────────────────
 
-    [Fact]
-    public void TrackFlight_LowercaseAirlineIata_Passes()
+    // ── FlightNumber: numeric-prefix carriers (#280 task 4) ─────────────────────
+    // These carriers (IndiGo "6E", jetBlue-style numeric prefixes, etc.) are findable by search
+    // but, before this fix, were rejected on POST because TrackFlightCommandValidator's regex
+    // required an alphabetic prefix while SearchFlightsQueryValidator's did not.
+
+    [Theory]
+    [InlineData("6E4120")] // IndiGo — numeric-then-letter prefix
+    [InlineData("U21234")] // easyJet — letter-then-digit prefix
+    [InlineData("9W1234")] // Jet Airways — digit-then-letter prefix
+    public void TrackFlight_NumericPrefixFlightNumbers_Pass(string flightNumber)
     {
         var v = new TrackFlightCommandValidator();
-        AssertValid(v, ValidTrackFlightCommand() with { AirlineIata = "ba" });
+        var cmd = ValidTrackFlightCommand() with { FlightNumber = flightNumber };
+        AssertValid(v, cmd);
     }
 
     [Theory]
@@ -781,7 +791,6 @@ public class ValidatorEdgeCaseTests
         var now = DateTime.UtcNow;
         return new TrackFlightCommand(
             TravelerId: Guid.NewGuid(),
-            AirlineIata: "BA",
             FlightNumber: "BA123",
             ServiceDate: DateOnly.FromDateTime(now),
             DepartureAirportIata: "LHR",
@@ -789,4 +798,14 @@ public class ValidatorEdgeCaseTests
             ScheduledDepartureUtc: now.AddHours(1),
             ScheduledArrivalUtc: now.AddHours(9));
     }
+
+    /// <summary>Matches AeroApiOptions' own defaults (12 future / 3 past months) so validator
+    /// edge cases here exercise the same bounds production actually uses.</summary>
+    private sealed class FakeHorizonOptions : IFlightSearchHorizonOptions
+    {
+        public int MaxFutureMonths => 12;
+        public int MaxPastMonths => 3;
+    }
+
+    private static readonly IFlightSearchHorizonOptions DefaultHorizon = new FakeHorizonOptions();
 }

@@ -1,6 +1,9 @@
+using FlightAssistant.Application;
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Application.Queries.Flights;
 using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
+using FluentValidation;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -40,6 +43,12 @@ public class AeroApiDependencyInjectionTests
         // isDevelopment: true so the unrelated Apns ValidateOnStart check (which AddInfrastructure
         // also registers) doesn't require Apns:* config this test has no reason to supply.
         services.AddInfrastructure(config, isDevelopment: true);
+
+        // Program.cs calls AddApplication() and AddInfrastructure() together — needed here so
+        // SearchFlightsQueryValidator, which now takes IFlightSearchHorizonOptions in its
+        // constructor, can actually be resolved the way FluentValidation's DI-scanned validators
+        // are resolved in production, not constructed directly with a hand-supplied fake.
+        services.AddApplication();
 
         return services.BuildServiceProvider();
     }
@@ -164,6 +173,37 @@ public class AeroApiDependencyInjectionTests
         var statusProvider = provider.GetRequiredService<IFlightStatusProvider>();
 
         Assert.Equal("AeroAPI", statusProvider.ProviderName);
+    }
+
+    [Fact]
+    public void AddInfrastructure_ResolvesIFlightSearchHorizonOptions_FromAeroApiOptions()
+    {
+        using var provider = BuildContainer();
+
+        // SearchFlightsQueryValidator (Application layer) depends on IFlightSearchHorizonOptions
+        // rather than on AeroApiOptions directly, because Application must never reference
+        // Infrastructure. This proves the translation registered in AddInfrastructure actually
+        // reflects the real bound AeroApiOptions defaults (12 future / 3 past months), not just
+        // that something resolves.
+        var horizon = provider.GetRequiredService<IFlightSearchHorizonOptions>();
+
+        Assert.Equal(12, horizon.MaxFutureMonths);
+        Assert.Equal(3, horizon.MaxPastMonths);
+    }
+
+    [Fact]
+    public void AddApplication_ResolvesSearchFlightsQueryValidator_WithItsHorizonOptionsDependency()
+    {
+        using var provider = BuildContainer();
+
+        // The regression this test exists to catch: SearchFlightsQueryValidator gained a
+        // constructor dependency (IFlightSearchHorizonOptions) in task 4. FluentValidation's
+        // AddValidatorsFromAssembly scan constructs validators through the container, so a
+        // missing registration for that dependency would only surface here — every other
+        // validator test in the solution constructs validators with `new`, bypassing DI entirely.
+        var validator = provider.GetRequiredService<IValidator<SearchFlightsQuery>>();
+
+        Assert.IsType<SearchFlightsQueryValidator>(validator);
     }
 
     [Fact]

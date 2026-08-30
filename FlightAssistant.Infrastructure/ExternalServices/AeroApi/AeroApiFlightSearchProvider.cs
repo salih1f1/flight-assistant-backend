@@ -13,11 +13,12 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     /// Endpoint: GET /schedules/{date_start}/{date_end}?origin=&amp;destination=&amp;airline=&amp;
     /// flight_number=&amp;include_codeshares=true&amp;max_pages=1&amp;cursor=
     ///
-    /// One endpoint covers the full −3&#160;month → +12&#160;month range (no live/future split, no
-    /// <c>DateRoutingFlightSearchProvider</c>), and <c>origin</c>/<c>destination</c>/<c>airline</c>/
-    /// <c>flight_number</c> all filter server-side, so — unlike the AviationStack schedules
-    /// provider this replaces — there is no client-side route/flight-number filtering and no
-    /// operating-carrier guessing: <c>actual_ident_iata</c> states it outright.
+    /// One endpoint covers the full −3&#160;month → +12&#160;month range (no live/future split), and
+    /// <c>origin</c>/<c>destination</c>/<c>airline</c>/<c>flight_number</c> all filter server-side,
+    /// so there is no client-side route/flight-number filtering. Returns one result per flight
+    /// designator — including codeshares when <see cref="FlightSearchCriteria.IncludeCodeshares"/>
+    /// is set — with no operating-carrier grouping: the caller derives the marketing airline from
+    /// each result's own <see cref="FlightSearchResult.FlightNumber"/>.
     ///
     /// <para>
     /// <b>The UTC/local-day mismatch.</b> <c>scheduled_out</c>/<c>scheduled_in</c> are UTC, but
@@ -283,32 +284,19 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         /// <summary>A schedules row exactly as AeroAPI returns it, before mapping to the public shape.</summary>
         private sealed record Row(
             string IdentIata,
-            string? ActualIdentIata,
             string OriginIata,
             string DestinationIata,
             DateTime ScheduledOutUtc,
-            DateTime ScheduledInUtc,
-            string? AircraftType);
+            DateTime ScheduledInUtc);
 
-        private static FlightSearchResult ToResult(Row row, DateOnly serviceDate)
-        {
-            var ident = row.IdentIata.ToUpperInvariant();
-            var operating = string.IsNullOrWhiteSpace(row.ActualIdentIata)
-                ? ident
-                : row.ActualIdentIata.ToUpperInvariant();
-            var airline = ident.Length >= 2 ? ident[..2] : ident;
-
-            return new FlightSearchResult(
-                FlightNumbers: [ident],
-                OperatingFlightNumber: operating,
-                AirlineIata: airline,
-                DepartureIata: row.OriginIata.ToUpperInvariant(),
-                ArrivalIata: row.DestinationIata.ToUpperInvariant(),
+        private static FlightSearchResult ToResult(Row row, DateOnly serviceDate) =>
+            new(
+                FlightNumber: row.IdentIata.ToUpperInvariant(),
                 ServiceDate: serviceDate,
+                DepartureAirportIata: row.OriginIata.ToUpperInvariant(),
+                ArrivalAirportIata: row.DestinationIata.ToUpperInvariant(),
                 ScheduledDepartureUtc: row.ScheduledOutUtc,
-                ScheduledArrivalUtc: row.ScheduledInUtc,
-                EquipmentIcao: row.AircraftType?.ToUpperInvariant());
-        }
+                ScheduledArrivalUtc: row.ScheduledInUtc);
 
         /// <summary>
         /// Skips rows missing anything required to place them: <c>ident_iata</c>, <c>origin_iata</c>,
@@ -332,12 +320,10 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
 
             return new Row(
                 IdentIata: identIata,
-                ActualIdentIata: TryGetString(element, "actual_ident_iata"),
                 OriginIata: originIata,
                 DestinationIata: destinationIata,
                 ScheduledOutUtc: scheduledOut.Value,
-                ScheduledInUtc: scheduledIn.Value,
-                AircraftType: TryGetString(element, "aircraft_type"));
+                ScheduledInUtc: scheduledIn.Value);
         }
 
         private static string? TryGetNextUrl(JsonDocument doc)
@@ -362,7 +348,11 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
             var start = startUtc.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
             var end = endUtc.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
 
-            var query = new List<string> { "include_codeshares=true", "max_pages=1" };
+            var query = new List<string>
+            {
+                $"include_codeshares={(criteria.IncludeCodeshares ? "true" : "false")}",
+                "max_pages=1"
+            };
 
             if (!string.IsNullOrWhiteSpace(criteria.DepartureIata))
                 query.Add($"origin={Uri.EscapeDataString(criteria.DepartureIata.ToUpperInvariant())}");

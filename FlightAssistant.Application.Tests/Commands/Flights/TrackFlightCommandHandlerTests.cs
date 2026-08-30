@@ -15,7 +15,6 @@ public class TrackFlightCommandHandlerTests
 
     private static readonly TrackFlightCommand DefaultCmd = new(
         TravelerId: Guid.NewGuid(),
-        AirlineIata: "BA",
         FlightNumber: "BA123",
         ServiceDate: DateOnly.FromDateTime(DateTime.Today),
         DepartureAirportIata: "LHR",
@@ -101,6 +100,39 @@ public class TrackFlightCommandHandlerTests
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             _handler.Handle(DefaultCmd, CancellationToken.None));
+        Assert.Equal(404, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task AirlineIsDerived_FromTheFlightNumbersFirstTwoCharacters_NotFromASeparateField()
+    {
+        // There is no AirlineIata field any more — the handler must derive the airline from the
+        // flight number itself. "6E4120" is a numeric-prefix carrier (IndiGo), so this also proves
+        // the derivation isn't assuming an alphabetic-only prefix.
+        var cmd = DefaultCmd with { FlightNumber = "6E4120" };
+        _refData.GetAirlineIdByIataAsync("6E", Arg.Any<CancellationToken>()).Returns(7);
+        _flights.GetOrCreateFlightAsync(Arg.Any<Flight>(), Arg.Any<CancellationToken>())
+            .Returns(ci => ci.Arg<Flight>());
+        _flights.GetTravelerFlightAsync(cmd.TravelerId, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .ReturnsNull();
+
+        await _handler.Handle(cmd, CancellationToken.None);
+
+        await _refData.Received(1).GetAirlineIdByIataAsync("6E", Arg.Any<CancellationToken>());
+        await _flights.Received(1).GetOrCreateFlightAsync(
+            Arg.Is<Flight>(f => f.AirlineId == 7), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AirlineDerivedFromFlightNumber_WhenUnknown_Still404s()
+    {
+        // Same 404 behaviour as before, just triggered by the derived airline rather than a
+        // separately posted one.
+        var cmd = DefaultCmd with { FlightNumber = "ZZ999" };
+        _refData.GetAirlineIdByIataAsync("ZZ", Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
+            _handler.Handle(cmd, CancellationToken.None));
         Assert.Equal(404, ex.StatusCode);
     }
 }

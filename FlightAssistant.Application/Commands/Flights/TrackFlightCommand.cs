@@ -7,7 +7,6 @@ namespace FlightAssistant.Application.Commands.Flights
 {
     public record TrackFlightCommand(
         Guid TravelerId,
-        string AirlineIata,
         string FlightNumber,
         DateOnly ServiceDate,
         string DepartureAirportIata,
@@ -29,8 +28,13 @@ namespace FlightAssistant.Application.Commands.Flights
 
         public async Task<int> Handle(TrackFlightCommand cmd, CancellationToken ct)
         {
-            var airlineId = await _refData.GetAirlineIdByIataAsync(cmd.AirlineIata, ct)
-                ?? throw new DomainException($"Airline '{cmd.AirlineIata}' not found.", 404);
+            // An IATA flight designator's first two characters are the marketing airline's IATA
+            // code (e.g. "6E4120" -> "6E") — there is no separate AirlineIata field to trust or
+            // to contradict it, so this is now the single source of truth for which airline is
+            // being tracked.
+            var airlineIata = cmd.FlightNumber.Length >= 2 ? cmd.FlightNumber[..2] : cmd.FlightNumber;
+            var airlineId = await _refData.GetAirlineIdByIataAsync(airlineIata, ct)
+                ?? throw new DomainException($"Airline '{airlineIata}' not found.", 404);
 
             var depAirportId = await _refData.GetAirportIdByIataAsync(cmd.DepartureAirportIata, ct)
                 ?? throw new DomainException($"Airport '{cmd.DepartureAirportIata}' not found.", 404);

@@ -10,7 +10,14 @@ namespace FlightAssistant.Application.Queries.Flights
     /// (<paramref name="From"/> + <paramref name="To"/>) or a specific <paramref name="FlightNumber"/>.
     /// Airport codes are 3-letter IATA codes; the flight number is an IATA flight code (e.g. BA123).
     /// </summary>
-    public record SearchFlightsQuery(string? From, string? To, DateOnly Date, string? FlightNumber = null)
+    /// <param name="IncludeCodeshares">When <c>true</c> (the default), codeshare-marketed rows for
+    /// the same physical departure are included alongside the operating flight's own row.</param>
+    public record SearchFlightsQuery(
+        string? From,
+        string? To,
+        DateOnly Date,
+        string? FlightNumber = null,
+        bool IncludeCodeshares = false)
         : IRequest<IReadOnlyList<FlightSearchResult>>;
 
     public class SearchFlightsQueryValidator : AbstractValidator<SearchFlightsQuery>
@@ -18,11 +25,7 @@ namespace FlightAssistant.Application.Queries.Flights
         // IATA flight code: 2-char airline prefix (alphanumeric, e.g. "BA", "U2") + 1-4 digit number.
         private const string FlightNumberPattern = "^[A-Z0-9]{2}[0-9]{1,4}$";
 
-        // AviationStack's schedules endpoint rejects dates past a rolling horizon (observed as
-        // ~11.5 months out). Stay just inside it so the window's drift never turns into a 502.
-        private const int MaxFutureMonths = 11;
-
-        public SearchFlightsQueryValidator()
+        public SearchFlightsQueryValidator(IFlightSearchHorizonOptions horizon)
         {
             // A search must be anchored on a full route OR a flight number — otherwise the result
             // set would be unbounded.
@@ -61,15 +64,16 @@ namespace FlightAssistant.Application.Queries.Flights
                     .WithMessage("'flightNumber' must be an IATA flight code, e.g. 'BA123'.");
             });
 
+            // The provider's schedules endpoint only holds a rolling window of past and future
+            // data (AeroApiOptions.MaxPastMonths / MaxFutureMonths). Rejecting a date outside it
+            // here turns what would otherwise be an upstream 502 into a clear 400.
             RuleFor(x => x.Date)
-                .Must(d => d >= DateOnly.FromDateTime(DateTime.UtcNow.AddYears(-1)))
-                .WithMessage("Date must not be more than 1 year in the past.");
+                .Must(d => d >= DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(-horizon.MaxPastMonths)))
+                .WithMessage($"Date must not be more than {horizon.MaxPastMonths} months in the past.");
 
-            // The provider's schedules endpoint refuses dates beyond a rolling horizon roughly a
-            // year out. Rejecting them here turns an upstream 502 into a clear 400.
             RuleFor(x => x.Date)
-                .Must(d => d <= DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(MaxFutureMonths)))
-                .WithMessage($"Date must not be more than {MaxFutureMonths} months in the future.");
+                .Must(d => d <= DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(horizon.MaxFutureMonths)))
+                .WithMessage($"Date must not be more than {horizon.MaxFutureMonths} months in the future.");
         }
 
         private static bool HasRouteOrFlightNumber(SearchFlightsQuery q) =>
@@ -89,7 +93,8 @@ namespace FlightAssistant.Application.Queries.Flights
                     DepartureIata: query.From?.ToUpperInvariant(),
                     ArrivalIata: query.To?.ToUpperInvariant(),
                     Date: query.Date,
-                    FlightNumber: query.FlightNumber?.ToUpperInvariant()),
+                    FlightNumber: query.FlightNumber?.ToUpperInvariant(),
+                    IncludeCodeshares: query.IncludeCodeshares),
                 ct);
     }
 }

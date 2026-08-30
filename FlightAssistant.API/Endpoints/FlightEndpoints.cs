@@ -21,28 +21,31 @@ namespace FlightAssistant.API.Endpoints
 
             // GET /flights/search?date=2025-06-01&from=LHR&to=JFK
             // GET /flights/search?date=2025-06-01&flightNumber=BA123
-            group.MapGet("search", async (DateOnly date, IMediator mediator, CancellationToken ct, string? from = null, string? to = null, string? flightNumber = null) =>
+            group.MapGet("search", async (DateOnly date, IMediator mediator, CancellationToken ct, string? from = null, string? to = null, string? flightNumber = null, bool includeCodeshares = false) =>
             {
-                var results = await mediator.Send(new SearchFlightsQuery(from, to, date, flightNumber), ct);
+                var results = await mediator.Send(new SearchFlightsQuery(from, to, date, flightNumber, includeCodeshares), ct);
                 var dtos = results.Select(r => new FlightSearchResultDto(
-                    r.FlightNumbers, r.OperatingFlightNumber, r.AirlineIata,
-                    r.DepartureIata, r.ArrivalIata,
-                    r.ServiceDate, r.ScheduledDepartureUtc, r.ScheduledArrivalUtc, r.EquipmentIcao)).ToList();
+                    r.FlightNumber, r.ServiceDate, r.DepartureAirportIata, r.ArrivalAirportIata,
+                    r.ScheduledDepartureUtc, r.ScheduledArrivalUtc)).ToList();
                 return Results.Ok(dtos);
             })
             .WithName("SearchFlights")
             .WithSummary("Search flights by route or flight number on a date")
             .WithDescription(
-                "Searches scheduled flights via AviationStack to populate the 'add flight' picker before calling POST /flights to track a result.\n\n" +
+                "Searches scheduled flights to populate the 'add flight' picker. Each returned row has exactly " +
+                "the same shape as TrackFlightRequest (flightNumber, serviceDate, departureAirportIata, " +
+                "arrivalAirportIata, scheduledDepartureUtc, scheduledArrivalUtc), so a result can be posted " +
+                "straight to POST /flights, unmodified, to track it.\n\n" +
                 "Search criteria (query params):\n" +
-                "- date (required): the departure date in YYYY-MM-DD format. Must not be more than 1 year in the past, nor more than 11 months in the future.\n" +
+                "- date (required): the departure date in YYYY-MM-DD format. Must fall within the provider's rolling past/future horizon.\n" +
                 "- from / to (optional): departure and arrival airport as 3-letter IATA codes (e.g. LHR, JFK). Case-insensitive. Must be supplied together.\n" +
-                "- flightNumber (optional): an IATA flight code, e.g. BA123 (2-character airline prefix + 1–4 digit number). Case-insensitive.\n\n" +
+                "- flightNumber (optional): an IATA flight code, e.g. BA123 (2-character alphanumeric airline prefix + 1–4 digit number, optional trailing letter). Case-insensitive.\n" +
+                "- includeCodeshares (optional, default false): when true, includes codeshare-marketed rows for the same physical departure alongside the operating flight's own row; when false, only the operating flight's own row is returned.\n\n" +
                 "You must provide either a full route (both from and to) OR a flightNumber, in addition to date; otherwise the request is rejected with 400.\n\n" +
-                "Each result is one physical departure. Airlines sell the same aircraft under several flight numbers, " +
-                "so 'flightNumbers' lists all of them (e.g. TK1028 is also 6E4120, MS9668, RJ3710 and SQ6228) rather than " +
-                "returning a near-duplicate row per marketing carrier. 'operatingFlightNumber' names the carrier actually " +
-                "flying the aircraft where the data source discloses it, and is null for future dates.\n\n" +
+                "Each result is one flight designator — the same aircraft sold under several marketing numbers " +
+                "(e.g. TK1028 is also 6E4120, MS9668, RJ3710 and SQ6228) appears as one row per number, not " +
+                "grouped. There is no separate 'operating carrier' field: the airline is always the first two " +
+                "characters of the result's own flightNumber.\n\n" +
                 "Responses:\n" +
                 "- 200: list of matching flights (empty list when the provider responds successfully but nothing matches).\n" +
                 "- 400: invalid/insufficient parameters.\n" +
@@ -88,7 +91,6 @@ namespace FlightAssistant.API.Endpoints
 
                 var flightId = await mediator.Send(new TrackFlightCommand(
                     travelerId,
-                    req.AirlineIata,
                     req.FlightNumber,
                     req.ServiceDate,
                     req.DepartureAirportIata,
@@ -101,9 +103,12 @@ namespace FlightAssistant.API.Endpoints
             .WithName("TrackFlight")
             .WithSummary("Track a flight")
             .WithDescription(
-                "Adds a flight to the authenticated traveler's tracking list. " +
+                "Adds a flight to the authenticated traveler's tracking list. A row returned by GET /flights/search " +
+                "can be posted here unmodified — this body is exactly that shape. " +
                 "If the flight already exists in the system (same airline, number, and service date) it is reused; otherwise a new flight record is created. " +
-                "Body fields: AirlineIata (e.g. 'BA'), FlightNumber (e.g. 'BA123'), ServiceDate (YYYY-MM-DD), " +
+                "The airline is derived from the first two characters of FlightNumber (e.g. 'BA123' -> 'BA', '6E4120' -> '6E'); " +
+                "there is no separate airline field. " +
+                "Body fields: FlightNumber (e.g. 'BA123' or '6E4120'), ServiceDate (YYYY-MM-DD), " +
                 "DepartureAirportIata, ArrivalAirportIata, ScheduledDepartureUtc, ScheduledArrivalUtc.")
             .Produces(201)
             .ProducesValidationProblem();
@@ -171,7 +176,7 @@ namespace FlightAssistant.API.Endpoints
             .WithName("SyncFlightStatus")
             .WithSummary("Manually sync flight status")
             .WithDescription(
-                "Triggers an on-demand status refresh for the specified flight by querying the external flight data provider (AviationStack). " +
+                "Triggers an on-demand status refresh for the specified flight by querying the external flight data provider. " +
                 "Returns { updated: true } if new status data was fetched and persisted, or { updated: false } if the data was already up to date. " +
                 "Route parameter: flightId — the numeric flight ID.")
             .Produces(200)

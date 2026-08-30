@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using FlightAssistant.Application.Interfaces.ExternalServices;
 
 namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
 {
@@ -6,9 +7,12 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     /// Configuration for the FlightAware AeroAPI client, bound from the <c>AeroApi</c> section.
     /// Registered with <c>ValidateDataAnnotations().ValidateOnStart()</c> so a missing/invalid
     /// value fails fast at startup rather than surfacing as a confusing runtime error on the
-    /// first search.
+    /// first search. Implements <see cref="IFlightSearchHorizonOptions"/> so the Application-layer
+    /// query validator can read the real configured horizon without this (Infrastructure) project
+    /// being referenced from Application — see the DI registration in
+    /// <c>FlightAssistant.Infrastructure.DependencyInjection</c>.
     /// </summary>
-    public sealed class AeroApiOptions
+    public sealed class AeroApiOptions : IFlightSearchHorizonOptions
     {
         /// <summary>Sent as the <c>x-apikey</c> header on every request. Never logged.</summary>
         [Required]
