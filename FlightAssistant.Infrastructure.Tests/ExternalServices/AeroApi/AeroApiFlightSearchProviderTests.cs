@@ -363,13 +363,19 @@ public class AeroApiFlightSearchProviderTests
     // Rejection of an unfiltered airport query
     // ------------------------------------------------------------------
 
-    [Fact]
-    public async Task SearchAsync_RejectsAnOriginOnlySearch_WithNoDestinationOrFlightNumber()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task SearchAsync_RejectsAnOriginOnlySearch_WithNoDestinationOrFlightNumber(string? arrivalIata)
     {
+        // IsNullOrWhiteSpace is the actual guard, so null, "" and whitespace-only must all be
+        // rejected identically — not just null, which validator-produced criteria would never
+        // even send. This protects a query that would otherwise be ~700 rows / ~47 result sets.
         var handler = new ScriptedHttpMessageHandler((HttpStatusCode.OK, """{ "scheduled": [] }"""));
 
         var ex = await Assert.ThrowsAsync<DomainException>(() => Provider(handler).SearchAsync(
-            new FlightSearchCriteria("LHR", null, new DateOnly(2026, 9, 29), null)));
+            new FlightSearchCriteria("LHR", arrivalIata, new DateOnly(2026, 9, 29), null)));
 
         Assert.Equal(400, ex.StatusCode);
         Assert.Empty(handler.Requests); // rejected before any HTTP call

@@ -1,3 +1,5 @@
+using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,7 +13,8 @@ namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroApi;
 /// <c>AeroApiThrottleGate</c>'s constructor requiring a <see cref="TimeProvider"/> that nothing in
 /// the solution registers. That gap is silent in Task 1 (nothing resolves the gate yet) and
 /// detonates the moment a real provider is added in Task 2/3 — these tests prove the graph is
-/// actually buildable and stays that way.
+/// actually buildable and stays that way, now including the search provider Task 2 added (every
+/// one of ITS tests also constructs it directly with hand-supplied fakes, same gap as Task 1's).
 /// </summary>
 public class AeroApiDependencyInjectionTests
 {
@@ -27,6 +30,12 @@ public class AeroApiDependencyInjectionTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton<IConfiguration>(config);
+
+        // AddAppCaching is registered separately from AddInfrastructure in Program.cs (the real
+        // composition root) — AeroApiAirportTimezoneLookup needs ICacheService, so it must be
+        // registered here too, or resolving it (and anything that depends on it) would throw for
+        // a reason that has nothing to do with the AeroAPI wiring under test.
+        services.AddAppCaching(config);
 
         // isDevelopment: true so the unrelated Apns ValidateOnStart check (which AddInfrastructure
         // also registers) doesn't require Apns:* config this test has no reason to supply.
@@ -80,5 +89,53 @@ public class AeroApiDependencyInjectionTests
         var timeProvider = provider.GetRequiredService<TimeProvider>();
 
         Assert.NotNull(timeProvider);
+    }
+
+    [Fact]
+    public void AddInfrastructure_ResolvesIFlightSearchProvider_AsAeroApiFlightSearchProvider()
+    {
+        using var provider = BuildContainer();
+
+        // The regression this test exists to catch: task 2 replaced the
+        // DateRoutingFlightSearchProvider registration, but every one of its own tests constructs
+        // AeroApiFlightSearchProvider directly with hand-supplied fakes (an HttpClient over a stub
+        // handler, a hand-built AeroApiAirportTimezoneLookup) — none of them go through DI, so a
+        // wrong lifetime, a missing dependency, or the registration being dropped entirely would
+        // be invisible until a real request hit it in production. Deleting the
+        // AeroApiFlightSearchProvider registration from DependencyInjection.cs turns this from a
+        // pass into an InvalidOperationException at GetRequiredService, which is the point.
+        var searchProvider = provider.GetRequiredService<IFlightSearchProvider>();
+
+        Assert.IsType<AeroApiFlightSearchProvider>(searchProvider);
+    }
+
+    [Fact]
+    public void AddInfrastructure_ResolvesAeroApiAirportTimezoneLookup_WithItsHttpClientAndCache()
+    {
+        using var provider = BuildContainer();
+
+        // Resolving this directly (rather than only transitively through IFlightSearchProvider)
+        // isolates which dependency is missing if this ever throws: ICacheService (from
+        // AddAppCaching), IOptions<AeroApiOptions>, or the named "AeroApi" HttpClient.
+        var lookup = provider.GetRequiredService<AeroApiAirportTimezoneLookup>();
+
+        Assert.NotNull(lookup);
+    }
+
+    [Fact]
+    public void AddInfrastructure_ResolvesAeroApiFlightSearchProvider_AsAScopedInstancePerScope()
+    {
+        using var root = BuildContainer();
+
+        using (var scopeA = root.CreateScope())
+        {
+            var first = scopeA.ServiceProvider.GetRequiredService<AeroApiFlightSearchProvider>();
+            var second = scopeA.ServiceProvider.GetRequiredService<AeroApiFlightSearchProvider>();
+            Assert.Same(first, second); // same within a scope
+
+            using var scopeB = root.CreateScope();
+            var third = scopeB.ServiceProvider.GetRequiredService<AeroApiFlightSearchProvider>();
+            Assert.NotSame(first, third); // different across scopes — proves it's Scoped, not Singleton
+        }
     }
 }
