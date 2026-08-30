@@ -117,16 +117,15 @@ namespace FlightAssistant.Infrastructure
                 sp.GetRequiredService<IConfiguration>(),
                 sp.GetRequiredService<ILogger<AviationStackScheduleSearchProvider>>()));
 
-            services.AddScoped<IFlightSearchProvider>(sp => new DateRoutingFlightSearchProvider(
-                sp.GetRequiredService<AviationStackLiveSearchProvider>(),
-                sp.GetRequiredService<AviationStackScheduleSearchProvider>(),
-                sp.GetRequiredService<ILogger<DateRoutingFlightSearchProvider>>()));
+            // DateRoutingFlightSearchProvider is no longer wired to IFlightSearchProvider — see the
+            // AeroApiFlightSearchProvider registration below (issue #280 / task 2). The class and
+            // its own tests stay on disk untouched; Task 5 deletes them once the status provider
+            // (task 3) and contract reshape (task 4) are also done.
 
             // AeroAPI — replacing AviationStack as the flight data provider (issue #280). This wires
-            // only the HTTP foundation: options, error mapping (AeroApiResponse), and the shared
-            // outbound throttle. Nothing above IFlightSearchProvider/IFlightStatusProvider points at
-            // it yet — later tasks build the concrete providers and switch DI over; the AviationStack
-            // registrations above stay in place until then.
+            // the HTTP foundation: options, error mapping (AeroApiResponse), and the shared outbound
+            // throttle. IFlightStatusProvider still points at AviationStack — task 3 switches that
+            // over; the AviationStack status registration above stays in place until then.
             services.AddOptions<AeroApiOptions>()
                 .BindConfiguration("AeroApi")
                 .ValidateDataAnnotations()
@@ -172,6 +171,21 @@ namespace FlightAssistant.Infrastructure
             });
 
             aeroApiClientBuilder.AddHttpMessageHandler<AeroApiThrottlingHandler>();
+
+            services.AddScoped(sp => new AeroApiAirportTimezoneLookup(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
+                sp.GetRequiredService<ICacheService>(),
+                sp.GetRequiredService<IOptions<AeroApiOptions>>(),
+                sp.GetRequiredService<ILogger<AeroApiAirportTimezoneLookup>>()));
+
+            services.AddScoped(sp => new AeroApiFlightSearchProvider(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
+                sp.GetRequiredService<AeroApiAirportTimezoneLookup>(),
+                sp.GetRequiredService<IOptions<AeroApiOptions>>(),
+                sp.GetRequiredService<ILogger<AeroApiFlightSearchProvider>>()));
+
+            services.AddScoped<IFlightSearchProvider>(sp =>
+                sp.GetRequiredService<AeroApiFlightSearchProvider>());
 
             // Push notifications — singleton so the APNs client is created once and reused
             services.AddOptions<ApnsOptions>()
