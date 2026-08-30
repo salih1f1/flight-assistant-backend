@@ -12,6 +12,7 @@ using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -130,6 +131,12 @@ namespace FlightAssistant.Infrastructure
                 .BindConfiguration("AeroApi")
                 .ValidateDataAnnotations()
                 .ValidateOnStart();
+
+            // AeroApiThrottleGate's constructor requires a TimeProvider, and nothing else in this
+            // solution (nor AddStandardResilienceHandler, nor the generic host) registers one —
+            // TryAddSingleton so a real caller elsewhere in the app can still supply its own without
+            // a duplicate-registration conflict.
+            services.TryAddSingleton(TimeProvider.System);
 
             // Singleton so every AeroAPI HttpClient contends on the same gate — the personal tier's
             // ~5 queries/minute limit is a process-wide budget, not a per-client one.

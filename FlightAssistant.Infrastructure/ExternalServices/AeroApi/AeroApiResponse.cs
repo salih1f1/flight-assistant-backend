@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using FlightAssistant.Domain.Common.Exceptions;
 using Microsoft.Extensions.Logging;
 
@@ -28,19 +29,32 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         // 503 Service Unavailable — the provider throttled us (429). The client may retry later.
         private const int StatusCode503ServiceUnavailable = 503;
 
+        // Catches credential-shaped fields (apikey, api_key, x-apikey, access_token, secret, …) in
+        // an upstream body even when they don't literally match the configured key — e.g. a stray
+        // echoed header, or a differently-cased/partial representation of it.
+        private static readonly Regex KeyLikeFieldPattern = new(
+            @"(""?(?:x-)?(?:api[_-]?key|access[_-]?token|secret)""?\s*[:=]\s*)""?[^""\s,}]+""?",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
         /// <summary>
         /// Reads an AeroAPI response, throwing <see cref="DomainException"/> for any provider-side
         /// failure. Returns the parsed document only on success; the caller owns disposing it.
         /// </summary>
-        /// <param name="operation">Human-readable operation name used in logs, e.g.
-        /// <c>"Flight search"</c>.</param>
+        /// <param name="operation">Human-readable operation name embedded in both the client-facing
+        /// message and the logs, e.g. <c>"Flight search"</c> or <c>"Flight status"</c>. Shared by
+        /// every AeroAPI caller, so this must never hardcode a single operation's wording.</param>
         /// <param name="criteria">Request context for logs only, e.g. <c>"SOF-&gt;IST 2026-10-10"</c>.
         /// Never include the request URL or headers — the URL is safe (the key travels only in the
         /// <c>x-apikey</c> header) but headers must never be logged.</param>
+        /// <param name="apiKey">The configured AeroAPI key, redacted out of the upstream body before
+        /// it reaches <see cref="DomainException.DiagnosticDetail"/> or the logs. AeroAPI never
+        /// echoes it back in a body — auth travels only in the <c>x-apikey</c> header — but this is
+        /// defense in depth against an upstream bug or a proxy that reflects request state.</param>
         public static async Task<JsonDocument> ReadOrThrowAsync(
             HttpResponseMessage response,
             string operation,
             string criteria,
+            string apiKey,
             ILogger logger,
             CancellationToken ct)
         {
@@ -59,13 +73,13 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
                         "AeroAPI returned an unparseable {Operation} response ({StatusCode}) for {Criteria}",
                         operation, status, criteria);
                     throw new DomainException(
-                        "Flight search is temporarily unavailable. Please try again shortly.",
+                        $"{operation} is temporarily unavailable. Please try again shortly.",
                         StatusCode502BadGateway,
                         $"AeroAPI returned HTTP {status} with a body that is not valid JSON.");
                 }
             }
 
-            var upstreamBody = await SafeReadBodyAsync(response, ct);
+            var upstreamBody = Redact(await SafeReadBodyAsync(response, ct), apiKey);
 
             switch (response.StatusCode)
             {
@@ -88,8 +102,8 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
                         operation, status, criteria, retryAfter is null ? "" : $" (Retry-After: {retryAfter})");
                     throw new DomainException(
                         retryAfter is null
-                            ? "Flight search is busy. Please try again shortly."
-                            : $"Flight search is busy. Please try again shortly. Retry-After: {retryAfter}.",
+                            ? $"{operation} is busy. Please try again shortly."
+                            : $"{operation} is busy. Please try again shortly. Retry-After: {retryAfter}.",
                         StatusCode503ServiceUnavailable,
                         $"AeroAPI returned HTTP 429: {upstreamBody}");
 
@@ -98,7 +112,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
                         "AeroAPI rejected {Operation} parameters ({StatusCode}) for {Criteria}: {Body}",
                         operation, status, criteria, upstreamBody);
                     throw new DomainException(
-                        "The flight search request was rejected.",
+                        $"The {Decapitalize(operation)} request was rejected.",
                         StatusCode400BadRequest,
                         $"AeroAPI returned HTTP {status}: {upstreamBody}");
 
@@ -107,7 +121,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
                         "AeroAPI {Operation} returned an unexpected status ({StatusCode}) for {Criteria}: {Body}",
                         operation, status, criteria, upstreamBody);
                     throw new DomainException(
-                        "Flight search is temporarily unavailable. Please try again shortly.",
+                        $"{operation} is temporarily unavailable. Please try again shortly.",
                         StatusCode502BadGateway,
                         $"AeroAPI returned HTTP {status}: {upstreamBody}");
             }
@@ -129,6 +143,33 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
 
             return null;
         }
+
+        /// <summary>
+        /// Strips the configured API key — and anything shaped like a credential field — out of
+        /// upstream text before it reaches <see cref="DomainException.DiagnosticDetail"/> or a log.
+        /// AeroAPI auth travels only in the <c>x-apikey</c> request header and is never expected to
+        /// appear in a response body; this exists purely as defense in depth.
+        /// </summary>
+        private static string Redact(string text, string apiKey)
+        {
+            if (string.IsNullOrEmpty(text))
+                return text;
+
+            var redacted = text;
+
+            if (!string.IsNullOrEmpty(apiKey))
+                redacted = redacted.Replace(apiKey, "[REDACTED]", StringComparison.OrdinalIgnoreCase);
+
+            redacted = KeyLikeFieldPattern.Replace(redacted, "$1[REDACTED]");
+
+            return redacted;
+        }
+
+        /// <summary>Lower-cases only the first character of <paramref name="value"/>, so an
+        /// operation name like <c>"Flight search"</c> embeds naturally mid-sentence as
+        /// <c>"the flight search request…"</c>.</summary>
+        private static string Decapitalize(string value) =>
+            string.IsNullOrEmpty(value) ? value : char.ToLowerInvariant(value[0]) + value[1..];
 
         private static async Task<string> SafeReadBodyAsync(HttpResponseMessage response, CancellationToken ct)
         {
