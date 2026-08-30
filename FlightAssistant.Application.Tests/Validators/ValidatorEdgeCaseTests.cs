@@ -722,11 +722,26 @@ public class ValidatorEdgeCaseTests
     [InlineData("6E4120")] // IndiGo — numeric-then-letter prefix
     [InlineData("U21234")] // easyJet — letter-then-digit prefix
     [InlineData("9W1234")] // Jet Airways — digit-then-letter prefix
+    [InlineData("B61234")] // JetBlue — letter-then-digit prefix
+    [InlineData("B1234")]  // "B"+"1" satisfies [A-Z][A-Z0-9] — a plausible designator shape
+                            // (compare the real B6/U2/9W/6E); whether "B1" is an assigned
+                            // carrier is reference data's job (TrackFlightCommandHandler's 404),
+                            // not this regex's. Must stay valid.
     public void TrackFlight_NumericPrefixFlightNumbers_Pass(string flightNumber)
     {
         var v = new TrackFlightCommandValidator();
         var cmd = ValidTrackFlightCommand() with { FlightNumber = flightNumber };
         AssertValid(v, cmd);
+    }
+
+    [Theory]
+    [InlineData("123")]    // all-digit prefix "12" — no real IATA airline designator is all digits
+    [InlineData("12345A")] // same, with a valid digit run and suffix — only the prefix is wrong
+    public void TrackFlight_AllDigitPrefixFlightNumbers_Fail(string flightNumber)
+    {
+        var v = new TrackFlightCommandValidator();
+        var cmd = ValidTrackFlightCommand() with { FlightNumber = flightNumber };
+        AssertInvalid(v, cmd, "FlightNumber");
     }
 
     [Theory]

@@ -10,7 +10,13 @@ namespace FlightAssistant.Application.Validators
         {
             RuleFor(x => x.FlightNumber)
                 .NotEmpty()
-                .Matches(@"^[A-Z0-9]{2}\d{1,4}[A-Z]?$", RegexOptions.IgnoreCase)
+                // A real IATA flight designator's 2-character airline prefix always contains at
+                // least one letter (e.g. "6E", "U2", "9W", "B6") — an all-digit prefix like "12"
+                // is not a carrier. [A-Z][A-Z0-9] covers letter-first prefixes (including
+                // letter+digit and letter+letter); [0-9][A-Z] covers digit-first prefixes. Whether
+                // a given shape is an actually-assigned carrier is reference data's job — see
+                // TrackFlightCommandHandler's 404 — not this regex's.
+                .Matches(@"^(?:[A-Z][A-Z0-9]|[0-9][A-Z])\d{1,4}[A-Z]?$", RegexOptions.IgnoreCase)
                 .WithMessage("FlightNumber must be in the format AA1234 or AA1234A.");
 
             RuleFor(x => x.ServiceDate)

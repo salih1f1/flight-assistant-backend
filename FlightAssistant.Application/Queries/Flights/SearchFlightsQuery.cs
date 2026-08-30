@@ -10,8 +10,9 @@ namespace FlightAssistant.Application.Queries.Flights
     /// (<paramref name="From"/> + <paramref name="To"/>) or a specific <paramref name="FlightNumber"/>.
     /// Airport codes are 3-letter IATA codes; the flight number is an IATA flight code (e.g. BA123).
     /// </summary>
-    /// <param name="IncludeCodeshares">When <c>true</c> (the default), codeshare-marketed rows for
-    /// the same physical departure are included alongside the operating flight's own row.</param>
+    /// <param name="IncludeCodeshares">When <c>true</c>, codeshare-marketed rows for the same
+    /// physical departure are included alongside the operating flight's own row. Defaults to
+    /// <c>false</c>.</param>
     public record SearchFlightsQuery(
         string? From,
         string? To,

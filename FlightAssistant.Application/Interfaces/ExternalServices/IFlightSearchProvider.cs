@@ -28,7 +28,7 @@ namespace FlightAssistant.Application.Interfaces.ExternalServices
         string? ArrivalIata,
         DateOnly Date,
         string? FlightNumber,
-        bool IncludeCodeshares = true);
+        bool IncludeCodeshares = false);
 
     /// <summary>
     /// The provider's search horizon, exposed here (in the Application layer) so the query
