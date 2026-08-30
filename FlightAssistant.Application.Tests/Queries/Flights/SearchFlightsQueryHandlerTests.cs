@@ -1,6 +1,5 @@
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Queries.Flights;
-using FlightAssistant.Contracts.Requests.Flights;
 using NSubstitute;
 
 namespace FlightAssistant.Application.Tests.Queries.Flights;
@@ -64,35 +63,9 @@ public class SearchFlightsQueryHandlerTests
         Assert.Same(results, response);
     }
 
-    [Fact]
-    public async Task Handle_ReturnedRow_CarriesEveryFieldTrackFlightRequestNeeds()
-    {
-        // The whole point of task 4's reshape: a search result IS a TrackFlightRequest, field for
-        // field, with no client-side transformation. Prove it explicitly here rather than leaving
-        // it implied by the two records happening to look similar.
-        var result = new FlightSearchResult(
-            FlightNumber: "6E4120",
-            ServiceDate: new DateOnly(2026, 9, 29),
-            DepartureAirportIata: "SOF",
-            ArrivalAirportIata: "IST",
-            ScheduledDepartureUtc: new DateTime(2026, 9, 29, 6, 35, 0, DateTimeKind.Utc),
-            ScheduledArrivalUtc: new DateTime(2026, 9, 29, 8, 5, 0, DateTimeKind.Utc));
-        _search.SearchAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>())
-            .Returns([result]);
-
-        var response = await _handler.Handle(
-            new SearchFlightsQuery(null, null, result.ServiceDate, "6E4120"), CancellationToken.None);
-        var row = Assert.Single(response);
-
-        var trackRequest = new TrackFlightRequest(
-            row.FlightNumber, row.ServiceDate, row.DepartureAirportIata, row.ArrivalAirportIata,
-            row.ScheduledDepartureUtc, row.ScheduledArrivalUtc);
-
-        Assert.Equal(result.FlightNumber, trackRequest.FlightNumber);
-        Assert.Equal(result.ServiceDate, trackRequest.ServiceDate);
-        Assert.Equal(result.DepartureAirportIata, trackRequest.DepartureAirportIata);
-        Assert.Equal(result.ArrivalAirportIata, trackRequest.ArrivalAirportIata);
-        Assert.Equal(result.ScheduledDepartureUtc, trackRequest.ScheduledDepartureUtc);
-        Assert.Equal(result.ScheduledArrivalUtc, trackRequest.ScheduledArrivalUtc);
-    }
+    // Deliberately NOT here: a test that copies a FlightSearchResult's six fields into a
+    // TrackFlightRequest and asserts each copy equals its source. That is a tautology — it can only
+    // fail at compile time, and would pass unchanged with the handler deleted.
+    // FlightEndpointTests.SearchFlights_ReturnedRow_DeserialisesIntoAValidTrackFlightRequest does
+    // the real job, at the HTTP/JSON boundary where the shapes could actually diverge.
 }

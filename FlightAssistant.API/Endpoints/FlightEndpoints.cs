@@ -1,6 +1,7 @@
 using FlightAssistant.API.Authentication;
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Queries.Flights;
+using FlightAssistant.Application.Validators;
 using FlightAssistant.Contracts.Paging;
 using FlightAssistant.Contracts.Requests.Flights;
 using FlightAssistant.Contracts.Responses.Flights;
@@ -39,7 +40,10 @@ namespace FlightAssistant.API.Endpoints
                 "Search criteria (query params):\n" +
                 "- date (required): the departure date in YYYY-MM-DD format. Must fall within the provider's rolling past/future horizon.\n" +
                 "- from / to (optional): departure and arrival airport as 3-letter IATA codes (e.g. LHR, JFK). Case-insensitive. Must be supplied together.\n" +
-                "- flightNumber (optional): an IATA flight code, e.g. BA123 (2-character alphanumeric airline prefix + 1–4 digit number, optional trailing letter). Case-insensitive.\n" +
+                // Rendered from FlightNumberFormat so the documented rule cannot drift from the
+                // regex the validator actually applies — which is exactly what happened before.
+                "- flightNumber (optional): an IATA flight code — " + FlightNumberFormat.Description +
+                ". Case-insensitive. The same rule POST /flights applies, so any flightNumber this endpoint accepts is trackable.\n" +
                 "- includeCodeshares (optional, default false): when true, includes codeshare-marketed rows for the same physical departure alongside the operating flight's own row; when false, only the operating flight's own row is returned.\n\n" +
                 "You must provide either a full route (both from and to) OR a flightNumber, in addition to date; otherwise the request is rejected with 400.\n\n" +
                 "Each result is one flight designator — the same aircraft sold under several marketing numbers " +

@@ -57,6 +57,47 @@ public class AeroApiOptionsTests
         Assert.Throws<OptionsValidationException>(() => options.Value);
     }
 
+    [Theory]
+    [InlineData("00:00:00")]   // zero — silently disables the only process-wide spend brake
+    [InlineData("-00:00:05")]  // negative — same, and nonsensical as an interval
+    [InlineData("00:10:00")]   // absurdly long: would drag every derived timeout with it
+    public void MinRequestIntervalOutsideRange_FailsValidation(string minRequestInterval)
+    {
+        // MaxPages, MaxFutureMonths and MaxPastMonths all had a [Range]; this one did not, even
+        // though it is the single brake on a metered, per-call billed API — and it is now the value
+        // every resilience timeout is derived from, so it is the value most likely to be tuned.
+        var options = BuildOptions(new Dictionary<string, string?>
+        {
+            ["AeroApi:ApiKey"] = "dummy",
+            ["AeroApi:MinRequestInterval"] = minRequestInterval
+        });
+
+        Assert.Throws<OptionsValidationException>(() => options.Value);
+    }
+
+    [Theory]
+    [InlineData("00:00:12")]
+    [InlineData("00:00:45")]
+    [InlineData("00:01:30")]
+    public void AttemptTimeout_AlwaysExceedsMinRequestInterval_AtAnyConfiguredInterval(string minRequestInterval)
+    {
+        // The invariant behind the critical defect: AeroApiThrottlingHandler is registered inside
+        // the resilience handler, so a throttled wait of up to a whole MinRequestInterval elapses
+        // within AttemptTimeout. If the timeout is ever the smaller of the two, every throttled call
+        // is killed before it reaches the transport. Deriving it is what makes tuning the interval
+        // safe — this asserts the derivation actually holds rather than merely happening to at 12s.
+        var options = BuildOptions(new Dictionary<string, string?>
+        {
+            ["AeroApi:ApiKey"] = "dummy",
+            ["AeroApi:MinRequestInterval"] = minRequestInterval
+        }).Value;
+
+        Assert.True(options.AttemptTimeout > options.MinRequestInterval);
+        Assert.True(options.TotalRequestTimeout > options.AttemptTimeout);
+        Assert.True(options.CircuitBreakerSamplingDuration >= options.AttemptTimeout * 2);
+        Assert.True(options.HttpClientTimeout > options.TotalRequestTimeout);
+    }
+
     [Fact]
     public void ValidApiKey_BindsWithDocumentedDefaults()
     {
@@ -71,5 +112,9 @@ public class AeroApiOptionsTests
         Assert.Equal(12, value.MaxFutureMonths);
         Assert.Equal(3, value.MaxPastMonths);
         Assert.Equal(30, value.TimeoutSeconds);
+        Assert.Equal(2, value.MaxRetryAttempts);
+
+        // Derived, not configured: a 12s throttle wait plus a 30s network budget per attempt.
+        Assert.Equal(TimeSpan.FromSeconds(42), value.AttemptTimeout);
     }
 }

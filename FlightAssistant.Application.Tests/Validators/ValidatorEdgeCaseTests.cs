@@ -401,10 +401,43 @@ public class ValidatorEdgeCaseTests
     [InlineData("BA")]       // missing number
     [InlineData("B")]        // too short
     [InlineData("BA12345")]  // number too long
+    [InlineData("12345")]    // all-digit airline prefix — no such carrier; search used to accept it
     public void SearchFlights_InvalidFlightNumber_Fails(string flightNumber)
     {
         var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertInvalid(v, new SearchFlightsQuery(null, null, DateOnly.FromDateTime(DateTime.UtcNow), flightNumber));
+    }
+
+    [Theory]
+    // Accepted by both:
+    [InlineData("BA123")]
+    [InlineData("6E4120")]  // digit-first airline prefix
+    [InlineData("U21234")]  // letter-then-digit prefix
+    [InlineData("BA123A")]  // operational trailing letter — search used to REJECT this
+    [InlineData("ba123")]   // case is normalised, not rejected
+    // Rejected by both:
+    [InlineData("12345")]   // all-digit prefix — search used to ACCEPT this
+    [InlineData("BA")]
+    [InlineData("B")]
+    [InlineData("BA12345")]
+    [InlineData("BA123AB")]
+    public void FlightNumberRule_IsIdentical_ForSearchAndTrack(string flightNumber)
+    {
+        // The two validators used to carry two different hand-written regexes, disagreeing in both
+        // directions: search accepted an all-digit prefix that track refused, and track accepted a
+        // trailing letter that search refused. Either disagreement means the picker can hand a
+        // client a flight number POST /flights then rejects — the exact class of defect the search
+        // reshape exists to remove. They now share FlightNumberFormat.Pattern; this asserts they
+        // agree on every shape rather than trusting that they still read from the same constant.
+        var searchAccepts = new SearchFlightsQueryValidator(DefaultHorizon)
+            .Validate(new SearchFlightsQuery(null, null, DateOnly.FromDateTime(DateTime.UtcNow), flightNumber))
+            .IsValid;
+
+        var trackAccepts = new TrackFlightCommandValidator()
+            .Validate(ValidTrackFlightCommand() with { FlightNumber = flightNumber })
+            .IsValid;
+
+        Assert.Equal(trackAccepts, searchAccepts);
     }
 
     // ── Import: Alliances ─────────────────────────────────────────────────────────

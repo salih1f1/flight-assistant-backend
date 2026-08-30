@@ -223,40 +223,54 @@ public class AeroApiFlightSearchProviderTests
         // midnight: 2026-09-28T11:00:00Z (inclusive) -> 2026-09-29T11:00:00Z (exclusive). Verified
         // independently against the real system tzdata via TimeZoneInfo below, not hardcoded from
         // the design doc's illustrative (and slightly different) UTC+12 arithmetic.
+        //
+        // The requested WINDOW is the whole assertion here. This test used to also feed the stub a
+        // hand-assembled body and assert its row count back out — but the stub returns whatever it
+        // is handed regardless of the window requested, so that only ever restated a property of
+        // the fixture, never of the provider. What the provider actually decides is the URL.
         var zone = TimeZoneInfo.FindSystemTimeZoneById("Pacific/Auckland");
         var expectedStart = TimeZoneInfo.ConvertTimeToUtc(new DateTime(2026, 9, 29, 0, 0, 0), zone);
         var expectedEnd = TimeZoneInfo.ConvertTimeToUtc(new DateTime(2026, 9, 30, 0, 0, 0), zone);
 
-        // A single AeroAPI query for the correct window would return exactly the rows that fall
-        // inside it, drawn from the two recorded naive-query fixtures: the early departures from
-        // the "day" fixture (which the buggy [D,D+1) UTC query got right) plus the late departures
-        // from the "daybefore" fixture (which the buggy query missed entirely).
-        var dayRows = ReadRows(ReadFixture("schedules-utc-window-day.json"));
-        var dayBeforeRows = ReadRows(ReadFixture("schedules-utc-window-daybefore.json"));
-        var correctRows = dayRows.Where(r => r.ScheduledOutUtc < expectedEnd)
-            .Concat(dayBeforeRows.Where(r => r.ScheduledOutUtc >= expectedStart))
-            .ToList();
-
-        // Sanity check on the fixtures themselves: this is exactly the bug the design doc measured.
-        Assert.Equal(11, correctRows.Count);
-        var missedByTheNaiveQuery = new[] { "NZ101", "QF140", "QF4", "NZ103" };
-        Assert.All(missedByTheNaiveQuery, ident => Assert.Contains(correctRows, r => r.Ident == ident));
-        var wronglyIncludedByTheNaiveQuery = new[] { "JQ202", "QF142" };
-        Assert.All(wronglyIncludedByTheNaiveQuery, ident => Assert.DoesNotContain(correctRows, r => r.Ident == ident));
-
-        var body = ToScheduledBody(correctRows);
-        var handler = new ScriptedHttpMessageHandler((HttpStatusCode.OK, body));
+        var handler = new ScriptedHttpMessageHandler(
+            (HttpStatusCode.OK, """{ "scheduled": [], "links": null, "num_pages": 1 }"""));
         var timezones = TimezoneLookup(("AKL", "Pacific/Auckland"));
 
-        var results = await Provider(handler, timezones).SearchAsync(
+        await Provider(handler, timezones).SearchAsync(
             new FlightSearchCriteria("AKL", "SYD", new DateOnly(2026, 9, 29), null));
 
         Assert.Single(handler.Requests);
         Assert.Contains(expectedStart.ToString("yyyy-MM-ddTHH:mm:ssZ"), handler.Requests[0].AbsolutePath);
         Assert.Contains(expectedEnd.ToString("yyyy-MM-ddTHH:mm:ssZ"), handler.Requests[0].AbsolutePath);
 
-        Assert.Equal(11, results.Count);
-        Assert.All(missedByTheNaiveQuery, ident => Assert.Contains(results, r => r.FlightNumber == ident));
+        // The shifted window is not the naive [D, D+1) UTC one — that is the bug it exists to fix.
+        Assert.DoesNotContain("2026-09-29T00:00:00Z", handler.Requests[0].AbsolutePath);
+    }
+
+    [Fact]
+    public void TheAklFixtures_ShowWhatTheNaiveUtcWindowGetsWrong()
+    {
+        // Kept as a documented measurement of the defect against the two recorded naive-query
+        // fixtures, separate from the provider test above so neither is mistaken for the other:
+        // this asserts about the recorded data, not about any code.
+        var zone = TimeZoneInfo.FindSystemTimeZoneById("Pacific/Auckland");
+        var localDayStart = TimeZoneInfo.ConvertTimeToUtc(new DateTime(2026, 9, 29, 0, 0, 0), zone);
+        var localDayEnd = TimeZoneInfo.ConvertTimeToUtc(new DateTime(2026, 9, 30, 0, 0, 0), zone);
+
+        var dayRows = ReadRows(ReadFixture("schedules-utc-window-day.json"));
+        var dayBeforeRows = ReadRows(ReadFixture("schedules-utc-window-daybefore.json"));
+        var correctRows = dayRows.Where(r => r.ScheduledOutUtc < localDayEnd)
+            .Concat(dayBeforeRows.Where(r => r.ScheduledOutUtc >= localDayStart))
+            .ToList();
+
+        Assert.Equal(11, correctRows.Count);
+        // Departing on the requested AKL local day but before the UTC day rolled over: a naive
+        // [D, D+1) UTC query never sees these at all.
+        var missedByTheNaiveQuery = new[] { "NZ101", "QF140", "QF4", "NZ103" };
+        Assert.All(missedByTheNaiveQuery, ident => Assert.Contains(correctRows, r => r.Ident == ident));
+        // Inside the naive UTC day, but actually departing the NEXT AKL local day.
+        var wronglyIncludedByTheNaiveQuery = new[] { "JQ202", "QF142" };
+        Assert.All(wronglyIncludedByTheNaiveQuery, ident => Assert.DoesNotContain(correctRows, r => r.Ident == ident));
     }
 
     [Fact]
@@ -297,11 +311,18 @@ public class AeroApiFlightSearchProviderTests
         // #275 established the principle: an unplaceable time is worse omitted than
         // approximated. The AeroAPI provider keeps the same contract for its own degraded
         // path — falling back to a UTC-calendar-date comparison rather than dropping the row.
+        //
+        // The second row is what makes this test load-bearing. With only the matching row present,
+        // a filter that returned everything unfiltered — i.e. no filter at all — would pass just as
+        // happily. XX200 falls inside the widened [D-1, D+2) query window but on the wrong UTC day,
+        // so it must be excluded by the very fallback comparison the first row is kept by.
         const string body = """
         {
           "scheduled": [
             { "ident_iata": "XX100", "actual_ident_iata": null, "origin_iata": "ZZZ", "destination_iata": "JFK",
-              "scheduled_out": "2026-09-29T06:00:00Z", "scheduled_in": "2026-09-29T12:00:00Z" }
+              "scheduled_out": "2026-09-29T06:00:00Z", "scheduled_in": "2026-09-29T12:00:00Z" },
+            { "ident_iata": "XX200", "actual_ident_iata": null, "origin_iata": "ZZZ", "destination_iata": "JFK",
+              "scheduled_out": "2026-09-30T06:00:00Z", "scheduled_in": "2026-09-30T12:00:00Z" }
           ],
           "links": null,
           "num_pages": 1
@@ -315,7 +336,8 @@ public class AeroApiFlightSearchProviderTests
         var results = await Provider(handler, timezones).SearchAsync(
             new FlightSearchCriteria("ZZZ", "JFK", new DateOnly(2026, 9, 29), null));
 
-        Assert.Single(results);
+        var kept = Assert.Single(results);
+        Assert.Equal("XX100", kept.FlightNumber);
     }
 
     // ------------------------------------------------------------------
@@ -390,6 +412,99 @@ public class AeroApiFlightSearchProviderTests
         Assert.Empty(handler.Requests); // rejected before any HTTP call
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task SearchAsync_RejectsADestinationOnlySearch_WithNoOriginOrFlightNumber(string? departureIata)
+    {
+        // The exact mirror of the origin-only case, and strictly worse: with no origin there is no
+        // zone to anchor a local day on, so it would run over the widened 3-day window — the same
+        // ~700-row query the guard exists to prevent, at three times the days. The guard checked
+        // only for a missing destination, so this half sailed straight through.
+        var handler = new ScriptedHttpMessageHandler((HttpStatusCode.OK, """{ "scheduled": [] }"""));
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => Provider(handler).SearchAsync(
+            new FlightSearchCriteria(departureIata, "LHR", new DateOnly(2026, 9, 29), null)));
+
+        Assert.Equal(400, ex.StatusCode);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("B")]
+    [InlineData(" ")]
+    public async Task SearchAsync_RejectsAFlightNumberTooShortToFilterOn(string flightNumber)
+    {
+        // Same fail-open shape reached by another route: BuildUrl needs at least the 2-character
+        // airline prefix to emit airline=/flight_number=, so a shorter value satisfied the guard
+        // while contributing no filter at all — leaving an origin-only query over a widened window.
+        var handler = new ScriptedHttpMessageHandler((HttpStatusCode.OK, """{ "scheduled": [] }"""));
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => Provider(handler).SearchAsync(
+            new FlightSearchCriteria("LHR", null, new DateOnly(2026, 9, 29), flightNumber)));
+
+        Assert.Equal(400, ex.StatusCode);
+        Assert.Empty(handler.Requests);
+    }
+
+    // ------------------------------------------------------------------
+    // links.next must never take the API key off-origin
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task SearchAsync_RefusesToFollowAnAbsoluteNextLink_AndStopsPaging()
+    {
+        // The "AeroApi" HttpClient attaches x-apikey as a default header to EVERY request it makes,
+        // whatever the host. TrimStart('/') leaves an absolute URL absolute, so a malformed,
+        // redirect-shaped or tampered "next" would have sent the credential to another host. Losing
+        // the remaining pages of one search is the correct price.
+        const string page1 = """
+        {
+          "scheduled": [
+            { "ident_iata": "BA100", "actual_ident_iata": null, "origin_iata": "LHR", "destination_iata": "JFK",
+              "scheduled_out": "2026-09-29T10:00:00Z", "scheduled_in": "2026-09-29T18:00:00Z" }
+          ],
+          "links": { "next": "https://attacker.example/schedules/2026-09-29/2026-09-30?cursor=abc" },
+          "num_pages": 2
+        }
+        """;
+        var handler = new ScriptedHttpMessageHandler((HttpStatusCode.OK, page1));
+        var timezones = TimezoneLookup(("LHR", "Europe/London"));
+
+        var results = await Provider(handler, timezones, maxPages: 4).SearchAsync(
+            new FlightSearchCriteria("LHR", "JFK", new DateOnly(2026, 9, 29), null));
+
+        Assert.Single(handler.Requests); // page 1 only — the off-host link was never requested
+        Assert.Single(results);          // page 1's rows are still returned
+    }
+
+    [Fact]
+    public async Task SearchAsync_RefusesANextLinkThatEscapesTheBaseAddress_AndStopsPaging()
+    {
+        // A relative link can leave the base address too: "../.." climbs out of "/aeroapi/". The
+        // client would still attach the API key, so resolution against BaseAddress is checked, not
+        // just absoluteness.
+        const string page1 = """
+        {
+          "scheduled": [
+            { "ident_iata": "BA100", "actual_ident_iata": null, "origin_iata": "LHR", "destination_iata": "JFK",
+              "scheduled_out": "2026-09-29T10:00:00Z", "scheduled_in": "2026-09-29T18:00:00Z" }
+          ],
+          "links": { "next": "/../elsewhere/schedules?cursor=abc" },
+          "num_pages": 2
+        }
+        """;
+        var handler = new ScriptedHttpMessageHandler((HttpStatusCode.OK, page1));
+        var timezones = TimezoneLookup(("LHR", "Europe/London"));
+
+        var results = await Provider(handler, timezones, maxPages: 4).SearchAsync(
+            new FlightSearchCriteria("LHR", "JFK", new DateOnly(2026, 9, 29), null));
+
+        Assert.Single(handler.Requests);
+        Assert.Single(results);
+    }
+
     // ------------------------------------------------------------------
     // DST edge handling for local-midnight window boundaries
     // ------------------------------------------------------------------
@@ -446,7 +561,7 @@ public class AeroApiFlightSearchProviderTests
     // Fixture parsing helpers (test-only; independent of the provider's own JSON mapping)
     // ------------------------------------------------------------------
 
-    private sealed record FixtureRow(string Ident, DateTime ScheduledOutUtc, string RawJson);
+    private sealed record FixtureRow(string Ident, DateTime ScheduledOutUtc);
 
     private static List<FixtureRow> ReadRows(string body)
     {
@@ -456,11 +571,7 @@ public class AeroApiFlightSearchProviderTests
                 e.GetProperty("ident_iata").GetString()!,
                 DateTime.Parse(e.GetProperty("scheduled_out").GetString()!,
                     System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal),
-                e.GetRawText()))
+                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal)))
             .ToList();
     }
-
-    private static string ToScheduledBody(IEnumerable<FixtureRow> rows) =>
-        $$"""{ "scheduled": [{{string.Join(",", rows.Select(r => r.RawJson))}}], "links": null, "num_pages": 1 }""";
 }

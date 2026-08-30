@@ -69,7 +69,10 @@ namespace FlightAssistant.Infrastructure
                 var options = sp.GetRequiredService<IOptions<AeroApiOptions>>().Value;
                 client.BaseAddress = new Uri(options.BaseUrl);
                 client.DefaultRequestHeaders.Add("x-apikey", options.ApiKey);
-                client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+                // Deliberately NOT TimeoutSeconds: HttpClient.Timeout wraps the entire resilience
+                // pipeline, throttle wait included, so it must be looser than the pipeline's own
+                // TotalRequestTimeout or it would abort the very waits the pipeline is sized for.
+                client.Timeout = options.HttpClientTimeout;
             });
 
             // Resilience is registered first (= outermost) so that every retry attempt re-enters the
@@ -77,9 +80,24 @@ namespace FlightAssistant.Infrastructure
             // AddStandardResilienceHandler returns a pipeline-specific builder, not IHttpClientBuilder,
             // so the throttle handler is added as a separate statement on the original builder rather
             // than chained off it.
-            aeroApiClientBuilder.AddStandardResilienceHandler(options =>
+            //
+            // Because the throttle sits INSIDE this pipeline, a request can spend up to a whole
+            // MinRequestInterval queued before it ever reaches the transport — and that wait happens
+            // inside AttemptTimeout. The library's 10s default is shorter than the 12s default
+            // interval, which meant every second call in an interval window was killed before it
+            // sent anything, retried twice (a timeout counts as transient), and then failed the 30s
+            // total timeout: a multi-page search failed from page 2 on. Every timeout below is
+            // therefore derived from AeroApiOptions rather than left at a default or hardcoded, so
+            // tuning the interval cannot silently reintroduce it.
+            aeroApiClientBuilder.AddStandardResilienceHandler().Configure((options, sp) =>
             {
-                options.Retry.MaxRetryAttempts = 2;
+                var aeroApi = sp.GetRequiredService<IOptions<AeroApiOptions>>().Value;
+
+                options.AttemptTimeout.Timeout = aeroApi.AttemptTimeout;
+                options.TotalRequestTimeout.Timeout = aeroApi.TotalRequestTimeout;
+                options.CircuitBreaker.SamplingDuration = aeroApi.CircuitBreakerSamplingDuration;
+
+                options.Retry.MaxRetryAttempts = aeroApi.MaxRetryAttempts;
                 // 429 must never be retried automatically: this is a $5/month metered tier, and
                 // retrying a rate-limit response only makes the throttling worse. All other
                 // transient outcomes (5xx, timeouts, network errors) keep the default handling.

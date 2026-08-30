@@ -24,17 +24,36 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         /// <summary>
         /// Blocks until it is this caller's turn to send, given <paramref name="minInterval"/>
         /// since the previous reserved send.
+        ///
+        /// <para>
+        /// A reservation that is abandoned — the caller's wait is cancelled by a timeout or a
+        /// dropped request — is <b>released</b> rather than left standing. Without that, an
+        /// attempt killed mid-wait would still have pushed the queue a whole interval further out,
+        /// so each retry made the next caller strictly worse while nothing was ever sent.
+        /// </para>
         /// </summary>
         public async Task WaitForTurnAsync(TimeSpan minInterval, CancellationToken ct)
         {
-            var delay = await ReserveSlotAsync(minInterval, ct);
-            if (delay > TimeSpan.Zero)
+            var reservation = await ReserveSlotAsync(minInterval, ct);
+            if (reservation.Delay <= TimeSpan.Zero) return;
+
+            try
             {
-                await Task.Delay(delay, _timeProvider, ct);
+                await Task.Delay(reservation.Delay, _timeProvider, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                await ReleaseSlotAsync(reservation);
+                throw;
             }
         }
 
-        private async Task<TimeSpan> ReserveSlotAsync(TimeSpan minInterval, CancellationToken ct)
+        /// <summary>A claim on a send slot: how long the caller must wait for it, the instant it
+        /// falls due, and the instant the gate was pushed to in order to reserve it.</summary>
+        private readonly record struct Reservation(
+            TimeSpan Delay, DateTimeOffset SlotUtc, DateTimeOffset NextSlotUtc);
+
+        private async Task<Reservation> ReserveSlotAsync(TimeSpan minInterval, CancellationToken ct)
         {
             await _reservationLock.WaitAsync(ct);
             try
@@ -44,7 +63,27 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
 
                 _nextAvailableSlotUtc = earliestSlot + minInterval;
 
-                return earliestSlot - now;
+                return new Reservation(earliestSlot - now, earliestSlot, _nextAvailableSlotUtc.Value);
+            }
+            finally
+            {
+                _reservationLock.Release();
+            }
+        }
+
+        private async Task ReleaseSlotAsync(Reservation reservation)
+        {
+            // CancellationToken.None deliberately: the caller's token is already cancelled — that is
+            // why we are here — and failing to give the slot back is exactly the leak being fixed.
+            await _reservationLock.WaitAsync(CancellationToken.None);
+            try
+            {
+                // Only roll back if nobody has reserved behind us. If someone has, the gate has
+                // already been spaced off our slot and rewinding it would let them send too early.
+                // Rewinding to SlotUtc (not further) preserves the interval since the last send
+                // that actually happened, while freeing the slot we never used.
+                if (_nextAvailableSlotUtc == reservation.NextSlotUtc)
+                    _nextAvailableSlotUtc = reservation.SlotUtc;
             }
             finally
             {

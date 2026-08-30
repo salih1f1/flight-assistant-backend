@@ -91,13 +91,18 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
         // the real HTTP/JSON boundary — through the endpoint's actual mapping code, not a
         // hand-rolled duplicate of it — by substituting the search provider with a fake and
         // deserialising the raw response body into TrackFlightRequest.
+        // Relative to today, never a pinned literal: SearchFlightsQueryValidator bounds the date to
+        // the provider's rolling past/future horizon, so a hardcoded date eventually falls out of it
+        // and the test starts failing for a reason that has nothing to do with the response shape
+        // it exists to check.
+        var serviceDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30));
         var fakeResult = new FlightSearchResult(
             FlightNumber: "6E4120",
-            ServiceDate: new DateOnly(2026, 9, 29),
+            ServiceDate: serviceDate,
             DepartureAirportIata: "SOF",
             ArrivalAirportIata: "IST",
-            ScheduledDepartureUtc: new DateTime(2026, 9, 29, 6, 35, 0, DateTimeKind.Utc),
-            ScheduledArrivalUtc: new DateTime(2026, 9, 29, 8, 5, 0, DateTimeKind.Utc));
+            ScheduledDepartureUtc: serviceDate.ToDateTime(new TimeOnly(6, 35), DateTimeKind.Utc),
+            ScheduledArrivalUtc: serviceDate.ToDateTime(new TimeOnly(8, 5), DateTimeKind.Utc));
 
         var fakeProvider = Substitute.For<IFlightSearchProvider>();
         fakeProvider.SearchAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>())
@@ -110,7 +115,7 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
         var client = scopedFactory.CreateClient();
 
         var response = await client.GetAsync(
-            "flights/search?flightNumber=6E4120&date=2026-09-29");
+            $"flights/search?flightNumber=6E4120&date={serviceDate:yyyy-MM-dd}");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var rows = await response.Content.ReadFromJsonAsync<List<TrackFlightRequest>>();

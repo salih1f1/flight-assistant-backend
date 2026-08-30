@@ -76,13 +76,25 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
             FlightSearchCriteria criteria,
             CancellationToken ct = default)
         {
-            // An airport-only query (origin, no destination, no flight number) is ~700 rows and
-            // roughly 4% of a monthly quota in one call — never issue it.
-            if (string.IsNullOrWhiteSpace(criteria.ArrivalIata) && string.IsNullOrWhiteSpace(criteria.FlightNumber))
+            // A single-airport query (one end of a route and nothing else) is ~700 rows and roughly
+            // 4% of a monthly quota in one call — never issue it, at either end. Destination-only is
+            // the exact mirror of origin-only and is in fact worse: with no origin there is no zone
+            // to anchor a local day on, so it runs over the widened 3-day window (see
+            // ResolveWindowAsync) — three times the rows.
+            //
+            // The flight number only counts as a filter if BuildUrl can actually push it down,
+            // which needs at least the 2-character airline prefix. A shorter non-empty value would
+            // otherwise satisfy this guard while contributing nothing to the query — the same
+            // fail-open shape, reached by a different route.
+            var hasOrigin = !string.IsNullOrWhiteSpace(criteria.DepartureIata);
+            var hasDestination = !string.IsNullOrWhiteSpace(criteria.ArrivalIata);
+            var hasUsableFlightNumber = HasUsableFlightNumber(criteria.FlightNumber);
+
+            if (!hasUsableFlightNumber && !(hasOrigin && hasDestination))
             {
                 _logger.LogWarning("Rejected an unfiltered flight search for {Criteria}", Describe(criteria));
                 throw new DomainException(
-                    "A flight search must include a destination airport or a flight number.",
+                    "A flight search must include both a departure and an arrival airport, or a flight number.",
                     400);
             }
 
@@ -326,7 +338,31 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
                 ScheduledInUtc: scheduledIn.Value);
         }
 
-        private static string? TryGetNextUrl(JsonDocument doc)
+        /// <summary>
+        /// Extracts the next page's path from a response's <c>links.next</c>, or null to stop
+        /// paging.
+        ///
+        /// <para>
+        /// <b>The link is untrusted input.</b> The "AeroApi" <see cref="HttpClient"/> carries
+        /// <c>x-apikey</c> as a default header on <i>every</i> request it makes, regardless of
+        /// host, so following a link that leaves the configured base address would hand the API
+        /// credential to whatever host the link names. A malformed, redirect-shaped or tampered
+        /// <c>next</c> is therefore refused outright: it is resolved against
+        /// <see cref="HttpClient.BaseAddress"/> and followed only if the result still sits
+        /// underneath it. That single test catches every escape at once — an absolute URI resolves
+        /// to itself and so lands outside the base, a <c>../</c> climbs out of it, and a
+        /// host-rooted path leaves the <c>/aeroapi/</c> prefix behind. Refusing costs at most the
+        /// remaining pages of one search; the alternative costs the key.
+        /// </para>
+        ///
+        /// <para>
+        /// Note that "does it parse as absolute?" is deliberately <i>not</i> the test:
+        /// <c>Uri.TryCreate("/schedules/…", UriKind.Absolute, …)</c> succeeds on Unix, yielding a
+        /// <c>file://</c> URI, so that check would reject AeroAPI's own perfectly ordinary
+        /// host-rooted links. Resolution against the base is both stricter and correct.
+        /// </para>
+        /// </summary>
+        private string? TryGetNextUrl(JsonDocument doc)
         {
             if (!doc.RootElement.TryGetProperty("links", out var links) || links.ValueKind != JsonValueKind.Object)
                 return null;
@@ -334,13 +370,27 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
                 return null;
 
             var value = next.GetString();
+            if (string.IsNullOrWhiteSpace(value)) return null;
+
             // AeroAPI's "next" link is a path rooted at the API host (e.g.
             // "/schedules/2026-09-29/2026-09-30?..."), but this client sends every other request as
             // relative to the "AeroApi" HttpClient's BaseAddress (which already ends in "/aeroapi/").
             // Combining a leading-slash relative URI against that base would discard the "/aeroapi/"
             // segment (standard URI combination rules), so the leading slash is stripped to keep the
             // request under the same base every other call in this class uses.
-            return string.IsNullOrWhiteSpace(value) ? null : value.TrimStart('/');
+            var relative = value.TrimStart('/');
+
+            var baseAddress = _http.BaseAddress;
+            if (baseAddress is null ||
+                !Uri.TryCreate(baseAddress, relative, out var resolved) ||
+                !baseAddress.IsBaseOf(resolved))
+            {
+                _logger.LogWarning(
+                    "AeroAPI returned a paging link that does not resolve underneath the configured base address; refusing to follow it (it could send the API key off-origin) and stopping pagination");
+                return null;
+            }
+
+            return relative;
         }
 
         private string BuildUrl(DateTime startUtc, DateTime endUtc, FlightSearchCriteria criteria)
@@ -360,16 +410,26 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
             if (!string.IsNullOrWhiteSpace(criteria.ArrivalIata))
                 query.Add($"destination={Uri.EscapeDataString(criteria.ArrivalIata.ToUpperInvariant())}");
 
-            if (!string.IsNullOrWhiteSpace(criteria.FlightNumber) && criteria.FlightNumber.Length >= 2)
+            if (HasUsableFlightNumber(criteria.FlightNumber))
             {
-                var airline = criteria.FlightNumber[..2].ToUpperInvariant();
-                var number = criteria.FlightNumber[2..];
+                var flightNumber = criteria.FlightNumber!.Trim();
+                var airline = flightNumber[..2].ToUpperInvariant();
+                var number = flightNumber[2..];
                 query.Add($"airline={Uri.EscapeDataString(airline)}");
                 query.Add($"flight_number={Uri.EscapeDataString(number)}");
             }
 
             return $"schedules/{start}/{end}?{string.Join("&", query)}";
         }
+
+        /// <summary>
+        /// Whether a flight number can actually be pushed down to AeroAPI as an
+        /// <c>airline</c>+<c>flight_number</c> pair — it needs at least the 2-character airline
+        /// prefix. Shared by the unfiltered-query guard and <see cref="BuildUrl"/> so the guard can
+        /// never accept a value the URL builder then silently ignores.
+        /// </summary>
+        private static bool HasUsableFlightNumber(string? flightNumber) =>
+            !string.IsNullOrWhiteSpace(flightNumber) && flightNumber.Trim().Length >= 2;
 
         private static string Describe(FlightSearchCriteria criteria)
         {

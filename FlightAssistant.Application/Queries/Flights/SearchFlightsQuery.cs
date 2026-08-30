@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Application.Validators;
 using FluentValidation;
 using MediatR;
 
@@ -23,9 +24,6 @@ namespace FlightAssistant.Application.Queries.Flights
 
     public class SearchFlightsQueryValidator : AbstractValidator<SearchFlightsQuery>
     {
-        // IATA flight code: 2-char airline prefix (alphanumeric, e.g. "BA", "U2") + 1-4 digit number.
-        private const string FlightNumberPattern = "^[A-Z0-9]{2}[0-9]{1,4}$";
-
         public SearchFlightsQueryValidator(IFlightSearchHorizonOptions horizon)
         {
             // A search must be anchored on a full route OR a flight number — otherwise the result
@@ -60,20 +58,30 @@ namespace FlightAssistant.Application.Queries.Flights
 
             When(x => !string.IsNullOrWhiteSpace(x.FlightNumber), () =>
             {
+                // Shared with TrackFlightCommandValidator — a flight number that search accepts
+                // must be one POST /flights accepts too, or the picker hands the client a row it
+                // cannot track. See FlightNumberFormat.
                 RuleFor(x => x.FlightNumber!)
-                    .Matches(FlightNumberPattern, RegexOptions.IgnoreCase)
-                    .WithMessage("'flightNumber' must be an IATA flight code, e.g. 'BA123'.");
+                    .Matches(FlightNumberFormat.Pattern, RegexOptions.IgnoreCase)
+                    .WithMessage($"'flightNumber' must be an IATA flight code: {FlightNumberFormat.Description}.");
             });
 
             // The provider's schedules endpoint only holds a rolling window of past and future
             // data (AeroApiOptions.MaxPastMonths / MaxFutureMonths). Rejecting a date outside it
             // here turns what would otherwise be an upstream 502 into a clear 400.
+            //
+            // The day of slack at each end is load-bearing, not padding: the provider queries a
+            // window around the requested date, not the date itself — [D−1, D+2) when no origin
+            // zone is available, and a local-day window that can start the day before or end the
+            // day after in UTC. A date sitting exactly on the horizon would therefore produce a
+            // date_start/date_end just outside the provider's own bounds and earn the upstream 400
+            // this rule exists to pre-empt.
             RuleFor(x => x.Date)
-                .Must(d => d >= DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(-horizon.MaxPastMonths)))
+                .Must(d => d >= DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(-horizon.MaxPastMonths).AddDays(1)))
                 .WithMessage($"Date must not be more than {horizon.MaxPastMonths} months in the past.");
 
             RuleFor(x => x.Date)
-                .Must(d => d <= DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(horizon.MaxFutureMonths)))
+                .Must(d => d <= DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(horizon.MaxFutureMonths).AddDays(-1)))
                 .WithMessage($"Date must not be more than {horizon.MaxFutureMonths} months in the future.");
         }
 

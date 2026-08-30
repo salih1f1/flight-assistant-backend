@@ -64,6 +64,55 @@ public class AeroApiThrottleGateTests
     }
 
     [Fact]
+    public async Task WaitForTurnAsync_ReleasesTheSlot_WhenTheWaitIsCancelled()
+    {
+        // The amplifier behind the resilience-timeout defect: a reservation used to advance the
+        // queue at reservation time and was never given back if the caller's wait was cancelled
+        // (a per-attempt timeout, a dropped request). Every abandoned attempt therefore pushed the
+        // gate a further interval out while nothing had actually been sent, so each retry made the
+        // next caller strictly worse than the one before it.
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var gate = new AeroApiThrottleGate(clock);
+
+        await gate.WaitForTurnAsync(Interval, CancellationToken.None); // t=0, sends
+
+        using var cts = new CancellationTokenSource();
+        var abandoned = gate.WaitForTurnAsync(Interval, cts.Token); // would send at t=12
+        await cts.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => abandoned);
+
+        // The next caller inherits the abandoned slot at t=12 — NOT t=24. Spacing from the send
+        // that really happened is preserved; the slot nobody used is not charged to anyone.
+        var next = gate.WaitForTurnAsync(Interval, CancellationToken.None);
+        clock.Advance(Interval);
+        await next;
+    }
+
+    [Fact]
+    public async Task WaitForTurnAsync_KeepsSpacing_WhenAnAbandonedCallerIsNotTheLatestReservation()
+    {
+        // Releasing must not rewind past a reservation someone else made behind us: that caller has
+        // already been spaced off our slot, and moving the gate back would let it send too early.
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var gate = new AeroApiThrottleGate(clock);
+
+        await gate.WaitForTurnAsync(Interval, CancellationToken.None); // t=0, sends
+
+        using var cts = new CancellationTokenSource();
+        var abandoned = gate.WaitForTurnAsync(Interval, cts.Token); // holds t=12
+        var behind = gate.WaitForTurnAsync(Interval, CancellationToken.None); // holds t=24
+
+        await cts.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => abandoned);
+
+        clock.Advance(Interval);
+        Assert.False(behind.IsCompleted); // still waiting for its own t=24 slot
+
+        clock.Advance(Interval);
+        await behind;
+    }
+
+    [Fact]
     public async Task WaitForTurnAsync_QueuesThirdCall_BehindTheSecond()
     {
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);

@@ -197,6 +197,94 @@ public class AeroApiFlightStatusProviderTests
     }
 
     // ------------------------------------------------------------------
+    // Service-date matching is origin-LOCAL, not UTC
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Two operations of the same ident a day apart, each carrying its own <c>origin.timezone</c>
+    /// exactly as AeroAPI supplies it. <paramref name="timezone"/> is deliberately a parameter: the
+    /// whole defect is invisible at SOF (UTC+3, 06:35Z departure), where the origin-local and UTC
+    /// calendar dates are the same date — which is why every pre-existing test in this file used it.
+    /// </summary>
+    private static string TwoDayBody(string originIata, string? timezone, params string[] scheduledOutUtc)
+    {
+        var timezoneJson = timezone is null ? "null" : $"\"{timezone}\"";
+        var rows = scheduledOutUtc.Select(t => $$"""
+            {
+              "ident_iata": "NZ101",
+              "fa_flight_id": "ANZ101-{{t}}",
+              "cancelled": false,
+              "diverted": false,
+              "origin": { "code_iata": "{{originIata}}", "timezone": {{timezoneJson}} },
+              "scheduled_out": "{{t}}",
+              "scheduled_in": "{{t}}",
+              "status": "Scheduled"
+            }
+            """);
+
+        return $$"""{ "flights": [{{string.Join(",", rows)}}], "links": null, "num_pages": 1 }""";
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_MatchesTheOriginsLocalServiceDate_ForAFarEastAirport()
+    {
+        // AKL is UTC+13 on this date. NZ101 departing 2026-09-29 07:00 local IS 2026-09-28T18:00Z,
+        // and the NEXT day's operation is 2026-09-29T18:00Z. AeroApiFlightSearchProvider reports
+        // ServiceDate as the origin's LOCAL day (that is the entire point of its window shift),
+        // TrackFlightCommandHandler stores it verbatim and SyncFlightStatusCommand hands it back
+        // here — so matching on the UTC calendar date silently selected the following day's
+        // operation and applied its gate, terminal and status to the tracked flight.
+        var handler = new StubHttpMessageHandler(
+            TwoDayBody("AKL", "Pacific/Auckland", "2026-09-28T18:00:00Z", "2026-09-29T18:00:00Z"));
+
+        var result = await Provider(handler).GetStatusAsync("NZ101", new DateOnly(2026, 9, 29));
+
+        Assert.NotNull(result);
+        Assert.Equal("ANZ101-2026-09-28T18:00:00Z", result!.ExternalId);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_MatchesTheOriginsLocalServiceDate_ForAFarWestAirport()
+    {
+        // The mirror image: LAX is UTC−7 in September, so a 2026-09-30T04:00Z departure is local
+        // 2026-09-29 21:00, and 2026-09-29T04:00Z is local 2026-09-28. A UTC comparison picks the
+        // PREVIOUS day's operation here — the error runs in both directions.
+        var handler = new StubHttpMessageHandler(
+            TwoDayBody("LAX", "America/Los_Angeles", "2026-09-29T04:00:00Z", "2026-09-30T04:00:00Z"));
+
+        var result = await Provider(handler).GetStatusAsync("NZ101", new DateOnly(2026, 9, 29));
+
+        Assert.NotNull(result);
+        Assert.Equal("ANZ101-2026-09-30T04:00:00Z", result!.ExternalId);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_FallsBackToTheUtcDate_WhenTheRowCarriesNoOriginTimezone()
+    {
+        // Degrading to the previous behaviour beats matching nothing: an approximate row is more
+        // useful to a traveller than no status at all, and it is correct for most of the world.
+        var handler = new StubHttpMessageHandler(
+            TwoDayBody("AKL", null, "2026-09-28T18:00:00Z", "2026-09-29T18:00:00Z"));
+
+        var result = await Provider(handler).GetStatusAsync("NZ101", new DateOnly(2026, 9, 29));
+
+        Assert.NotNull(result);
+        Assert.Equal("ANZ101-2026-09-29T18:00:00Z", result!.ExternalId);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_FallsBackToTheUtcDate_WhenTheOriginTimezoneIsUnloadable()
+    {
+        var handler = new StubHttpMessageHandler(
+            TwoDayBody("AKL", "Not/AZone", "2026-09-28T18:00:00Z", "2026-09-29T18:00:00Z"));
+
+        var result = await Provider(handler).GetStatusAsync("NZ101", new DateOnly(2026, 9, 29));
+
+        Assert.NotNull(result);
+        Assert.Equal("ANZ101-2026-09-29T18:00:00Z", result!.ExternalId);
+    }
+
+    // ------------------------------------------------------------------
     // Status-code normalisation
     // ------------------------------------------------------------------
 
@@ -248,6 +336,36 @@ public class AeroApiFlightStatusProviderTests
         Assert.Equal("CAN", result!.StatusCode);
     }
 
+    [Theory]
+    [InlineData("En Route")]
+    [InlineData("Scheduled")]
+    [InlineData("En Route / On Time")]
+    public async Task GetStatusAsync_DivertedFlag_WinsOverStatusText_RegardlessOfStatusString(string statusText)
+    {
+        // AeroAPI supplies `diverted` as a boolean alongside `cancelled`, and for the same reason:
+        // the prose `status` can lag reality. The cancelled check already guarded against that;
+        // `diverted` was read by nobody, so a genuinely diverted flight reported as "En Route"
+        // mapped to DEP — the exact failure the cancelled check exists to prevent.
+        var handler = new StubHttpMessageHandler(SingleFlightBody(status: statusText, diverted: true));
+
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
+
+        Assert.Equal("DIV", result!.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_CancelledWins_WhenBothFlagsAreSet()
+    {
+        // A flight cannot really be both; if the payload claims it is, cancellation is the more
+        // consequential outcome for a traveller and is documented to win.
+        var handler = new StubHttpMessageHandler(
+            SingleFlightBody(status: "En Route", cancelled: true, diverted: true));
+
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
+
+        Assert.Equal("CAN", result!.StatusCode);
+    }
+
     [Fact]
     public async Task GetStatusAsync_UnrecognisedStatus_MapsToUnk_AndLogsAWarning_RatherThanFailingSilently()
     {
@@ -274,7 +392,7 @@ public class AeroApiFlightStatusProviderTests
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
     }
 
-    private static string SingleFlightBody(string? status, bool cancelled = false)
+    private static string SingleFlightBody(string? status, bool cancelled = false, bool diverted = false)
     {
         var statusJson = status is null ? "null" : $"\"{status}\"";
         return $$"""
@@ -284,7 +402,7 @@ public class AeroApiFlightStatusProviderTests
               "ident_iata": "TK1028",
               "fa_flight_id": "THY1028-test",
               "cancelled": {{(cancelled ? "true" : "false")}},
-              "diverted": false,
+              "diverted": {{(diverted ? "true" : "false")}},
               "scheduled_out": "2026-08-30T06:35:00Z",
               "estimated_out": "2026-08-30T06:35:00Z",
               "actual_out": null,
