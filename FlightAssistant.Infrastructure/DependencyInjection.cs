@@ -1,7 +1,9 @@
+using System.Net;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AviationStack;
 using FlightAssistant.Infrastructure.ExternalServices.FlightSearch;
 using FlightAssistant.Infrastructure.ExternalServices.FlightStatus;
@@ -10,7 +12,9 @@ using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Polly;
 namespace FlightAssistant.Infrastructure
 {
@@ -116,6 +120,51 @@ namespace FlightAssistant.Infrastructure
                 sp.GetRequiredService<AviationStackLiveSearchProvider>(),
                 sp.GetRequiredService<AviationStackScheduleSearchProvider>(),
                 sp.GetRequiredService<ILogger<DateRoutingFlightSearchProvider>>()));
+
+            // AeroAPI — replacing AviationStack as the flight data provider (issue #280). This wires
+            // only the HTTP foundation: options, error mapping (AeroApiResponse), and the shared
+            // outbound throttle. Nothing above IFlightSearchProvider/IFlightStatusProvider points at
+            // it yet — later tasks build the concrete providers and switch DI over; the AviationStack
+            // registrations above stay in place until then.
+            services.AddOptions<AeroApiOptions>()
+                .BindConfiguration("AeroApi")
+                .ValidateDataAnnotations()
+                .ValidateOnStart();
+
+            // Singleton so every AeroAPI HttpClient contends on the same gate — the personal tier's
+            // ~5 queries/minute limit is a process-wide budget, not a per-client one.
+            services.AddSingleton<AeroApiThrottleGate>();
+            services.AddTransient<AeroApiThrottlingHandler>();
+
+            var aeroApiClientBuilder = services.AddHttpClient("AeroApi", (sp, client) =>
+            {
+                var options = sp.GetRequiredService<IOptions<AeroApiOptions>>().Value;
+                client.BaseAddress = new Uri(options.BaseUrl);
+                client.DefaultRequestHeaders.Add("x-apikey", options.ApiKey);
+                client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+            });
+
+            // Resilience is registered first (= outermost) so that every retry attempt re-enters the
+            // throttling handler below and waits its turn too — not just the first attempt of a call.
+            // AddStandardResilienceHandler returns a pipeline-specific builder, not IHttpClientBuilder,
+            // so the throttle handler is added as a separate statement on the original builder rather
+            // than chained off it.
+            aeroApiClientBuilder.AddStandardResilienceHandler(options =>
+            {
+                options.Retry.MaxRetryAttempts = 2;
+                // 429 must never be retried automatically: this is a $5/month metered tier, and
+                // retrying a rate-limit response only makes the throttling worse. All other
+                // transient outcomes (5xx, timeouts, network errors) keep the default handling.
+                options.Retry.ShouldHandle = args =>
+                {
+                    if (args.Outcome.Result?.StatusCode == HttpStatusCode.TooManyRequests)
+                        return ValueTask.FromResult(false);
+
+                    return ValueTask.FromResult(HttpClientResiliencePredicates.IsTransient(args.Outcome));
+                };
+            });
+
+            aeroApiClientBuilder.AddHttpMessageHandler<AeroApiThrottlingHandler>();
 
             // Push notifications — singleton so the APNs client is created once and reused
             services.AddOptions<ApnsOptions>()
