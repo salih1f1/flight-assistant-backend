@@ -43,6 +43,7 @@ namespace FlightAssistant.Infrastructure.Persistance
 
         // Configurations
         public DbSet<SeedVersion> SeedVersions => Set<SeedVersion>();
+        public DbSet<AeroApiCall> AeroApiCalls => Set<AeroApiCall>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

@@ -99,5 +99,23 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         /// that is actually meant to bite.
         /// </summary>
         public TimeSpan HttpClientTimeout => TotalRequestTimeout + TimeSpan.FromSeconds(30);
+
+        /// <summary>
+        /// Unit cost in USD per <c>endpointTemplate</c> (the same low-cardinality templates stored on
+        /// <see cref="FlightAssistant.Domain.Configuration.Entities.AeroApiCall.EndpointTemplate"/>),
+        /// bound from <c>AeroApi:Pricing</c>. Deliberately not hardcoded in C# — FlightAware changes
+        /// prices. An endpoint missing from this dictionary costs 0 rather than throwing, so a missing
+        /// price shows up as a visible $0 line in the usage rollup instead of failing it.
+        /// </summary>
+        public Dictionary<string, decimal> Pricing { get; set; } = new();
+
+        /// <summary>Informational budget ceiling shown against actual metered spend; enforces nothing on its own.</summary>
+        public decimal MonthlyBudgetUsd { get; set; } = 5m;
+
+        /// <summary>
+        /// How long <see cref="FlightAssistant.Domain.Configuration.Entities.AeroApiCall"/> rows are
+        /// kept before cleanup.
+        /// </summary>
+        public int UsageRetentionDays { get; set; } = 90;
     }
 }

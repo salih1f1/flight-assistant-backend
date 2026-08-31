@@ -22,6 +22,50 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("FlightAssistant.Domain.Configuration.Entities.AeroApiCall", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CalledUtc")
+                        .HasColumnType("timestamptz");
+
+                    b.Property<string>("Caller")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<long>("DurationMs")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("EndpointTemplate")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<int?>("StatusCode")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CalledUtc");
+
+                    b.HasIndex("CalledUtc", "EndpointTemplate");
+
+                    b.ToTable("aeroapi_calls", (string)null);
+                });
+
             modelBuilder.Entity("FlightAssistant.Domain.Configuration.Entities.SeedVersion", b =>
                 {
                     b.Property<string>("Dataset")

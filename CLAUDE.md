@@ -138,6 +138,9 @@ Most values are pulled from Azure Key Vault in deployed environments; for local 
 | `AeroApi:BaseUrl` | Optional; defaults to `https://aeroapi.flightaware.com/aeroapi/` |
 | `AeroApi:MinRequestInterval` | Optional; default `00:00:12` (1 s–5 min). Every resilience timeout is derived from it — tune it and they follow |
 | `AeroApi:TimeoutSeconds` | Optional; default 30. Per-attempt **network** budget, *excluding* the throttle wait added on top |
+| `AeroApi:Pricing` | Optional; default empty. Unit cost in USD per `endpointTemplate`, e.g. `AeroApi:Pricing:/flights/{ident}`. A missing key costs 0 |
+| `AeroApi:MonthlyBudgetUsd` | Optional; default `5` |
+| `AeroApi:UsageRetentionDays` | Optional; default `90` |
 | `Apns:BundleId`, `Apns:KeyId`, `Apns:TeamId`, `Apns:P8KeyContent` | iOS push; `Apns:UseSandbox=true` for dev |
 | `AdminPanel:AllowedOrigin` | CORS origin for admin UI (default: `http://localhost:5173`) |
 
