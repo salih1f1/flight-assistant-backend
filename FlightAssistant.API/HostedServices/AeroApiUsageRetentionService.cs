@@ -65,11 +65,21 @@ namespace FlightAssistant.API.HostedServices
         /// <see cref="AeroApiOptions.UsageRetentionDays"/>, entirely server-side via
         /// <c>ExecuteDeleteAsync</c> — rows are never loaded into memory just to be deleted, which
         /// matters once the table has grown past the retention window. Public so tests can drive one
-        /// pass directly rather than through the infinite <see cref="ExecuteAsync"/> loop. A genuine
-        /// failure (DB unreachable, etc.) is logged and swallowed — returning 0 rather than
-        /// throwing — so it is left for the next scheduled cycle to retry and can never crash the
-        /// host; a cancellation requested on <paramref name="ct"/> propagates instead, so
-        /// <see cref="ExecuteAsync"/> can tell a real failure apart from an ordinary shutdown.
+        /// pass directly rather than through the infinite <see cref="ExecuteAsync"/> loop.
+        ///
+        /// <para>
+        /// A genuine failure (DB unreachable, etc.) is logged and swallowed — returning 0 rather
+        /// than throwing — so it is left for the next scheduled cycle to retry and can never crash
+        /// the host, <b>unconditionally</b>: this holds even if <paramref name="ct"/> happens to
+        /// already be cancelled when the failure occurs (e.g. a dropped connection racing with host
+        /// shutdown). Only an <see cref="OperationCanceledException"/> that <paramref name="ct"/>
+        /// itself actually caused is let through, so <see cref="ExecuteAsync"/> can tell that
+        /// ordinary shutdown apart from a real failure. Gating the catch on token *state*
+        /// (<c>ct.IsCancellationRequested</c>) rather than on what actually threw would let an
+        /// unrelated exception escape both this method and <see cref="ExecuteAsync"/>'s own
+        /// cancellation handling whenever it happens to race with shutdown — which is exactly the
+        /// "never crash the host" guarantee this method exists to uphold.
+        /// </para>
         /// </summary>
         public async Task<int> PruneOnceAsync(CancellationToken ct)
         {
@@ -92,8 +102,16 @@ namespace FlightAssistant.API.HostedServices
 
                 return deleted;
             }
-            catch (Exception ex) when (ct.IsCancellationRequested is false)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                // Genuinely our own caller's cancellation — let it propagate so ExecuteAsync can
+                // stop the loop cleanly instead of logging this as a failure.
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Every other failure, unconditionally — including one that happens to occur while
+                // ct is already cancelled but was NOT caused by that cancellation.
                 _log.LogError(ex, "AeroAPI usage retention prune failed; will retry on the next cycle.");
                 return 0;
             }

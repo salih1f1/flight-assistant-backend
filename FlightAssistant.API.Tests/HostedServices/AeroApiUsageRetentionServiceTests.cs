@@ -154,5 +154,132 @@ public sealed class AeroApiUsageRetentionServiceTests : IDisposable
         Assert.Equal(1, await service.PruneOnceAsync(CancellationToken.None));
     }
 
+    [Fact]
+    public async Task PruneOnceAsync_ADatabaseFailure_IsLoggedAndSwallowed_NotThrown()
+    {
+        // The scope factory itself is broken (the container behind it is disposed), so
+        // CreateScope() throws — a genuine failure wholly unrelated to the caller's token.
+        var clock = new FakeTimeProvider(Now);
+        var provider = await BuildProviderAsync(retentionDays: 90);
+        var brokenScopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+        await provider.DisposeAsync();
+
+        var service = new AeroApiUsageRetentionService(
+            brokenScopeFactory, clock, NullLogger<AeroApiUsageRetentionService>.Instance);
+
+        var deleted = await service.PruneOnceAsync(CancellationToken.None);
+
+        Assert.Equal(0, deleted);
+    }
+
+    [Fact]
+    public async Task PruneOnceAsync_ADatabaseFailure_IsLoggedAndSwallowed_EvenWhenTheCallersTokenIsAlreadyCancelled()
+    {
+        // Regression test for the review finding on this task: the exception filter used to be
+        // gated on ct.IsCancellationRequested alone, not on whether the exception was actually an
+        // OperationCanceledException caused by that cancellation. A genuine failure (here: the
+        // scope factory's container is disposed — nothing to do with cancellation) racing with a
+        // stoppingToken cancellation during host shutdown used to escape both this method's catch
+        // AND ExecuteAsync's own OperationCanceledException catch, propagating out of ExecuteAsync
+        // entirely — which the brief's "a failed prune ... must never crash the host" forbids
+        // unconditionally, not just when the token happens to still be live.
+        var clock = new FakeTimeProvider(Now);
+        var provider = await BuildProviderAsync(retentionDays: 90);
+        var brokenScopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+        await provider.DisposeAsync();
+
+        var service = new AeroApiUsageRetentionService(
+            brokenScopeFactory, clock, NullLogger<AeroApiUsageRetentionService>.Instance);
+
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync(); // simulates racing with a real host shutdown
+
+        // Before the fix, this threw ObjectDisposedException instead of returning.
+        var deleted = await service.PruneOnceAsync(cts.Token);
+
+        Assert.Equal(0, deleted);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PrunesOnceOnStart_ThenWaitsAFullDayBeforePruningAgain()
+    {
+        // Drives the real BackgroundService loop (not just PruneOnceAsync in isolation) via the
+        // public IHostedService.StartAsync/StopAsync, with every time-based decision — the initial
+        // "now", and the daily wait — governed by a FakeTimeProvider rather than any real delay.
+        var oneDay = TimeSpan.FromDays(1);
+        var clock = new FakeTimeProvider(Now);
+        await using var provider = await BuildProviderAsync(retentionDays: 90);
+
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+            db.AeroApiCalls.Add(NewCall(Now.UtcDateTime.AddDays(-91))); // due immediately
+            await db.SaveChangesAsync();
+        }
+
+        var service = NewService(provider, clock);
+        using var cts = new CancellationTokenSource();
+
+        await service.StartAsync(cts.Token);
+        await WaitUntilAsync(() => CountRowsAsync(provider, expected: 0));
+
+        // The first pass already ran. Seed a second due row and confirm the loop is now parked on
+        // its daily wait, NOT pruning again immediately.
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+            db.AeroApiCalls.Add(NewCall(Now.UtcDateTime.AddDays(-91)));
+            await db.SaveChangesAsync();
+        }
+
+        clock.Advance(oneDay - TimeSpan.FromSeconds(1));
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+            // Correct regardless of exactly when ExecuteAsync's own (real, unavoidably-async DB
+            // work-driven) continuation actually reaches and registers the daily Task.Delay: no
+            // second pass can possibly have run yet either way, so the row is still here.
+            Assert.Equal(1, await db.AeroApiCalls.CountAsync());
+        }
+
+        // A further, deliberately generous advance — not "+1 second" to land exactly on the
+        // 1-day mark. The daily Task.Delay is registered against whatever fake "now" is current
+        // AT THE MOMENT ExecuteAsync's own async continuation (real DB I/O, not under this test's
+        // control) reaches that line, which may be slightly later than the advance above. A wide
+        // safety margin makes this step immune to that gap while the negative assertion above
+        // stays exact, since nothing before it could have advanced the loop past its wait either
+        // way.
+        clock.Advance(TimeSpan.FromDays(2));
+        await WaitUntilAsync(() => CountRowsAsync(provider, expected: 0));
+
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    private static async Task<int> CountRowsAsync(ServiceProvider provider, int expected)
+    {
+        await using var scope = provider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        return await db.AeroApiCalls.CountAsync() == expected ? expected : -1;
+    }
+
+    /// <summary>
+    /// Polls a condition with short real waits, bounded to a couple of seconds, purely to
+    /// synchronize the test with genuinely asynchronous background work (real Sqlite I/O on a
+    /// separate continuation) that <see cref="FakeTimeProvider"/> has no way to fast-forward — it
+    /// governs simulated business time (the daily wait), not wall-clock synchronization with the
+    /// background service's own task scheduling. Every domain-time-dependent transition in this
+    /// test is still driven exclusively by <c>clock.Advance</c>.
+    /// </summary>
+    private static async Task WaitUntilAsync(Func<Task<int>> pollExpectedOrMinusOne)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (await pollExpectedOrMinusOne() < 0)
+        {
+            if (DateTime.UtcNow > deadline)
+                throw new TimeoutException("Background prune pass did not complete in time.");
+            await Task.Delay(10);
+        }
+    }
+
     public void Dispose() => _connection.Dispose();
 }
