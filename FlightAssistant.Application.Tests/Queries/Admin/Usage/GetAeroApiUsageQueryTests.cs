@@ -233,10 +233,52 @@ public class GetAeroApiUsageQueryTests
     }
 
     [Fact]
+    public void Validator_Rejects_AnEndBeforeTheDefaultedStart()
+    {
+        // End-only request: the start defaults to the first of the current UTC month, so an end in
+        // the previous month inverts the range even though no start was supplied to compare with.
+        var result = Validator().Validate(new GetAeroApiUsageQuery(EndUtc: MonthStart.AddDays(-3)));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.PropertyName.Contains("End", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Validator_Rejects_AStartInTheFuture()
+    {
+        // With no end, a future start would resolve to an inverted range rather than an error.
+        var result = Validator().Validate(new GetAeroApiUsageQuery(Now.AddDays(1)));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.ErrorMessage.Contains("future"));
+    }
+
+    [Fact]
     public void Validator_Accepts_AnOmittedRange()
     {
         var result = Validator().Validate(new GetAeroApiUsageQuery());
 
         Assert.True(result.IsValid, string.Join("; ", result.Errors.Select(e => e.ErrorMessage)));
+    }
+
+    // ── Cache serialization ───────────────────────────────────────────────────
+
+    [Fact]
+    public void CachedPayload_SurvivesAJsonRoundTrip_TheWayRedisCacheServiceStoresIt()
+    {
+        // The in-memory cache stores the object as-is, so nothing local would ever notice a shape
+        // System.Text.Json cannot rebuild — but production runs Redis, which serializes with
+        // JsonSerializerDefaults.Web. A cached record whose IReadOnlyList could not round-trip
+        // would fail only there, on a deploy, as a 500 on the dashboard.
+        var options = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web);
+
+        var json = System.Text.Json.JsonSerializer.Serialize(Usage, options);
+        var restored = System.Text.Json.JsonSerializer.Deserialize<AeroApiAccountUsage>(json, options);
+
+        Assert.NotNull(restored);
+        Assert.Equal(Usage.TotalCalls, restored!.TotalCalls);
+        Assert.Equal(Usage.TotalCostUsd, restored.TotalCostUsd);
+        var row = Assert.Single(restored.ByOperation);
+        Assert.Equal(Usage.ByOperation[0], row);
     }
 }

@@ -62,10 +62,28 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
                     $"AeroAPI caps usage history at {MaxHistoryYears} year into the past — " +
                     "choose a later start.");
 
+            // A usage report of the future is meaningless, and — with no end supplied — it would
+            // also resolve to an inverted range, which upstream would answer with either a 400 or a
+            // confidently empty report.
+            RuleFor(x => x.StartUtc)
+                .Must(start => start!.Value.ToUniversalTime() <= timeProvider.GetUtcNow())
+                .When(x => x.StartUtc.HasValue)
+                .WithMessage("The start of the range cannot be in the future.");
+
+            // Compared against the *resolved* start, not just an explicitly supplied one: an
+            // end-only request (say ?end=2026-08-01 in September) would otherwise sail past this
+            // rule and invert the defaulted month range.
             RuleFor(x => x.EndUtc)
-                .Must((query, end) => end!.Value.ToUniversalTime() > query.StartUtc!.Value.ToUniversalTime())
-                .When(x => x.StartUtc.HasValue && x.EndUtc.HasValue)
-                .WithMessage("The end of the range must be after its start.");
+                .Must((query, end) =>
+                {
+                    var (startUtc, _) = GetAeroApiUsageQueryHandler.ResolveRange(
+                        query, timeProvider.GetUtcNow());
+                    return end!.Value.ToUniversalTime() > startUtc;
+                })
+                .When(x => x.EndUtc.HasValue)
+                .WithMessage(
+                    "The end of the range must be after its start — with no start given, that is " +
+                    "the first of the current UTC month.");
         }
     }
 
@@ -157,9 +175,10 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
         /// <see cref="CacheDuration"/></i>. The flooring is what makes the cache work at all — an
         /// unrounded "now" would produce a distinct key on every request and the handler would call
         /// a metered API each time — and it keeps the key changing exactly when upstream refreshes.
-        /// It also never sends a future timestamp upstream. In the first few minutes of a month the
-        /// floor would land on (or before) the month start, which would ask for an empty window, so
-        /// the raw "now" is used there instead; the only cost is no caching for those minutes.
+        /// It also never sends a future timestamp upstream. Where the floor would land on or before
+        /// the resolved start — the first minutes of a month, or a start given inside the current
+        /// bucket — it would invert the window, so the raw "now" is used there instead; the only
+        /// cost is no caching for those few minutes.
         /// </para>
         /// </summary>
         public static (DateTimeOffset StartUtc, DateTimeOffset EndUtc) ResolveRange(
