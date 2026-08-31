@@ -253,7 +253,14 @@ public class AeroApiClientPipelineTests
         // spend causing up to MaxRetryAttempts× the spend, plus a 502 on a lookup that succeeded.
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var transport = new CountingTransport();
-        using var provider = BuildContainer(clock, transport, usageRecorder: new HangingUsageRecorder());
+
+        // Deliberately not `using`, unlike every other test here. If this guard ever catches a
+        // regression, the metering write is still outstanding when the assertions below fail — and
+        // disposing the container while one is outstanding blocks: measured, the assertion throws
+        // in ~90ms and the runner then never reports it, turning a named failing test into a job
+        // that hangs until CI kills it. It is disposed on the success path instead, where the write
+        // has already settled; a container leaked by an already-failing run costs nothing.
+        var provider = BuildContainer(clock, transport, usageRecorder: new HangingUsageRecorder());
         var client = provider.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi");
 
         var pending = client.GetAsync("airports/SOF");
@@ -275,5 +282,7 @@ public class AeroApiClientPipelineTests
         Assert.True(pending.IsCompleted, "the metering write must not hold the request past its own budget");
         Assert.Equal(HttpStatusCode.OK, (await pending).StatusCode);
         Assert.Equal(1, transport.Calls); // abandoned the row, not the attempt: no retry, no extra spend
+
+        provider.Dispose(); // reached only when nothing is left in flight — see the note above
     }
 }
