@@ -1,3 +1,5 @@
+using FlightAssistant.Application.Interfaces.ExternalServices;
+
 namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
 {
     /// <summary>
@@ -10,7 +12,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     /// I/O. <see cref="TimeProvider"/> is injected so tests can advance a fake clock instead of
     /// sleeping.
     /// </summary>
-    public sealed class AeroApiThrottleGate
+    public sealed class AeroApiThrottleGate : IAeroApiThrottleObserver
     {
         private readonly TimeProvider _timeProvider;
         private readonly SemaphoreSlim _reservationLock = new(1, 1);
@@ -19,6 +21,30 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         public AeroApiThrottleGate(TimeProvider timeProvider)
         {
             _timeProvider = timeProvider;
+        }
+
+        /// <summary>
+        /// The instant the next outbound slot falls due, or null before any reservation has ever
+        /// been made. A read-only observation for the usage dashboard (issue #300) — e.g. "next
+        /// AeroAPI slot in 7s" — that explains a slow search at a glance. Read under
+        /// <see cref="_reservationLock"/>, the same lock every reservation/release goes through, so
+        /// this never sees a torn write (a <see cref="DateTimeOffset"/>? is multi-word and cannot
+        /// be read atomically); it never itself reserves or releases a slot.
+        /// </summary>
+        public DateTimeOffset? NextSlotUtc
+        {
+            get
+            {
+                _reservationLock.Wait();
+                try
+                {
+                    return _nextAvailableSlotUtc;
+                }
+                finally
+                {
+                    _reservationLock.Release();
+                }
+            }
         }
 
         /// <summary>

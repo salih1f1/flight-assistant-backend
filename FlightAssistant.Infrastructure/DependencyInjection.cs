@@ -53,6 +53,11 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<IFlightSearchHorizonOptions>(sp =>
                 sp.GetRequiredService<IOptions<AeroApiOptions>>().Value);
 
+            // Same translation, same reason (issue #300): GetAeroApiUsageQueryHandler renders the
+            // spend gauge against the configured monthly budget, which lives on AeroApiOptions.
+            services.AddScoped<IAeroApiBudgetOptions>(sp =>
+                sp.GetRequiredService<IOptions<AeroApiOptions>>().Value);
+
             // AeroApiThrottleGate's constructor requires a TimeProvider, and nothing else in this
             // solution (nor AddStandardResilienceHandler, nor the generic host) registers one —
             // TryAddSingleton so a real caller elsewhere in the app can still supply its own without
@@ -63,6 +68,13 @@ namespace FlightAssistant.Infrastructure
             // ~5 queries/minute limit is a process-wide budget, not a per-client one.
             services.AddSingleton<AeroApiThrottleGate>();
             services.AddTransient<AeroApiThrottlingHandler>();
+
+            // Same translation pattern as IAeroApiBudgetOptions above, for the usage query's
+            // NextSlotUtc (issue #300): AeroApiThrottleGate implements IAeroApiThrottleObserver
+            // (defined in Application) itself, and is resolved here under that interface as the
+            // very same singleton instance — not a second gate.
+            services.AddSingleton<IAeroApiThrottleObserver>(sp =>
+                sp.GetRequiredService<AeroApiThrottleGate>());
 
             var aeroApiClientBuilder = services.AddHttpClient("AeroApi", (sp, client) =>
             {
@@ -140,6 +152,17 @@ namespace FlightAssistant.Infrastructure
 
             services.AddScoped<IFlightStatusProvider>(sp =>
                 sp.GetRequiredService<AeroApiFlightStatusProvider>());
+
+            // Account usage (issue #300) — same named client as search and status, so the spend
+            // report is throttled, retried and authenticated identically. The endpoint it proxies
+            // is itself billed at $0.00.
+            services.AddScoped(sp => new AeroApiAccountUsageProvider(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
+                sp.GetRequiredService<IOptions<AeroApiOptions>>(),
+                sp.GetRequiredService<ILogger<AeroApiAccountUsageProvider>>()));
+
+            services.AddScoped<IAeroApiAccountUsageProvider>(sp =>
+                sp.GetRequiredService<AeroApiAccountUsageProvider>());
 
             // Push notifications — singleton so the APNs client is created once and reused
             services.AddOptions<ApnsOptions>()

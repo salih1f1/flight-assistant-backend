@@ -1,0 +1,42 @@
+{
+  "total_calls": 42,
+  "total_pages": 46,
+  "total_cost": 0.66,
+  "total_discount_cost": 0.0,
+  "total_successful_calls": 41,
+  "total_failed_calls": 1,
+  "resource_details": [
+    {
+      "operation": "GET /schedules/{date_start}/{date_end}",
+      "total_resource_calls": 21,
+      "num_pages": 21,
+      "resource_cost": 0.42,
+      "successful_resource_calls": 21,
+      "failed_resource_calls": 0
+    },
+    {
+      "operation": "GET /airports/{id}",
+      "total_resource_calls": 4,
+      "num_pages": 8,
+      "resource_cost": 0.04,
+      "successful_resource_calls": 4,
+      "failed_resource_calls": 0
+    },
+    {
+      "operation": "GET /flights/search",
+      "total_resource_calls": 1,
+      "num_pages": 1,
+      "resource_cost": 0.05,
+      "successful_resource_calls": 0,
+      "failed_resource_calls": 1
+    },
+    {
+      "operation": "GET /account/usage",
+      "total_resource_calls": 6,
+      "num_pages": 6,
+      "resource_cost": 0.0,
+      "successful_resource_calls": 6,
+      "failed_resource_calls": 0
+    }
+  ]
+}

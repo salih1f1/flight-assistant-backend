@@ -1,5 +1,6 @@
 using FlightAssistant.Application;
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Application.Queries.Admin.Usage;
 using FlightAssistant.Application.Queries.Flights;
 using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
@@ -221,5 +222,54 @@ public class AeroApiDependencyInjectionTests
             var third = scopeB.ServiceProvider.GetRequiredService<AeroApiFlightSearchProvider>();
             Assert.NotSame(first, third); // different across scopes — proves it's Scoped, not Singleton
         }
+    }
+
+    [Fact]
+    public void AddInfrastructure_ResolvesIAeroApiAccountUsageProvider_FromTheRealContainer()
+    {
+        using var provider = BuildContainer();
+
+        var usage = provider.GetRequiredService<IAeroApiAccountUsageProvider>();
+
+        Assert.IsType<AeroApiAccountUsageProvider>(usage);
+    }
+
+    [Fact]
+    public void AddInfrastructure_ResolvesIAeroApiBudgetOptions_FromAeroApiOptions()
+    {
+        using var provider = BuildContainer();
+
+        // The same translation as IFlightSearchHorizonOptions: proves the interface Application
+        // owns reflects the real bound AeroApiOptions default ($5/month personal tier), not just
+        // that something resolves.
+        var budget = provider.GetRequiredService<IAeroApiBudgetOptions>();
+
+        Assert.Equal(5m, budget.MonthlyBudgetUsd);
+    }
+
+    [Fact]
+    public void AddInfrastructure_ResolvesIAeroApiThrottleObserver_AsTheVerySameGateInstance()
+    {
+        using var provider = BuildContainer();
+
+        var gate = provider.GetRequiredService<AeroApiThrottleGate>();
+        var observer = provider.GetRequiredService<IAeroApiThrottleObserver>();
+
+        // A second gate would observe a slot queue nothing actually sends through — the whole
+        // point of the singleton is that there is exactly one.
+        Assert.Same(gate, observer);
+    }
+
+    [Fact]
+    public void AddApplication_ResolvesGetAeroApiUsageQueryValidator_WithItsTimeProviderDependency()
+    {
+        using var provider = BuildContainer();
+
+        // Same regression shape as SearchFlightsQueryValidator above: the validator takes a
+        // TimeProvider (to enforce AeroAPI's one-year history cap), and only AddInfrastructure
+        // registers one. Constructing it with `new` in a unit test would never notice.
+        var validator = provider.GetRequiredService<IValidator<GetAeroApiUsageQuery>>();
+
+        Assert.IsType<GetAeroApiUsageQueryValidator>(validator);
     }
 }
