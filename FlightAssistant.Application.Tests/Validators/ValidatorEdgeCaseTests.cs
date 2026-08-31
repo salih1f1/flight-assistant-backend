@@ -284,14 +284,14 @@ public class ValidatorEdgeCaseTests
     public void CreateAirport_LowercaseIata_Passes()
     {
         var v = new CreateAirportCommandValidator();
-        AssertValid(v, new CreateAirportCommand("lhr", "egll", "Heathrow", "London", "gb", null, null, null, null));
+        AssertValid(v, new CreateAirportCommand("lhr", "egll", "Heathrow", "London", "gb", null, null, null));
     }
 
     [Fact]
     public void CreateAirport_CityExceeds200_Fails()
     {
         var v = new CreateAirportCommandValidator();
-        AssertInvalid(v, new CreateAirportCommand("LHR", null, "Heathrow", new string('A', 201), "GB", null, null, null, null), "City");
+        AssertInvalid(v, new CreateAirportCommand("LHR", null, "Heathrow", new string('A', 201), "GB", null, null, null), "City");
     }
 
     // ── Admin: Lounge ─────────────────────────────────────────────────────────
@@ -500,7 +500,7 @@ public class ValidatorEdgeCaseTests
     {
         var v = new ImportAirportsCommandValidator();
         AssertInvalid(v, new ImportAirportsCommand([
-            new AirportImportDto("LHRX", null, "Heathrow", "London", "GB", null, null, null, null)]), "Iata");
+            new AirportImportDto("LHRX", null, "Heathrow", "London", "GB", null, null, null)]), "Iata");
     }
 
     [Fact]
@@ -508,7 +508,7 @@ public class ValidatorEdgeCaseTests
     {
         var v = new ImportAirportsCommandValidator();
         AssertValid(v, new ImportAirportsCommand([
-            new AirportImportDto("lhr", "egll", "Heathrow", "London", "gb", null, null, null, null)]));
+            new AirportImportDto("lhr", "egll", "Heathrow", "London", "gb", null, null, null)]));
     }
 
     [Fact]
@@ -516,7 +516,7 @@ public class ValidatorEdgeCaseTests
     {
         var v = new ImportAirportsCommandValidator();
         AssertValid(v, new ImportAirportsCommand([
-            new AirportImportDto("LHR", "EGLL", "Heathrow", "London", "GB", 51.477, -0.461, 83, "Europe/London")]));
+            new AirportImportDto("LHR", "EGLL", "Heathrow", "London", "GB", 51.477, -0.461, 83)]));
     }
 
     // ── Import: Airlines ──────────────────────────────────────────────────────────
@@ -797,7 +797,7 @@ public class ValidatorEdgeCaseTests
     public void UpdateAirport_LowercaseCodes_Passes()
     {
         var v = new UpdateAirportCommandValidator();
-        AssertValid(v, new UpdateAirportCommand(1, "lhr", "egll", "Heathrow", "London", "gb", null, null, null, null));
+        AssertValid(v, new UpdateAirportCommand(1, "lhr", "egll", "Heathrow", "London", "gb", null, null, null));
     }
 
     [Fact]

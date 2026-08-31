@@ -19,7 +19,7 @@ public class AdminAirportCommandHandlerTests
         var handler = new CreateAirportCommandHandler(_repo);
 
         await handler.Handle(
-            new CreateAirportCommand("LHR", null, "Heathrow", "London", "GB", 51.47, -0.46, 83, "Europe/London"),
+            new CreateAirportCommand("LHR", null, "Heathrow", "London", "GB", 51.47, -0.46, 83),
             CancellationToken.None);
 
         await _repo.Received(1).AddAsync(Arg.Any<Airport>(), Arg.Any<CancellationToken>());
@@ -32,11 +32,11 @@ public class AdminAirportCommandHandlerTests
     public async Task Update_ExistingAirport_CallsSave()
     {
         var handler = new UpdateAirportCommandHandler(_repo);
-        var airport = Airport.Create("LHR", null, "Heathrow", "London", "GB", null, null, null, null);
+        var airport = Airport.Create("LHR", null, "Heathrow", "London", "GB", null, null, null);
         _repo.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(airport);
 
         await handler.Handle(
-            new UpdateAirportCommand(1, "LHR", null, "London Heathrow", "London", "GB", null, null, null, null),
+            new UpdateAirportCommand(1, "LHR", null, "London Heathrow", "London", "GB", null, null, null),
             CancellationToken.None);
 
         await _repo.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
@@ -50,7 +50,7 @@ public class AdminAirportCommandHandlerTests
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(
-                new UpdateAirportCommand(99, "LHR", null, "Heathrow", "London", "GB", null, null, null, null),
+                new UpdateAirportCommand(99, "LHR", null, "Heathrow", "London", "GB", null, null, null),
                 CancellationToken.None));
         Assert.Equal(404, ex.StatusCode);
 
@@ -63,7 +63,7 @@ public class AdminAirportCommandHandlerTests
     public async Task Delete_ExistingAirport_DeletesAndSaves()
     {
         var handler = new DeleteAirportCommandHandler(_repo);
-        var airport = Airport.Create("LHR", null, "Heathrow", "London", "GB", null, null, null, null);
+        var airport = Airport.Create("LHR", null, "Heathrow", "London", "GB", null, null, null);
         _repo.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(airport);
 
         await handler.Handle(new DeleteAirportCommand(1), CancellationToken.None);

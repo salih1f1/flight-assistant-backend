@@ -15,7 +15,7 @@ public class ImportAirportsCommandHandlerTests
     {
         _repo.FindByIataAsync("LHR", Arg.Any<CancellationToken>()).ReturnsNull();
         var handler = new ImportAirportsCommandHandler(_repo);
-        var dto = new AirportImportDto("LHR", "EGLL", "Heathrow", "London", "GB", 51.477, -0.461, 83, "Europe/London");
+        var dto = new AirportImportDto("LHR", "EGLL", "Heathrow", "London", "GB", 51.477, -0.461, 83);
 
         var result = await handler.Handle(new ImportAirportsCommand([dto]), CancellationToken.None);
 
@@ -32,7 +32,7 @@ public class ImportAirportsCommandHandlerTests
         var existing = Airport.Create("LHR", null, "Old Name", "London", "GB");
         _repo.FindByIataAsync("LHR", Arg.Any<CancellationToken>()).Returns(existing);
         var handler = new ImportAirportsCommandHandler(_repo);
-        var dto = new AirportImportDto("LHR", "EGLL", "Heathrow", "London", "GB", 51.477, -0.461, 83, "Europe/London");
+        var dto = new AirportImportDto("LHR", "EGLL", "Heathrow", "London", "GB", 51.477, -0.461, 83);
 
         var result = await handler.Handle(new ImportAirportsCommand([dto]), CancellationToken.None);
 
@@ -50,7 +50,7 @@ public class ImportAirportsCommandHandlerTests
         Airport? added = null;
         await _repo.AddAsync(Arg.Do<Airport>(a => added = a), Arg.Any<CancellationToken>());
         var handler = new ImportAirportsCommandHandler(_repo);
-        var dto = new AirportImportDto("LHR", null, "Heathrow", "London", "GB", null, null, null, null);
+        var dto = new AirportImportDto("LHR", null, "Heathrow", "London", "GB", null, null, null);
 
         await handler.Handle(new ImportAirportsCommand([dto]), CancellationToken.None);
 

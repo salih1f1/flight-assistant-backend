@@ -14,12 +14,11 @@ namespace FlightAssistant.Domain.ReferenceData.Entities
         public double? Latitude { get; private set; }
         public double? Longitude { get; private set; }
         public int? ElevationFt { get; private set; }
-        public string? Timezone { get; private set; }
 
         private Airport() { } // EF
 
         public static Airport Create(string iata, string? icao, string name, string city, string countryCode,
-            double? latitude = null, double? longitude = null, int? elevationFt = null, string? timezone = null) =>
+            double? latitude = null, double? longitude = null, int? elevationFt = null) =>
             new()
             {
                 Iata = iata.ToCanonicalCode(),
@@ -30,12 +29,11 @@ namespace FlightAssistant.Domain.ReferenceData.Entities
                 Latitude = latitude,
                 Longitude = longitude,
                 ElevationFt = elevationFt,
-                Timezone = timezone,
                 SourceType = "admin"
             };
 
         public void Update(string iata, string? icao, string name, string city, string countryCode,
-            double? latitude, double? longitude, int? elevationFt, string? timezone)
+            double? latitude, double? longitude, int? elevationFt)
         {
             Iata = iata.ToCanonicalCode();
             Icao = icao.ToCanonicalCodeOrNull();
@@ -45,7 +43,6 @@ namespace FlightAssistant.Domain.ReferenceData.Entities
             Latitude = latitude;
             Longitude = longitude;
             ElevationFt = elevationFt;
-            Timezone = timezone;
         }
     }
 }

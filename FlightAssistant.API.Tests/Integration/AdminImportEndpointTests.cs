@@ -40,8 +40,8 @@ public class AdminImportEndpointTests(FlightAssistantWebApplicationFactory facto
         var client = factory.CreateAdminClient();
 
         const string airportsCsv = """
-            Iata,Icao,Name,City,CountryCode,Latitude,Longitude,ElevationFt,Timezone
-            LHR,EGLL,Heathrow Airport,London,GB,51.4706,-0.461941,83,Europe/London
+            Iata,Icao,Name,City,CountryCode,Latitude,Longitude,ElevationFt
+            LHR,EGLL,Heathrow Airport,London,GB,51.4706,-0.461941,83
             """;
         var airportsResponse = await client.PostAsync("admin/import/airports", BuildMultipart(airportsCsv));
         Assert.Equal(HttpStatusCode.OK, airportsResponse.StatusCode);
@@ -55,6 +55,23 @@ public class AdminImportEndpointTests(FlightAssistantWebApplicationFactory facto
         var response = await client.PostAsync("admin/import/lounges", BuildMultipart(loungesCsv));
 
         Assert.Equal((HttpStatusCode)207, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ImportAirports_CsvHasStaleTimezoneColumn_Returns400WithClearMessage()
+    {
+        var client = factory.CreateAdminClient();
+
+        const string airportsCsv = """
+            Iata,Icao,Name,City,CountryCode,Latitude,Longitude,ElevationFt,Timezone
+            LHR,EGLL,Heathrow Airport,London,GB,51.4706,-0.461941,83,Europe/London
+            """;
+
+        var response = await client.PostAsync("admin/import/airports", BuildMultipart(airportsCsv));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("Timezone", body);
     }
 
     [Fact]
