@@ -32,7 +32,7 @@ links and seed versions have no admin surface at all.
 
 | Question | Decision |
 |---|---|
-| Test visibility | **Read-only CI results.** CI publishes a report; the panel reads it. Nothing executes from the panel. |
+| Test visibility | **GitHub Actions, not the panel.** *(Revised 2026-09-01 — see A7.)* CI runs on every PR and publishes a report. Originally the panel was to read it; that duplicated a better dashboard for no gain. Nothing executes from the panel either way. |
 | AeroAPI usage store | **Postgres table**, one row per outbound call. Durable, no Redis/App Insights dependency. |
 | Full DB coverage | **Hybrid** — generic read-only browser over an explicit whitelist, plus typed pages where you edit. |
 | Audit trail | **`admin_audit_log`**, written in-transaction. |
@@ -165,17 +165,28 @@ relationship view or a write:
 
 Alliances, lounge providers and loyalty kinds already have endpoints; they only lack UI.
 
-### A7 — CI test report
+### A7 — CI on pull requests — **done, and deliberately narrowed** (#298, PR #299)
 
-Change `dotnet test` to emit `--logger "trx;LogFileName=<project>.trx"`, convert the TRX
-files to one compact JSON summary (suite, test, outcome, duration, failure message) and
-upload it as a `test-results` artifact. Run on PRs too, not just pushes to
-`development`, or the panel only ever shows merged history.
+Nothing ran on `pull_request`, so #290, #292 and #294 opened with zero checks and tests
+only ran *after* merge, on the deploy pipeline. A separate `ci.yml` now builds, tests and
+publishes a report on every PR — kept separate from the deploy workflow, which holds Azure
+credentials and applies an EF migration bundle and must never be reachable from a PR,
+including one from a fork. `trx_to_json.py` writes a `test-results.json` artifact and a
+pass/fail table into the job summary.
 
-The panel must not hold a GitHub token, so the backend proxies:
-`GET /admin/ci/runs` and `GET /admin/ci/runs/{id}/tests`. Token in Key Vault as
-`GitHub:Token` (fine-grained, read-only, this repo) with `GitHub:Owner`/`Repo`/`Workflow`.
-Cache through `ICacheService` for ~60s so panel polling never trips GitHub's rate limit.
+**The panel gets no tests page. This reverses the original plan.**
+
+The reasoning that put one here was "you asked to see tests, so the panel should show
+them". That was wrong: the admin panel is for **operating live data**, while test results
+are **developer-facing CI**, and GitHub Actions is already a better dashboard than
+anything built here — run history, per-test detail, logs, re-run, PR integration, all
+free. A panel page would be a worse copy of it behind a proxy that also needed a GitHub
+token in Key Vault, a cache to survive rate limits, and two endpoints to maintain.
+
+So: **no `GET /admin/ci/*` endpoints, and no B6.** Test visibility is the Actions tab, the
+PR's own checks, and a build badge in the README. The `test-results.json` artifact stays —
+it costs nothing and makes the summary readable — and if flaky-test tracking is ever
+wanted, that calls for a purpose-built tool (BuildPulse, Currents), not a hand-rolled page.
 
 ### A8 — Publish the OpenAPI spec for codegen
 
@@ -216,7 +227,8 @@ exists only in endpoint summaries.
 
 **B4** — alliances, lounge providers, loyalty kinds; traveler and flight drill-downs.
 **B5** — audit log page plus a recent-activity strip on the dashboard.
-**B6** — tests page: CI runs, per-suite and per-test results, failure output, link out. Read-only.
+**B6** — ~~tests page~~ **dropped.** See A7: GitHub Actions is already the better dashboard,
+and duplicating it in the panel would cost a token, a proxy and a cache to end up worse.
 **B7** — deploy to Azure Static Web Apps; point `AdminPanel:AllowedOrigin` at it.
 
 ## Verification
@@ -235,12 +247,13 @@ Per backend PR: `dotnet build --configuration Release && dotnet test`, plus
   and rolls back with a failed save.
 - **A4/A5** — a test that fails when an entity is added without classifying its columns;
   assert a list response never contains a full device token; assert reveal audits.
-- **A7** — run the TRX converter over a real TRX and confirm the artifact parses.
+- **A7** — done. The converter was exercised against real TRX output and against a
+  synthetic failing one, plus the no-results and wrong-file-count paths.
 
 End to end: `docker compose up -d`, `dotnet run --project FlightAssistant.API`,
 `npm run dev` in the panel, sign in as admin, then browse a table with a masked column,
-verify a record and find it in the audit log, read the health and usage dashboard, and
-open the tests page.
+verify a record and find it in the audit log, and read the health and usage dashboard.
+Test results are checked on the PR itself, not in the panel.
 
 ## Out of scope
 
