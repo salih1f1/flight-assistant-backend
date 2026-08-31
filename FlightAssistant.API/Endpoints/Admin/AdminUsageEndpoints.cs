@@ -30,7 +30,8 @@ namespace FlightAssistant.API.Endpoints.Admin
                     result.DailyCounts.Select(d => new AeroApiUsageDailyCountDto(
                         d.Date, d.Calls)).ToList(),
                     result.Status429CountLast7Days,
-                    result.Status502CountLast7Days);
+                    result.Status502CountLast7Days,
+                    result.NextSlotUtc);
                 return Results.Ok(dto);
             })
             .WithName("AdminGetAeroApiUsage")

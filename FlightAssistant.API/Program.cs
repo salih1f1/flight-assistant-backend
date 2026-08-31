@@ -137,6 +137,7 @@ if (!string.IsNullOrWhiteSpace(redisConnStr))
 // Hosted services
 
 builder.Services.AddHostedService<FlightStatusSyncBackgroundService>();
+builder.Services.AddHostedService<AeroApiUsageRetentionService>();
 
 // ------------------------------------------------------------
 // 3. Authentication & Authorization

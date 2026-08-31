@@ -72,6 +72,13 @@ namespace FlightAssistant.Infrastructure
             services.AddSingleton<AeroApiThrottleGate>();
             services.AddTransient<AeroApiThrottlingHandler>();
 
+            // Same translation pattern as IAeroApiUsagePricingOptions above, for
+            // GetAeroApiUsageQueryHandler's NextSlotUtc (issue #293): AeroApiThrottleGate
+            // implements IAeroApiThrottleObserver (defined in Application) itself, and is resolved
+            // here under that interface as the very same singleton instance — not a second gate.
+            services.AddSingleton<IAeroApiThrottleObserver>(sp =>
+                sp.GetRequiredService<AeroApiThrottleGate>());
+
             // Per-call usage metering (issue #293). The recorder is scoped like every other
             // DbContext consumer; the handler owns no scope of its own and creates one per row.
             services.AddScoped<IAeroApiUsageRecorder, DbAeroApiUsageRecorder>();

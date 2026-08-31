@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Configuration;
+using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FluentValidation;
 using MediatR;
@@ -23,7 +24,11 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
         IReadOnlyList<AeroApiUsageOutcomeBreakdown> ByOutcome,
         IReadOnlyList<AeroApiUsageDailyCount> DailyCounts,
         int Status429CountLast7Days,
-        int Status502CountLast7Days);
+        int Status502CountLast7Days,
+        // Set by Handle from IAeroApiThrottleObserver, not by BuildResult (issue #293) — the
+        // throttle gate's current state is not part of the pure rollup arithmetic BuildResult
+        // computes from `raw`, so it defaults to null here and is attached afterwards.
+        DateTimeOffset? NextSlotUtc = null);
 
     /// <summary>
     /// Defaults to the current UTC month through now when either bound is omitted. Both
@@ -105,11 +110,14 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
     {
         private readonly IAeroApiUsageRepository _repo;
         private readonly IAeroApiUsagePricingOptions _pricing;
+        private readonly IAeroApiThrottleObserver _throttle;
 
-        public GetAeroApiUsageQueryHandler(IAeroApiUsageRepository repo, IAeroApiUsagePricingOptions pricing)
+        public GetAeroApiUsageQueryHandler(
+            IAeroApiUsageRepository repo, IAeroApiUsagePricingOptions pricing, IAeroApiThrottleObserver throttle)
         {
             _repo = repo;
             _pricing = pricing;
+            _throttle = throttle;
         }
 
         public async Task<AeroApiUsageResult> Handle(GetAeroApiUsageQuery request, CancellationToken ct)
@@ -127,7 +135,7 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
                 last7DaysStartUtc, now,
                 ct);
 
-            return BuildResult(fromUtc, toUtc, raw, _pricing);
+            return BuildResult(fromUtc, toUtc, raw, _pricing) with { NextSlotUtc = _throttle.NextSlotUtc };
         }
 
         /// <summary>

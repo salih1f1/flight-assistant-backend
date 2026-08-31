@@ -12,7 +12,8 @@ namespace FlightAssistant.Contracts.Responses.Admin
         IReadOnlyList<AeroApiUsageOutcomeBreakdownDto> ByOutcome,
         IReadOnlyList<AeroApiUsageDailyCountDto> DailyCounts,
         int Status429CountLast7Days,
-        int Status502CountLast7Days
+        int Status502CountLast7Days,
+        DateTimeOffset? NextSlotUtc
     );
 
     public sealed record AeroApiUsageTemplateBreakdownDto(

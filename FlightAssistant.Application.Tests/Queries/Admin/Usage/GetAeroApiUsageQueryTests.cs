@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Configuration;
+using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Queries.Admin.Usage;
 using FlightAssistant.Domain.Configuration.Entities;
@@ -15,6 +16,7 @@ public class GetAeroApiUsageQueryTests
     }
 
     private readonly IAeroApiUsageRepository _repo = Substitute.For<IAeroApiUsageRepository>();
+    private readonly IAeroApiThrottleObserver _throttle = Substitute.For<IAeroApiThrottleObserver>();
 
     [Fact]
     public async Task Handle_RollsUpCallsAcrossTemplatesAndOutcomes_WithPricedSpendAndShare()
@@ -58,7 +60,7 @@ public class GetAeroApiUsageQueryTests
             },
             MonthlyBudgetUsd = 5m,
         };
-        var handler = new GetAeroApiUsageQueryHandler(_repo, pricing);
+        var handler = new GetAeroApiUsageQueryHandler(_repo, pricing, _throttle);
 
         var result = await handler.Handle(new GetAeroApiUsageQuery(null, null), CancellationToken.None);
 
@@ -109,7 +111,7 @@ public class GetAeroApiUsageQueryTests
             .Returns(raw);
         // Deliberately empty: "/{...}" has no configured price.
         var pricing = new FakePricingOptions { Pricing = new Dictionary<string, decimal>() };
-        var handler = new GetAeroApiUsageQueryHandler(_repo, pricing);
+        var handler = new GetAeroApiUsageQueryHandler(_repo, pricing, _throttle);
 
         var result = await handler.Handle(new GetAeroApiUsageQuery(null, null), CancellationToken.None);
 
@@ -139,7 +141,7 @@ public class GetAeroApiUsageQueryTests
                 Arg.Any<CancellationToken>())
             .Returns(raw);
         var pricing = new FakePricingOptions();
-        var handler = new GetAeroApiUsageQueryHandler(_repo, pricing);
+        var handler = new GetAeroApiUsageQueryHandler(_repo, pricing, _throttle);
 
         var result = await handler.Handle(new GetAeroApiUsageQuery(null, null), CancellationToken.None);
 
@@ -169,7 +171,7 @@ public class GetAeroApiUsageQueryTests
                 Arg.Any<DateTime>(), Arg.Any<DateTime>(),
                 Arg.Any<CancellationToken>())
             .Returns(raw);
-        var handler = new GetAeroApiUsageQueryHandler(_repo, new FakePricingOptions());
+        var handler = new GetAeroApiUsageQueryHandler(_repo, new FakePricingOptions(), _throttle);
         var before = DateTime.UtcNow;
 
         var result = await handler.Handle(new GetAeroApiUsageQuery(null, null), CancellationToken.None);
@@ -194,7 +196,7 @@ public class GetAeroApiUsageQueryTests
                 Arg.Any<DateTime>(), Arg.Any<DateTime>(),
                 Arg.Any<CancellationToken>())
             .Returns(raw);
-        var handler = new GetAeroApiUsageQueryHandler(_repo, new FakePricingOptions());
+        var handler = new GetAeroApiUsageQueryHandler(_repo, new FakePricingOptions(), _throttle);
         var from = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         var to = new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc);
 
@@ -227,7 +229,7 @@ public class GetAeroApiUsageQueryTests
                 Arg.Any<DateTime>(), Arg.Any<DateTime>(),
                 Arg.Any<CancellationToken>())
             .Returns(raw);
-        var handler = new GetAeroApiUsageQueryHandler(_repo, new FakePricingOptions());
+        var handler = new GetAeroApiUsageQueryHandler(_repo, new FakePricingOptions(), _throttle);
         var from = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Unspecified);
         var to = new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Unspecified);
 
@@ -273,7 +275,7 @@ public class GetAeroApiUsageQueryTests
                 ["/flights/{ident}"] = 0.02m,
             },
         };
-        var handler = new GetAeroApiUsageQueryHandler(_repo, pricing);
+        var handler = new GetAeroApiUsageQueryHandler(_repo, pricing, _throttle);
 
         var result = await handler.Handle(new GetAeroApiUsageQuery(null, null), CancellationToken.None);
 
@@ -283,5 +285,55 @@ public class GetAeroApiUsageQueryTests
         Assert.Equal(0.14m, result.CurrentMonthSpendUsd); // 7 * 0.02
         Assert.NotEqual(result.TotalCalls, result.CurrentMonthCalls);
         Assert.NotEqual(result.EstimatedSpendUsd, result.CurrentMonthSpendUsd);
+    }
+
+    [Fact]
+    public async Task Handle_SurfacesNextSlotUtc_FromTheThrottleObserver()
+    {
+        // NextSlotUtc is deliberately NOT part of AeroApiUsageRawData or BuildResult's pure
+        // arithmetic (issue #293) — it comes from the live throttle gate, attached by Handle. This
+        // proves the wiring, not just that BuildResult defaults the field to null.
+        var raw = new AeroApiUsageRawData(
+            new Dictionary<string, int>(),
+            new Dictionary<AeroApiCallOutcome, int>(),
+            new Dictionary<DateOnly, int>(),
+            new Dictionary<string, int>(),
+            0, 0);
+        _repo.GetUsageRollupAsync(
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<CancellationToken>())
+            .Returns(raw);
+        var nextSlotUtc = new DateTimeOffset(2026, 8, 31, 12, 0, 7, TimeSpan.Zero);
+        _throttle.NextSlotUtc.Returns(nextSlotUtc);
+        var handler = new GetAeroApiUsageQueryHandler(_repo, new FakePricingOptions(), _throttle);
+
+        var result = await handler.Handle(new GetAeroApiUsageQuery(null, null), CancellationToken.None);
+
+        Assert.Equal(nextSlotUtc, result.NextSlotUtc);
+    }
+
+    [Fact]
+    public async Task Handle_NoReservationYet_SurfacesNullNextSlotUtc()
+    {
+        var raw = new AeroApiUsageRawData(
+            new Dictionary<string, int>(),
+            new Dictionary<AeroApiCallOutcome, int>(),
+            new Dictionary<DateOnly, int>(),
+            new Dictionary<string, int>(),
+            0, 0);
+        _repo.GetUsageRollupAsync(
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<CancellationToken>())
+            .Returns(raw);
+        _throttle.NextSlotUtc.Returns((DateTimeOffset?)null);
+        var handler = new GetAeroApiUsageQueryHandler(_repo, new FakePricingOptions(), _throttle);
+
+        var result = await handler.Handle(new GetAeroApiUsageQuery(null, null), CancellationToken.None);
+
+        Assert.Null(result.NextSlotUtc);
     }
 }
