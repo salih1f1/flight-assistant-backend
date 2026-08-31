@@ -64,6 +64,11 @@ namespace FlightAssistant.Infrastructure
             services.AddSingleton<AeroApiThrottleGate>();
             services.AddTransient<AeroApiThrottlingHandler>();
 
+            // Per-call usage metering (issue #293). The recorder is scoped like every other
+            // DbContext consumer; the handler owns no scope of its own and creates one per row.
+            services.AddScoped<IAeroApiUsageRecorder, DbAeroApiUsageRecorder>();
+            services.AddTransient<AeroApiUsageRecordingHandler>();
+
             var aeroApiClientBuilder = services.AddHttpClient("AeroApi", (sp, client) =>
             {
                 var options = sp.GetRequiredService<IOptions<AeroApiOptions>>().Value;
@@ -111,6 +116,14 @@ namespace FlightAssistant.Infrastructure
             });
 
             aeroApiClientBuilder.AddHttpMessageHandler<AeroApiThrottlingHandler>();
+
+            // Metering is registered last (= innermost, closest to the transport) on purpose, and
+            // both halves of that placement are load-bearing on a per-query billed API. Inside the
+            // throttle: a caller whose wait is cancelled never gets here, so a row exists only when
+            // a request was actually sent — queueing is not spend. Inside the resilience handler:
+            // every retry attempt passes through separately and is billed separately, so each one
+            // gets its own row instead of the whole logical request counting once.
+            aeroApiClientBuilder.AddHttpMessageHandler<AeroApiUsageRecordingHandler>();
 
             services.AddScoped(sp => new AeroApiAirportTimezoneLookup(
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),

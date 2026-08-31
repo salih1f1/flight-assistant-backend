@@ -1,9 +1,11 @@
 using System.Net;
 using System.Text;
+using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
 
 namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroApi;
@@ -35,7 +37,7 @@ namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroApi;
 public class AeroApiClientPipelineTests
 {
     /// <summary>Counts what actually made it past every handler to the wire.</summary>
-    private sealed class CountingTransport : HttpMessageHandler
+    private sealed class CountingTransport(HttpStatusCode status = HttpStatusCode.OK) : HttpMessageHandler
     {
         private int _calls;
         public int Calls => Volatile.Read(ref _calls);
@@ -44,15 +46,41 @@ public class AeroApiClientPipelineTests
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _calls);
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            return Task.FromResult(new HttpResponseMessage(status)
             {
                 Content = new StringContent("{}", Encoding.UTF8, "application/json")
             });
         }
     }
 
+    /// <summary>
+    /// Stands in for <c>DbAeroApiUsageRecorder</c>. <c>AddInfrastructure</c> registers the real one
+    /// against <c>FlightAssistantDbContext</c>, which only the API composition root registers — so
+    /// in this container every write would throw, be swallowed by the handler's best-effort catch,
+    /// and leave "was this call metered?" unobservable. Substituting the seam is what makes the
+    /// metering assertions below mean anything.
+    /// </summary>
+    private sealed class CountingUsageRecorder : IAeroApiUsageRecorder
+    {
+        private readonly List<AeroApiCall> _calls = [];
+
+        public IReadOnlyList<AeroApiCall> Calls
+        {
+            get { lock (_calls) return _calls.ToList(); }
+        }
+
+        public Task RecordAsync(AeroApiCall call, CancellationToken ct)
+        {
+            lock (_calls) _calls.Add(call);
+            return Task.CompletedTask;
+        }
+    }
+
     private static ServiceProvider BuildContainer(
-        FakeTimeProvider clock, CountingTransport transport, TimeSpan? minRequestInterval = null)
+        FakeTimeProvider clock,
+        CountingTransport transport,
+        TimeSpan? minRequestInterval = null,
+        IAeroApiUsageRecorder? usageRecorder = null)
     {
         var settings = new Dictionary<string, string?> { ["AeroApi:ApiKey"] = "dummy-test-key" };
         if (minRequestInterval is { } interval)
@@ -74,6 +102,12 @@ public class AeroApiClientPipelineTests
         // Swap only the innermost transport: every handler AddInfrastructure registered stays in
         // place, which is exactly what is under test.
         services.AddHttpClient("AeroApi").ConfigurePrimaryHttpMessageHandler(() => transport);
+
+        if (usageRecorder is not null)
+        {
+            services.RemoveAll<IAeroApiUsageRecorder>();
+            services.AddSingleton(usageRecorder);
+        }
 
         return services.BuildServiceProvider();
     }
@@ -136,5 +170,65 @@ public class AeroApiClientPipelineTests
 
         Assert.Equal(HttpStatusCode.OK, (await second).StatusCode);
         Assert.Equal(2, transport.Calls);
+    }
+
+    [Fact]
+    public async Task ARetriedRequest_IsMeteredOncePerAttempt()
+    {
+        // FlightAware bills per query, and a retry is another query. The usage handler is
+        // registered INSIDE the resilience handler precisely so each attempt writes its own row —
+        // metering the logical request instead would under-report spend by up to MaxRetryAttempts×,
+        // and nothing outside the composed pipeline can tell the two apart.
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var transport = new CountingTransport(HttpStatusCode.InternalServerError);
+        var recorder = new CountingUsageRecorder();
+        using var provider = BuildContainer(clock, transport, usageRecorder: recorder);
+        var client = provider.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi");
+
+        var pending = client.GetAsync("airports/SOF");
+        await AdvanceUntilSettled(clock, pending, TimeSpan.FromMinutes(5));
+
+        Assert.Equal(HttpStatusCode.InternalServerError, (await pending).StatusCode);
+        Assert.Equal(3, transport.Calls); // the initial attempt plus MaxRetryAttempts (2) retries
+        Assert.Equal(3, recorder.Calls.Count);
+        Assert.All(recorder.Calls, call =>
+        {
+            Assert.Equal(AeroApiCallOutcome.Failed, call.Outcome);
+            Assert.Equal(500, call.StatusCode);
+            Assert.Equal(AeroApiEndpointTemplate.Airports, call.EndpointTemplate);
+        });
+    }
+
+    [Fact]
+    public async Task ARequestAbandonedDuringItsThrottleWait_IsNotMetered()
+    {
+        // The mirror image: quota is spent by sending, not by queueing. A caller that gives up
+        // while waiting on the gate consumed nothing, so it must leave no row — the same reasoning
+        // that makes AeroApiThrottleGate release an abandoned reservation. Metering outside the
+        // throttle would bill waits that never became requests.
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var transport = new CountingTransport();
+        var recorder = new CountingUsageRecorder();
+        using var provider = BuildContainer(clock, transport, usageRecorder: recorder);
+        var client = provider.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi");
+
+        await client.GetAsync("airports/SOF");
+        Assert.Single(recorder.Calls);
+
+        using var abandonment = new CancellationTokenSource();
+        var abandoned = client.GetAsync("airports/IST", abandonment.Token);
+
+        // Let it work its way down to the gate. The 10ms is a scheduling yield, not a simulated
+        // wait — the interval it parks on runs on the fake clock, which is advanced nowhere near
+        // the 12s the first request reserved, so nothing can release it while we set up.
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await Task.Delay(10);
+        Assert.False(abandoned.IsCompleted);
+
+        await abandonment.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => abandoned);
+
+        Assert.Equal(1, transport.Calls);
+        Assert.Single(recorder.Calls); // still just the first request's row
     }
 }
