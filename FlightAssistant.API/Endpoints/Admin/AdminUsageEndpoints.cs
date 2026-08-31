@@ -20,6 +20,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                     result.ToUtc,
                     result.TotalCalls,
                     result.EstimatedSpendUsd,
+                    result.BillableSpendUsd,
                     result.MonthlyBudgetUsd,
                     result.CurrentMonthCalls,
                     result.CurrentMonthSpendUsd,
@@ -30,7 +31,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                     result.DailyCounts.Select(d => new AeroApiUsageDailyCountDto(
                         d.Date, d.Calls)).ToList(),
                     result.Status429CountLast7Days,
-                    result.Status502CountLast7Days,
+                    result.TransportFailureCountLast7Days,
                     result.NextSlotUtc);
                 return Results.Ok(dto);
             })

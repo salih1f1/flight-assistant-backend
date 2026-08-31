@@ -12,11 +12,27 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
 
     public sealed record AeroApiUsageDailyCount(DateOnly Date, int Calls);
 
+    /// <param name="EstimatedSpendUsd">
+    /// <b>Upper bound.</b> Every call in the range priced by template, including
+    /// <c>Throttled</c> rows (a 429 is refused before it is served and is not billed) and every
+    /// <c>Failed</c> retry attempt. Pair it with <paramref name="BillableSpendUsd"/> — the two are
+    /// the ceiling and the floor to reconcile a real FlightAware invoice against.
+    /// </param>
+    /// <param name="BillableSpendUsd">
+    /// <b>Lower bound.</b> The same arithmetic with <c>Throttled</c> rows excluded, since those are
+    /// definitely not billed. <c>Failed</c> rows are still counted: a 4xx is plausibly billed and a
+    /// 5xx plausibly is not, and guessing the other way would under-report real spend.
+    /// </param>
+    /// <param name="TransportFailureCountLast7Days">
+    /// Calls that got no response at all — unreachable, timed out, unparseable. This is what this
+    /// app turns into a client-facing 502; AeroAPI itself never sends one.
+    /// </param>
     public sealed record AeroApiUsageResult(
         DateTime FromUtc,
         DateTime ToUtc,
         int TotalCalls,
         decimal EstimatedSpendUsd,
+        decimal BillableSpendUsd,
         decimal MonthlyBudgetUsd,
         int CurrentMonthCalls,
         decimal CurrentMonthSpendUsd,
@@ -24,7 +40,7 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
         IReadOnlyList<AeroApiUsageOutcomeBreakdown> ByOutcome,
         IReadOnlyList<AeroApiUsageDailyCount> DailyCounts,
         int Status429CountLast7Days,
-        int Status502CountLast7Days,
+        int TransportFailureCountLast7Days,
         // Set by Handle from IAeroApiThrottleObserver, not by BuildResult (issue #293) — the
         // throttle gate's current state is not part of the pure rollup arithmetic BuildResult
         // computes from `raw`, so it defaults to null here and is attached afterwards.
@@ -161,6 +177,12 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
 
             var estimatedSpendUsd = byTemplate.Sum(t => t.SpendUsd);
 
+            // The floor to EstimatedSpendUsd's ceiling: same prices, Throttled rows dropped. Priced
+            // off its own dictionary rather than derived from byTemplate, because the exclusion is
+            // per (template, outcome) and byTemplate has already collapsed the outcome dimension.
+            var billableSpendUsd = raw.BillableCallsByTemplate
+                .Sum(kv => PriceFor(pricing, kv.Key) * kv.Value);
+
             var byOutcome = raw.CallsByOutcome
                 .Select(kv => new AeroApiUsageOutcomeBreakdown(kv.Key.ToString(), kv.Value))
                 .OrderByDescending(o => o.Calls)
@@ -181,6 +203,7 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
                 toUtc,
                 totalCalls,
                 estimatedSpendUsd,
+                billableSpendUsd,
                 pricing.MonthlyBudgetUsd,
                 currentMonthCalls,
                 currentMonthSpendUsd,
@@ -188,7 +211,7 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
                 byOutcome,
                 dailyCounts,
                 raw.Status429CountLast7Days,
-                raw.Status502CountLast7Days);
+                raw.TransportFailureCountLast7Days);
         }
 
         // Unknown template prices at 0 rather than throwing — see IAeroApiUsagePricingOptions.Pricing.

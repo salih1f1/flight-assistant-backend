@@ -9,13 +9,27 @@ namespace FlightAssistant.Application.Interfaces.Repositories
     /// them; the table grows unbounded until the retention prune runs. The handler owns the pricing
     /// and budget arithmetic over these counts, not this repository.
     /// </summary>
+    /// <param name="CallsByTemplate">Every call in the range, whatever its outcome.</param>
+    /// <param name="BillableCallsByTemplate">
+    /// The same grouping with <see cref="AeroApiCallOutcome.Throttled"/> rows excluded. A 429 is
+    /// refused by FlightAware before it is served and is not a billed query, so counting it inflates
+    /// spend exactly when the provider is struggling. <see cref="AeroApiCallOutcome.Failed"/> rows
+    /// are deliberately still counted here — a 4xx is plausibly billed and a 5xx plausibly is not,
+    /// and without the invoice the conservative direction is to keep them in.
+    /// </param>
+    /// <param name="TransportFailureCountLast7Days">
+    /// Calls that never got a response at all (<see cref="AeroApiCallOutcome.Failed"/> with a null
+    /// status): unreachable host, timeout, unparseable reply. This — not an upstream 502, which
+    /// AeroAPI does not send — is what this app maps to a client-facing 502.
+    /// </param>
     public sealed record AeroApiUsageRawData(
         IReadOnlyDictionary<string, int> CallsByTemplate,
+        IReadOnlyDictionary<string, int> BillableCallsByTemplate,
         IReadOnlyDictionary<AeroApiCallOutcome, int> CallsByOutcome,
         IReadOnlyDictionary<DateOnly, int> CallsByDay,
         IReadOnlyDictionary<string, int> CallsByTemplateForCurrentMonth,
         int Status429CountLast7Days,
-        int Status502CountLast7Days);
+        int TransportFailureCountLast7Days);
 
     public interface IAeroApiUsageRepository
     {

@@ -27,6 +27,12 @@ public class GetAeroApiUsageQueryTests
                 ["/schedules/{range}"] = 30,
                 ["/flights/{ident}"] = 10,
             },
+            // 3 of the 40 were throttled: 2 schedules calls and 1 flights call.
+            BillableCallsByTemplate: new Dictionary<string, int>
+            {
+                ["/schedules/{range}"] = 28,
+                ["/flights/{ident}"] = 9,
+            },
             CallsByOutcome: new Dictionary<AeroApiCallOutcome, int>
             {
                 [AeroApiCallOutcome.Success] = 35,
@@ -44,7 +50,7 @@ public class GetAeroApiUsageQueryTests
                 ["/flights/{ident}"] = 10,
             },
             Status429CountLast7Days: 3,
-            Status502CountLast7Days: 1);
+            TransportFailureCountLast7Days: 1);
         _repo.GetUsageRollupAsync(
                 Arg.Any<DateTime>(), Arg.Any<DateTime>(),
                 Arg.Any<DateTime>(), Arg.Any<DateTime>(),
@@ -65,8 +71,11 @@ public class GetAeroApiUsageQueryTests
         var result = await handler.Handle(new GetAeroApiUsageQuery(null, null), CancellationToken.None);
 
         Assert.Equal(40, result.TotalCalls);
-        // 30 * 0.01 + 10 * 0.02 = 0.5
+        // 30 * 0.01 + 10 * 0.02 = 0.5 — the upper bound: every call, throttled ones included.
         Assert.Equal(0.5m, result.EstimatedSpendUsd);
+        // 28 * 0.01 + 9 * 0.02 = 0.46 — the lower bound, with the 3 throttled calls dropped.
+        Assert.Equal(0.46m, result.BillableSpendUsd);
+        Assert.True(result.BillableSpendUsd < result.EstimatedSpendUsd);
         Assert.Equal(5m, result.MonthlyBudgetUsd);
         Assert.Equal(40, result.CurrentMonthCalls);
         Assert.Equal(0.5m, result.CurrentMonthSpendUsd);
@@ -90,7 +99,79 @@ public class GetAeroApiUsageQueryTests
         Assert.Equal(20, result.DailyCounts[0].Calls);
 
         Assert.Equal(3, result.Status429CountLast7Days);
-        Assert.Equal(1, result.Status502CountLast7Days);
+        Assert.Equal(1, result.TransportFailureCountLast7Days);
+    }
+
+    [Fact]
+    public async Task Handle_AnAllThrottledRange_ShowsAnUpperBoundSpendButZeroBillableSpend()
+    {
+        // The AeroAPI-outage case the two figures exist for: every call in the window was refused
+        // with a 429, which FlightAware rejects before serving and does not bill. EstimatedSpendUsd
+        // still prices them (it is deliberately the ceiling), so BillableSpendUsd is the only thing
+        // telling the operator this "spend spike" cost nothing at all.
+        var raw = new AeroApiUsageRawData(
+            CallsByTemplate: new Dictionary<string, int> { ["/schedules/{range}"] = 50 },
+            BillableCallsByTemplate: new Dictionary<string, int> { ["/schedules/{range}"] = 0 },
+            CallsByOutcome: new Dictionary<AeroApiCallOutcome, int> { [AeroApiCallOutcome.Throttled] = 50 },
+            CallsByDay: new Dictionary<DateOnly, int> { [new DateOnly(2026, 8, 1)] = 50 },
+            CallsByTemplateForCurrentMonth: new Dictionary<string, int> { ["/schedules/{range}"] = 50 },
+            Status429CountLast7Days: 50,
+            TransportFailureCountLast7Days: 0);
+        _repo.GetUsageRollupAsync(
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<CancellationToken>())
+            .Returns(raw);
+        var pricing = new FakePricingOptions
+        {
+            Pricing = new Dictionary<string, decimal> { ["/schedules/{range}"] = 0.01m },
+        };
+        var handler = new GetAeroApiUsageQueryHandler(_repo, pricing, _throttle);
+
+        var result = await handler.Handle(new GetAeroApiUsageQuery(null, null), CancellationToken.None);
+
+        Assert.Equal(50, result.TotalCalls);
+        Assert.Equal(0.5m, result.EstimatedSpendUsd);
+        Assert.Equal(0m, result.BillableSpendUsd);
+    }
+
+    [Fact]
+    public async Task Handle_NothingThrottled_MakesTheTwoSpendFiguresAgree()
+    {
+        // The other end of the bracket: with no throttled rows the ceiling and the floor are the
+        // same number, so an operator seeing them diverge knows it is throttling, not drift.
+        // Failed rows stay inside BOTH figures — a 4xx is plausibly billed, and only the invoice
+        // can settle it.
+        var raw = new AeroApiUsageRawData(
+            CallsByTemplate: new Dictionary<string, int> { ["/flights/{ident}"] = 20 },
+            BillableCallsByTemplate: new Dictionary<string, int> { ["/flights/{ident}"] = 20 },
+            CallsByOutcome: new Dictionary<AeroApiCallOutcome, int>
+            {
+                [AeroApiCallOutcome.Success] = 12,
+                [AeroApiCallOutcome.Failed] = 8,
+            },
+            CallsByDay: new Dictionary<DateOnly, int> { [new DateOnly(2026, 8, 1)] = 20 },
+            CallsByTemplateForCurrentMonth: new Dictionary<string, int> { ["/flights/{ident}"] = 20 },
+            Status429CountLast7Days: 0,
+            TransportFailureCountLast7Days: 8);
+        _repo.GetUsageRollupAsync(
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<CancellationToken>())
+            .Returns(raw);
+        var pricing = new FakePricingOptions
+        {
+            Pricing = new Dictionary<string, decimal> { ["/flights/{ident}"] = 0.02m },
+        };
+        var handler = new GetAeroApiUsageQueryHandler(_repo, pricing, _throttle);
+
+        var result = await handler.Handle(new GetAeroApiUsageQuery(null, null), CancellationToken.None);
+
+        Assert.Equal(0.4m, result.EstimatedSpendUsd);
+        Assert.Equal(0.4m, result.BillableSpendUsd);
+        Assert.Equal(8, result.TransportFailureCountLast7Days);
     }
 
     [Fact]
@@ -98,11 +179,12 @@ public class GetAeroApiUsageQueryTests
     {
         var raw = new AeroApiUsageRawData(
             CallsByTemplate: new Dictionary<string, int> { ["/{...}"] = 5 },
+            BillableCallsByTemplate: new Dictionary<string, int> { ["/{...}"] = 5 },
             CallsByOutcome: new Dictionary<AeroApiCallOutcome, int> { [AeroApiCallOutcome.Success] = 5 },
             CallsByDay: new Dictionary<DateOnly, int> { [new DateOnly(2026, 8, 1)] = 5 },
             CallsByTemplateForCurrentMonth: new Dictionary<string, int> { ["/{...}"] = 5 },
             Status429CountLast7Days: 0,
-            Status502CountLast7Days: 0);
+            TransportFailureCountLast7Days: 0);
         _repo.GetUsageRollupAsync(
                 Arg.Any<DateTime>(), Arg.Any<DateTime>(),
                 Arg.Any<DateTime>(), Arg.Any<DateTime>(),
@@ -116,6 +198,7 @@ public class GetAeroApiUsageQueryTests
         var result = await handler.Handle(new GetAeroApiUsageQuery(null, null), CancellationToken.None);
 
         Assert.Equal(0m, result.EstimatedSpendUsd);
+        Assert.Equal(0m, result.BillableSpendUsd);
         Assert.Equal(0m, result.CurrentMonthSpendUsd);
         var breakdown = Assert.Single(result.ByTemplate);
         Assert.Equal("/{...}", breakdown.EndpointTemplate);
@@ -129,11 +212,12 @@ public class GetAeroApiUsageQueryTests
     {
         var raw = new AeroApiUsageRawData(
             CallsByTemplate: new Dictionary<string, int>(),
+            BillableCallsByTemplate: new Dictionary<string, int>(),
             CallsByOutcome: new Dictionary<AeroApiCallOutcome, int>(),
             CallsByDay: new Dictionary<DateOnly, int>(),
             CallsByTemplateForCurrentMonth: new Dictionary<string, int>(),
             Status429CountLast7Days: 0,
-            Status502CountLast7Days: 0);
+            TransportFailureCountLast7Days: 0);
         _repo.GetUsageRollupAsync(
                 Arg.Any<DateTime>(), Arg.Any<DateTime>(),
                 Arg.Any<DateTime>(), Arg.Any<DateTime>(),
@@ -153,13 +237,14 @@ public class GetAeroApiUsageQueryTests
         Assert.Empty(result.ByOutcome);
         Assert.Empty(result.DailyCounts);
         Assert.Equal(0, result.Status429CountLast7Days);
-        Assert.Equal(0, result.Status502CountLast7Days);
+        Assert.Equal(0, result.TransportFailureCountLast7Days);
     }
 
     [Fact]
     public async Task Handle_NullDates_DefaultsToCurrentUtcMonthThroughNow()
     {
         var raw = new AeroApiUsageRawData(
+            new Dictionary<string, int>(),
             new Dictionary<string, int>(),
             new Dictionary<AeroApiCallOutcome, int>(),
             new Dictionary<DateOnly, int>(),
@@ -185,6 +270,7 @@ public class GetAeroApiUsageQueryTests
     public async Task Handle_ExplicitDates_AreUsedVerbatim()
     {
         var raw = new AeroApiUsageRawData(
+            new Dictionary<string, int>(),
             new Dictionary<string, int>(),
             new Dictionary<AeroApiCallOutcome, int>(),
             new Dictionary<DateOnly, int>(),
@@ -216,6 +302,7 @@ public class GetAeroApiUsageQueryTests
         // repository — an InMemory-backed integration test cannot see this, since InMemory ignores
         // DateTimeKind entirely.
         var raw = new AeroApiUsageRawData(
+            new Dictionary<string, int>(),
             new Dictionary<string, int>(),
             new Dictionary<AeroApiCallOutcome, int>(),
             new Dictionary<DateOnly, int>(),
@@ -256,11 +343,12 @@ public class GetAeroApiUsageQueryTests
         // the two dictionaries happen to be identical could not catch that mistake.
         var raw = new AeroApiUsageRawData(
             CallsByTemplate: new Dictionary<string, int> { ["/schedules/{range}"] = 100 },
+            BillableCallsByTemplate: new Dictionary<string, int> { ["/schedules/{range}"] = 100 },
             CallsByOutcome: new Dictionary<AeroApiCallOutcome, int> { [AeroApiCallOutcome.Success] = 100 },
             CallsByDay: new Dictionary<DateOnly, int> { [new DateOnly(2026, 1, 15)] = 100 },
             CallsByTemplateForCurrentMonth: new Dictionary<string, int> { ["/flights/{ident}"] = 7 },
             Status429CountLast7Days: 0,
-            Status502CountLast7Days: 0);
+            TransportFailureCountLast7Days: 0);
         _repo.GetUsageRollupAsync(
                 Arg.Any<DateTime>(), Arg.Any<DateTime>(),
                 Arg.Any<DateTime>(), Arg.Any<DateTime>(),
@@ -295,6 +383,7 @@ public class GetAeroApiUsageQueryTests
         // proves the wiring, not just that BuildResult defaults the field to null.
         var raw = new AeroApiUsageRawData(
             new Dictionary<string, int>(),
+            new Dictionary<string, int>(),
             new Dictionary<AeroApiCallOutcome, int>(),
             new Dictionary<DateOnly, int>(),
             new Dictionary<string, int>(),
@@ -318,6 +407,7 @@ public class GetAeroApiUsageQueryTests
     public async Task Handle_NoReservationYet_SurfacesNullNextSlotUtc()
     {
         var raw = new AeroApiUsageRawData(
+            new Dictionary<string, int>(),
             new Dictionary<string, int>(),
             new Dictionary<AeroApiCallOutcome, int>(),
             new Dictionary<DateOnly, int>(),
