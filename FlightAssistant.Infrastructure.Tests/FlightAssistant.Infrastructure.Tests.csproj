@@ -14,6 +14,8 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.8" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.9.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.5.1" />
     <PackageReference Include="NSubstitute" Version="5.3.0" />
@@ -38,6 +40,13 @@
        payload shapes rather than hand-typed approximations. -->
   <ItemGroup>
     <None Include="Fixtures\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- The REAL shipped appsettings.json, copied (not project-referenced — this project must not
+       depend on the API layer) so AeroApiPricingCoverageTests can bind the actual AeroApi:Pricing
+       section an operator gets on deploy, rather than a fixture that agrees with itself. -->
+  <ItemGroup>
+    <None Include="..\FlightAssistant.API\appsettings.json" Link="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

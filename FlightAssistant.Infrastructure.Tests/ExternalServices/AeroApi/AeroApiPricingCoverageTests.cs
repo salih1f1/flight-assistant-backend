@@ -1,5 +1,6 @@
 using System.Reflection;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
+using Microsoft.Extensions.Configuration;
 
 namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroApi;
 
@@ -10,6 +11,14 @@ namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroApi;
 /// shows a silent $0 line. This test is the guard rail for that: it lives here, not in Application,
 /// because both <see cref="AeroApiEndpointTemplate"/> (the canonical list) and
 /// <see cref="AeroApiOptions"/> (the Pricing dictionary's shape) are Infrastructure-only types.
+///
+/// <para>
+/// Two guards, chained. The reflection guard proves the canonical template list is a subset of
+/// <see cref="ExpectedPricing"/>; the binding guards prove <see cref="ExpectedPricing"/> matches
+/// the <c>AeroApi:Pricing</c> section of the shipped <c>appsettings.json</c>, bound the same way
+/// the host binds it. Neither half is useful alone — a fixture that only agrees with itself cannot
+/// fail, which is precisely what the earlier version of this file did.
+/// </para>
 /// </summary>
 public class AeroApiPricingCoverageTests
 {
@@ -66,22 +75,59 @@ public class AeroApiPricingCoverageTests
         }
     }
 
-    [Fact]
-    public void AeroApiOptions_Pricing_LooksUpEveryExpectedKeyByExactStringEquality()
+    /// <summary>
+    /// Binds the REAL <c>FlightAssistant.API/appsettings.json</c> — copied into this project's
+    /// output by the csproj, not project-referenced — exactly the way
+    /// <c>services.AddOptions&lt;AeroApiOptions&gt;().BindConfiguration("AeroApi")</c> does at
+    /// startup. Anything asserted against this is asserted against what an operator actually gets
+    /// on deploy.
+    /// </summary>
+    private static AeroApiOptions BindShippedAeroApiOptions()
     {
-        // A typo'd key in appsettings/Key Vault (different casing, stray whitespace) would bind
-        // successfully and then silently miss on every lookup — AeroApiOptions.Pricing costs an
-        // unmatched key at $0 rather than throwing. This proves the literal strings operators are
-        // expected to configure resolve through the same dictionary type the options class exposes.
-        var options = new AeroApiOptions
-        {
-            Pricing = new Dictionary<string, decimal>(ExpectedPricing),
-        };
+        var configuration = new ConfigurationBuilder()
+            .AddJsonFile("appsettings.json", optional: false)
+            .Build();
+
+        var options = new AeroApiOptions();
+        configuration.GetSection("AeroApi").Bind(options);
+        return options;
+    }
+
+    [Fact]
+    public void ShippedAppSettings_PricesEveryExpectedTemplate_ByExactStringEquality()
+    {
+        // The predecessor of this test built its own dictionary from ExpectedPricing and then
+        // looked ExpectedPricing's keys up in it — it exercised Dictionary's copy constructor and
+        // could not fail. It now binds the shipped configuration instead, so a template added
+        // without a price, a key typo'd in appsettings.json (different casing, stray whitespace,
+        // a missing brace) or the whole section going missing all trip here. None of those throw
+        // in production: an unmatched key just prices at $0, which is the silent failure this
+        // guards.
+        var options = BindShippedAeroApiOptions();
+
+        Assert.NotEmpty(options.Pricing);
 
         foreach (var (template, price) in ExpectedPricing)
         {
-            Assert.True(options.Pricing.TryGetValue(template, out var actual));
+            Assert.True(
+                options.Pricing.TryGetValue(template, out var actual),
+                $"'{template}' has no AeroApi:Pricing entry in the shipped appsettings.json, so the " +
+                "usage rollup would silently bill it at $0.");
             Assert.Equal(price, actual);
+        }
+    }
+
+    [Fact]
+    public void ShippedAppSettings_PricesNothingThatIsNotACanonicalTemplate()
+    {
+        // The other direction: a stale key left behind after a template was renamed prices nothing
+        // and would sit there looking configured. Bound config, again, not a fixture.
+        var options = BindShippedAeroApiOptions();
+        var canonicalTemplates = CanonicalTemplates();
+
+        foreach (var configuredTemplate in options.Pricing.Keys)
+        {
+            Assert.Contains(configuredTemplate, canonicalTemplates);
         }
     }
 }
