@@ -1,17 +1,18 @@
+using System.Net;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.Repositories;
-using FlightAssistant.Infrastructure.ExternalServices.AviationStack;
-using FlightAssistant.Infrastructure.ExternalServices.FlightSearch;
-using FlightAssistant.Infrastructure.ExternalServices.FlightStatus;
+using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.Notifications;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Logging;
-using Polly;
+using Microsoft.Extensions.Options;
 namespace FlightAssistant.Infrastructure
 {
     public static class DependencyInjection
@@ -37,85 +38,108 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<IAllianceRepository, AllianceRepository>();
             services.AddScoped(typeof(IVerifiableRepository<>), typeof(EfVerifiableRepository<>));
 
-            // Flight status — AviationStack is the sole provider. The IFlightStatusProvider
-            // abstraction is kept so a fallback composite can be reintroduced for production.
-            services.AddHttpClient<AviationStackFlightStatusProvider>(client =>
+            // AeroAPI — the sole flight data provider (issue #280). This wires the HTTP
+            // foundation: options, error mapping (AeroApiResponse), and the shared outbound
+            // throttle.
+            services.AddOptions<AeroApiOptions>()
+                .BindConfiguration("AeroApi")
+                .ValidateDataAnnotations()
+                .ValidateOnStart();
+
+            // SearchFlightsQueryValidator (Application layer) needs the configured search horizon
+            // to bound requests against, but Application must never reference Infrastructure —
+            // AeroApiOptions implements IFlightSearchHorizonOptions (defined in Application) so
+            // this is a plain translation, not a leak of AeroApiOptions itself.
+            services.AddScoped<IFlightSearchHorizonOptions>(sp =>
+                sp.GetRequiredService<IOptions<AeroApiOptions>>().Value);
+
+            // AeroApiThrottleGate's constructor requires a TimeProvider, and nothing else in this
+            // solution (nor AddStandardResilienceHandler, nor the generic host) registers one —
+            // TryAddSingleton so a real caller elsewhere in the app can still supply its own without
+            // a duplicate-registration conflict.
+            services.TryAddSingleton(TimeProvider.System);
+
+            // Singleton so every AeroAPI HttpClient contends on the same gate — the personal tier's
+            // ~5 queries/minute limit is a process-wide budget, not a per-client one.
+            services.AddSingleton<AeroApiThrottleGate>();
+            services.AddTransient<AeroApiThrottlingHandler>();
+
+            var aeroApiClientBuilder = services.AddHttpClient("AeroApi", (sp, client) =>
             {
-                client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "https://api.aviationstack.com/v1/");
-                client.Timeout = TimeSpan.FromSeconds(30);
-            }).AddStandardResilienceHandler(options =>
-            {
-                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
-                options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(8);
-                options.Retry.MaxRetryAttempts = 3;
-                options.Retry.BackoffType = DelayBackoffType.Exponential;
+                var options = sp.GetRequiredService<IOptions<AeroApiOptions>>().Value;
+                client.BaseAddress = new Uri(options.BaseUrl);
+                client.DefaultRequestHeaders.Add("x-apikey", options.ApiKey);
+                // Deliberately NOT TimeoutSeconds: HttpClient.Timeout wraps the entire resilience
+                // pipeline, throttle wait included, so it must be looser than the pipeline's own
+                // TotalRequestTimeout or it would abort the very waits the pipeline is sized for.
+                client.Timeout = options.HttpClientTimeout;
             });
 
-            // Resolve via the typed client so the configured HttpClient (BaseAddress, timeout,
-            // resilience handler) is used. Re-activating the concrete type directly would inject
-            // a default, unconfigured HttpClient with no BaseAddress.
-            services.AddScoped<IFlightStatusProvider>(sp =>
-                sp.GetRequiredService<AviationStackFlightStatusProvider>());
-
-            // Flight search — AviationStack splits its data across two endpoints: /v1/flights holds
-            // past and present, /v1/flightsFuture holds future schedules, with no overlap.
-            // DateRoutingFlightSearchProvider picks between them; nothing above this layer knows.
-            foreach (var clientType in new[]
-                     {
-                         typeof(AviationStackLiveSearchProvider),
-                         typeof(AviationStackScheduleSearchProvider),
-                         typeof(AviationStackRouteResolver),
-                         typeof(AviationStackAirportTimezoneLookup),
-                         typeof(OperatingCarrierResolver)
-                     })
+            // Resilience is registered first (= outermost) so that every retry attempt re-enters the
+            // throttling handler below and waits its turn too — not just the first attempt of a call.
+            // AddStandardResilienceHandler returns a pipeline-specific builder, not IHttpClientBuilder,
+            // so the throttle handler is added as a separate statement on the original builder rather
+            // than chained off it.
+            //
+            // Because the throttle sits INSIDE this pipeline, a request can spend up to a whole
+            // MinRequestInterval queued before it ever reaches the transport — and that wait happens
+            // inside AttemptTimeout. The library's 10s default is shorter than the 12s default
+            // interval, which meant every second call in an interval window was killed before it
+            // sent anything, retried twice (a timeout counts as transient), and then failed the 30s
+            // total timeout: a multi-page search failed from page 2 on. Every timeout below is
+            // therefore derived from AeroApiOptions rather than left at a default or hardcoded, so
+            // tuning the interval cannot silently reintroduce it.
+            aeroApiClientBuilder.AddStandardResilienceHandler().Configure((options, sp) =>
             {
-                services.AddHttpClient(clientType.Name, client =>
-                {
-                    client.BaseAddress = new Uri(config["AviationStack:BaseUrl"] ?? "https://api.aviationstack.com/v1/");
-                    client.Timeout = TimeSpan.FromSeconds(30);
-                }).AddStandardResilienceHandler(options =>
-                {
-                    options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
-                    options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(8);
-                    options.Retry.MaxRetryAttempts = 2;
-                    options.Retry.BackoffType = DelayBackoffType.Exponential;
-                });
-            }
+                var aeroApi = sp.GetRequiredService<IOptions<AeroApiOptions>>().Value;
 
-            services.AddScoped(sp => new AviationStackRouteResolver(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackRouteResolver)),
-                sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<ILogger<AviationStackRouteResolver>>()));
+                options.AttemptTimeout.Timeout = aeroApi.AttemptTimeout;
+                options.TotalRequestTimeout.Timeout = aeroApi.TotalRequestTimeout;
+                options.CircuitBreaker.SamplingDuration = aeroApi.CircuitBreakerSamplingDuration;
 
-            services.AddScoped(sp => new AviationStackAirportTimezoneLookup(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackAirportTimezoneLookup)),
+                options.Retry.MaxRetryAttempts = aeroApi.MaxRetryAttempts;
+                // 429 must never be retried automatically: this is a $5/month metered tier, and
+                // retrying a rate-limit response only makes the throttling worse. All other
+                // transient outcomes (5xx, timeouts, network errors) keep the default handling.
+                options.Retry.ShouldHandle = args =>
+                {
+                    if (args.Outcome.Result?.StatusCode == HttpStatusCode.TooManyRequests)
+                        return ValueTask.FromResult(false);
+
+                    return ValueTask.FromResult(HttpClientResiliencePredicates.IsTransient(args.Outcome));
+                };
+            });
+
+            aeroApiClientBuilder.AddHttpMessageHandler<AeroApiThrottlingHandler>();
+
+            services.AddScoped(sp => new AeroApiAirportTimezoneLookup(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
                 sp.GetRequiredService<ICacheService>(),
-                sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<ILogger<AviationStackAirportTimezoneLookup>>()));
+                sp.GetRequiredService<IOptions<AeroApiOptions>>(),
+                sp.GetRequiredService<ILogger<AeroApiAirportTimezoneLookup>>()));
 
-            services.AddScoped(sp => new OperatingCarrierResolver(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(OperatingCarrierResolver)),
-                sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<ILogger<OperatingCarrierResolver>>()));
+            services.AddScoped(sp => new AeroApiFlightSearchProvider(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
+                sp.GetRequiredService<AeroApiAirportTimezoneLookup>(),
+                sp.GetRequiredService<IOptions<AeroApiOptions>>(),
+                sp.GetRequiredService<ILogger<AeroApiFlightSearchProvider>>()));
 
-            services.AddScoped(sp => new AviationStackLiveSearchProvider(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackLiveSearchProvider)),
-                sp.GetRequiredService<AviationStackAirportTimezoneLookup>(),
-                sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<ILogger<AviationStackLiveSearchProvider>>()));
+            services.AddScoped<IFlightSearchProvider>(sp =>
+                sp.GetRequiredService<AeroApiFlightSearchProvider>());
 
-            services.AddScoped(sp => new AviationStackScheduleSearchProvider(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(AviationStackScheduleSearchProvider)),
-                sp.GetRequiredService<AviationStackRouteResolver>(),
-                sp.GetRequiredService<OperatingCarrierResolver>(),
-                sp.GetRequiredService<AviationStackAirportTimezoneLookup>(),
-                sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<ILogger<AviationStackScheduleSearchProvider>>()));
+            // Flight status (issue #280). ProviderName ("AeroAPI") feeds the stored
+            // FlightStatusEvent dedup hash (see SyncFlightStatusCommand.cs) — the prior provider's
+            // stored events keep hashes computed under its own name, so each tracked flight may
+            // emit one duplicate status event the first time it is synced after this deploy.
+            // Accepted, not migrated; see AeroApiFlightStatusProviderTests for the documenting test.
+            services.AddScoped(sp => new AeroApiFlightStatusProvider(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
+                sp.GetRequiredService<IOptions<AeroApiOptions>>(),
+                sp.GetRequiredService<TimeProvider>(),
+                sp.GetRequiredService<ILogger<AeroApiFlightStatusProvider>>()));
 
-            services.AddScoped<IFlightSearchProvider>(sp => new DateRoutingFlightSearchProvider(
-                sp.GetRequiredService<AviationStackLiveSearchProvider>(),
-                sp.GetRequiredService<AviationStackScheduleSearchProvider>(),
-                sp.GetRequiredService<ILogger<DateRoutingFlightSearchProvider>>()));
+            services.AddScoped<IFlightStatusProvider>(sp =>
+                sp.GetRequiredService<AeroApiFlightStatusProvider>());
 
             // Push notifications — singleton so the APNs client is created once and reused
             services.AddOptions<ApnsOptions>()

@@ -59,11 +59,11 @@ namespace FlightAssistant.Domain.Tests.Flights
         [Fact]
         public void Create_SetsFields()
         {
-            var evt = FlightStatusEvent.Create(1, 2, DateTime.UtcNow, "AviationStack", "ext-123", "A1", "T2");
+            var evt = FlightStatusEvent.Create(1, 2, DateTime.UtcNow, "AeroAPI", "ext-123", "A1", "T2");
 
             Assert.Equal(1, evt.FlightId);
             Assert.Equal(2, evt.StatusId);
-            Assert.Equal("AviationStack", evt.Source);
+            Assert.Equal("AeroAPI", evt.Source);
             Assert.Equal("ext-123", evt.ExternalId);
             Assert.Equal("A1", evt.Gate);
             Assert.Equal("T2", evt.Terminal);
@@ -74,8 +74,8 @@ namespace FlightAssistant.Domain.Tests.Flights
         public void Create_SameInputs_ProduceSameDedupHash()
         {
             var at = new DateTime(2025, 6, 15, 10, 0, 0, DateTimeKind.Utc);
-            var e1 = FlightStatusEvent.Create(1, 2, at, "AviationStack", "ext-1");
-            var e2 = FlightStatusEvent.Create(1, 2, at, "AviationStack", "ext-1");
+            var e1 = FlightStatusEvent.Create(1, 2, at, "AeroAPI", "ext-1");
+            var e2 = FlightStatusEvent.Create(1, 2, at, "AeroAPI", "ext-1");
 
             Assert.Equal(e1.DedupHash, e2.DedupHash);
         }
@@ -96,8 +96,8 @@ namespace FlightAssistant.Domain.Tests.Flights
             // Regression for #232: the pre-insert dedup check and the stored hash must be
             // computed over IDENTICAL inputs, otherwise dedup never matches.
             var at = new DateTime(2025, 6, 15, 10, 0, 0, DateTimeKind.Utc);
-            var precheckHash = FlightStatusEvent.ComputeDedupHash(1, 2, at, "AviationStack", "ext-1");
-            var evt = FlightStatusEvent.Create(1, 2, at, "AviationStack", "ext-1");
+            var precheckHash = FlightStatusEvent.ComputeDedupHash(1, 2, at, "AeroAPI", "ext-1");
+            var evt = FlightStatusEvent.Create(1, 2, at, "AeroAPI", "ext-1");
 
             Assert.Equal(evt.DedupHash, precheckHash);
         }

@@ -36,9 +36,9 @@ public class GlobalExceptionHandlerTests
     }
 
     private static DomainException PlanRestriction() => new(
-        "Flight search is unavailable due to a flight data provider configuration issue.",
+        "Flight data is temporarily unavailable.",
         500,
-        "AviationStack returned HTTP 403 function_access_restricted: Your current subscription plan does not support this API function.");
+        "AeroAPI returned HTTP 403: {\"reason\":\"forbidden\",\"detail\":\"This API key does not have access to this endpoint.\"}");
 
     [Fact]
     public async Task DomainException_OutsideProduction_SurfacesDiagnosticDetail()
@@ -51,7 +51,7 @@ public class GlobalExceptionHandlerTests
         Assert.Equal(500, ctx.Response.StatusCode);
 
         var body = await BodyOf(ctx);
-        Assert.Contains("function_access_restricted", body.GetProperty("detail").GetString());
+        Assert.Contains("forbidden", body.GetProperty("detail").GetString());
         Assert.Equal("/flights/search", body.GetProperty("instance").GetString());
     }
 
@@ -68,7 +68,7 @@ public class GlobalExceptionHandlerTests
             "Production responses must not carry the upstream cause.");
 
         // The title is still the useful, non-leaking summary.
-        Assert.Contains("configuration issue", body.GetProperty("title").GetString());
+        Assert.Contains("temporarily unavailable", body.GetProperty("title").GetString());
     }
 
     [Fact]
@@ -79,7 +79,7 @@ public class GlobalExceptionHandlerTests
         await handler.TryHandleAsync(ctx, PlanRestriction(), CancellationToken.None);
 
         var body = await BodyOf(ctx);
-        Assert.Contains("function_access_restricted", body.GetProperty("detail").GetString());
+        Assert.Contains("forbidden", body.GetProperty("detail").GetString());
     }
 
     [Theory]
@@ -133,7 +133,7 @@ public class GlobalExceptionHandlerTests
     public async Task ThrottlingResponse_SetsRetryAfterHeader()
     {
         var (handler, ctx) = Sut("Production");
-        var ex = new DomainException("Flight search is temporarily unavailable due to high demand.", 503, "AviationStack returned HTTP 429 rate_limit_reached: throttled");
+        var ex = new DomainException("Flight search is busy. Please try again shortly.", 503, "AeroAPI returned HTTP 429: {\"reason\":\"rate limit exceeded\"}");
 
         await handler.TryHandleAsync(ctx, ex, CancellationToken.None);
 

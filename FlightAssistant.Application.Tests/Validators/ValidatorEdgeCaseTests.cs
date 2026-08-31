@@ -1,6 +1,7 @@
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Commands.Loyalty;
 using FlightAssistant.Application.Commands.Travelers;
+using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Queries.Flights;
 using FlightAssistant.Application.Queries.Lounges;
 using FlightAssistant.Application.Validators;
@@ -50,9 +51,9 @@ public class ValidatorEdgeCaseTests
     }
 
     [Theory]
-    [InlineData("BA12345")]    // 5 digits
-    [InlineData("B1234")]      // single letter prefix
-    [InlineData("123")]        // no letters
+    [InlineData("BA12345")]    // 5 digits — exceeds the 1-4 digit run
+    [InlineData("BA")]         // prefix only, no digits at all
+    [InlineData("BA1234AA")]   // two trailing letters — only one is allowed
     [InlineData("")]           // empty
     public void TrackFlight_InvalidFlightNumbers_Fail(string flightNumber)
     {
@@ -330,7 +331,7 @@ public class ValidatorEdgeCaseTests
     [Fact]
     public void SearchFlights_ValidQuery_Passes()
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertValid(v, new SearchFlightsQuery("LHR", "JFK", DateOnly.FromDateTime(DateTime.UtcNow)));
     }
 
@@ -341,7 +342,7 @@ public class ValidatorEdgeCaseTests
     [InlineData("lHr", "jFk")] // mixed case
     public void SearchFlights_AnyCaseIata_Passes(string from, string to)
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertValid(v, new SearchFlightsQuery(from, to, DateOnly.FromDateTime(DateTime.UtcNow)));
     }
 
@@ -350,7 +351,7 @@ public class ValidatorEdgeCaseTests
     [InlineData("LHR", "JFKK")] // 4-char To
     public void SearchFlights_InvalidIata_Fails(string from, string to)
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertInvalid(v, new SearchFlightsQuery(from, to, DateOnly.FromDateTime(DateTime.UtcNow)));
     }
 
@@ -360,14 +361,14 @@ public class ValidatorEdgeCaseTests
     [InlineData("ba123")]  // lowercase — normalized, not rejected
     public void SearchFlights_FlightNumberOnly_Passes(string flightNumber)
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertValid(v, new SearchFlightsQuery(null, null, DateOnly.FromDateTime(DateTime.UtcNow), flightNumber));
     }
 
     [Fact]
     public void SearchFlights_FutureDateWithinProviderHorizon_Passes()
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertValid(v, new SearchFlightsQuery("LHR", "JFK", DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(6))));
     }
 
@@ -376,14 +377,14 @@ public class ValidatorEdgeCaseTests
     {
         // The schedules endpoint refuses dates past a rolling ~1-year horizon; rejecting here
         // turns what would be an upstream 502 into a clear 400.
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertInvalid(v, new SearchFlightsQuery("LHR", "JFK", DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(13))));
     }
 
     [Fact]
     public void SearchFlights_NoRouteAndNoFlightNumber_Fails()
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertInvalid(v, new SearchFlightsQuery(null, null, DateOnly.FromDateTime(DateTime.UtcNow)));
     }
 
@@ -392,7 +393,7 @@ public class ValidatorEdgeCaseTests
     [InlineData(null, "JFK")] // only To
     public void SearchFlights_HalfRoute_Fails(string? from, string? to)
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertInvalid(v, new SearchFlightsQuery(from, to, DateOnly.FromDateTime(DateTime.UtcNow)));
     }
 
@@ -400,10 +401,43 @@ public class ValidatorEdgeCaseTests
     [InlineData("BA")]       // missing number
     [InlineData("B")]        // too short
     [InlineData("BA12345")]  // number too long
+    [InlineData("12345")]    // all-digit airline prefix — no such carrier; search used to accept it
     public void SearchFlights_InvalidFlightNumber_Fails(string flightNumber)
     {
-        var v = new SearchFlightsQueryValidator();
+        var v = new SearchFlightsQueryValidator(DefaultHorizon);
         AssertInvalid(v, new SearchFlightsQuery(null, null, DateOnly.FromDateTime(DateTime.UtcNow), flightNumber));
+    }
+
+    [Theory]
+    // Accepted by both:
+    [InlineData("BA123")]
+    [InlineData("6E4120")]  // digit-first airline prefix
+    [InlineData("U21234")]  // letter-then-digit prefix
+    [InlineData("BA123A")]  // operational trailing letter — search used to REJECT this
+    [InlineData("ba123")]   // case is normalised, not rejected
+    // Rejected by both:
+    [InlineData("12345")]   // all-digit prefix — search used to ACCEPT this
+    [InlineData("BA")]
+    [InlineData("B")]
+    [InlineData("BA12345")]
+    [InlineData("BA123AB")]
+    public void FlightNumberRule_IsIdentical_ForSearchAndTrack(string flightNumber)
+    {
+        // The two validators used to carry two different hand-written regexes, disagreeing in both
+        // directions: search accepted an all-digit prefix that track refused, and track accepted a
+        // trailing letter that search refused. Either disagreement means the picker can hand a
+        // client a flight number POST /flights then rejects — the exact class of defect the search
+        // reshape exists to remove. They now share FlightNumberFormat.Pattern; this asserts they
+        // agree on every shape rather than trusting that they still read from the same constant.
+        var searchAccepts = new SearchFlightsQueryValidator(DefaultHorizon)
+            .Validate(new SearchFlightsQuery(null, null, DateOnly.FromDateTime(DateTime.UtcNow), flightNumber))
+            .IsValid;
+
+        var trackAccepts = new TrackFlightCommandValidator()
+            .Validate(ValidTrackFlightCommand() with { FlightNumber = flightNumber })
+            .IsValid;
+
+        Assert.Equal(trackAccepts, searchAccepts);
     }
 
     // ── Import: Alliances ─────────────────────────────────────────────────────────
@@ -712,11 +746,35 @@ public class ValidatorEdgeCaseTests
 
     // ── Case-insensitive code inputs (#265) ─────────────────────────────────────
 
-    [Fact]
-    public void TrackFlight_LowercaseAirlineIata_Passes()
+    // ── FlightNumber: numeric-prefix carriers (#280 task 4) ─────────────────────
+    // These carriers (IndiGo "6E", jetBlue-style numeric prefixes, etc.) are findable by search
+    // but, before this fix, were rejected on POST because TrackFlightCommandValidator's regex
+    // required an alphabetic prefix while SearchFlightsQueryValidator's did not.
+
+    [Theory]
+    [InlineData("6E4120")] // IndiGo — numeric-then-letter prefix
+    [InlineData("U21234")] // easyJet — letter-then-digit prefix
+    [InlineData("9W1234")] // Jet Airways — digit-then-letter prefix
+    [InlineData("B61234")] // JetBlue — letter-then-digit prefix
+    [InlineData("B1234")]  // "B"+"1" satisfies [A-Z][A-Z0-9] — a plausible designator shape
+                            // (compare the real B6/U2/9W/6E); whether "B1" is an assigned
+                            // carrier is reference data's job (TrackFlightCommandHandler's 404),
+                            // not this regex's. Must stay valid.
+    public void TrackFlight_NumericPrefixFlightNumbers_Pass(string flightNumber)
     {
         var v = new TrackFlightCommandValidator();
-        AssertValid(v, ValidTrackFlightCommand() with { AirlineIata = "ba" });
+        var cmd = ValidTrackFlightCommand() with { FlightNumber = flightNumber };
+        AssertValid(v, cmd);
+    }
+
+    [Theory]
+    [InlineData("123")]    // all-digit prefix "12" — no real IATA airline designator is all digits
+    [InlineData("12345A")] // same, with a valid digit run and suffix — only the prefix is wrong
+    public void TrackFlight_AllDigitPrefixFlightNumbers_Fail(string flightNumber)
+    {
+        var v = new TrackFlightCommandValidator();
+        var cmd = ValidTrackFlightCommand() with { FlightNumber = flightNumber };
+        AssertInvalid(v, cmd, "FlightNumber");
     }
 
     [Theory]
@@ -781,7 +839,6 @@ public class ValidatorEdgeCaseTests
         var now = DateTime.UtcNow;
         return new TrackFlightCommand(
             TravelerId: Guid.NewGuid(),
-            AirlineIata: "BA",
             FlightNumber: "BA123",
             ServiceDate: DateOnly.FromDateTime(now),
             DepartureAirportIata: "LHR",
@@ -789,4 +846,14 @@ public class ValidatorEdgeCaseTests
             ScheduledDepartureUtc: now.AddHours(1),
             ScheduledArrivalUtc: now.AddHours(9));
     }
+
+    /// <summary>Matches AeroApiOptions' own defaults (12 future / 3 past months) so validator
+    /// edge cases here exercise the same bounds production actually uses.</summary>
+    private sealed class FakeHorizonOptions : IFlightSearchHorizonOptions
+    {
+        public int MaxFutureMonths => 12;
+        public int MaxPastMonths => 3;
+    }
+
+    private static readonly IFlightSearchHorizonOptions DefaultHorizon = new FakeHorizonOptions();
 }

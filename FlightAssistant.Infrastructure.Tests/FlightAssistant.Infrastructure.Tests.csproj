@@ -34,4 +34,10 @@
     <ProjectReference Include="..\FlightAssistant.Infrastructure\FlightAssistant.Infrastructure.csproj" />
   </ItemGroup>
 
+  <!-- Recorded AeroAPI responses used to drive AeroApiFlightSearchProvider tests against real
+       payload shapes rather than hand-typed approximations. -->
+  <ItemGroup>
+    <None Include="Fixtures\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

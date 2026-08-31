@@ -53,7 +53,7 @@ Swagger UI → http://localhost:5000/swagger
 - Web: React/Next.js (Phase 3)  
 
 **Data Sources**
-- Flight Status & Search → AviationStack  
+- Flight Status & Search → FlightAware AeroAPI  
 - Alliances & Airports → OpenFlights + curated JSON  
 - Lounge Info → curated static list  
 

@@ -10,17 +10,14 @@ namespace FlightAssistant.Application.Validators
         {
             RuleFor(x => x.FlightNumber)
                 .NotEmpty()
-                .Matches(@"^[A-Z]{2}\d{1,4}[A-Z]?$", RegexOptions.IgnoreCase)
+                // Shared with SearchFlightsQueryValidator — see FlightNumberFormat for why this
+                // must be one constant and not two copies of a regex.
+                .Matches(FlightNumberFormat.Pattern, RegexOptions.IgnoreCase)
                 .WithMessage("FlightNumber must be in the format AA1234 or AA1234A.");
 
             RuleFor(x => x.ServiceDate)
                 .Must(d => d >= DateOnly.FromDateTime(DateTime.UtcNow.Date))
                 .WithMessage("ServiceDate cannot be in the past.");
-
-            RuleFor(x => x.AirlineIata)
-                .NotEmpty()
-                .Matches(@"^[A-Z0-9]{2,3}$", RegexOptions.IgnoreCase)
-                .WithMessage("AirlineIata must be a 2–3 character IATA code.");
 
             RuleFor(x => x.DepartureAirportIata)
                 .NotEmpty()
