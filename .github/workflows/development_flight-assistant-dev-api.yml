@@ -49,6 +49,10 @@ jobs:
           Azure__SignUpSignInPolicyId: "B2C_1_signupsignin"
           Azure__Issuer: "https://dummy.b2clogin.com/{0}/v2.0/"
           Azure__Authority: "https://dummy.b2clogin.com/{0}/B2C_1_signupsignin/v2.0"
+          # AeroApiOptions.ApiKey is [Required] and validated on start, so the host — and
+          # therefore the spec export, which boots it — refuses to start without a value.
+          # A dummy is enough: generating the spec makes no outbound call.
+          AeroApi__ApiKey: "dummy"
         run: >
           dotnet swagger tofile
           --output openapi.json
