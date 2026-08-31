@@ -203,4 +203,85 @@ public class GetAeroApiUsageQueryTests
         Assert.Equal(from, result.FromUtc);
         Assert.Equal(to, result.ToUtc);
     }
+
+    [Fact]
+    public async Task Handle_UnspecifiedKindDates_AreNormalizedToUtc_BeforeReachingTheRepository()
+    {
+        // What ASP.NET Core query-string binding actually produces for "?fromUtc=2026-01-01" or
+        // "?fromUtc=2026-01-01T00:00:00" (no offset/Z suffix) — Kind=Unspecified, not Kind=Utc.
+        // CalledUtc maps to Postgres timestamptz, and Npgsql throws at parameter-write time for any
+        // DateTime whose Kind isn't Utc, so this must be normalized before it ever reaches the
+        // repository — an InMemory-backed integration test cannot see this, since InMemory ignores
+        // DateTimeKind entirely.
+        var raw = new AeroApiUsageRawData(
+            new Dictionary<string, int>(),
+            new Dictionary<AeroApiCallOutcome, int>(),
+            new Dictionary<DateOnly, int>(),
+            new Dictionary<string, int>(),
+            0, 0);
+        DateTime? capturedFrom = null;
+        DateTime? capturedTo = null;
+        _repo.GetUsageRollupAsync(
+                Arg.Do<DateTime>(d => capturedFrom = d), Arg.Do<DateTime>(d => capturedTo = d),
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<CancellationToken>())
+            .Returns(raw);
+        var handler = new GetAeroApiUsageQueryHandler(_repo, new FakePricingOptions());
+        var from = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Unspecified);
+        var to = new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Unspecified);
+
+        var result = await handler.Handle(new GetAeroApiUsageQuery(from, to), CancellationToken.None);
+
+        Assert.NotNull(capturedFrom);
+        Assert.NotNull(capturedTo);
+        Assert.Equal(DateTimeKind.Utc, capturedFrom!.Value.Kind);
+        Assert.Equal(DateTimeKind.Utc, capturedTo!.Value.Kind);
+        Assert.Equal(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), capturedFrom.Value);
+        Assert.Equal(new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc), capturedTo.Value);
+        // The result echoes the normalized (not the raw, Unspecified-kind) bounds back too.
+        Assert.Equal(DateTimeKind.Utc, result.FromUtc.Kind);
+        Assert.Equal(DateTimeKind.Utc, result.ToUtc.Kind);
+    }
+
+    [Fact]
+    public async Task Handle_CurrentMonthSpend_IsComputedFromItsOwnDictionary_NotTheRangeDictionary()
+    {
+        // CallsByTemplate (the requested range) and CallsByTemplateForCurrentMonth are deliberately
+        // DIFFERENT dictionaries here — a range spanning a month boundary, or lying entirely in a
+        // past month, is the common case in practice, not the exception. If BuildResult ever priced
+        // CallsByTemplate for the current-month figures too, this test would fail; a fixture where
+        // the two dictionaries happen to be identical could not catch that mistake.
+        var raw = new AeroApiUsageRawData(
+            CallsByTemplate: new Dictionary<string, int> { ["/schedules/{range}"] = 100 },
+            CallsByOutcome: new Dictionary<AeroApiCallOutcome, int> { [AeroApiCallOutcome.Success] = 100 },
+            CallsByDay: new Dictionary<DateOnly, int> { [new DateOnly(2026, 1, 15)] = 100 },
+            CallsByTemplateForCurrentMonth: new Dictionary<string, int> { ["/flights/{ident}"] = 7 },
+            Status429CountLast7Days: 0,
+            Status502CountLast7Days: 0);
+        _repo.GetUsageRollupAsync(
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<DateTime>(), Arg.Any<DateTime>(),
+                Arg.Any<CancellationToken>())
+            .Returns(raw);
+        var pricing = new FakePricingOptions
+        {
+            Pricing = new Dictionary<string, decimal>
+            {
+                ["/schedules/{range}"] = 0.01m,
+                ["/flights/{ident}"] = 0.02m,
+            },
+        };
+        var handler = new GetAeroApiUsageQueryHandler(_repo, pricing);
+
+        var result = await handler.Handle(new GetAeroApiUsageQuery(null, null), CancellationToken.None);
+
+        Assert.Equal(100, result.TotalCalls);
+        Assert.Equal(1.0m, result.EstimatedSpendUsd); // 100 * 0.01
+        Assert.Equal(7, result.CurrentMonthCalls);
+        Assert.Equal(0.14m, result.CurrentMonthSpendUsd); // 7 * 0.02
+        Assert.NotEqual(result.TotalCalls, result.CurrentMonthCalls);
+        Assert.NotEqual(result.EstimatedSpendUsd, result.CurrentMonthSpendUsd);
+    }
 }

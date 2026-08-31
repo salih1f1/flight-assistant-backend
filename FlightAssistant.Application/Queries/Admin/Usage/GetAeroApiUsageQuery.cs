@@ -26,9 +26,47 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
         int Status502CountLast7Days);
 
     /// <summary>
-    /// Defaults to the current UTC month through now when either bound is omitted (see the handler).
+    /// Defaults to the current UTC month through now when either bound is omitted. Both
+    /// <see cref="GetAeroApiUsageQueryValidator"/> (so the 366-day cap applies to the range that will
+    /// actually be queried, not just the supplied bound) and the handler compute the effective range
+    /// through <see cref="EffectiveFromUtc"/>/<see cref="EffectiveToUtc"/> — one source of truth for
+    /// the defaulting/normalization logic, rather than two copies that could drift.
     /// </summary>
-    public record GetAeroApiUsageQuery(DateTime? FromUtc, DateTime? ToUtc) : IRequest<AeroApiUsageResult>;
+    public record GetAeroApiUsageQuery(DateTime? FromUtc, DateTime? ToUtc) : IRequest<AeroApiUsageResult>
+    {
+        /// <summary>
+        /// A null bound defaults to the first instant of the current UTC month; a supplied bound is
+        /// normalized to UTC — see <see cref="NormalizeToUtc"/>.
+        /// </summary>
+        public DateTime EffectiveFromUtc(DateTime nowUtc) =>
+            NormalizeToUtc(FromUtc) ?? new DateTime(nowUtc.Year, nowUtc.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        /// <summary>A null bound defaults to <paramref name="nowUtc"/>; a supplied bound is normalized to UTC.</summary>
+        public DateTime EffectiveToUtc(DateTime nowUtc) => NormalizeToUtc(ToUtc) ?? nowUtc;
+
+        /// <summary>
+        /// ASP.NET Core's query-string binding hands back <c>Kind=Unspecified</c> for a bare date or
+        /// an offset-less timestamp (e.g. <c>?fromUtc=2026-01-01</c> — what an HTML date picker
+        /// sends), and only <c>Kind=Utc</c> for one with a <c>Z</c>/offset suffix. <c>CalledUtc</c>
+        /// maps to Postgres <c>timestamptz</c>, and Npgsql refuses to write any
+        /// <see cref="DateTime"/> whose <see cref="DateTime.Kind"/> is not <see cref="DateTimeKind.Utc"/>
+        /// — anything else throws at parameter-write time, which is a 500 the caller cannot fix by
+        /// resubmitting the same value differently. So every bound is normalized before it reaches
+        /// the repository: <c>Unspecified</c> is read as UTC (the right interpretation for a
+        /// parameter literally named <c>FromUtc</c>/<c>ToUtc</c>), and <c>Local</c> is converted.
+        /// </summary>
+        private static DateTime? NormalizeToUtc(DateTime? value)
+        {
+            if (value is null) return null;
+
+            return value.Value.Kind switch
+            {
+                DateTimeKind.Utc => value.Value,
+                DateTimeKind.Local => value.Value.ToUniversalTime(),
+                _ => DateTime.SpecifyKind(value.Value, DateTimeKind.Utc), // Unspecified
+            };
+        }
+    }
 
     public class GetAeroApiUsageQueryValidator : AbstractValidator<GetAeroApiUsageQuery>
     {
@@ -37,14 +75,29 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
         public GetAeroApiUsageQueryValidator()
         {
             RuleFor(x => x)
-                .Must(x => x.FromUtc is null || x.ToUtc is null || x.FromUtc.Value < x.ToUtc.Value)
+                .Must(HaveFromBeforeTo)
                 .WithMessage("FromUtc must be earlier than ToUtc.")
                 .WithName(nameof(GetAeroApiUsageQuery.FromUtc));
 
             RuleFor(x => x)
-                .Must(x => x.FromUtc is null || x.ToUtc is null || (x.ToUtc.Value - x.FromUtc.Value).TotalDays <= MaxRangeDays)
+                .Must(NotExceedMaxRangeDays)
                 .WithMessage($"The range between FromUtc and ToUtc must not exceed {MaxRangeDays} days.")
                 .WithName(nameof(GetAeroApiUsageQuery.FromUtc));
+        }
+
+        // Evaluated over the EFFECTIVE range (defaults applied), not just the supplied bounds — a
+        // request that omits one bound (e.g. only FromUtc=2000-01-01) still gets the default applied
+        // to the other before the cap is checked, so the cap cannot be bypassed by omitting a bound.
+        private static bool HaveFromBeforeTo(GetAeroApiUsageQuery query)
+        {
+            var now = DateTime.UtcNow;
+            return query.EffectiveFromUtc(now) < query.EffectiveToUtc(now);
+        }
+
+        private static bool NotExceedMaxRangeDays(GetAeroApiUsageQuery query)
+        {
+            var now = DateTime.UtcNow;
+            return (query.EffectiveToUtc(now) - query.EffectiveFromUtc(now)).TotalDays <= MaxRangeDays;
         }
     }
 
@@ -62,8 +115,8 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
         public async Task<AeroApiUsageResult> Handle(GetAeroApiUsageQuery request, CancellationToken ct)
         {
             var now = DateTime.UtcNow;
-            var fromUtc = request.FromUtc ?? new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
-            var toUtc = request.ToUtc ?? now;
+            var fromUtc = request.EffectiveFromUtc(now);
+            var toUtc = request.EffectiveToUtc(now);
 
             var currentMonthStartUtc = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
             var last7DaysStartUtc = now.AddDays(-7);

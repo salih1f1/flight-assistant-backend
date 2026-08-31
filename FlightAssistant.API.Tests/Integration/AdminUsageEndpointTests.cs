@@ -64,4 +64,18 @@ public class AdminUsageEndpointTests(FlightAssistantWebApplicationFactory factor
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
+
+    [Fact]
+    public async Task GetAeroApiUsage_OnlyFromUtcSupplied_FarEnoughInThePastToExceedMaxRangeAgainstDefaultedToUtc_Returns400()
+    {
+        // The 366-day cap must be evaluated against the EFFECTIVE range, not just the supplied
+        // bound: omitting ToUtc used to default it to "now" only AFTER the cap check ran, so a
+        // FromUtc alone (no ToUtc at all) bypassed the cap entirely and could yield a decades-wide
+        // range against the real table.
+        var client = factory.CreateAdminClient();
+
+        var response = await client.GetAsync("admin/usage/aeroapi?fromUtc=2000-01-01T00:00:00Z");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
 }
