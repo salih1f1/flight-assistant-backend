@@ -19,10 +19,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Configuratio
             // Stored as a string so a migration reordering the enum can never silently rewrite history.
             b.Property(x => x.Outcome).HasConversion<string>().HasMaxLength(16);
 
-            // Every query is a date range.
-            b.HasIndex(x => x.CalledUtc);
-
-            // Per-endpoint rollup.
+            // Every query is a CalledUtc range, and most also group by template. One composite
+            // covers both: Postgres serves a leading-column range scan from it, so a separate
+            // index on CalledUtc alone would only be write amplification on a table that takes an
+            // insert per outbound call and a bulk delete every day.
             b.HasIndex(x => new { x.CalledUtc, x.EndpointTemplate });
         }
     }

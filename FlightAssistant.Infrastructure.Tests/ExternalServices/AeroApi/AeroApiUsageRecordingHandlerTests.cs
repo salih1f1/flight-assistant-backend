@@ -203,6 +203,44 @@ public class AeroApiUsageRecordingHandlerTests
     }
 
     [Fact]
+    public async Task AnAbsurdlyLongFamilySegment_FallsBackToUnrecognised_RatherThanOverflowingTheColumn()
+    {
+        // AeroApiCall.EndpointTemplate is varchar(128). A letters-only path segment longer than that
+        // passes the "reads like an endpoint name" guard, and the row would then throw at INSERT,
+        // be swallowed by the handler's best-effort catch, and vanish — losing a billed call from
+        // the ledger silently. Unreachable today (all three call sites hit a named template), so
+        // this pins the guard rather than a live behaviour.
+        var overlongFamily = new string('a', 200);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var recorder = new RecordingUsageRecorder();
+        using var provider = BuildProvider(recorder);
+        using var client = BuildClient(provider, new StubTransport(), clock);
+
+        await client.GetAsync($"{overlongFamily}/AAL123");
+
+        var call = Assert.Single(recorder.Calls);
+        Assert.Equal(AeroApiEndpointTemplate.Unrecognised, call.EndpointTemplate);
+        Assert.True(call.EndpointTemplate.Length <= 128);
+    }
+
+    [Fact]
+    public async Task AFamilySegmentAtTheLengthBound_IsStillKept()
+    {
+        // The bound must not be so tight that it swallows plausible endpoint names — the guard is
+        // there for data masquerading as a family name, not for long-ish real ones.
+        var family = new string('a', 32);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var recorder = new RecordingUsageRecorder();
+        using var provider = BuildProvider(recorder);
+        using var client = BuildClient(provider, new StubTransport(), clock);
+
+        await client.GetAsync($"{family}/AAL123");
+
+        var call = Assert.Single(recorder.Calls);
+        Assert.Equal($"/{family}/{{...}}", call.EndpointTemplate);
+    }
+
+    [Fact]
     public async Task TheRecordedDuration_IsTheTimeTheCallActuallyTook()
     {
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);

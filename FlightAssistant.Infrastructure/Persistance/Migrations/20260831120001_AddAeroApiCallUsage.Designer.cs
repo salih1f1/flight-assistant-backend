@@ -62,8 +62,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CalledUtc");
-
                     b.HasIndex("CalledUtc", "EndpointTemplate");
 
                     b.ToTable("aeroapi_calls", (string)null);

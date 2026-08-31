@@ -25,12 +25,25 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         private const string UnknownCaller = "unknown";
 
         /// <summary>
-        /// The root segment of <see cref="AeroApiOptions.BaseUrl"/> (<c>…/aeroapi/</c>). Every
-        /// request path starts with it, so it is skipped when naming an unrecognised endpoint —
-        /// otherwise every unknown endpoint would collapse into a single <c>/aeroapi/{...}</c>
-        /// bucket that names nothing.
+        /// The root segment of FlightAware's own API path (<c>…/aeroapi/</c>), hardcoded rather
+        /// than read from <see cref="AeroApiOptions.BaseUrl"/> — which is configurable, so a base
+        /// URL rooted anywhere else simply will not match here. That costs nothing: skipping this
+        /// segment only stops every unrecognised endpoint from collapsing into a single
+        /// <c>/aeroapi/{...}</c> bucket that names nothing, and it is skipped by name, not by
+        /// position, so an unmatched root just leaves the first segment as the family name.
         /// </summary>
         private const string ApiRootSegment = "aeroapi";
+
+        /// <summary>
+        /// Upper bound on the family segment kept for an unrecognised endpoint.
+        /// <see cref="FlightAssistant.Domain.Configuration.Entities.AeroApiCall.EndpointTemplate"/>
+        /// is <c>varchar(128)</c>; an over-long segment would throw at insert, and
+        /// <see cref="AeroApiUsageRecordingHandler"/>'s best-effort catch would swallow that and
+        /// silently drop the usage row — losing exactly the spend record metering exists to keep.
+        /// No AeroAPI endpoint name comes near this length, so anything longer is data wearing an
+        /// endpoint name's clothes and is bucketed as <see cref="Unrecognised"/> instead.
+        /// </summary>
+        private const int MaxFamilySegmentLength = 32;
 
         /// <summary>
         /// Maps a request URI to its template and caller. Matching is by path segment, in path
@@ -54,12 +67,12 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
             }
 
             // Unrecognised endpoint: keep the family segment (the one after the API root) and drop
-            // everything after it, since that is where idents and ranges live. The letters-only
-            // guard is the backstop — if the segment does not read as an endpoint name, it is
-            // treated as data and dropped entirely rather than stored.
+            // everything after it, since that is where idents and ranges live. The letters-only and
+            // length guards are the backstop — if the segment does not read as an endpoint name, it
+            // is treated as data and dropped entirely rather than stored.
             var family = Array.Find(segments, s => !s.Equals(ApiRootSegment, StringComparison.OrdinalIgnoreCase));
 
-            return family is not null && family.All(char.IsAsciiLetter)
+            return family is not null && family.Length <= MaxFamilySegmentLength && family.All(char.IsAsciiLetter)
                 ? new AeroApiEndpointTemplate($"/{family.ToLowerInvariant()}/{{...}}", UnknownCaller)
                 : new AeroApiEndpointTemplate(Unrecognised, UnknownCaller);
         }

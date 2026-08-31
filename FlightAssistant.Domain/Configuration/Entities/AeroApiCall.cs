@@ -21,6 +21,15 @@ namespace FlightAssistant.Domain.Configuration.Entities
         public int? StatusCode { get; private set; }
         public long DurationMs { get; private set; }
         public AeroApiCallOutcome Outcome { get; private set; }
+
+        /// <summary>
+        /// The endpoint's <i>conventional consumer</i> (<c>search</c>, <c>status</c>,
+        /// <c>timezone-lookup</c>), not the call site that actually issued the request. It is
+        /// derived from the endpoint template alone — one endpoint always yields one caller label —
+        /// so it is a readable alias for the endpoint, and carries no information about which
+        /// handler, request or feature the call came from. Anything wanting that would have to be
+        /// passed in and stored separately.
+        /// </summary>
         public string Caller { get; private set; } = default!;
         public DateTime CalledUtc { get; private set; }
 

@@ -30,11 +30,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_aeroapi_calls_CalledUtc",
-                table: "aeroapi_calls",
-                column: "CalledUtc");
-
-            migrationBuilder.CreateIndex(
                 name: "IX_aeroapi_calls_CalledUtc_EndpointTemplate",
                 table: "aeroapi_calls",
                 columns: new[] { "CalledUtc", "EndpointTemplate" });
