@@ -21,7 +21,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                 var result = await mediator.Send(new GetAllAirportsQuery(paging), ct);
                 var dtos = result.Items.Select(a => new AirportAdminDto(
                     a.Id, a.Iata, a.Icao, a.Name, a.City, a.CountryCode,
-                    a.Latitude, a.Longitude, a.ElevationFt, a.Timezone)).ToList();
+                    a.Latitude, a.Longitude, a.ElevationFt)).ToList();
                 return Results.Ok(new PagedResult<AirportAdminDto>(dtos, result.Total, result.Page, result.PageSize));
             })
             .WithName("AdminGetAllAirports")
@@ -35,7 +35,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                 var a = await mediator.Send(new GetAirportByIdQuery(id), ct);
                 if (a is null) return Results.NotFound();
                 return Results.Ok(new AirportAdminDto(a.Id, a.Iata, a.Icao, a.Name, a.City, a.CountryCode,
-                    a.Latitude, a.Longitude, a.ElevationFt, a.Timezone));
+                    a.Latitude, a.Longitude, a.ElevationFt));
             })
             .WithName("AdminGetAirportById")
             .WithSummary("Get airport by ID")
@@ -47,7 +47,7 @@ namespace FlightAssistant.API.Endpoints.Admin
             {
                 var id = await mediator.Send(new CreateAirportCommand(
                     req.Iata, req.Icao, req.Name, req.City, req.CountryCode,
-                    req.Latitude, req.Longitude, req.ElevationFt, req.Timezone), ct);
+                    req.Latitude, req.Longitude, req.ElevationFt), ct);
                 return Results.Created($"/admin/airports/{id}", new { id });
             })
             .WithName("AdminCreateAirport")
@@ -59,7 +59,7 @@ namespace FlightAssistant.API.Endpoints.Admin
             group.MapPut("{id:int}", async (int id, [FromBody] UpdateAirportRequest req, IMediator mediator, CancellationToken ct) =>
             {
                 await mediator.Send(new UpdateAirportCommand(id, req.Iata, req.Icao, req.Name, req.City, req.CountryCode,
-                    req.Latitude, req.Longitude, req.ElevationFt, req.Timezone), ct);
+                    req.Latitude, req.Longitude, req.ElevationFt), ct);
                 return Results.NoContent();
             })
             .WithName("AdminUpdateAirport")

@@ -8,7 +8,7 @@ namespace FlightAssistant.Application.Commands.Admin.Import;
 
 public record AirportImportDto(
     string Iata, string? Icao, string Name, string City, string CountryCode,
-    double? Latitude, double? Longitude, int? ElevationFt, string? Timezone);
+    double? Latitude, double? Longitude, int? ElevationFt);
 
 public record ImportAirportsCommand(IReadOnlyList<AirportImportDto> Items) : IRequest<ImportResult>;
 
@@ -60,13 +60,13 @@ public sealed class ImportAirportsCommandHandler : IRequestHandler<ImportAirport
                 if (existing is null)
                 {
                     await _repo.AddAsync(Airport.Create(dto.Iata, dto.Icao, dto.Name, dto.City, dto.CountryCode,
-                        dto.Latitude, dto.Longitude, dto.ElevationFt, dto.Timezone), ct);
+                        dto.Latitude, dto.Longitude, dto.ElevationFt), ct);
                     inserted++;
                 }
                 else
                 {
                     existing.Update(dto.Iata, dto.Icao, dto.Name, dto.City, dto.CountryCode,
-                        dto.Latitude, dto.Longitude, dto.ElevationFt, dto.Timezone);
+                        dto.Latitude, dto.Longitude, dto.ElevationFt);
                     updated++;
                 }
             }

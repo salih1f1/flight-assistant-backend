@@ -9,7 +9,6 @@ namespace FlightAssistant.Contracts.Responses.Admin
         string CountryCode,
         double? Latitude,
         double? Longitude,
-        int? ElevationFt,
-        string? Timezone
+        int? ElevationFt
     );
 }

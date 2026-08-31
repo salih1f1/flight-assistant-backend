@@ -16,7 +16,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.ReferenceDat
             b.Property(x => x.Name).IsRequired().HasMaxLength(200);
             b.Property(x => x.City).IsRequired().HasMaxLength(200);
             b.Property(x => x.CountryCode).IsRequired().HasMaxLength(2).IsFixedLength();
-            b.Property(x => x.Timezone).HasMaxLength(64);
 
             b.HasIndex(x => x.Iata).IsUnique();
             b.HasIndex(x => x.Icao).IsUnique().HasFilter("\"Icao\" IS NOT NULL");

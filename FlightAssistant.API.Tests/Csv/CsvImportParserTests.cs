@@ -1,6 +1,7 @@
 using System.Text;
 using FlightAssistant.API.Csv;
 using FlightAssistant.Application.Commands.Admin.Import;
+using FlightAssistant.Domain.Common.Exceptions;
 
 namespace FlightAssistant.API.Tests.Csv;
 
@@ -30,9 +31,9 @@ public class CsvImportParserTests
     public async Task ParseAirports_WithNullableFields_ReturnsDtos()
     {
         const string csv = """
-            Iata,Icao,Name,City,CountryCode,Latitude,Longitude,ElevationFt,Timezone
-            LHR,EGLL,Heathrow,London,GB,51.477,-0.461,83,Europe/London
-            SVO,,Sheremetyevo,Moscow,RU,,,,
+            Iata,Icao,Name,City,CountryCode,Latitude,Longitude,ElevationFt
+            LHR,EGLL,Heathrow,London,GB,51.477,-0.461,83
+            SVO,,Sheremetyevo,Moscow,RU,,,
             """;
         var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
 
@@ -46,6 +47,43 @@ public class CsvImportParserTests
         Assert.Null(result[1].Icao);
         Assert.Null(result[1].Latitude);
         Assert.Null(result[1].ElevationFt);
+    }
+
+    [Fact]
+    public async Task ParseAirports_CsvStillHasTimezoneColumn_ThrowsClearDomainException()
+    {
+        // Airports CSVs exported before #285 still carry a Timezone column. Rather than silently
+        // dropping it (which would leave an admin wondering why re-importing an old export had no
+        // effect) or letting CsvHelper fail with an unmapped-member error, the parser rejects it
+        // up front with a message naming the offending column.
+        const string csv = """
+            Iata,Icao,Name,City,CountryCode,Latitude,Longitude,ElevationFt,Timezone
+            LHR,EGLL,Heathrow,London,GB,51.477,-0.461,83,Europe/London
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
+            CsvImportParser.ParseAsync<AirportImportDto, AirportImportDtoMap>(stream, rejectHeaders: ["Timezone"]));
+
+        Assert.Contains("Timezone", ex.Message);
+        Assert.Equal(400, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task ParseAirports_NoRejectHeadersConfigured_IgnoresStrayColumn()
+    {
+        // Without an explicit rejectHeaders list (the behaviour every other importer keeps), an
+        // extra CSV column that isn't part of the DTO is silently ignored by CsvHelper's AutoMap.
+        const string csv = """
+            Iata,Icao,Name,City,CountryCode,Latitude,Longitude,ElevationFt,Timezone
+            LHR,EGLL,Heathrow,London,GB,51.477,-0.461,83,Europe/London
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<AirportImportDto, AirportImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.Equal("LHR", result[0].Iata);
     }
 
     // ── Nested entity (JSON column) ────────────────────────────────────────────

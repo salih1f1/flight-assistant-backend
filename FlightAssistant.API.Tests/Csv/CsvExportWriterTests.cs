@@ -28,7 +28,7 @@ public class CsvExportWriterTests
     {
         var data = new List<AirportExportDto>
         {
-            new("SVO", null, "Sheremetyevo", "Moscow", "RU", null, null, null, null)
+            new("SVO", null, "Sheremetyevo", "Moscow", "RU", null, null, null)
         };
 
         var bytes = CsvExportWriter.Write<AirportExportDto, AirportExportDtoMap>(data);

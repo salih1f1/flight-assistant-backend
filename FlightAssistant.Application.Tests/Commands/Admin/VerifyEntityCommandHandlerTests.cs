@@ -15,7 +15,7 @@ public class VerifyEntityCommandHandlerTests
     [Fact]
     public async Task Handle_ExistingEntity_VerifiesAndSavesAndReturnsTrue()
     {
-        var airport = Airport.Create("LHR", null, "Heathrow", "London", "GB", null, null, null, null);
+        var airport = Airport.Create("LHR", null, "Heathrow", "London", "GB", null, null, null);
         _repo.FindByIdAsync(1, Arg.Any<CancellationToken>()).Returns(airport);
         var handler = new VerifyEntityCommandHandler<Airport>(_repo);
 
@@ -32,7 +32,7 @@ public class VerifyEntityCommandHandlerTests
     [Fact]
     public async Task Handle_ExistingEntity_UnverifiesAndSavesAndReturnsTrue()
     {
-        var airport = Airport.Create("LHR", null, "Heathrow", "London", "GB", null, null, null, null);
+        var airport = Airport.Create("LHR", null, "Heathrow", "London", "GB", null, null, null);
         airport.Verify("admin@example.com");
         _repo.FindByIdAsync(1, Arg.Any<CancellationToken>()).Returns(airport);
         var handler = new VerifyEntityCommandHandler<Airport>(_repo);

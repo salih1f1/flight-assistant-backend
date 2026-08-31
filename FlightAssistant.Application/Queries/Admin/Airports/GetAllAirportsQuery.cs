@@ -15,8 +15,7 @@ namespace FlightAssistant.Application.Queries.Admin.Airports
         string CountryCode,
         double? Latitude,
         double? Longitude,
-        int? ElevationFt,
-        string? Timezone
+        int? ElevationFt
     );
 
     public record GetAllAirportsQuery(PagedRequest Paging) : IRequest<PagedResult<AirportResult>>;
@@ -39,7 +38,7 @@ namespace FlightAssistant.Application.Queries.Admin.Airports
             var (airports, total) = await _repo.GetAllAsync(request.Paging.Page, request.Paging.PageSize, ct);
             var items = airports.Select(a => new AirportResult(
                 a.Id, a.Iata, a.Icao, a.Name, a.City, a.CountryCode,
-                a.Latitude, a.Longitude, a.ElevationFt, a.Timezone
+                a.Latitude, a.Longitude, a.ElevationFt
             )).ToList();
             return new PagedResult<AirportResult>(items, total, request.Paging.Page, request.Paging.PageSize);
         }

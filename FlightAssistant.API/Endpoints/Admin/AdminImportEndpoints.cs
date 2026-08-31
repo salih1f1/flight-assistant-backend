@@ -41,7 +41,7 @@ public static class AdminImportEndpoints
         group.MapPost("airports", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
             await using var stream = file.OpenReadStream();
-            var items = await CsvImportParser.ParseAsync<AirportImportDto, AirportImportDtoMap>(stream);
+            var items = await CsvImportParser.ParseAsync<AirportImportDto, AirportImportDtoMap>(stream, rejectHeaders: ["Timezone"]);
             var result = await mediator.Send(new ImportAirportsCommand(items), ct);
             return result.ToImportResponse();
         }).WithName("ImportAirports")

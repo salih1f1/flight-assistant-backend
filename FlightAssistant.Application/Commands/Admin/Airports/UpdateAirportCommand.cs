@@ -15,8 +15,7 @@ namespace FlightAssistant.Application.Commands.Admin.Airports
         string CountryCode,
         double? Latitude,
         double? Longitude,
-        int? ElevationFt,
-        string? Timezone
+        int? ElevationFt
     ) : IRequest;
 
     public sealed class UpdateAirportCommandHandler : IRequestHandler<UpdateAirportCommand>
@@ -29,7 +28,7 @@ namespace FlightAssistant.Application.Commands.Admin.Airports
             var airport = await _repo.GetByIdAsync(cmd.Id, ct)
                 ?? throw new DomainException($"Airport {cmd.Id} not found.", 404);
             airport.Update(cmd.Iata, cmd.Icao, cmd.Name, cmd.City, cmd.CountryCode,
-                cmd.Latitude, cmd.Longitude, cmd.ElevationFt, cmd.Timezone);
+                cmd.Latitude, cmd.Longitude, cmd.ElevationFt);
             await _repo.SaveChangesAsync(ct);
         }
     }
@@ -51,7 +50,6 @@ namespace FlightAssistant.Application.Commands.Admin.Airports
             RuleFor(x => x.CountryCode)
                 .NotEmpty().MaximumLength(2)
                 .Matches(@"^[A-Z]{2}$", RegexOptions.IgnoreCase).WithMessage("Country code must be ISO 3166-1 alpha-2.");
-            RuleFor(x => x.Timezone).MaximumLength(64).When(x => x.Timezone is not null);
         }
     }
 }

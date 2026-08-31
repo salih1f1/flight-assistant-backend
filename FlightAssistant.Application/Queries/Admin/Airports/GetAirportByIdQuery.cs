@@ -16,7 +16,7 @@ namespace FlightAssistant.Application.Queries.Admin.Airports
             var a = await _repo.GetByIdAsync(request.Id, ct);
             if (a is null) return null;
             return new AirportResult(a.Id, a.Iata, a.Icao, a.Name, a.City, a.CountryCode,
-                a.Latitude, a.Longitude, a.ElevationFt, a.Timezone);
+                a.Latitude, a.Longitude, a.ElevationFt);
         }
     }
 }

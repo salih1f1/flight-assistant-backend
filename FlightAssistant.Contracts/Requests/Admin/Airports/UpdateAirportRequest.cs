@@ -8,7 +8,6 @@ namespace FlightAssistant.Contracts.Requests.Admin.Airports
         string CountryCode,
         double? Latitude,
         double? Longitude,
-        int? ElevationFt,
-        string? Timezone
+        int? ElevationFt
     );
 }

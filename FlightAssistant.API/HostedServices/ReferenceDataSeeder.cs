@@ -98,7 +98,7 @@ namespace FlightAssistant.API.HostedServices
             await SeedCustomAsync<AirportSeedDto>(db, dataset, ct, async (dto, d, c) =>
             {
                 await PopulateAirportsAsync(
-                    Airport.Create(dto.Iata, dto.Icao, dto.Name, dto.City, dto.CountryCode, dto.Latitude, dto.Longitude, dto.ElevationFt, dto.Timezone),
+                    Airport.Create(dto.Iata, dto.Icao, dto.Name, dto.City, dto.CountryCode, dto.Latitude, dto.Longitude, dto.ElevationFt),
                     d, c);
             });
         }
@@ -518,8 +518,7 @@ namespace FlightAssistant.API.HostedServices
             string CountryCode,
             double? Latitude = null,
             double? Longitude = null,
-            int? ElevationFt = null,
-            string? Timezone = null);
+            int? ElevationFt = null);
 
         private record AirlineSeedDto(
             string? Iata,

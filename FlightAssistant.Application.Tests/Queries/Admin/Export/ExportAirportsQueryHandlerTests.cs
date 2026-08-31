@@ -12,7 +12,7 @@ public class ExportAirportsQueryHandlerTests
     [Fact]
     public async Task Handle_ReturnsVerifiedAirportsMappedToExportDto()
     {
-        var airport = Airport.Create("LHR", "EGLL", "Heathrow", "London", "GB", 51.477, -0.461, 83, "Europe/London");
+        var airport = Airport.Create("LHR", "EGLL", "Heathrow", "London", "GB", 51.477, -0.461, 83);
         _repo.GetAllVerifiedAsync(Arg.Any<CancellationToken>()).Returns(new List<Airport> { airport });
         var handler = new ExportAirportsQueryHandler(_repo);
 
@@ -27,7 +27,6 @@ public class ExportAirportsQueryHandlerTests
         Assert.Equal(51.477, result[0].Latitude);
         Assert.Equal(-0.461, result[0].Longitude);
         Assert.Equal(83, result[0].ElevationFt);
-        Assert.Equal("Europe/London", result[0].Timezone);
     }
 
     [Fact]
