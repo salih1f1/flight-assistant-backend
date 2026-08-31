@@ -76,6 +76,18 @@ public class AeroApiClientPipelineTests
         }
     }
 
+    /// <summary>
+    /// A database that hangs rather than refuses: the write never completes on its own, only when
+    /// the budget the handler gives it runs out. Honouring the token is what Npgsql does when a
+    /// command is cancelled, and it is the only thing standing between a stalled pool and a
+    /// re-billed AeroAPI query.
+    /// </summary>
+    private sealed class HangingUsageRecorder : IAeroApiUsageRecorder
+    {
+        public Task RecordAsync(AeroApiCall call, CancellationToken ct) =>
+            Task.Delay(Timeout.InfiniteTimeSpan, ct);
+    }
+
     private static ServiceProvider BuildContainer(
         FakeTimeProvider clock,
         CountingTransport transport,
@@ -230,5 +242,38 @@ public class AeroApiClientPipelineTests
 
         Assert.Equal(1, transport.Calls);
         Assert.Single(recorder.Calls); // still just the first request's row
+    }
+
+    [Fact]
+    public async Task AHangingMeteringWrite_IsAbandoned_AndCostsNoExtraAeroApiCall()
+    {
+        // The meter is awaited in-band, innermost, so a stalled database spends the caller's
+        // attempt budget. Left unbounded it would blow Polly's AttemptTimeout for a request whose
+        // 200 had already arrived, and Polly would retry it — the meter that exists to control
+        // spend causing up to MaxRetryAttempts× the spend, plus a 502 on a lookup that succeeded.
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var transport = new CountingTransport();
+        using var provider = BuildContainer(clock, transport, usageRecorder: new HangingUsageRecorder());
+        var client = provider.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi");
+
+        var pending = client.GetAsync("airports/SOF");
+
+        // The response is already in hand, yet the request is not done: the write is genuinely
+        // awaited rather than fired and forgotten (which would dispose its scope out from under it).
+        await Task.Delay(10);
+        Assert.Equal(1, transport.Calls);
+        Assert.False(pending.IsCompleted);
+
+        // Ten simulated seconds: comfortably past the 5s the write is allowed, and nowhere near
+        // the 42s AttemptTimeout — which is the point. If metering finishes inside its own budget,
+        // the attempt is never even close to being at risk. Advancing as far as the attempt
+        // timeout would instead be advancing into the very failure this bound exists to prevent.
+        await AdvanceUntilSettled(clock, pending, TimeSpan.FromSeconds(10));
+
+        // Asserted before awaiting: an unbounded write never completes, and this must fail on the
+        // spot rather than hang the suite on a task that can never finish.
+        Assert.True(pending.IsCompleted, "the metering write must not hold the request past its own budget");
+        Assert.Equal(HttpStatusCode.OK, (await pending).StatusCode);
+        Assert.Equal(1, transport.Calls); // abandoned the row, not the attempt: no retry, no extra spend
     }
 }

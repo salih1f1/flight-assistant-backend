@@ -32,6 +32,24 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     /// </summary>
     public sealed class AeroApiUsageRecordingHandler : DelegatingHandler
     {
+        /// <summary>
+        /// Ceiling on the metering write itself, and the reason it cannot simply run to completion:
+        /// this handler is the innermost one, so the write is awaited <i>inside</i> Polly's
+        /// <see cref="AeroApiOptions.AttemptTimeout"/> and <see cref="AeroApiOptions.TotalRequestTimeout"/>.
+        /// A database that hangs rather than refuses — pool exhaustion, a failover — would burn the
+        /// rest of the attempt window on a call whose response had already arrived, and Polly would
+        /// then time the attempt out and <b>retry a request that had already succeeded</b>: up to
+        /// <see cref="AeroApiOptions.MaxRetryAttempts"/>× the spend, caused by the very meter that
+        /// exists to control spend, and a 502 for a flight lookup that was fine.
+        ///
+        /// <para>
+        /// Five seconds is far longer than a single-row insert can legitimately need and far
+        /// shorter than the slack in the attempt budget. Past it the row is abandoned and logged:
+        /// one missing usage row is strictly cheaper than a re-billed AeroAPI query.
+        /// </para>
+        /// </summary>
+        private static readonly TimeSpan MeteringWriteTimeout = TimeSpan.FromSeconds(5);
+
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly TimeProvider _timeProvider;
         private readonly ILogger<AeroApiUsageRecordingHandler> _logger;
@@ -85,9 +103,10 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         }
 
         /// <summary>
-        /// Best-effort by contract: metering exists to observe flight requests, never to break one.
-        /// Any failure — a bad row, an unavailable database, a container without one at all — is
-        /// logged at Warning and swallowed.
+        /// Best-effort by contract: metering exists to observe flight requests, never to break one
+        /// and never to slow one down materially. Any failure — a bad row, an unavailable database,
+        /// a container without one at all, or a write that overruns
+        /// <see cref="MeteringWriteTimeout"/> — is logged at Warning and swallowed.
         /// </summary>
         private async Task RecordAsync(
             AeroApiEndpointTemplate endpoint,
@@ -107,10 +126,12 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
                 await using var scope = _scopeFactory.CreateAsyncScope();
                 var recorder = scope.ServiceProvider.GetRequiredService<IAeroApiUsageRecorder>();
 
-                // CancellationToken.None deliberately: the call has already been sent and is
-                // already billed. Letting a caller that walked away take the row with it would
-                // under-report exactly the spend nobody is watching.
-                await recorder.RecordAsync(call, CancellationToken.None);
+                // Deliberately NOT the caller's token: the call has already been sent and is
+                // already billed, so a caller that walked away must not take the row with it —
+                // that would under-report exactly the spend nobody is watching. It gets its own
+                // budget instead, because unbounded is not an option here (see the constant).
+                using var writeBudget = new CancellationTokenSource(MeteringWriteTimeout, _timeProvider);
+                await recorder.RecordAsync(call, writeBudget.Token);
             }
             catch (Exception ex)
             {
