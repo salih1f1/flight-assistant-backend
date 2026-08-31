@@ -1,4 +1,5 @@
 using System.Net;
+using FlightAssistant.Application.Interfaces.Configuration;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
@@ -36,6 +37,7 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<IAirportRepository, AirportRepository>();
             services.AddScoped<ICountryRepository, CountryRepository>();
             services.AddScoped<IAllianceRepository, AllianceRepository>();
+            services.AddScoped<IAeroApiUsageRepository, AeroApiUsageRepository>();
             services.AddScoped(typeof(IVerifiableRepository<>), typeof(EfVerifiableRepository<>));
 
             // AeroAPI — the sole flight data provider (issue #280). This wires the HTTP
@@ -51,6 +53,12 @@ namespace FlightAssistant.Infrastructure
             // AeroApiOptions implements IFlightSearchHorizonOptions (defined in Application) so
             // this is a plain translation, not a leak of AeroApiOptions itself.
             services.AddScoped<IFlightSearchHorizonOptions>(sp =>
+                sp.GetRequiredService<IOptions<AeroApiOptions>>().Value);
+
+            // Same translation, for GetAeroApiUsageQueryHandler's pricing/budget arithmetic (issue
+            // #293) — AeroApiOptions implements IAeroApiUsagePricingOptions (defined in Application)
+            // so this is a plain translation, not a leak of AeroApiOptions itself.
+            services.AddScoped<IAeroApiUsagePricingOptions>(sp =>
                 sp.GetRequiredService<IOptions<AeroApiOptions>>().Value);
 
             // AeroApiThrottleGate's constructor requires a TimeProvider, and nothing else in this

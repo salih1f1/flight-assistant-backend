@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using FlightAssistant.Application.Interfaces.Configuration;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 
 namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
@@ -7,12 +8,13 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     /// Configuration for the FlightAware AeroAPI client, bound from the <c>AeroApi</c> section.
     /// Registered with <c>ValidateDataAnnotations().ValidateOnStart()</c> so a missing/invalid
     /// value fails fast at startup rather than surfacing as a confusing runtime error on the
-    /// first search. Implements <see cref="IFlightSearchHorizonOptions"/> so the Application-layer
-    /// query validator can read the real configured horizon without this (Infrastructure) project
-    /// being referenced from Application — see the DI registration in
+    /// first search. Implements <see cref="IFlightSearchHorizonOptions"/> and
+    /// <see cref="IAeroApiUsagePricingOptions"/> so Application-layer consumers (the search
+    /// validator, the usage-rollup handler) can read the real configured values without this
+    /// (Infrastructure) project being referenced from Application — see the DI registrations in
     /// <c>FlightAssistant.Infrastructure.DependencyInjection</c>.
     /// </summary>
-    public sealed class AeroApiOptions : IFlightSearchHorizonOptions
+    public sealed class AeroApiOptions : IFlightSearchHorizonOptions, IAeroApiUsagePricingOptions
     {
         /// <summary>Sent as the <c>x-apikey</c> header on every request. Never logged.</summary>
         [Required]
@@ -109,13 +111,24 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         /// </summary>
         public Dictionary<string, decimal> Pricing { get; set; } = new();
 
+        // IAeroApiUsagePricingOptions.Pricing is IReadOnlyDictionary — a property's declared type
+        // can't covary implicitly, so this is an explicit interface implementation over the same
+        // dictionary rather than a second, divergent copy.
+        IReadOnlyDictionary<string, decimal> IAeroApiUsagePricingOptions.Pricing => Pricing;
+
         /// <summary>Informational budget ceiling shown against actual metered spend; enforces nothing on its own.</summary>
+        // The double-typed Range overload is used deliberately, not the typeof(decimal) string-pair
+        // overload: RangeAttribute parses that string pair with the current culture, and "0.01"
+        // fails to parse (and so fails validation for every legal value) under a non-"."-decimal
+        // culture. The double overload compares by converting the bound value to double instead.
+        [Range(0.01, 1_000_000)]
         public decimal MonthlyBudgetUsd { get; set; } = 5m;
 
         /// <summary>
         /// How long <see cref="FlightAssistant.Domain.Configuration.Entities.AeroApiCall"/> rows are
         /// kept before cleanup.
         /// </summary>
+        [Range(1, 3650)]
         public int UsageRetentionDays { get; set; } = 90;
     }
 }

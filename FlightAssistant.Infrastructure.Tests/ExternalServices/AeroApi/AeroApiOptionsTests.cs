@@ -98,6 +98,38 @@ public class AeroApiOptionsTests
         Assert.True(options.HttpClientTimeout > options.TotalRequestTimeout);
     }
 
+    [Theory]
+    [InlineData("0")]      // zero — the budget line would show as an immediate 0% overrun
+    [InlineData("-5")]     // negative — nonsensical as a budget ceiling
+    public void MonthlyBudgetUsdOutsideRange_FailsValidation(string monthlyBudgetUsd)
+    {
+        // MonthlyBudgetUsd and UsageRetentionDays carried no [Range] even though every other
+        // numeric knob on this class does, and the class is registered with
+        // ValidateDataAnnotations().ValidateOnStart() precisely to fail fast on nonsense config —
+        // a negative budget passed startup validation before this.
+        var options = BuildOptions(new Dictionary<string, string?>
+        {
+            ["AeroApi:ApiKey"] = "dummy",
+            ["AeroApi:MonthlyBudgetUsd"] = monthlyBudgetUsd
+        });
+
+        Assert.Throws<OptionsValidationException>(() => options.Value);
+    }
+
+    [Theory]
+    [InlineData("0")]      // zero — every metered row would be pruned immediately
+    [InlineData("-1")]     // negative — nonsensical as a day count
+    public void UsageRetentionDaysOutsideRange_FailsValidation(string usageRetentionDays)
+    {
+        var options = BuildOptions(new Dictionary<string, string?>
+        {
+            ["AeroApi:ApiKey"] = "dummy",
+            ["AeroApi:UsageRetentionDays"] = usageRetentionDays
+        });
+
+        Assert.Throws<OptionsValidationException>(() => options.Value);
+    }
+
     [Fact]
     public void ValidApiKey_BindsWithDocumentedDefaults()
     {
@@ -113,6 +145,8 @@ public class AeroApiOptionsTests
         Assert.Equal(3, value.MaxPastMonths);
         Assert.Equal(30, value.TimeoutSeconds);
         Assert.Equal(2, value.MaxRetryAttempts);
+        Assert.Equal(5m, value.MonthlyBudgetUsd);
+        Assert.Equal(90, value.UsageRetentionDays);
 
         // Derived, not configured: a 12s throttle wait plus a 30s network budget per attempt.
         Assert.Equal(TimeSpan.FromSeconds(42), value.AttemptTimeout);
