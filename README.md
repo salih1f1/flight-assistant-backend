@@ -1,5 +1,6 @@
 # ✈️ Flight Assistant
 
+[![CI](https://github.com/salih1f1/flight-assistant-backend/actions/workflows/ci.yml/badge.svg?branch=development)](https://github.com/salih1f1/flight-assistant-backend/actions/workflows/ci.yml)  
 [![.NET](https://img.shields.io/badge/.NET-10.0-blueviolet?logo=dotnet)](https://dotnet.microsoft.com/)  
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue?logo=postgresql)](https://www.postgresql.org/)  
 [![Redis](https://img.shields.io/badge/Redis-Cache-red?logo=redis)](https://redis.io/)  

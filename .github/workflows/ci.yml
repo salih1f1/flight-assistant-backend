@@ -1,0 +1,79 @@
+# Verification-only workflow. Runs on every pull request and on pushes to the
+# long-lived branches.
+#
+# Deliberately separate from development_flight-assistant-dev-api.yml rather than
+# adding a pull_request trigger there: that workflow holds Azure credentials and
+# applies an EF migration bundle to the dev database. Neither should ever be
+# reachable from a pull request, including one opened from a fork.
+name: CI
+
+on:
+  pull_request:
+    branches: [development, main]
+  push:
+    branches: [development, main]
+  workflow_dispatch:
+
+# A new push to a PR branch makes the in-flight run obsolete. Don't spend runners
+# finishing it. Never cancel a run on development/main — those are the record.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.x'
+
+      - name: Build
+        run: dotnet build --configuration Release
+
+      # One project at a time, each writing a .trx named after itself. Running the
+      # whole solution with a fixed LogFileName makes every project overwrite the
+      # previous one's results — the report then shows only the last project's
+      # tests and goes green having checked a fraction of the suite.
+      #
+      # `|| true` keeps the loop going past a red project so the report covers all
+      # of them; the Report step is what fails the job.
+      - name: Test
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/TestResults"
+          count=0
+          for proj in FlightAssistant.*.Tests/*.csproj; do
+            name=$(basename "$(dirname "$proj")")
+            echo "::group::$name"
+            dotnet test "$proj" --configuration Release --no-build \
+              --logger "trx;LogFileName=$name.trx" \
+              --results-directory "$GITHUB_WORKSPACE/TestResults" || true
+            echo "::endgroup::"
+            count=$((count + 1))
+          done
+          echo "EXPECTED_SUITES=$count" >> "$GITHUB_ENV"
+
+      # Produces test-results.json for the admin panel's tests page (#291, A7) and
+      # a table in the job summary so a reviewer sees the outcome without
+      # downloading an artifact. Exits non-zero on any failed test, or if a project
+      # produced no .trx at all.
+      - name: Report
+        run: >
+          python3 .github/scripts/trx_to_json.py
+          TestResults test-results.json "$EXPECTED_SUITES"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            test-results.json
+            TestResults/**/*.trx
+          retention-days: 30
