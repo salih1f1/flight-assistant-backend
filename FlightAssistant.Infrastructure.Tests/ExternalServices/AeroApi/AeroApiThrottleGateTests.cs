@@ -129,4 +129,52 @@ public class AeroApiThrottleGateTests
         clock.Advance(Interval);
         await third;
     }
+
+    [Fact]
+    public void NextSlotUtc_IsNull_BeforeAnyReservation()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var gate = new AeroApiThrottleGate(clock);
+
+        Assert.Null(gate.NextSlotUtc);
+    }
+
+    [Fact]
+    public async Task NextSlotUtc_ReflectsTheReservedSlot_AfterAReservation()
+    {
+        var start = DateTimeOffset.UtcNow;
+        var clock = new FakeTimeProvider(start);
+        var gate = new AeroApiThrottleGate(clock);
+
+        await gate.WaitForTurnAsync(Interval, CancellationToken.None); // sends immediately at t=0
+
+        // The first send reserves the NEXT slot, one interval out — not the slot it just used.
+        Assert.Equal(start + Interval, gate.NextSlotUtc);
+
+        var second = gate.WaitForTurnAsync(Interval, CancellationToken.None); // queues for t=12
+        Assert.Equal(start + Interval + Interval, gate.NextSlotUtc);
+
+        clock.Advance(Interval);
+        await second;
+    }
+
+    [Fact]
+    public async Task NextSlotUtc_RewindsWithTheGate_WhenAnAbandonedReservationIsReleased()
+    {
+        var start = DateTimeOffset.UtcNow;
+        var clock = new FakeTimeProvider(start);
+        var gate = new AeroApiThrottleGate(clock);
+
+        await gate.WaitForTurnAsync(Interval, CancellationToken.None); // t=0, gate now at t=12
+
+        using var cts = new CancellationTokenSource();
+        var abandoned = gate.WaitForTurnAsync(Interval, cts.Token); // reserves t=12, gate now at t=24
+        Assert.Equal(start + Interval + Interval, gate.NextSlotUtc);
+
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => abandoned);
+
+        // Observation follows the release the gate already performs — it does not cause it.
+        Assert.Equal(start + Interval, gate.NextSlotUtc);
+    }
 }
