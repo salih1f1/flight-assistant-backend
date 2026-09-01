@@ -56,6 +56,33 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         public int MaxPastMonths { get; set; } = 3;
 
         /// <summary>
+        /// How many days into the past <c>GET /flights/{ident}</c> can be asked to look, via the
+        /// explicit <c>start</c> parameter <see cref="AeroApiFlightStatusProvider"/> now sends
+        /// (issue #283). Mirrors AeroAPI's own hard limit on that parameter (its public reference
+        /// documentation states "max 10 days past"; not exercised against the live endpoint here).
+        /// The <c>[Range]</c> ceiling is deliberately that same 10 — a configured value AeroAPI
+        /// would reject turns every status sync into a guaranteed 400.
+        /// </summary>
+        [Range(1, 10)]
+        public int StatusWindowPastDays { get; set; } = 10;
+
+        /// <summary>
+        /// How many days into the future <c>GET /flights/{ident}</c> can be asked to look, via the
+        /// explicit <c>end</c> parameter (see <see cref="StatusWindowPastDays"/> for the <c>start</c>
+        /// side and the same caveat about how the limit was confirmed). AeroAPI's documented ceiling
+        /// is 2 days future, which is also this property's <c>[Range]</c> ceiling.
+        ///
+        /// <para>
+        /// <see cref="FlightAssistant.Infrastructure.Persistance.Repositories.FlightRepository.GetActiveTrackedFlightsAsync"/>
+        /// uses this same value (padded by one extra day) to stop offering flights this provider
+        /// can never answer for as poll candidates in the first place — see that method for why the
+        /// pad exists and why the lower bound is left untouched.
+        /// </para>
+        /// </summary>
+        [Range(1, 2)]
+        public int StatusWindowFutureDays { get; set; } = 2;
+
+        /// <summary>
         /// How long <c>AeroApiFlightSearchCachingDecorator</c> caches a search whose
         /// <c>FlightSearchCriteria.Date</c> is today or in the past. Short relative to
         /// <see cref="SearchCacheTtlFuture"/> because a service date that has already started (or is

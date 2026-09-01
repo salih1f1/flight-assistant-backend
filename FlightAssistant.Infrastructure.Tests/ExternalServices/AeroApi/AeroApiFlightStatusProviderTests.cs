@@ -5,6 +5,7 @@ using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 
 namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroApi;
 
@@ -70,12 +71,13 @@ public class AeroApiFlightStatusProviderTests
     private static AeroApiFlightStatusProvider Provider(
         StubHttpMessageHandler handler,
         TimeProvider? timeProvider = null,
-        ILogger<AeroApiFlightStatusProvider>? logger = null)
+        ILogger<AeroApiFlightStatusProvider>? logger = null,
+        AeroApiOptions? options = null)
     {
         var http = new HttpClient(handler) { BaseAddress = new Uri("http://stub/aeroapi/") };
         return new AeroApiFlightStatusProvider(
             http,
-            Options.Create(new AeroApiOptions { ApiKey = "dummy" }),
+            Options.Create(options ?? new AeroApiOptions { ApiKey = "dummy" }),
             timeProvider ?? TimeProvider.System,
             logger ?? NullLogger<AeroApiFlightStatusProvider>.Instance);
     }
@@ -169,6 +171,48 @@ public class AeroApiFlightStatusProviderTests
         await Provider(handler).GetStatusAsync("tk1028", new DateOnly(2026, 8, 30));
 
         Assert.Equal("/aeroapi/flights/TK1028", handler.LastRequestUri!.AbsolutePath);
+    }
+
+    // ------------------------------------------------------------------
+    // Explicit start/end (issue #283) — deterministic rather than relying on
+    // AeroAPI's undocumented default window.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetStatusAsync_SendsStartAndEndQueryParameters_DerivedFromTheConfiguredWindowAndNow()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 30, 12, 0, 0, TimeSpan.Zero));
+        var handler = new StubHttpMessageHandler(ReadFixture("flight-status.json"));
+        var options = new AeroApiOptions
+        {
+            ApiKey = "dummy",
+            StatusWindowPastDays = 10,
+            StatusWindowFutureDays = 2
+        };
+
+        await Provider(handler, timeProvider: clock, options: options)
+            .GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
+
+        var expectedStart = Uri.EscapeDataString("2026-08-20T12:00:00Z");
+        var expectedEnd = Uri.EscapeDataString("2026-09-01T12:00:00Z");
+        Assert.Equal($"?start={expectedStart}&end={expectedEnd}", handler.LastRequestUri!.Query);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_StartAndEndQueryParameters_MoveWithTheClock()
+    {
+        // Same configured window, different "now" — the request window must move with it rather
+        // than being fixed at construction time.
+        var clock = new FakeTimeProvider(new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var handler = new StubHttpMessageHandler(ReadFixture("flight-status.json"));
+        var options = new AeroApiOptions { ApiKey = "dummy", StatusWindowPastDays = 10, StatusWindowFutureDays = 2 };
+
+        await Provider(handler, timeProvider: clock, options: options)
+            .GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
+
+        var expectedStart = Uri.EscapeDataString("2026-12-22T00:00:00Z");
+        var expectedEnd = Uri.EscapeDataString("2027-01-03T00:00:00Z");
+        Assert.Equal($"?start={expectedStart}&end={expectedEnd}", handler.LastRequestUri!.Query);
     }
 
     // ------------------------------------------------------------------

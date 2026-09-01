@@ -45,10 +45,17 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         private const string StatusDiverted = "DIV";
         private const string StatusUnknown = "UNK";
 
+        // AeroAPI's own timestamp format for `start`/`end` — matches AeroApiFlightSearchProvider's
+        // `date_start`/`date_end` and AeroApiAccountUsageProvider's `start`/`end`, so all three
+        // outbound query formats stay identical.
+        private const string TimestampFormat = "yyyy-MM-ddTHH:mm:ssZ";
+
         private readonly HttpClient _http;
         private readonly TimeProvider _timeProvider;
         private readonly ILogger<AeroApiFlightStatusProvider> _logger;
         private readonly string _apiKey;
+        private readonly int _statusWindowPastDays;
+        private readonly int _statusWindowFutureDays;
 
         public string ProviderName => "AeroAPI";
 
@@ -62,6 +69,8 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
             _timeProvider = timeProvider;
             _logger = logger;
             _apiKey = options.Value.ApiKey;
+            _statusWindowPastDays = options.Value.StatusWindowPastDays;
+            _statusWindowFutureDays = options.Value.StatusWindowFutureDays;
         }
 
         public async Task<FlightStatusResult?> GetStatusAsync(
@@ -73,7 +82,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
             HttpResponseMessage response;
             try
             {
-                response = await _http.GetAsync($"flights/{Uri.EscapeDataString(ident)}", ct);
+                response = await _http.GetAsync(BuildUrl(ident), ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -102,6 +111,32 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
 
             // No row for the requested service date — "no data", not a provider failure.
             return null;
+        }
+
+        /// <summary>
+        /// Builds the <c>/flights/{ident}</c> request URL with explicit <c>start</c>/<c>end</c>
+        /// bounds (issue #283), rather than relying on AeroAPI's undocumented default window — the
+        /// two behaved identically when this was written (the recorded fixture that motivated this
+        /// change spanned roughly the same −10/+2 days these defaults produce), but leaving the
+        /// bound implicit meant it could silently drift out of step with
+        /// <c>FlightRepository.GetActiveTrackedFlightsAsync</c>'s own window, which is derived from
+        /// the same <see cref="AeroApiOptions"/>.
+        ///
+        /// <para>
+        /// Computed from <see cref="_timeProvider"/> — i.e. from "now", not from the requested
+        /// <paramref name="ident"/>'s service date — because AeroAPI's <c>start</c>/<c>end</c> are a
+        /// hard limit on how far the query itself may reach from the current moment, independent of
+        /// which flight is being asked about.
+        /// </para>
+        /// </summary>
+        private string BuildUrl(string ident)
+        {
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            var start = now.AddDays(-_statusWindowPastDays).ToString(TimestampFormat, CultureInfo.InvariantCulture);
+            var end = now.AddDays(_statusWindowFutureDays).ToString(TimestampFormat, CultureInfo.InvariantCulture);
+
+            return $"flights/{Uri.EscapeDataString(ident)}" +
+                   $"?start={Uri.EscapeDataString(start)}&end={Uri.EscapeDataString(end)}";
         }
 
         /// <summary>
