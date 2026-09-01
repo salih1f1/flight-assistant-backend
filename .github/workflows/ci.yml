@@ -37,6 +37,15 @@ jobs:
       - name: Build
         run: dotnet build --configuration Release
 
+      # FlightAssistant.Infrastructure.Tests spins up real PostgreSQL via Testcontainers (#295),
+      # which needs a reachable Docker daemon. ubuntu-latest ships one, running, by default, so
+      # this should always no-op here — it exists so a daemon that is missing or misconfigured
+      # fails at this clearly-named step with Docker's own error, instead of surfacing as a wall of
+      # red tests (one per test in the Postgres collection, all citing the same root cause) deep
+      # inside the Infrastructure.Tests run, or as a confusing hang.
+      - name: Verify Docker is available (required for Testcontainers-backed tests)
+        run: docker info
+
       # One project at a time, each writing a .trx named after itself. Running the
       # whole solution with a fixed LogFileName makes every project overwrite the
       # previous one's results — the report then shows only the last project's

@@ -1,33 +1,28 @@
 using FlightAssistant.Domain.Flights.Entities;
+using FlightAssistant.Domain.ReferenceData.Entities;
+using FlightAssistant.Domain.Travelers.Entities;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
-using Microsoft.EntityFrameworkCore;
+using FlightAssistant.Infrastructure.Tests.TestSupport;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 
 namespace FlightAssistant.Infrastructure.Tests.Persistance.Repositories;
 
 /// <summary>
-/// Drives <see cref="FlightRepository.GetActiveTrackedFlightsAsync"/> against
-/// <c>UseInMemoryDatabase</c> to prove the LINQ filtering logic (which flights come back).
-///
-/// <para>
-/// <b>What this does and does not prove.</b> The InMemory provider evaluates the
-/// <c>Where</c> clause in-memory rather than translating it to SQL, so these tests prove the
-/// C# comparison logic is correct but cannot prove a <see cref="DateOnly"/> comparison actually
-/// translates to real PostgreSQL the same way — see issue #295. A <see cref="DateOnly"/>
-/// range comparison is about as simple as EF translation gets (no custom value converter
-/// quirks, no client-eval fallback), so the residual risk is low, but it is unproven by this
-/// suite.
-/// </para>
+/// Drives <see cref="FlightRepository.GetActiveTrackedFlightsAsync"/> against real PostgreSQL
+/// (see #295) to prove the <see cref="DateOnly"/> range filter actually translates to SQL the way
+/// the C# comparison logic implies. This used to run on <c>UseInMemoryDatabase</c>, which
+/// evaluates the <c>Where</c> clause client-side rather than translating it, so it proved the
+/// comparison logic but never proved the translation itself.
 /// </summary>
-public class FlightRepositoryTests
+[Collection(PostgresCollection.Name)]
+public class FlightRepositoryTests : PostgresTestBase
 {
-    private static FlightAssistantDbContext CreateContext() =>
-        new(new DbContextOptionsBuilder<FlightAssistantDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
-            .Options);
+    public FlightRepositoryTests(PostgresContainerFixture fixture) : base(fixture) { }
+
+    private FlightAssistantDbContext CreateContext() => CreateDbContext();
 
     private static FlightRepository Repository(
         FlightAssistantDbContext db, TimeProvider clock, int statusWindowFutureDays = 2) =>
@@ -37,13 +32,55 @@ public class FlightRepositoryTests
             StatusWindowFutureDays = statusWindowFutureDays
         }));
 
+    /// <summary>
+    /// Real PostgreSQL enforces the FK constraints <see cref="FlightConfiguration"/> and friends
+    /// declare — unlike the InMemory provider this suite used to run on — so a <see cref="Flight"/>
+    /// row needs real Airline/Airport/Country rows behind it, not just plausible-looking integers.
+    /// Idempotent per <paramref name="db"/> (checks for an existing row before inserting) so
+    /// repeated calls within one test, and the reset-per-test fixture, both stay cheap and safe.
+    /// </summary>
+    private static (int AirlineId, int DepartureAirportId, int ArrivalAirportId) EnsureReferenceData(
+        FlightAssistantDbContext db)
+    {
+        var existingAirline = db.Airlines.FirstOrDefault();
+        if (existingAirline is not null)
+        {
+            var airports = db.Airports.OrderBy(a => a.Id).Take(2).ToList();
+            return (existingAirline.Id, airports[0].Id, airports[1].Id);
+        }
+
+        db.Countries.Add(Country.Create("US", "United States"));
+        var airline = Airline.Create("TK", "THY", "Test Airline", "US");
+        var departure = Airport.Create("JFK", "KJFK", "JFK Airport", "New York", "US");
+        var arrival = Airport.Create("LAX", "KLAX", "LAX Airport", "Los Angeles", "US");
+        db.Airlines.Add(airline);
+        db.Airports.Add(departure);
+        db.Airports.Add(arrival);
+        db.SaveChanges();
+
+        return (airline.Id, departure.Id, arrival.Id);
+    }
+
+    /// <summary>Idempotent per <paramref name="db"/> for the same <paramref name="travelerId"/> —
+    /// <c>TravelerFlightConfiguration</c> FKs <c>traveler_flights.TravelerId</c> to a real
+    /// <c>travelers</c> row under real Postgres.</summary>
+    private static void EnsureTraveler(FlightAssistantDbContext db, Guid travelerId)
+    {
+        if (db.Travelers.Any(t => t.Id == travelerId)) return;
+        db.Travelers.Add(Traveler.Register(travelerId, $"{travelerId:N}@test.local"));
+        db.SaveChanges();
+    }
+
     private static Flight TrackedFlight(FlightAssistantDbContext db, Guid travelerId, DateOnly serviceDate, string flightNumber)
     {
+        var (airlineId, departureAirportId, arrivalAirportId) = EnsureReferenceData(db);
+        EnsureTraveler(db, travelerId);
+
         var flight = Flight.Create(
-            airlineId: 1,
+            airlineId: airlineId,
             flightNumber: flightNumber,
-            departureAirportId: 1,
-            arrivalAirportId: 2,
+            departureAirportId: departureAirportId,
+            arrivalAirportId: arrivalAirportId,
             serviceDate: serviceDate,
             scheduledDepartureUtc: serviceDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
             scheduledArrivalUtc: serviceDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc).AddHours(2));
@@ -156,12 +193,13 @@ public class FlightRepositoryTests
     {
         using var db = CreateContext();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 1, 8, 0, 0, TimeSpan.Zero));
+        var (airlineId, departureAirportId, arrivalAirportId) = EnsureReferenceData(db);
 
         var flight = Flight.Create(
-            airlineId: 1,
+            airlineId: airlineId,
             flightNumber: "TK1028",
-            departureAirportId: 1,
-            arrivalAirportId: 2,
+            departureAirportId: departureAirportId,
+            arrivalAirportId: arrivalAirportId,
             serviceDate: new DateOnly(2026, 9, 2),
             scheduledDepartureUtc: new DateTime(2026, 9, 2, 0, 0, 0, DateTimeKind.Utc),
             scheduledArrivalUtc: new DateTime(2026, 9, 2, 2, 0, 0, DateTimeKind.Utc));
