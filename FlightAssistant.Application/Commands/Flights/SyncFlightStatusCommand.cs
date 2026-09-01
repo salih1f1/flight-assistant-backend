@@ -4,6 +4,7 @@ using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Flights.Entities;
 using FluentValidation;
 using MediatR;
+using Microsoft.Extensions.Logging;
 
 namespace FlightAssistant.Application.Commands.Flights
 {
@@ -13,13 +14,22 @@ namespace FlightAssistant.Application.Commands.Flights
 
     public sealed class SyncFlightStatusCommandHandler : IRequestHandler<SyncFlightStatusCommand, bool>
     {
+        // The safe, always-seeded fallback code (see FlightStatusConfiguration.HasData) that
+        // every provider maps its own unrecognised statuses to. An unknown code reaching this far
+        // means a *provider* has emitted something outside that mapping — not a data problem — so
+        // it degrades to the same fallback rather than aborting the sync.
+        private const string UnknownStatusCode = "UNK";
+
         private readonly IFlightRepository _flights;
         private readonly IFlightStatusProvider _provider;
+        private readonly ILogger<SyncFlightStatusCommandHandler> _logger;
 
-        public SyncFlightStatusCommandHandler(IFlightRepository flights, IFlightStatusProvider provider)
+        public SyncFlightStatusCommandHandler(
+            IFlightRepository flights, IFlightStatusProvider provider, ILogger<SyncFlightStatusCommandHandler> logger)
         {
             _flights = flights;
             _provider = provider;
+            _logger = logger;
         }
 
         public async Task<bool> Handle(SyncFlightStatusCommand cmd, CancellationToken ct)
@@ -41,16 +51,35 @@ namespace FlightAssistant.Application.Commands.Flights
 
             // Look up the FlightStatus row id first, so the dedup hash uses the same id-based
             // formula as the stored hash (see FlightStatusEvent.ComputeDedupHash).
-            var statusId = await _flights.GetFlightStatusIdByCodeAsync(result.StatusCode, ct)
-                ?? throw new DomainException($"Unknown flight status code '{result.StatusCode}'.", 404);
+            //
+            // Every provider already maps its own unrecognised statuses to "UNK" (the seeded safe
+            // fallback — see FlightStatusConfiguration.HasData), so a code that still fails to
+            // resolve here means a provider has started emitting something outside that mapping.
+            // That is a provider change to investigate, not a reason to lose this flight's status
+            // update entirely (and discard the AeroAPI call already spent fetching it) — so this
+            // degrades to "UNK" and logs a warning naming the code, rather than aborting the sync.
+            var resolvedStatusCode = result.StatusCode;
+            var statusId = await _flights.GetFlightStatusIdByCodeAsync(resolvedStatusCode, ct);
+            if (statusId is null)
+            {
+                _logger.LogWarning(
+                    "Unrecognised flight status code {StatusCode} from provider {Provider} for flight {FlightId}; falling back to {Fallback}",
+                    result.StatusCode, _provider.ProviderName, flight.Id, UnknownStatusCode);
+
+                resolvedStatusCode = UnknownStatusCode;
+                statusId = await _flights.GetFlightStatusIdByCodeAsync(UnknownStatusCode, ct)
+                    ?? throw new DomainException(
+                        $"Flight status code '{UnknownStatusCode}' is not seeded; the flight_statuses reference table is misconfigured.",
+                        404);
+            }
 
             // Dedup check
-            var dedupHash = FlightStatusEvent.ComputeDedupHash(flight.Id, statusId, result.EffectiveAtUtc, _provider.ProviderName, result.ExternalId);
+            var dedupHash = FlightStatusEvent.ComputeDedupHash(flight.Id, statusId.Value, result.EffectiveAtUtc, _provider.ProviderName, result.ExternalId);
             if (await _flights.FlightStatusEventExistsAsync(dedupHash, ct)) return false;
 
             var evt = FlightStatusEvent.Create(
                 flight.Id,
-                statusId,
+                statusId.Value,
                 result.EffectiveAtUtc,
                 _provider.ProviderName,
                 result.ExternalId,
@@ -62,7 +91,7 @@ namespace FlightAssistant.Application.Commands.Flights
             // ApplyStatusUpdate raises FlightStatusChanged domain event, which the
             // DomainEventDispatchInterceptor will publish after SaveChanges succeeds.
             flight.ApplyStatusUpdate(
-                result.StatusCode,
+                resolvedStatusCode,
                 result.EstimatedDepartureUtc,
                 result.EstimatedArrivalUtc,
                 result.ActualDepartureUtc,

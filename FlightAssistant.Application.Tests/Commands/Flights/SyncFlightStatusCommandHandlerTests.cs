@@ -3,6 +3,8 @@ using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Flights.Entities;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using NSubstitute.ReturnsExtensions;
 
@@ -13,6 +15,28 @@ public class SyncFlightStatusCommandHandlerTests
     private readonly IFlightRepository _flights = Substitute.For<IFlightRepository>();
     private readonly IFlightStatusProvider _provider = Substitute.For<IFlightStatusProvider>();
     private readonly SyncFlightStatusCommandHandler _handler;
+
+    /// <summary>Records every log call made through it, so a test can assert a warning was
+    /// actually emitted rather than an unrecognised status silently falling back to UNK unnoticed
+    /// (mirrors the equivalent helper in AeroApiFlightStatusProviderTests).</summary>
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Entries.Add((logLevel, formatter(state, exception)));
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+            public void Dispose() { }
+        }
+    }
 
     private static readonly Flight TestFlight = Flight.Create(
         1, "BA123", 10, 20,
@@ -35,7 +59,8 @@ public class SyncFlightStatusCommandHandlerTests
 
     public SyncFlightStatusCommandHandlerTests()
     {
-        _handler = new SyncFlightStatusCommandHandler(_flights, _provider);
+        _handler = new SyncFlightStatusCommandHandler(
+            _flights, _provider, NullLogger<SyncFlightStatusCommandHandler>.Instance);
         _provider.ProviderName.Returns("TestProvider");
     }
 
@@ -96,14 +121,54 @@ public class SyncFlightStatusCommandHandlerTests
         Assert.Equal(404, ex.StatusCode);
     }
 
+    // ------------------------------------------------------------------
+    // Unrecognised status code — falls back to UNK rather than aborting (#281)
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// A code the repository can't resolve reaches this far only if a provider has started
+    /// emitting something outside its own "UNK" fallback mapping — see
+    /// AeroApiFlightStatusProvider.MapStatusCode. Aborting the whole sync would both lose this
+    /// flight's status update and discard the AeroAPI call already spent fetching it, so the
+    /// handler degrades to the seeded "UNK" row instead and logs a warning naming the code.
+    /// </summary>
     [Fact]
-    public async Task UnknownStatusCode_Throws()
+    public async Task UnrecognisedStatusCode_FallsBackToUnk_AndLogsWarning_RatherThanThrowing()
     {
         _flights.GetFlightByIdAsync(1, Arg.Any<CancellationToken>()).Returns(TestFlight);
         _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
-            .Returns(TestStatus with { StatusCode = "UNKNOWN" });
+            .Returns(TestStatus with { StatusCode = "WEIRD" });
+        _flights.GetFlightStatusIdByCodeAsync("WEIRD", Arg.Any<CancellationToken>()).ReturnsNull();
+        _flights.GetFlightStatusIdByCodeAsync("UNK", Arg.Any<CancellationToken>()).Returns(7);
         _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(false);
-        _flights.GetFlightStatusIdByCodeAsync("UNKNOWN", Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var logger = new CapturingLogger<SyncFlightStatusCommandHandler>();
+        var handler = new SyncFlightStatusCommandHandler(_flights, _provider, logger);
+
+        var result = await handler.Handle(new SyncFlightStatusCommand(null, 1), CancellationToken.None);
+
+        Assert.True(result);
+        await _flights.Received(1).AddFlightStatusEventAsync(
+            Arg.Is<FlightStatusEvent>(e => e.StatusId == 7), Arg.Any<CancellationToken>());
+        await _flights.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+
+        Assert.Contains(logger.Entries, e =>
+            e.Level == LogLevel.Warning && e.Message.Contains("WEIRD"));
+    }
+
+    /// <summary>
+    /// The one case that should still be loud: if "UNK" itself can't be resolved, the reference
+    /// table is misconfigured (a genuine deployment error), not a provider surprise, so this
+    /// throws rather than swallowing the sync.
+    /// </summary>
+    [Fact]
+    public async Task UnrecognisedStatusCode_Throws_WhenUnkItselfIsNotSeeded()
+    {
+        _flights.GetFlightByIdAsync(1, Arg.Any<CancellationToken>()).Returns(TestFlight);
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(TestStatus with { StatusCode = "WEIRD" });
+        _flights.GetFlightStatusIdByCodeAsync("WEIRD", Arg.Any<CancellationToken>()).ReturnsNull();
+        _flights.GetFlightStatusIdByCodeAsync("UNK", Arg.Any<CancellationToken>()).ReturnsNull();
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             _handler.Handle(new SyncFlightStatusCommand(null, 1), CancellationToken.None));
