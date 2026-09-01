@@ -18,9 +18,14 @@ namespace FlightAssistant.API.HostedServices
     /// cross-layer abstraction.
     ///
     /// <para>
-    /// The snapshot is read and replaced as a whole under a lock, never through individual mutable
-    /// fields. A reader that could observe fields mid-update would risk a torn report — e.g. a fresh
-    /// <see cref="FlightSyncOutcome.Success"/> sitting beside the previous run's counts.
+    /// Readers need no locking of their own: <see cref="FlightSyncSnapshot"/> is an immutable record,
+    /// and .NET guarantees that reading or replacing a reference-typed field is atomic, so
+    /// <see cref="Current"/> always returns one complete, self-consistent snapshot — never a mix of an
+    /// old one and a new one. The <c>lock</c> below is for writers: it serialises the read-modify-write
+    /// inside each <c>Mark*</c> method so a second writer, if one is ever added, cannot race the first
+    /// and silently lose its update. There is exactly one writer today (the background service's
+    /// sequential loop), so nothing currently races on it — the lock is insurance against a second
+    /// writer showing up later, not a requirement for today's single-writer correctness.
     /// </para>
     /// </summary>
     public sealed class FlightSyncHeartbeat

@@ -89,10 +89,11 @@ public class FlightSyncHeartbeatTests
         var heartbeat = new FlightSyncHeartbeat();
         heartbeat.MarkRunStarted();
 
+        const string message = "database connection refused";
         Exception ex;
         try
         {
-            throw new InvalidOperationException("database connection refused");
+            throw new InvalidOperationException(message);
         }
         catch (InvalidOperationException caught)
         {
@@ -104,33 +105,53 @@ public class FlightSyncHeartbeatTests
         var snapshot = heartbeat.Current;
 
         Assert.Equal(FlightSyncOutcome.Failed, snapshot.LastOutcome);
-        Assert.Equal("InvalidOperationException: database connection refused", snapshot.LastError);
-        Assert.DoesNotContain("at FlightAssistant", snapshot.LastError);
-        Assert.DoesNotContain(Environment.NewLine, snapshot.LastError);
+        // Exact-string equality (rather than asserting the absence of e.g. "at FlightAssistant" or
+        // Environment.NewLine) is the strong form of "never a stack trace" for a value that's rendered
+        // to an operator outside Production: it pins the whole value, so nothing beyond the type name
+        // and message — stack trace included — can ever sneak in.
+        Assert.Equal($"{typeof(InvalidOperationException).Name}: {message}", snapshot.LastError);
         Assert.Equal(nextDue, snapshot.NextRunDueUtc);
         Assert.NotNull(snapshot.LastRunCompletedUtc);
     }
 
     [Fact]
-    public async Task Current_NeverReturnsATornSnapshot_UnderConcurrentReadsAndWrites()
+    public async Task Current_NeverExposesFieldsMixedFromDifferentWriters_RegressionGuardForImmutableSnapshotDesign()
     {
+        // What this guards: FlightSyncSnapshot is an immutable record published via a single atomic
+        // reference write, so .NET already guarantees a reader can never observe a torn *instance* —
+        // that holds with or without the `lock`. The real risk this test catches is a future
+        // regression to individual mutable fields on the heartbeat (separate LastOutcome /
+        // FlightsProcessed / FlightsFailed fields updated one at a time): that shape would let a
+        // concurrent reader observe a snapshot stitched together from two different writers, e.g. a
+        // fresh Success outcome paired with the wrong writer's counts. Several writer threads publish
+        // distinguishable (processed, failed) pairs below so such a mixture is detectable rather than
+        // accidentally coherent.
+        //
+        // What this does NOT show: that the `lock` inside the Mark* methods is load-bearing today.
+        // With a single production writer (the background service's sequential loop) there is nothing
+        // yet for it to race against; it stays as insurance against a second writer being added later.
+        const int writerCount = 4;
+        const int iterationsPerWriter = 2000;
         var heartbeat = new FlightSyncHeartbeat();
         using var cts = new CancellationTokenSource();
-        var observedTornSnapshot = false;
+        var incoherentSnapshotObserved = false;
 
-        var writer = Task.Run(() =>
-        {
-            for (var i = 0; i < 5000; i++)
+        // Writer `w` always publishes the pair (w, -(w + 1)) together in one call, so the pairing
+        // itself — not just the individual values — identifies which writer's write produced it. A
+        // snapshot mixing fields from two different writes can never satisfy failed == -(processed+1).
+        var writers = Enumerable.Range(0, writerCount)
+            .Select(writerId => Task.Run(() =>
             {
-                heartbeat.MarkRunStarted();
-                if (i % 2 == 0)
-                    heartbeat.MarkRunSucceeded(i, i % 3, DateTime.UtcNow.AddMinutes(10));
-                else
-                    heartbeat.MarkRunFailed(new InvalidOperationException("boom"), DateTime.UtcNow.AddMinutes(10));
-            }
-
-            cts.Cancel();
-        });
+                for (var i = 0; i < iterationsPerWriter; i++)
+                {
+                    heartbeat.MarkRunStarted();
+                    heartbeat.MarkRunSucceeded(
+                        processed: writerId,
+                        failed: -(writerId + 1),
+                        nextRunDueUtc: DateTime.UtcNow.AddMinutes(10));
+                }
+            }))
+            .ToArray();
 
         var reader = Task.Run(() =>
         {
@@ -138,19 +159,27 @@ public class FlightSyncHeartbeatTests
             {
                 var snapshot = heartbeat.Current;
 
-                // A completed outcome (Success/Failed) must always carry its completion timestamp —
-                // never one field from a new write sitting beside another from the previous one.
-                var isTorn = snapshot.LastOutcome is FlightSyncOutcome.Success or FlightSyncOutcome.Failed
-                    && snapshot.LastRunCompletedUtc is null;
+                // A completed outcome must always carry its completion timestamp — never a fresh
+                // outcome sitting beside a still-null timestamp from before the run started.
+                var completedOutcomeHasTimestamp =
+                    snapshot.LastOutcome is not (FlightSyncOutcome.Success or FlightSyncOutcome.Failed)
+                    || snapshot.LastRunCompletedUtc is not null;
 
-                if (isTorn)
-                    observedTornSnapshot = true;
+                // A Success snapshot's counts must be the exact pair one writer published together.
+                var countsAreASingleWritersPair =
+                    snapshot.LastOutcome != FlightSyncOutcome.Success
+                    || snapshot.FlightsFailed == -(snapshot.FlightsProcessed + 1);
+
+                if (!completedOutcomeHasTimestamp || !countsAreASingleWritersPair)
+                    incoherentSnapshotObserved = true;
             }
         });
 
-        await Task.WhenAll(writer, reader);
+        await Task.WhenAll(writers);
+        cts.Cancel();
+        await reader;
 
-        Assert.False(observedTornSnapshot);
+        Assert.False(incoherentSnapshotObserved);
     }
 
     [Fact]
