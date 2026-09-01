@@ -4,6 +4,7 @@ using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
+using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
 using FlightAssistant.Infrastructure.Notifications;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
@@ -136,8 +137,18 @@ namespace FlightAssistant.Infrastructure
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
                 sp.GetRequiredService<ILogger<AeroApiFlightSearchProvider>>()));
 
-            services.AddScoped<IFlightSearchProvider>(sp =>
-                sp.GetRequiredService<AeroApiFlightSearchProvider>());
+            // IFlightSearchProvider resolves to the caching decorator, not AeroApiFlightSearchProvider
+            // directly (issue #282) — GET /flights/search is anonymous and only rate-limited per IP,
+            // so without a cache in front of it, a scripted client could drain the $5/month metered
+            // tier long before the throttle (a latency control, not a spend cap) even slowed it down.
+            // AeroApiFlightSearchProvider itself stays registered and resolvable — the decorator wraps
+            // it, it does not replace it.
+            services.AddScoped<IFlightSearchProvider>(sp => new AeroApiFlightSearchCachingDecorator(
+                sp.GetRequiredService<AeroApiFlightSearchProvider>(),
+                sp.GetRequiredService<ICacheService>(),
+                sp.GetRequiredService<IOptions<AeroApiOptions>>(),
+                sp.GetRequiredService<TimeProvider>(),
+                sp.GetRequiredService<ILogger<AeroApiFlightSearchCachingDecorator>>()));
 
             // Flight status (issue #280). ProviderName ("AeroAPI") feeds the stored
             // FlightStatusEvent dedup hash (see SyncFlightStatusCommand.cs) — the prior provider's

@@ -143,8 +143,40 @@ public class AeroApiOptionsTests
         Assert.Equal(30, value.TimeoutSeconds);
         Assert.Equal(2, value.MaxRetryAttempts);
         Assert.Equal(5m, value.MonthlyBudgetUsd);
+        Assert.Equal(TimeSpan.FromMinutes(5), value.SearchCacheTtlPastOrToday);
+        Assert.Equal(TimeSpan.FromHours(12), value.SearchCacheTtlFuture);
 
         // Derived, not configured: a 12s throttle wait plus a 30s network budget per attempt.
         Assert.Equal(TimeSpan.FromSeconds(42), value.AttemptTimeout);
+    }
+
+    [Theory]
+    [InlineData("00:00:00")]  // zero — would disable the search cache TTL entirely
+    [InlineData("-00:00:05")] // negative — nonsensical as a TTL
+    [InlineData("02:00:00")]  // past the 1-hour ceiling for "live-ish" past/today data
+    public void SearchCacheTtlPastOrTodayOutsideRange_FailsValidation(string ttl)
+    {
+        var options = BuildOptions(new Dictionary<string, string?>
+        {
+            ["AeroApi:ApiKey"] = "dummy",
+            ["AeroApi:SearchCacheTtlPastOrToday"] = ttl
+        });
+
+        Assert.Throws<OptionsValidationException>(() => options.Value);
+    }
+
+    [Theory]
+    [InlineData("00:00:00")]  // zero — would disable the search cache TTL entirely
+    [InlineData("00:00:30")]  // below the 5-minute floor
+    [InlineData("8.00:00:00")] // past the 7-day ceiling — stale enough to risk a real schedule change
+    public void SearchCacheTtlFutureOutsideRange_FailsValidation(string ttl)
+    {
+        var options = BuildOptions(new Dictionary<string, string?>
+        {
+            ["AeroApi:ApiKey"] = "dummy",
+            ["AeroApi:SearchCacheTtlFuture"] = ttl
+        });
+
+        Assert.Throws<OptionsValidationException>(() => options.Value);
     }
 }

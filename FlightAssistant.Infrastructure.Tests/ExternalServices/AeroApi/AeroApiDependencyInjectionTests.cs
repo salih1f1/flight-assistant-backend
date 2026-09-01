@@ -4,6 +4,7 @@ using FlightAssistant.Application.Queries.Admin.Usage;
 using FlightAssistant.Application.Queries.Flights;
 using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
+using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
 using FluentValidation;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -102,21 +103,20 @@ public class AeroApiDependencyInjectionTests
     }
 
     [Fact]
-    public void AddInfrastructure_ResolvesIFlightSearchProvider_AsAeroApiFlightSearchProvider()
+    public void AddInfrastructure_ResolvesIFlightSearchProvider_AsTheCachingDecorator()
     {
         using var provider = BuildContainer();
 
-        // The regression this test exists to catch: task 2 replaced the
-        // DateRoutingFlightSearchProvider registration, but every one of its own tests constructs
-        // AeroApiFlightSearchProvider directly with hand-supplied fakes (an HttpClient over a stub
-        // handler, a hand-built AeroApiAirportTimezoneLookup) — none of them go through DI, so a
-        // wrong lifetime, a missing dependency, or the registration being dropped entirely would
-        // be invisible until a real request hit it in production. Deleting the
-        // AeroApiFlightSearchProvider registration from DependencyInjection.cs turns this from a
-        // pass into an InvalidOperationException at GetRequiredService, which is the point.
+        // The regression this test exists to catch: issue #282 put a caching decorator in front of
+        // AeroApiFlightSearchProvider precisely so GET /flights/search (anonymous, only rate-limited
+        // per IP) stops going straight to the metered provider on every request. Every one of the
+        // decorator's own tests constructs it directly with hand-supplied fakes, so none of them go
+        // through DI — a wrong lifetime, a missing dependency, or the registration reverting to the
+        // bare provider (silently re-opening the budget hole this decorator exists to close) would
+        // be invisible until a real request hit it in production.
         var searchProvider = provider.GetRequiredService<IFlightSearchProvider>();
 
-        Assert.IsType<AeroApiFlightSearchProvider>(searchProvider);
+        Assert.IsType<AeroApiFlightSearchCachingDecorator>(searchProvider);
     }
 
     [Fact]

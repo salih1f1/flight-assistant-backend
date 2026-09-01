@@ -56,6 +56,24 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         public int MaxPastMonths { get; set; } = 3;
 
         /// <summary>
+        /// How long <c>AeroApiFlightSearchCachingDecorator</c> caches a search whose
+        /// <c>FlightSearchCriteria.Date</c> is today or in the past. Short relative to
+        /// <see cref="SearchCacheTtlFuture"/> because a service date that has already started (or is
+        /// starting) can still see actual/estimated updates, unlike a schedule further out.
+        /// </summary>
+        [Range(typeof(TimeSpan), "00:00:01", "01:00:00")]
+        public TimeSpan SearchCacheTtlPastOrToday { get; set; } = TimeSpan.FromMinutes(5);
+
+        /// <summary>
+        /// How long <c>AeroApiFlightSearchCachingDecorator</c> caches a search whose
+        /// <c>FlightSearchCriteria.Date</c> is in the future. Long, because a published future
+        /// schedule barely moves — this is the TTL doing the actual budget protection, since most
+        /// searches (and every scripted/repeated one worth worrying about) target future dates.
+        /// </summary>
+        [Range(typeof(TimeSpan), "00:05:00", "7.00:00:00")]
+        public TimeSpan SearchCacheTtlFuture { get; set; } = TimeSpan.FromHours(12);
+
+        /// <summary>
         /// Network budget for a single outbound attempt, <b>excluding</b> the time that attempt may
         /// spend queued on <see cref="AeroApiThrottleGate"/>. The throttle wait is added on top —
         /// see <see cref="AttemptTimeout"/>.

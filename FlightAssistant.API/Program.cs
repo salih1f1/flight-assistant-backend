@@ -199,8 +199,12 @@ builder.Services.AddRateLimiter(rl =>
 {
     rl.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
-    // Flight search — public, partition by client IP
-    var fsLimit = builder.Configuration.GetValue("RateLimiting:FlightSearch:PermitLimit", 20);
+    // Flight search — public, partition by client IP. Lowered from 20 to 8 (issue #282): now that
+    // AeroApiFlightSearchCachingDecorator absorbs repeated identical searches for free, this ceiling
+    // only bounds the number of *distinct* searches one IP can force upstream per window, so a lower
+    // number costs a legitimate user little while meaningfully cutting a scripted client's ability to
+    // burn through the $5/month metered AeroAPI tier by varying the search each time.
+    var fsLimit = builder.Configuration.GetValue("RateLimiting:FlightSearch:PermitLimit", 8);
     var fsWindow = builder.Configuration.GetValue("RateLimiting:FlightSearch:WindowSeconds", 60);
     rl.AddPolicy("flight-search", ctx => RateLimitPartition.GetFixedWindowLimiter(
         partitionKey: ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
