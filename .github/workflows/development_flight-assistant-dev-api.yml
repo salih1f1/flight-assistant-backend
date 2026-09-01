@@ -33,7 +33,9 @@ jobs:
         run: dotnet test --configuration Release --no-build --verbosity normal
 
       - name: dotnet publish
-        run: dotnet publish FlightAssistant.API -c Release -o ${{env.DOTNET_ROOT}}/myapp
+        run: >
+          dotnet publish FlightAssistant.API -c Release -o ${{env.DOTNET_ROOT}}/myapp
+          -p:SourceRevisionId=${{ github.sha }}
 
       - name: Restore dotnet tools
         run: dotnet tool restore
