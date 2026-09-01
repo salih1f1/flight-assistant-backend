@@ -9,15 +9,18 @@ namespace FlightAssistant.API.HostedServices
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly IConfiguration _config;
         private readonly ILogger<FlightStatusSyncBackgroundService> _log;
+        private readonly FlightSyncHeartbeat _heartbeat;
 
         public FlightStatusSyncBackgroundService(
             IServiceScopeFactory scopeFactory,
             IConfiguration config,
-            ILogger<FlightStatusSyncBackgroundService> log)
+            ILogger<FlightStatusSyncBackgroundService> log,
+            FlightSyncHeartbeat heartbeat)
         {
             _scopeFactory = scopeFactory;
             _config = config;
             _log = log;
+            _heartbeat = heartbeat;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -25,24 +28,32 @@ namespace FlightAssistant.API.HostedServices
             if (!_config.GetValue("FlightSync:Enabled", true))
             {
                 _log.LogInformation("FlightStatusSyncBackgroundService is disabled via config.");
+                // Heartbeat is left untouched: it must stay NeverRun so the admin health endpoint
+                // can render "disabled" rather than "broken".
                 return;
             }
 
             while (!stoppingToken.IsCancellationRequested)
             {
+                _heartbeat.MarkRunStarted();
+
                 TimeSpan delay;
                 try
                 {
-                    delay = await RunBatchAsync(stoppingToken);
+                    var result = await RunBatchAsync(stoppingToken);
+                    delay = result.Delay;
+                    _heartbeat.MarkRunSucceeded(result.Processed, result.Failed, DateTime.UtcNow + delay);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
+                    // Clean shutdown, not a failed run — heartbeat is left as-is.
                     break;
                 }
                 catch (Exception ex)
                 {
                     var retryIn = _config.GetValue("FlightSync:Interval", TimeSpan.FromMinutes(10));
                     _log.LogError(ex, "Flight status sync batch failed. Retrying in {Interval}.", retryIn);
+                    _heartbeat.MarkRunFailed(ex, DateTime.UtcNow + retryIn);
                     delay = retryIn;
                 }
 
@@ -50,7 +61,12 @@ namespace FlightAssistant.API.HostedServices
             }
         }
 
-        private async Task<TimeSpan> RunBatchAsync(CancellationToken ct)
+        /// <summary>Outcome of a single sync batch: the delay before the next run, how many flights
+        /// the batch worked through, and how many of those threw in the per-flight
+        /// catch-and-continue loop.</summary>
+        private record BatchResult(TimeSpan Delay, int Processed, int Failed);
+
+        private async Task<BatchResult> RunBatchAsync(CancellationToken ct)
         {
             using var scope = _scopeFactory.CreateScope();
             var flightRepo = scope.ServiceProvider.GetRequiredService<IFlightRepository>();
@@ -60,6 +76,7 @@ namespace FlightAssistant.API.HostedServices
 
             var now = DateTime.UtcNow;
             var hasNearDeparture = false;
+            var failed = 0;
 
             foreach (var flight in flights)
             {
@@ -71,6 +88,7 @@ namespace FlightAssistant.API.HostedServices
                 catch (Exception ex)
                 {
                     _log.LogError(ex, "Failed to sync flight {FlightId}", flight.Id);
+                    failed++;
                 }
 
                 if (IsActiveForFastPoll(flight.ScheduledDepartureUtc, flight.ScheduledArrivalUtc, flight.ActualArrivalUtc, now))
@@ -79,7 +97,8 @@ namespace FlightAssistant.API.HostedServices
 
             var normalInterval = _config.GetValue("FlightSync:Interval", TimeSpan.FromMinutes(10));
             var nearDeptInterval = _config.GetValue("FlightSync:NearDepartureInterval", TimeSpan.FromMinutes(2));
-            return hasNearDeparture ? nearDeptInterval : normalInterval;
+            var delay = hasNearDeparture ? nearDeptInterval : normalInterval;
+            return new BatchResult(delay, flights.Count, failed);
         }
 
         /// <summary>
