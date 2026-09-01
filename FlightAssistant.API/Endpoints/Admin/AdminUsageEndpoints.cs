@@ -54,6 +54,11 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "matching FlightAware's own refresh cadence.")
             .Produces<AeroApiUsageDto>(200)
             .ProducesValidationProblem()
+            // A plain ProblemDetails 400 as well as the ValidationProblemDetails one above:
+            // UsageRange.Resolve throws DomainException(400) as a backstop if a resolved range
+            // is ever inverted, which GlobalExceptionHandler renders without an errors
+            // dictionary. Same shape-at-one-status split AdminImportEndpoints declares.
+            .ProducesProblem(400)
             .ProducesProblem(500)
             .ProducesProblem(502)
             .ProducesProblem(503);
