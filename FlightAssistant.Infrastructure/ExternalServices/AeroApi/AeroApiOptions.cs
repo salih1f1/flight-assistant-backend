@@ -7,12 +7,13 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     /// Configuration for the FlightAware AeroAPI client, bound from the <c>AeroApi</c> section.
     /// Registered with <c>ValidateDataAnnotations().ValidateOnStart()</c> so a missing/invalid
     /// value fails fast at startup rather than surfacing as a confusing runtime error on the
-    /// first search. Implements <see cref="IFlightSearchHorizonOptions"/> so the Application-layer
-    /// query validator can read the real configured horizon without this (Infrastructure) project
-    /// being referenced from Application — see the DI registration in
+    /// first search. Implements <see cref="IFlightSearchHorizonOptions"/> and
+    /// <see cref="IAeroApiBudgetOptions"/> so the Application-layer query validator and usage query
+    /// can read the real configured horizon and budget without this (Infrastructure) project being
+    /// referenced from Application — see the DI registration in
     /// <c>FlightAssistant.Infrastructure.DependencyInjection</c>.
     /// </summary>
-    public sealed class AeroApiOptions : IFlightSearchHorizonOptions
+    public sealed class AeroApiOptions : IFlightSearchHorizonOptions, IAeroApiBudgetOptions
     {
         /// <summary>Sent as the <c>x-apikey</c> header on every request. Never logged.</summary>
         [Required]
@@ -38,6 +39,15 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         /// </summary>
         [Range(typeof(TimeSpan), "00:00:01", "00:05:00")]
         public TimeSpan MinRequestInterval { get; set; } = TimeSpan.FromSeconds(12);
+
+        /// <summary>
+        /// The monthly spend the admin panel draws its usage gauge against — the personal tier this
+        /// runs on is $5/month. Purely a local reference line: every actual cost figure comes from
+        /// AeroAPI's own <c>/account/usage</c> report, because FlightAware bills per page (not per
+        /// call) and bills failed calls too, so nothing here prices anything locally.
+        /// </summary>
+        [Range(0.01, 10_000)]
+        public decimal MonthlyBudgetUsd { get; set; } = 5m;
 
         [Range(1, 12)]
         public int MaxFutureMonths { get; set; } = 12;

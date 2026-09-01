@@ -32,8 +32,8 @@ links and seed versions have no admin surface at all.
 
 | Question | Decision |
 |---|---|
-| Test visibility | **GitHub Actions, not the panel.** *(Revised 2026-09-01 — see A7.)* CI runs on every PR and publishes a report. Originally the panel was to read it; that duplicated a better dashboard for no gain. Nothing executes from the panel either way. |
-| AeroAPI usage store | **Postgres table**, one row per outbound call. Durable, no Redis/App Insights dependency. |
+| Test visibility | ~~**Read-only CI results**, read by the panel.~~ **Reversed 2026-09-01 (#298): GitHub Actions, not the panel.** CI runs on every PR and publishes a report. Duplicating it in the panel would have cost a token, a proxy and a cache to end up with a worse dashboard. Nothing executes from the panel either way. |
+| AeroAPI usage store | ~~**Postgres table**, one row per outbound call.~~ **Reversed 2026-09-01 (#300): proxy AeroAPI's own `GET /account/usage`, cached 10 min.** FlightAware bills per *page*, not per call, and bills failed calls too — a locally counted, locally priced table got both wrong and could never be reconciled against the invoice. The provider's report is authoritative, and that endpoint is itself free. |
 | Full DB coverage | **Hybrid** — generic read-only browser over an explicit whitelist, plus typed pages where you edit. |
 | Audit trail | **`admin_audit_log`**, written in-transaction. |
 | PII | **Redacted by default**, revealable on demand, every reveal audited. |
@@ -60,39 +60,49 @@ links and seed versions have no admin surface at all.
 
 ## Backend track
 
-### A1 — AeroAPI usage metering
+### A1 — AeroAPI usage, proxied from the provider (revised 2026-09-01, issue #300)
 
-`AeroApiCall : BaseEntity` in `Domain/Configuration/Entities/` (alongside `SeedVersion`):
-`EndpointTemplate` (normalised — `/schedules/{range}`, `/flights/{ident}`,
-`/airports/{id}`), `Method`, `StatusCode` (nullable: transport failures have none),
-`DurationMs`, `Outcome` (`Success` | `Throttled` | `Failed`), `Caller` (`search` |
-`status` | `timezone-lookup`), `CalledUtc`. Table `aeroapi_calls`.
+**This section replaced a local meter** — an `aeroapi_calls` table, a recording
+`DelegatingHandler`, an `AeroApi:Pricing` dictionary, a rollup and a retention prune —
+built as PR #294 and closed unmerged. AeroAPI reports usage and cost itself, and the
+local model was wrong in two ways no test caught: it priced **calls** when FlightAware
+bills per **page** (`GET /airports`: 4 calls → 8 pages → $0.04, so every paginated search
+was under-reported by its page multiplier — and multi-page search is exactly what #280
+built), and it excluded **failed** calls, which are in fact billed (`/flights/search`: 1
+failed call, $0.05). Nothing derived locally could ever be reconciled against the
+invoice. None of `AeroApiCall`, `AeroApiUsageRecordingHandler`, `AeroApiEndpointTemplate`,
+`IAeroApiUsageRecorder`, `AeroApiUsageRepository`, `AeroApiUsageRetentionService` or
+`AeroApi:Pricing` exists — do not reintroduce them.
 
-Recorded by `AeroApiUsageRecordingHandler : DelegatingHandler` on the `"AeroApi"` named
-client, registered **innermost — after `AeroApiThrottlingHandler`**. Both halves of that
-placement are load-bearing:
+`GET /account/usage` (verified live) returns `total_calls`, `total_pages`, `total_cost`,
+`total_discount_cost`, `total_successful_calls`, `total_failed_calls` and a
+`resource_details` array of per-operation rows. `operation` arrives already normalised
+(`GET /schedules/{date_start}/{date_end}`), so there is no client-side path templating
+anywhere. **The endpoint itself is billed at $0.00**, so polling it costs nothing but a
+throttle slot.
 
-- A row exists *iff* a request actually left the process. Quota is consumed by the
-  transport, not by queueing, so a wait cancelled inside `AeroApiThrottleGate` must not
-  be counted — `WaitForTurnAsync` already releases abandoned reservations for the same
-  reason.
-- Every **retry attempt** gets its own row, because every attempt is its own metered
-  query. One row per logical request would under-report spend by up to
-  `MaxRetryAttempts`×.
+`AeroApiAccountUsageProvider` (Infrastructure) runs on the existing `"AeroApi"` named
+client — inheriting `x-apikey`, the resilience pipeline and `AeroApiThrottleGate` — and
+maps failures through the shared `AeroApiResponse.ReadOrThrowAsync`, so its status
+mapping cannot drift from search and status. It is reached through
+`IAeroApiAccountUsageProvider`, defined in Application.
 
-The handler lives on a singleton client, so it resolves `IServiceScopeFactory` per row
-rather than capturing a scoped `DbContext`. Writes are best-effort — catch and log,
-never fail the flight request. At ≤5 req/min a synchronous scoped write is fine; a
-bounded `Channel<T>` plus drain service is the escape hatch if volume grows.
+`GetAeroApiUsageQuery(StartUtc?, EndUtc?)` → `GET /admin/usage/aeroapi` on the existing
+`adminGroup`. Both bounds are optional and default to the current UTC month to date; the
+default end is floored onto the same 10-minute grid as the cache TTL, which is what makes
+the resolved range — reported, requested and used as the cache key — stable enough to
+cache at all. AeroAPI serves at most **one year** of history, and the validator rejects an
+earlier start itself: a 400 naming the real limit beats one relayed from upstream, and
+costs no metered call. `ICacheService`, 10 minutes, matching FlightAware's own refresh
+cadence — a shorter TTL buys no freshness and just spends throttle slots.
 
-Unit costs live in `AeroApi:Pricing:{endpoint}` with `AeroApi:MonthlyBudgetUsd`
-(default `5`) on `AeroApiOptions` — prices belong in config, FlightAware changes them.
-
-Read side: `GetAeroApiUsageQuery(from, to)` → calls this UTC month vs. budget, estimated
-spend, breakdown by endpoint and outcome, per-day series, 429/502 counts over 7 days.
-Endpoint `GET /admin/usage/aeroapi`. Also expose a read-only `NextSlotUtc` on
-`AeroApiThrottleGate` — *"next AeroAPI slot in 7s"* explains a slow search instantly.
-Prune rows older than 90 days on a daily timer.
+`AeroApi:MonthlyBudgetUsd` (default `5`) stays on `AeroApiOptions` for the gauge and
+reaches Application through `IAeroApiBudgetOptions` — the `IFlightSearchHorizonOptions`
+translation pattern, not a leak. `AeroApiThrottleGate` gains a read-only `NextSlotUtc`
+(read under its existing reservation lock; reservation/release semantics untouched)
+surfaced through `IAeroApiThrottleObserver` — *"next AeroAPI slot in 7s"* explains a slow
+search instantly. Only the upstream payload is cached: budget and next slot are attached
+fresh on every request.
 
 ### A2 — Admin health detail endpoint
 
@@ -212,8 +222,8 @@ access token. A panel that believes you are an admin while every request 403s is
 confusing first bug. `RequireAdmin` is a UX gate only; `AdminOnly` is the real one.
 
 **B1 — Health & usage dashboard.** Replaces the six count tiles in `Dashboard.tsx`,
-which fetch every list endpoint in full just to call `.length`. Budget gauge, calls this
-month, per-endpoint breakdown, per-day series, 429/502 counts, next throttle slot,
+which fetch every list endpoint in full just to call `.length`. Budget gauge, cost and
+pages this month, per-operation breakdown, failed-call count, next throttle slot,
 per-check health, pending migrations, sync heartbeat.
 
 **B2 — Data browser.** Table picker with row counts → paged, sortable generic grid on
@@ -235,11 +245,14 @@ and duplicating it in the panel would cost a token, a proxy and a cache to end u
 
 Per backend PR: `dotnet build --configuration Release && dotnet test`, plus
 
-- **A1** — unit-test the handler against a stub transport: one row per attempt, no row
-  for a cancelled throttle wait, correct outcome mapping for 429/502. Extend
-  `AeroApiClientPipelineTests`, which already drives the real composed client on a
-  `FakeTimeProvider`, to assert a retried request produces N rows — exactly the miscount
-  this placement exists to prevent.
+- **A1** — provider against a stub transport: the recorded `/account/usage` payload
+  deserializes (`resource_details` included), and 401/403 → 500, 429 → 503, 400 → 400,
+  unparseable → 502, asserting the shared `AeroApiResponse` mapping is wired up rather
+  than reimplementing it. Handler: defaults to the current UTC month, a cache hit does
+  not call the provider, a miss populates it. Validator: a start older than a year, and a
+  start after its end, are both rejected. Integration in the style of
+  `AdminImportEndpointTests`: 401 anonymous, 403 without the role, 200 with it, provider
+  always substituted — **no live AeroAPI calls from tests.**
 - **A2** — integration test in the style of `HealthEndpointTests`; assert `/health/live`
   and `/health/ready` are unchanged, and `/admin/health` is 401 anonymous, 403 without
   the role, 200 with it.

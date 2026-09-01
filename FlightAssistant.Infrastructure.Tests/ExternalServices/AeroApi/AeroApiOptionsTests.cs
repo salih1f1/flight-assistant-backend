@@ -98,6 +98,35 @@ public class AeroApiOptionsTests
         Assert.True(options.HttpClientTimeout > options.TotalRequestTimeout);
     }
 
+    [Theory]
+    [InlineData("0")]      // a zero budget makes the panel's gauge meaningless (divide by zero)
+    [InlineData("-1")]     // negative — nonsensical as a spend ceiling
+    [InlineData("20000")]  // far past any plausible tier; almost certainly a typo'd cents value
+    public void MonthlyBudgetUsdOutsideRange_FailsValidation(string budget)
+    {
+        // Decimal properties take the double-based [Range] overload; this proves it actually binds
+        // and validates rather than silently accepting anything.
+        var options = BuildOptions(new Dictionary<string, string?>
+        {
+            ["AeroApi:ApiKey"] = "dummy",
+            ["AeroApi:MonthlyBudgetUsd"] = budget
+        });
+
+        Assert.Throws<OptionsValidationException>(() => options.Value);
+    }
+
+    [Fact]
+    public void MonthlyBudgetUsd_BindsAConfiguredValue()
+    {
+        var options = BuildOptions(new Dictionary<string, string?>
+        {
+            ["AeroApi:ApiKey"] = "dummy",
+            ["AeroApi:MonthlyBudgetUsd"] = "12.50"
+        });
+
+        Assert.Equal(12.50m, options.Value.MonthlyBudgetUsd);
+    }
+
     [Fact]
     public void ValidApiKey_BindsWithDocumentedDefaults()
     {
@@ -113,6 +142,7 @@ public class AeroApiOptionsTests
         Assert.Equal(3, value.MaxPastMonths);
         Assert.Equal(30, value.TimeoutSeconds);
         Assert.Equal(2, value.MaxRetryAttempts);
+        Assert.Equal(5m, value.MonthlyBudgetUsd);
 
         // Derived, not configured: a 12s throttle wait plus a 30s network budget per attempt.
         Assert.Equal(TimeSpan.FromSeconds(42), value.AttemptTimeout);
