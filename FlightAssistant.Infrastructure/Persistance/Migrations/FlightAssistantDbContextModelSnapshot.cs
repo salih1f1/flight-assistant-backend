@@ -140,6 +140,57 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .IsUnique();
 
                     b.ToTable("flight_statuses", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            Code = "SCH",
+                            Description = "Flight is scheduled and has not yet departed.",
+                            Name = "Scheduled"
+                        },
+                        new
+                        {
+                            Id = 2,
+                            Code = "DEP",
+                            Description = "Flight has departed and is en route to its destination.",
+                            Name = "Departed"
+                        },
+                        new
+                        {
+                            Id = 3,
+                            Code = "ARR",
+                            Description = "Flight has arrived at the destination gate.",
+                            Name = "Arrived"
+                        },
+                        new
+                        {
+                            Id = 4,
+                            Code = "DLY",
+                            Description = "Flight is delayed from its scheduled departure or arrival time.",
+                            Name = "Delayed"
+                        },
+                        new
+                        {
+                            Id = 5,
+                            Code = "CAN",
+                            Description = "Flight has been cancelled.",
+                            Name = "Cancelled"
+                        },
+                        new
+                        {
+                            Id = 6,
+                            Code = "DIV",
+                            Description = "Flight has been diverted to an airport other than its scheduled destination.",
+                            Name = "Diverted"
+                        },
+                        new
+                        {
+                            Id = 7,
+                            Code = "UNK",
+                            Description = "Status could not be determined, or the provider reported a status this system does not recognise.",
+                            Name = "Unknown"
+                        });
                 });
 
             modelBuilder.Entity("FlightAssistant.Domain.Flights.Entities.FlightStatusEvent", b =>
