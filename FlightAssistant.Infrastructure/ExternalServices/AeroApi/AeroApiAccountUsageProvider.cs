@@ -39,6 +39,16 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         // so the full instant is always sent.
         private const string TimestampFormat = "yyyy-MM-ddTHH:mm:ssZ";
 
+        // Every top-level total this provider reads — ReadInt/ReadDecimal below return 0/0m for any
+        // of these that is missing or not a JSON number, which is a correct default for the field
+        // AeroAPI stops sending but a dangerously quiet one for a field it sends malformed: a
+        // metered account would report $0.00 spend with nothing in the log to say why.
+        private static readonly string[] TotalFields =
+        [
+            "total_calls", "total_pages", "total_cost", "total_discount_cost",
+            "total_successful_calls", "total_failed_calls"
+        ];
+
         private readonly HttpClient _http;
         private readonly ILogger<AeroApiAccountUsageProvider> _logger;
         private readonly string _apiKey;
@@ -81,15 +91,21 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
             var root = doc.RootElement;
 
             // A usage report is a dashboard number, not a decision input, so an individual field
-            // AeroAPI stops sending reads as zero rather than failing the whole request. A body with
-            // no totals at all is a different matter — that is a response shape change, and silently
-            // reporting $0.00 spend on a metered account is exactly the kind of quiet wrong answer
-            // this feature exists to remove, so it is logged.
-            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("total_calls", out _))
+            // AeroAPI stops sending reads as zero rather than failing the whole request. A total
+            // that is missing, or present but not a JSON number (e.g. "total_cost": "0.66"), is a
+            // different matter — that is a response shape change, and silently reporting $0.00 spend
+            // on a metered account is exactly the kind of quiet wrong answer this feature exists to
+            // remove, so every such field is named in the log.
+            var unreadableTotals = root.ValueKind == JsonValueKind.Object
+                ? TotalFields.Where(name => !IsReadableNumber(root, name)).ToList()
+                : TotalFields.ToList();
+
+            if (unreadableTotals.Count > 0)
             {
                 _logger.LogWarning(
-                    "AeroAPI usage response for {Criteria} carried no total_calls — reporting zeros",
-                    criteria);
+                    "AeroAPI usage response for {Criteria} had missing or unreadable total field(s) " +
+                    "{Fields} — reporting zero for those",
+                    criteria, string.Join(", ", unreadableTotals));
             }
 
             return new AeroApiAccountUsage(
@@ -134,6 +150,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
 
             return rows;
         }
+
+        private static bool IsReadableNumber(JsonElement root, string name) =>
+            root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number;
 
         private static int ReadInt(JsonElement element, string name) =>
             element.ValueKind == JsonValueKind.Object

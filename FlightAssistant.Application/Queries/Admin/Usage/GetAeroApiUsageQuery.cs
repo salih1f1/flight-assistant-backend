@@ -1,6 +1,7 @@
 using System.Globalization;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Domain.Common.Exceptions;
 using FluentValidation;
 using MediatR;
 
@@ -38,11 +39,102 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
 
     /// <summary>
     /// Reads AeroAPI's own account usage report. Both bounds are optional and default to the
-    /// current UTC month to date — see <see cref="GetAeroApiUsageQueryHandler.ResolveRange"/>.
+    /// current UTC month to date — see <see cref="UsageRange.Resolve"/>.
     /// </summary>
     public sealed record GetAeroApiUsageQuery(
         DateTimeOffset? StartUtc = null,
         DateTimeOffset? EndUtc = null) : IRequest<AeroApiUsageResult>;
+
+    /// <summary>
+    /// The one copy of "what does an omitted bound default to", owned by neither the validator nor
+    /// the handler — a validator runs before a handler and must not depend on one, which is exactly
+    /// what having the validator call a handler static amounted to. The validator only needs
+    /// <see cref="DefaultStartUtc"/> to phrase a 400; the handler needs the full <see cref="Resolve"/>,
+    /// which also floors the end onto the cache grid and is the backstop that guarantees the range
+    /// it ships upstream is never inverted, regardless of what the validator's own — separately
+    /// sampled — clock allowed through.
+    /// </summary>
+    internal static class UsageRange
+    {
+        /// <summary>An omitted start means the first instant of the current UTC month — this is a
+        /// monthly budget gauge.</summary>
+        public static DateTimeOffset DefaultStartUtc(DateTimeOffset now)
+        {
+            var nowUtc = now.ToUniversalTime();
+            return new DateTimeOffset(nowUtc.Year, nowUtc.Month, 1, 0, 0, 0, TimeSpan.Zero);
+        }
+
+        /// <summary>
+        /// Resolves the range actually reported on, requested upstream, and used as the cache key —
+        /// deliberately one triple, so the response can never claim a window the numbers did not
+        /// come from.
+        ///
+        /// <para>
+        /// An omitted start defaults per <see cref="DefaultStartUtc"/>. An omitted end means
+        /// <i>now, floored onto <paramref name="grid"/></i> — the flooring is what makes the cache
+        /// work at all (an unrounded "now" would produce a distinct key on every request, so the
+        /// handler would spend a metered call and a throttle slot on every dashboard refresh) and it
+        /// keeps the key changing exactly when upstream refreshes. Where the floor would land on or
+        /// before the resolved start — the first minutes of a month, or a start given inside the
+        /// current bucket — flooring would invert the window, so raw "now" is used there instead;
+        /// the window may then be zero-width (never inverted, but may be empty) and the only cost is
+        /// no caching for those few minutes.
+        /// </para>
+        ///
+        /// <para>
+        /// An <b>explicit</b> end gets the same treatment once it reaches or passes the floored
+        /// "now" boundary — whether because it names an instant still in the future (never sent
+        /// upstream unverified — the exact behaviour the default path was shaped to avoid) or
+        /// because it falls inside the bucket "now" is already in (the natural shape of a
+        /// range-picker UI asking for "up to now", which must land on the same key as every other
+        /// request in that bucket or the cache would never hit). An explicit end from an earlier
+        /// bucket is used exactly as given.
+        /// </para>
+        ///
+        /// <para>
+        /// Both bounds are truncated to whole seconds: the cache key is formatted to second
+        /// precision, so a resolved range that kept sub-second ticks — as raw "now" does — could
+        /// share a cache key with a request whose reported end differs from it by a fraction of a
+        /// second.
+        /// </para>
+        /// </summary>
+        public static (DateTimeOffset StartUtc, DateTimeOffset EndUtc) Resolve(
+            GetAeroApiUsageQuery request, DateTimeOffset now, TimeSpan grid)
+        {
+            var nowUtc = TruncateToSeconds(now.ToUniversalTime());
+
+            var startUtc = request.StartUtc.HasValue
+                ? TruncateToSeconds(request.StartUtc.Value.ToUniversalTime())
+                : DefaultStartUtc(nowUtc);
+
+            var flooredNow = new DateTimeOffset(
+                nowUtc.Ticks - nowUtc.Ticks % grid.Ticks, TimeSpan.Zero);
+            var effectiveNow = flooredNow > startUtc ? flooredNow : nowUtc;
+
+            DateTimeOffset endUtc;
+            if (request.EndUtc is { } requestedEnd)
+            {
+                var candidateEnd = TruncateToSeconds(requestedEnd.ToUniversalTime());
+                endUtc = candidateEnd >= flooredNow ? effectiveNow : candidateEnd;
+            }
+            else
+            {
+                endUtc = effectiveNow;
+            }
+
+            // The backstop: enforced here, not just at the API edge, because this is the one place
+            // that cannot be bypassed by a caller — the validator included — that sampled the clock
+            // at a different instant than this call did.
+            if (endUtc < startUtc)
+                throw new DomainException(
+                    "The resolved usage range was inverted. Please retry.", 400);
+
+            return (startUtc, endUtc);
+        }
+
+        private static DateTimeOffset TruncateToSeconds(DateTimeOffset value) =>
+            new(value.Ticks - value.Ticks % TimeSpan.TicksPerSecond, TimeSpan.Zero);
+    }
 
     public sealed class GetAeroApiUsageQueryValidator : AbstractValidator<GetAeroApiUsageQuery>
     {
@@ -70,14 +162,26 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
                 .When(x => x.StartUtc.HasValue)
                 .WithMessage("The start of the range cannot be in the future.");
 
-            // Compared against the *resolved* start, not just an explicitly supplied one: an
+            // Mirrors the start rule. Without it, an explicit future end (the natural shape of a
+            // range-picker UI's "to" field before the user finishes picking) would either be
+            // forwarded upstream unverified or silently clamped by UsageRange.Resolve with no 400 to
+            // explain why the reported end does not match what was asked for.
+            RuleFor(x => x.EndUtc)
+                .Must(end => end!.Value.ToUniversalTime() <= timeProvider.GetUtcNow())
+                .When(x => x.EndUtc.HasValue)
+                .WithMessage("The end of the range cannot be in the future.");
+
+            // Compared against the *defaulted* start, not just an explicitly supplied one: an
             // end-only request (say ?end=2026-08-01 in September) would otherwise sail past this
-            // rule and invert the defaulted month range.
+            // rule and invert the defaulted month range. This only needs the default-start rule, not
+            // the handler's full resolution, so it depends on UsageRange — never on the handler —
+            // and UsageRange.Resolve itself is the backstop if this sampled a different instant of
+            // "now" than the handler ultimately resolves against.
             RuleFor(x => x.EndUtc)
                 .Must((query, end) =>
                 {
-                    var (startUtc, _) = GetAeroApiUsageQueryHandler.ResolveRange(
-                        query, timeProvider.GetUtcNow());
+                    var startUtc = query.StartUtc?.ToUniversalTime()
+                        ?? UsageRange.DefaultStartUtc(timeProvider.GetUtcNow());
                     return end!.Value.ToUniversalTime() > startUtc;
                 })
                 .When(x => x.EndUtc.HasValue)
@@ -135,7 +239,7 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
 
         public async Task<AeroApiUsageResult> Handle(GetAeroApiUsageQuery request, CancellationToken ct)
         {
-            var (startUtc, endUtc) = ResolveRange(request, _timeProvider.GetUtcNow());
+            var (startUtc, endUtc) = UsageRange.Resolve(request, _timeProvider.GetUtcNow(), CacheDuration);
             var key = CacheKey(startUtc, endUtc);
 
             // Only the upstream payload is cached — the budget and the throttle's next slot are
@@ -162,40 +266,6 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
                         o.Operation, o.Calls, o.Pages, o.CostUsd, o.SuccessfulCalls, o.FailedCalls))
                     .ToList(),
                 _throttle.NextSlotUtc);
-        }
-
-        /// <summary>
-        /// Resolves the range actually reported on, requested upstream, and used as the cache key —
-        /// deliberately one triple, so the response can never claim a window the numbers did not
-        /// come from.
-        ///
-        /// <para>
-        /// An omitted start means the first instant of the current UTC month: this is a monthly
-        /// budget gauge. An omitted end means <i>now, floored onto the same 10-minute grid as
-        /// <see cref="CacheDuration"/></i>. The flooring is what makes the cache work at all — an
-        /// unrounded "now" would produce a distinct key on every request and the handler would call
-        /// a metered API each time — and it keeps the key changing exactly when upstream refreshes.
-        /// It also never sends a future timestamp upstream. Where the floor would land on or before
-        /// the resolved start — the first minutes of a month, or a start given inside the current
-        /// bucket — it would invert the window, so the raw "now" is used there instead; the only
-        /// cost is no caching for those few minutes.
-        /// </para>
-        /// </summary>
-        public static (DateTimeOffset StartUtc, DateTimeOffset EndUtc) ResolveRange(
-            GetAeroApiUsageQuery request, DateTimeOffset now)
-        {
-            var nowUtc = now.ToUniversalTime();
-
-            var startUtc = request.StartUtc?.ToUniversalTime()
-                ?? new DateTimeOffset(nowUtc.Year, nowUtc.Month, 1, 0, 0, 0, TimeSpan.Zero);
-
-            if (request.EndUtc is { } requestedEnd)
-                return (startUtc, requestedEnd.ToUniversalTime());
-
-            var flooredNow = new DateTimeOffset(
-                nowUtc.Ticks - nowUtc.Ticks % CacheDuration.Ticks, TimeSpan.Zero);
-
-            return (startUtc, flooredNow > startUtc ? flooredNow : nowUtc);
         }
 
         private static string CacheKey(DateTimeOffset startUtc, DateTimeOffset endUtc) =>

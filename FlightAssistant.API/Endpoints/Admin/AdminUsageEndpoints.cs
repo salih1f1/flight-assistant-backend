@@ -54,6 +54,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "matching FlightAware's own refresh cadence.")
             .Produces<AeroApiUsageDto>(200)
             .ProducesValidationProblem()
+            .ProducesProblem(500)
             .ProducesProblem(502)
             .ProducesProblem(503);
         }

@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -56,13 +57,45 @@ public class AeroApiAccountUsageProviderTests
         }
     }
 
-    private static AeroApiAccountUsageProvider Provider(StubHttpMessageHandler handler)
+    /// <summary>Throws before any response is produced — the transport-failure path (unreachable
+    /// host, DNS failure, connection reset), the only branch that does not go through
+    /// <c>AeroApiResponse.ReadOrThrowAsync</c>.</summary>
+    private sealed class ThrowingHttpMessageHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            throw new HttpRequestException("connection reset by peer");
+    }
+
+    /// <summary>Records every log call made through it, so a test can assert a warning was actually
+    /// emitted rather than an unreadable total silently reporting as zero with no trace.</summary>
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Entries.Add((logLevel, formatter(state, exception)));
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+            public void Dispose() { }
+        }
+    }
+
+    private static AeroApiAccountUsageProvider Provider(
+        HttpMessageHandler handler, ILogger<AeroApiAccountUsageProvider>? logger = null)
     {
         var http = new HttpClient(handler) { BaseAddress = new Uri("http://stub/aeroapi/") };
         return new AeroApiAccountUsageProvider(
             http,
             Options.Create(new AeroApiOptions { ApiKey = "dummy" }),
-            NullLogger<AeroApiAccountUsageProvider>.Instance);
+            logger ?? NullLogger<AeroApiAccountUsageProvider>.Instance);
     }
 
     [Fact]
@@ -180,6 +213,26 @@ public class AeroApiAccountUsageProviderTests
         Assert.Equal(502, ex.StatusCode);
     }
 
+    /// <summary>
+    /// The transport-failure catch (unreachable host, DNS failure, connection reset) is the one
+    /// branch that does not go through <c>AeroApiResponse.ReadOrThrowAsync</c> — it never gets a
+    /// response to hand it. Not equivalent to <c>AeroApiResponse.ReadOrThrowAsync</c>'s own tests:
+    /// this is the only path in this provider that maps its own <see cref="Exception"/> to 502.
+    /// <c>TaskCanceledException</c> from an <c>HttpClient</c> timeout is deliberately not covered
+    /// here — it derives from <c>OperationCanceledException</c>, is excluded by this catch's own
+    /// filter, and escapes as an unhandled 500. That matches <c>AeroApiFlightStatusProvider</c>'s
+    /// identical catch, so it is a house pattern here, not a regression.
+    /// </summary>
+    [Fact]
+    public async Task GetUsageAsync_Maps502_WhenTheHttpRequestThrowsBeforeAnyResponse()
+    {
+        var provider = Provider(new ThrowingHttpMessageHandler());
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => provider.GetUsageAsync(Start, End));
+
+        Assert.Equal(502, ex.StatusCode);
+    }
+
     [Fact]
     public async Task GetUsageAsync_NeverLeaksTheApiKey_IntoTheDiagnosticDetail()
     {
@@ -195,5 +248,51 @@ public class AeroApiAccountUsageProviderTests
 
         Assert.DoesNotContain("super-secret-key", ex.DiagnosticDetail);
         Assert.DoesNotContain("super-secret-key", ex.Message);
+    }
+
+    // ── The quiet-wrong-answer guard ─────────────────────────────────────────
+
+    [Fact]
+    public async Task GetUsageAsync_LogsAWarning_WhenTotalCallsIsEntirelyMissing()
+    {
+        var logger = new CapturingLogger<AeroApiAccountUsageProvider>();
+        var provider = Provider(
+            new StubHttpMessageHandler("""{"total_pages":0,"total_cost":0.0}"""), logger);
+
+        await provider.GetUsageAsync(Start, End);
+
+        Assert.Contains(logger.Entries, e =>
+            e.Level == LogLevel.Warning && e.Message.Contains("total_calls"));
+    }
+
+    /// <summary>
+    /// The case the guard exists to catch: a total that is present but not a number reads as zero
+    /// exactly as silently as a missing one, unless it is named in the log too. Without this, a
+    /// response shaped like this one would report $0.00 spend on a metered account with no warning
+    /// at all — the field the guard used to check, total_calls, is a valid number here.
+    /// </summary>
+    [Fact]
+    public async Task GetUsageAsync_LogsAWarning_WhenTotalCostIsPresentButNotANumber()
+    {
+        var logger = new CapturingLogger<AeroApiAccountUsageProvider>();
+        var provider = Provider(
+            new StubHttpMessageHandler("""{"total_calls":42,"total_cost":"0.66"}"""), logger);
+
+        var usage = await provider.GetUsageAsync(Start, End);
+
+        Assert.Equal(0m, usage.TotalCostUsd); // reads as zero — the log is the only trace
+        Assert.Contains(logger.Entries, e =>
+            e.Level == LogLevel.Warning && e.Message.Contains("total_cost"));
+    }
+
+    [Fact]
+    public async Task GetUsageAsync_DoesNotWarn_WhenEveryTotalIsAReadableNumber()
+    {
+        var logger = new CapturingLogger<AeroApiAccountUsageProvider>();
+        var provider = Provider(new StubHttpMessageHandler(ReadFixture()), logger);
+
+        await provider.GetUsageAsync(Start, End);
+
+        Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Warning);
     }
 }

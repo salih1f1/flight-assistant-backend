@@ -1,8 +1,10 @@
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Queries.Admin.Usage;
+using FlightAssistant.Domain.Common.Exceptions;
 using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 
 namespace FlightAssistant.Application.Tests.Queries.Admin.Usage;
 
@@ -128,6 +130,97 @@ public class GetAeroApiUsageQueryTests
             result.RangeStartUtc, result.RangeEndUtc, Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task Handle_ClampsAFarFutureExplicitEnd_ToTheSameFlooredNowAsTheDefaultPath()
+    {
+        // ?end=2099-01-01 must never be forwarded to AeroAPI unverified — the exact behaviour the
+        // default path's flooring exists to avoid.
+        var result = await _handler.Handle(
+            new GetAeroApiUsageQuery(EndUtc: new DateTimeOffset(2099, 1, 1, 0, 0, 0, TimeSpan.Zero)),
+            CancellationToken.None);
+
+        var expectedEnd = new DateTimeOffset(2026, 9, 17, 10, 30, 0, TimeSpan.Zero);
+        Assert.Equal(expectedEnd, result.RangeEndUtc);
+        await _provider.Received(1).GetUsageAsync(MonthStart, expectedEnd, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Handle_FloorsAnExplicitEndInsideTheCurrentBucket_SoItSharesTheDefaultsCacheKey()
+    {
+        // ?end=<now> is the natural shape of a range-picker UI: it must land on the same key as the
+        // defaulted end or every such request would spend a fresh metered call and throttle slot.
+        var insideCurrentBucket = new DateTimeOffset(2026, 9, 17, 10, 33, 0, TimeSpan.Zero);
+
+        var withDefault = await _handler.Handle(new GetAeroApiUsageQuery(), CancellationToken.None);
+        var withExplicitEnd = await _handler.Handle(
+            new GetAeroApiUsageQuery(EndUtc: insideCurrentBucket), CancellationToken.None);
+
+        Assert.Equal(withDefault.RangeEndUtc, withExplicitEnd.RangeEndUtc);
+        await _provider.Received(1).GetUsageAsync(
+            Arg.Any<DateTimeOffset>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+        Assert.Single(_cache.Writes);
+    }
+
+    [Fact]
+    public async Task Handle_KeepsAnExplicitEndFromAnEarlierBucket_Verbatim()
+    {
+        var earlier = new DateTimeOffset(2026, 9, 17, 9, 0, 0, TimeSpan.Zero);
+
+        var result = await _handler.Handle(new GetAeroApiUsageQuery(EndUtc: earlier), CancellationToken.None);
+
+        Assert.Equal(earlier, result.RangeEndUtc);
+    }
+
+    [Fact]
+    public async Task Handle_TruncatesTheRawNowFallback_ToWholeSeconds()
+    {
+        // The degenerate-window ("raw now") path is the one that can carry sub-second ticks; the
+        // cache key is formatted to second precision, so anything finer would let two requests in
+        // the same second share a key while reporting different RangeEndUtc values.
+        var justAfterMidnightWithMillis = new DateTimeOffset(2026, 9, 1, 0, 4, 0, 750, TimeSpan.Zero);
+        var handler = new GetAeroApiUsageQueryHandler(
+            _provider, _cache, new FakeBudget(), _throttle,
+            new FakeTimeProvider(justAfterMidnightWithMillis));
+
+        var result = await handler.Handle(new GetAeroApiUsageQuery(), CancellationToken.None);
+
+        Assert.Equal(new DateTimeOffset(2026, 9, 1, 0, 4, 0, TimeSpan.Zero), result.RangeEndUtc);
+    }
+
+    [Fact]
+    public async Task Handle_TruncatesTheRawNowFallback_SoTwoRequestsInTheSameSecondShareACacheKey()
+    {
+        var firstHandler = new GetAeroApiUsageQueryHandler(
+            _provider, _cache, new FakeBudget(), _throttle,
+            new FakeTimeProvider(new DateTimeOffset(2026, 9, 1, 0, 4, 0, 100, TimeSpan.Zero)));
+        var first = await firstHandler.Handle(new GetAeroApiUsageQuery(), CancellationToken.None);
+
+        var secondHandler = new GetAeroApiUsageQueryHandler(
+            _provider, _cache, new FakeBudget(), _throttle,
+            new FakeTimeProvider(new DateTimeOffset(2026, 9, 1, 0, 4, 0, 900, TimeSpan.Zero)));
+        var second = await secondHandler.Handle(new GetAeroApiUsageQuery(), CancellationToken.None);
+
+        Assert.Equal(first.RangeEndUtc, second.RangeEndUtc);
+        await _provider.Received(1).GetUsageAsync(
+            Arg.Any<DateTimeOffset>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+        Assert.Single(_cache.Writes);
+    }
+
+    /// <summary>
+    /// The backstop from the review fix: even called directly (as this unit test does, bypassing
+    /// the validator entirely) the handler must never ship an inverted range upstream, regardless of
+    /// what a caller — the validator included — decided after sampling a different instant of "now".
+    /// </summary>
+    [Fact]
+    public async Task Handle_ThrowsIfTheResolvedRangeIsInverted_RegardlessOfValidation()
+    {
+        var query = new GetAeroApiUsageQuery(StartUtc: Now.AddDays(-1), EndUtc: Now.AddDays(-2));
+
+        var ex = await Assert.ThrowsAsync<DomainException>(
+            () => _handler.Handle(query, CancellationToken.None));
+        Assert.Equal(400, ex.StatusCode);
+    }
+
     // ── Caching ───────────────────────────────────────────────────────────────
 
     [Fact]
@@ -153,6 +246,24 @@ public class GetAeroApiUsageQueryTests
             Arg.Any<DateTimeOffset>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
         Assert.Equal(Usage.TotalCostUsd, second.TotalCostUsd);
         Assert.Single(_cache.Writes);
+    }
+
+    /// <summary>
+    /// Pins the other half of what the class header claims: not just what is allowed out of the
+    /// cache, but what is kept out of it. A provider failure must never be written, or a transient
+    /// upstream error would be served as a confident, cached "answer" for the next 10 minutes.
+    /// </summary>
+    [Fact]
+    public async Task Handle_DoesNotCacheAFailedProviderCall()
+    {
+        _provider
+            .GetUsageAsync(Arg.Any<DateTimeOffset>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new DomainException("Usage reporting is temporarily unavailable.", 502));
+
+        await Assert.ThrowsAsync<DomainException>(
+            () => _handler.Handle(new GetAeroApiUsageQuery(), CancellationToken.None));
+
+        Assert.Empty(_cache.Writes);
     }
 
     [Fact]
@@ -251,6 +362,19 @@ public class GetAeroApiUsageQueryTests
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.ErrorMessage.Contains("future"));
+    }
+
+    [Fact]
+    public void Validator_Rejects_AnEndInTheFuture()
+    {
+        // Mirrors the start-in-the-future rule: ?end=2099-01-01 must be bounced here with a 400
+        // rather than silently clamped to "now" downstream with no explanation.
+        var result = Validator().Validate(new GetAeroApiUsageQuery(EndUtc: Now.AddDays(1)));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e =>
+            e.PropertyName.Contains("End", StringComparison.OrdinalIgnoreCase)
+            && e.ErrorMessage.Contains("future"));
     }
 
     [Fact]

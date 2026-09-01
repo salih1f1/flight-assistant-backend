@@ -91,9 +91,12 @@ public class AdminUsageEndpointTests(FlightAssistantWebApplicationFactory factor
         Assert.Equal(5m, dto.MonthlyBudgetUsd); // AeroApiOptions default — no AeroApi:MonthlyBudgetUsd in Testing config
         Assert.Single(dto.ByOperation);
 
-        // Defaulted range: the current UTC month to date.
-        var now = DateTimeOffset.UtcNow;
-        Assert.Equal(new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero), dto.RangeStartUtc);
+        // Defaulted range: the current UTC month to date. Asserted structurally rather than by
+        // recomputing "the current month" from DateTimeOffset.UtcNow here — that would be flaky
+        // across a real month boundary between the request above and this assertion.
+        Assert.Equal(1, dto.RangeStartUtc.Day);
+        Assert.Equal(TimeSpan.Zero, dto.RangeStartUtc.TimeOfDay);
+        Assert.Equal(TimeSpan.Zero, dto.RangeStartUtc.Offset);
     }
 
     [Fact]

@@ -7,6 +7,10 @@ namespace FlightAssistant.Contracts.Responses.Admin
     /// </summary>
     /// <param name="MonthlyBudgetUsd">Local configuration (<c>AeroApi:MonthlyBudgetUsd</c>), not an
     /// upstream figure — the reference line the panel's gauge is drawn against.</param>
+    /// <param name="ByOperation">Not exhaustive: a row whose upstream <c>operation</c> is missing or
+    /// blank is dropped rather than bucketed under a placeholder, so this breakdown can under-report
+    /// even against a complete response. Its cost still shows in the totals above — do not
+    /// reconcile the breakdown against them, and do not present it as the full picture.</param>
     /// <param name="NextSlotUtc">When the next outbound AeroAPI call is due on the shared outbound
     /// throttle, or null if none has been reserved yet. Live state, never cached.</param>
     public sealed record AeroApiUsageDto(
