@@ -6,6 +6,8 @@ using FlightAssistant.API.HostedServices;
 using FlightAssistant.API.Infrastructure;
 using FlightAssistant.API.Middleware;
 using FlightAssistant.Application;
+using FlightAssistant.Application.Administration;
+using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Infrastructure;
 using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.HealthChecks;
@@ -19,6 +21,7 @@ using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.Resource;
 using Microsoft.OpenApi.Models;
 using Serilog;
+using System.Security.Claims;
 using System.Threading.RateLimiting;
 
 // ------------------------------------------------------------
@@ -105,6 +108,7 @@ builder.Services.AddDbContext<FlightAssistantDbContext>((sp, opt) =>
 {
     opt.UseNpgsql(Cfg("PostgresConnectionString"));
     opt.AddInterceptors(sp.GetRequiredService<DomainEventDispatchInterceptor>());
+    opt.AddInterceptors(sp.GetRequiredService<AdminAuditInterceptor>());
 });
 
 // Caching
@@ -301,6 +305,21 @@ app.MapLoungeEndpoints();
 var adminGroup = app.MapGroup("admin")
     .RequireAuthorization("AdminOnly")
     .RequireCors("AdminPanel");
+
+// Populates IAdminContext from the authenticated admin's claims for the lifetime of the request —
+// mirrors TravelerContextMiddleware (oid claim, falling back to sub) — so the AdminAuditInterceptor
+// (Infrastructure) has an actor to stamp onto every AdminAuditLog row it writes during this
+// request's SaveChanges call(s). A filter on this group only, not middleware on the whole pipeline,
+// so ordinary traveler traffic never populates an actor and therefore never gets audited.
+adminGroup.AddEndpointFilter(async (efiContext, next) =>
+{
+    var http = efiContext.HttpContext;
+    var adminContext = http.RequestServices.GetRequiredService<AdminContext>();
+    adminContext.ActorId = http.User.FindFirstValue("oid") ?? http.User.FindFirstValue("sub");
+    adminContext.ActorName = http.User.FindFirstValue("name");
+    return await next(efiContext);
+});
+
 adminGroup.MapAdminTravelerEndpoints();
 adminGroup.MapAdminFlightEndpoints();
 adminGroup.MapAdminAirlineEndpoints();
@@ -313,6 +332,7 @@ adminGroup.MapAdminExportEndpoints();
 adminGroup.MapAdminImportEndpoints();
 adminGroup.MapAdminUsageEndpoints();
 adminGroup.MapAdminHealthEndpoints();
+adminGroup.MapAdminAuditEndpoints();
 
 // Private endpoints (ping, secure-test, whoami)
 app.MapPrivateEndpoints();

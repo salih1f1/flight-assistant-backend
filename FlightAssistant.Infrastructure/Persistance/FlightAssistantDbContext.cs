@@ -1,4 +1,5 @@
-﻿using FlightAssistant.Domain.Common;
+﻿using FlightAssistant.Domain.Administration.Entities;
+using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Lounges.Entities;
@@ -43,6 +44,9 @@ namespace FlightAssistant.Infrastructure.Persistance
 
         // Configurations
         public DbSet<SeedVersion> SeedVersions => Set<SeedVersion>();
+
+        // Administration
+        public DbSet<AdminAuditLog> AdminAuditLogs => Set<AdminAuditLog>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
