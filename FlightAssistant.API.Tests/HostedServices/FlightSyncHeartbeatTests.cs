@@ -114,7 +114,7 @@ public class FlightSyncHeartbeatTests
         Assert.NotNull(snapshot.LastRunCompletedUtc);
     }
 
-    [Fact]
+    [Fact(Timeout = 10_000)]
     public async Task Current_NeverExposesFieldsMixedFromDifferentWriters_RegressionGuardForImmutableSnapshotDesign()
     {
         // What this guards: FlightSyncSnapshot is an immutable record published via a single atomic
@@ -130,11 +130,67 @@ public class FlightSyncHeartbeatTests
         // What this does NOT show: that the `lock` inside the Mark* methods is load-bearing today.
         // With a single production writer (the background service's sequential loop) there is nothing
         // yet for it to race against; it stays as insurance against a second writer being added later.
+        //
+        // Detection-window note (final review, I3): an earlier version of this test started the
+        // reader *after* the writers, with only 2000 iterations per writer (6-11ms total), and caught
+        // the plainest form of the regression (individual mutable fields, no lock) only 5 times in 15
+        // runs — a coin flip weighted the wrong way. Two changes widen the window: (1) every reader
+        // spins on Current for a warm-up period *before* any writer is released, via a Barrier that
+        // holds all participants until every reader has actually been running for a while — so
+        // scheduling/JIT-warm-up luck can no longer let the whole race finish before a reader is even
+        // scheduled; (2) the per-writer workload is 50x longer, giving the race real wall-clock time
+        // to land inside a reader's sampling window instead of a handful of milliseconds.
         const int writerCount = 4;
-        const int iterationsPerWriter = 2000;
+        const int readerCount = 4;
+        const int iterationsPerWriter = 100_000;
+        const int readerWarmupIterations = 2_000;
         var heartbeat = new FlightSyncHeartbeat();
         using var cts = new CancellationTokenSource();
         var incoherentSnapshotObserved = false;
+        FlightSyncSnapshot? offendingSnapshot = null;
+
+        // Every reader and every writer rendezvous here. Readers only call SignalAndWait() after
+        // their own warm-up loop, so by the time the barrier releases everyone, every reader thread
+        // is demonstrably alive, scheduled, and JIT-warm — not merely queued via Task.Run. No writer
+        // performs its first Mark* call until that is true of every reader.
+        using var barrier = new Barrier(readerCount + writerCount);
+
+        // Readers are started first (this array is fully materialized — every Task.Run has been
+        // issued — before the writers array below is even constructed), so they are queued onto the
+        // thread pool ahead of any writer.
+        var readers = Enumerable.Range(0, readerCount)
+            .Select(readerId => Task.Run(() =>
+            {
+                for (var i = 0; i < readerWarmupIterations; i++)
+                    _ = heartbeat.Current;
+
+                barrier.SignalAndWait();
+
+                while (!cts.IsCancellationRequested)
+                {
+                    var snapshot = heartbeat.Current;
+
+                    // A completed outcome must always carry its completion timestamp — never a
+                    // fresh outcome sitting beside a still-null timestamp from before the run
+                    // started.
+                    var completedOutcomeHasTimestamp =
+                        snapshot.LastOutcome is not (FlightSyncOutcome.Success or FlightSyncOutcome.Failed)
+                        || snapshot.LastRunCompletedUtc is not null;
+
+                    // A Success snapshot's counts must be the exact pair one writer published
+                    // together.
+                    var countsAreASingleWritersPair =
+                        snapshot.LastOutcome != FlightSyncOutcome.Success
+                        || snapshot.FlightsFailed == -(snapshot.FlightsProcessed + 1);
+
+                    if (!completedOutcomeHasTimestamp || !countsAreASingleWritersPair)
+                    {
+                        incoherentSnapshotObserved = true;
+                        offendingSnapshot = snapshot;
+                    }
+                }
+            }))
+            .ToArray();
 
         // Writer `w` always publishes the pair (w, -(w + 1)) together in one call, so the pairing
         // itself — not just the individual values — identifies which writer's write produced it. A
@@ -142,6 +198,8 @@ public class FlightSyncHeartbeatTests
         var writers = Enumerable.Range(0, writerCount)
             .Select(writerId => Task.Run(() =>
             {
+                barrier.SignalAndWait();
+
                 for (var i = 0; i < iterationsPerWriter; i++)
                 {
                     heartbeat.MarkRunStarted();
@@ -153,33 +211,11 @@ public class FlightSyncHeartbeatTests
             }))
             .ToArray();
 
-        var reader = Task.Run(() =>
-        {
-            while (!cts.IsCancellationRequested)
-            {
-                var snapshot = heartbeat.Current;
-
-                // A completed outcome must always carry its completion timestamp — never a fresh
-                // outcome sitting beside a still-null timestamp from before the run started.
-                var completedOutcomeHasTimestamp =
-                    snapshot.LastOutcome is not (FlightSyncOutcome.Success or FlightSyncOutcome.Failed)
-                    || snapshot.LastRunCompletedUtc is not null;
-
-                // A Success snapshot's counts must be the exact pair one writer published together.
-                var countsAreASingleWritersPair =
-                    snapshot.LastOutcome != FlightSyncOutcome.Success
-                    || snapshot.FlightsFailed == -(snapshot.FlightsProcessed + 1);
-
-                if (!completedOutcomeHasTimestamp || !countsAreASingleWritersPair)
-                    incoherentSnapshotObserved = true;
-            }
-        });
-
         await Task.WhenAll(writers);
         cts.Cancel();
-        await reader;
+        await Task.WhenAll(readers);
 
-        Assert.False(incoherentSnapshotObserved);
+        Assert.False(incoherentSnapshotObserved, $"Observed an incoherent snapshot: {offendingSnapshot}");
     }
 
     [Fact]

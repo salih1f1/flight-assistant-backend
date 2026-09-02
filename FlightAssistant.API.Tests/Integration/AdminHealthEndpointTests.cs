@@ -141,6 +141,68 @@ public class AdminHealthEndpointTests(FlightAssistantWebApplicationFactory facto
         return client;
     }
 
+    /// <summary>
+    /// Registers a <see cref="FlightSyncHeartbeat"/> instance that already has a failed run on it —
+    /// DI resolves the last-registered descriptor for a given service type, so this overrides
+    /// Program.cs's own <c>AddSingleton&lt;FlightSyncHeartbeat&gt;()</c>, the same technique
+    /// <see cref="WithThreeFakeChecks"/> uses for <see cref="IHostEnvironment"/>. The integration
+    /// factory removes every <c>IHostedService</c>, so the background service that would normally
+    /// call <c>Mark*</c> never runs in this suite — this stands in for it directly.
+    /// </summary>
+    private static WebApplicationFactory<Program> WithFailedFlightSyncHeartbeat(
+        FlightAssistantWebApplicationFactory factory, string? environmentName = null)
+    {
+        var heartbeat = new FlightSyncHeartbeat();
+        heartbeat.MarkRunStarted();
+        heartbeat.MarkRunFailed(new InvalidOperationException("sync boom"), DateTime.UtcNow.AddMinutes(10));
+
+        return factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+            {
+                if (environmentName is not null)
+                    services.AddSingleton<IHostEnvironment>(new FakeHostEnvironment(environmentName));
+
+                services.AddSingleton(heartbeat);
+            }));
+    }
+
+    // Distinctive sentinel values for the redis/App Insights configured-ness test below. Chosen to
+    // be unmistakable in a failure diff and to never plausibly appear anywhere else in the response
+    // body.
+    private const string RedisConnectionStringSentinel =
+        "sentinel-redis-host.example.invalid:6380,password=SuperSecretRedisPassword123!";
+    private const string AppInsightsConnectionStringSentinel =
+        "InstrumentationKey=11111111-2222-3333-4444-555555555555;IngestionEndpoint=https://sentinel-appinsights.example.invalid/";
+
+    /// <summary>
+    /// Adds real (sentinel-valued) Redis and Application Insights connection strings to the test
+    /// host's configuration, via <c>ConfigureAppConfiguration</c> rather than a fake registration —
+    /// <c>AdminHealthReportBuilder.BuildSystem</c> reads straight off <c>IConfiguration</c>, so
+    /// nothing short of a real config value exercises the "is this actually configured" branch.
+    ///
+    /// <para>
+    /// This deliberately does not also make <c>Program.cs</c>'s own build-time
+    /// <c>hcBuilder.AddRedis(redisConnStr)</c> registration see the value: that read happens as a
+    /// plain top-level statement before this factory's <c>ConfigureAppConfiguration</c> delegate is
+    /// merged in (the same ordering the base factory's class comment already documents for
+    /// <c>Cfg()</c>), so no live Redis health check is ever registered here — and even if it were,
+    /// the base factory's <c>HealthCheckServiceOptions.Registrations.Clear()</c> means
+    /// <c>CheckHealthAsync</c> never invokes it. Either way this test cannot attempt a real Redis
+    /// connection; no <c>ConfigureServices</c> override to strip the health check is needed.
+    /// </para>
+    /// </summary>
+    private static WebApplicationFactory<Program> WithRedisAndAppInsightsConfigured(
+        FlightAssistantWebApplicationFactory factory)
+    {
+        return factory.WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, cfg) =>
+                cfg.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:Redis"] = RedisConnectionStringSentinel,
+                    ["ApplicationInsights:ConnectionString"] = AppInsightsConnectionStringSentinel,
+                })));
+    }
+
     [Fact]
     public async Task GetHealth_Anonymous_Returns401()
     {
@@ -321,5 +383,72 @@ public class AdminHealthEndpointTests(FlightAssistantWebApplicationFactory facto
         // Description is author-written health-check text, not exception detail — it still
         // renders even in Production.
         Assert.Equal("APNs check threw", apns.Description);
+    }
+
+    [Fact]
+    public async Task GetHealth_FlightSyncFailed_PopulatesLastErrorOutsideProduction()
+    {
+        // I2 (final review): flightSync.lastError is gated by the same includeDiagnostics flag as
+        // checks[].error, but had no coverage at all. Mirrors GetHealth_Development_Populates.../
+        // GetHealth_Production_Nulls... for the checks[] field, for this field.
+        using var scopedFactory = WithFailedFlightSyncHeartbeat(factory, environmentName: Environments.Development);
+        var client = AdminClient(scopedFactory);
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<AdminHealthDto>();
+        Assert.NotNull(dto);
+
+        Assert.Equal("Failed", dto!.FlightSync.LastOutcome);
+        Assert.NotNull(dto.FlightSync.LastError);
+        Assert.Contains("InvalidOperationException", dto.FlightSync.LastError);
+        Assert.Contains("sync boom", dto.FlightSync.LastError);
+    }
+
+    [Fact]
+    public async Task GetHealth_FlightSyncFailed_Production_NullsTheLastError()
+    {
+        // The security-relevant half of the pair above: the sync loop's own exception detail must
+        // never reach a Production caller either.
+        using var scopedFactory = WithFailedFlightSyncHeartbeat(factory, environmentName: Environments.Production);
+        var client = AdminClient(scopedFactory);
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<AdminHealthDto>();
+        Assert.NotNull(dto);
+
+        Assert.Equal("Failed", dto!.FlightSync.LastOutcome);
+        Assert.Null(dto.FlightSync.LastError);
+    }
+
+    [Fact]
+    public async Task GetHealth_RedisAndAppInsightsConfigured_ReportsBooleansTrue_AndNeverLeaksTheConnectionStrings()
+    {
+        // I2 (final review): GetHealth_Admin_NoChecksRegistered_Returns200_HealthyWithEmptyChecks
+        // only proves the booleans are false when nothing is configured — which would also pass if
+        // they were hardcoded false. This is the real test: configure both, assert both flip to
+        // true, and — the point of these fields being booleans in the first place — assert neither
+        // sentinel value appears anywhere in the raw response body.
+        using var scopedFactory = WithRedisAndAppInsightsConfigured(factory);
+        var client = AdminClient(scopedFactory);
+
+        var response = await client.GetAsync("admin/health");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        // Read as a raw string first: this is what actually proves the connection strings can't
+        // escape through the endpoint, as opposed to merely checking the two booleans on the
+        // deserialised DTO (which would miss a leak into some other field entirely).
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(RedisConnectionStringSentinel, body);
+        Assert.DoesNotContain(AppInsightsConnectionStringSentinel, body);
+
+        var dto = JsonSerializer.Deserialize<AdminHealthDto>(
+            body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(dto);
+        Assert.True(dto!.System.RedisConfigured);
+        Assert.True(dto.System.AppInsightsConfigured);
     }
 }
