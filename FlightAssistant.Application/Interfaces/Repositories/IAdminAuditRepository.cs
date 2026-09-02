@@ -6,9 +6,19 @@ namespace FlightAssistant.Application.Interfaces.Repositories
     public interface IAdminAuditRepository
     {
         /// <summary>
-        /// Newest-first by <c>ActionUtc</c> (matches the index Task 1 created). All filters are
-        /// optional and combine with AND. <paramref name="total"/> in the returned tuple reflects
-        /// the count after every filter is applied, not the table count.
+        /// Newest-first by <c>ActionUtc</c> (matches the index Task 1 created), then by <c>Id</c>
+        /// descending as a deterministic tiebreaker — rows written in the same admin save share one
+        /// <c>ActionUtc</c> instant, so <c>ActionUtc</c> alone does not make paging stable over a
+        /// large batch. All filters are optional and combine with AND. <paramref name="actorId"/>
+        /// matches case-insensitively (an <c>oid</c> claim's casing varies by source); every other
+        /// string filter is an exact match. <paramref name="total"/> in the returned tuple reflects
+        /// the count after every filter is applied, not the table count. <paramref name="fromUtc"/>
+        /// and <paramref name="toUtc"/> are both inclusive bounds and must already carry
+        /// <see cref="DateTimeKind.Utc"/> — Npgsql refuses to write anything else against the
+        /// underlying <c>timestamptz</c> column. <c>AdminAuditEndpoints</c> guarantees this by
+        /// binding <c>DateTimeOffset?</c> at the API boundary and projecting through
+        /// <c>.UtcDateTime</c> before a value ever reaches <c>GetAdminAuditQuery</c>; this method
+        /// does not normalise <c>Kind</c> itself.
         /// </summary>
         Task<(IReadOnlyList<AdminAuditLog> Items, int Total)> SearchAsync(
             int page,

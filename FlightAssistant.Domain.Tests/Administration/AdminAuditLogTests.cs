@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.Common.Exceptions;
@@ -49,8 +50,29 @@ namespace FlightAssistant.Domain.Tests.Administration
         [Fact]
         public void Create_WithoutTraceId_FallsBackToAmbientActivity()
         {
-            // No Activity.Current is started in this test, so the fallback resolves to null —
-            // still exercises the "not explicitly supplied" path distinctly from the explicit one.
+            // #313 final review, M6: the previous version of this test started no Activity, so it
+            // only ever exercised the "no ambient Activity" branch and would still pass with the
+            // "?? Activity.Current?.Id" fallback deleted from AdminAuditLog.Create entirely. A real
+            // Activity must be started so the assertion actually discriminates the fallback from
+            // no fallback. Measured: deleting the fallback from Create (leaving traceId: traceId,
+            // dropping the "?? Activity.Current?.Id") makes this test fail with
+            // "Assert.Equal() Failure: Values differ - Expected: <activity id> - Actual: null",
+            // confirming it now catches the regression it claims to guard against. Restored after
+            // measuring.
+            using var activity = new Activity("audit-test").Start();
+
+            var log = AdminAuditLog.Create("actor", null, AdminAuditAction.Delete, "Traveler", "guid-1", "Deleted Traveler");
+
+            Assert.Equal(activity.Id, log.TraceId);
+        }
+
+        [Fact]
+        public void Create_WithoutTraceId_AndNoAmbientActivity_TraceIdIsNull()
+        {
+            // Distinct from the test above: this pins the other half of the fallback — no ambient
+            // Activity means TraceId is genuinely null, not some default/empty-string stand-in.
+            Assert.Null(Activity.Current);
+
             var log = AdminAuditLog.Create("actor", null, AdminAuditAction.Delete, "Traveler", "guid-1", "Deleted Traveler");
 
             Assert.Null(log.TraceId);

@@ -253,7 +253,12 @@ namespace FlightAssistant.Infrastructure.Persistance
         private static string? GetEntityId(EntityEntry entry)
         {
             var key = entry.Metadata.FindPrimaryKey();
-            if (key is null) return string.Empty;
+            // A keyless entity (no HasNoKey mapping exists in this codebase today — see #313
+            // final review, M7) has no primary key to stringify at all, which is a different case
+            // from "not yet assigned": null is the honest value here too, exactly like the
+            // temporary-key branch two lines below, and lets AdminAuditLog.Create succeed instead
+            // of rejecting an empty string and turning an audit attempt into a failed admin write.
+            if (key is null) return null;
 
             var properties = key.Properties.Select(p => entry.Property(p.Name)).ToList();
 
