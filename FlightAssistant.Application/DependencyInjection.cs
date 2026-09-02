@@ -1,5 +1,7 @@
+using FlightAssistant.Application.Administration;
 using FlightAssistant.Application.Behaviours;
 using FlightAssistant.Application.Commands.Admin.Verify;
+using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
@@ -20,6 +22,11 @@ namespace FlightAssistant.Application
             services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
 
             services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehaviour<,>));
+
+            // Scoped so the Task 2 admin endpoint filter/middleware can populate it once per
+            // request and the Infrastructure audit interceptor reads back the same instance
+            // within that request's DbContext scope.
+            services.AddScoped<IAdminContext, AdminContext>();
 
             // VerifyEntityCommandHandler is a generic handler; register a concrete instance per entity type
             // so MediatR's assembly scan (which doesn't resolve open generics) can find them.
