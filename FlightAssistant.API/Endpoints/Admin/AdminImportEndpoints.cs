@@ -1,5 +1,8 @@
+using FlightAssistant.Application.Administration;
 using FlightAssistant.Application.Commands.Admin.Import;
+using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.API.Csv;
+using FlightAssistant.Domain.Administration.Enums;
 using MediatR;
 
 namespace FlightAssistant.API.Endpoints.Admin;
@@ -10,7 +13,16 @@ public static class AdminImportEndpoints
     {
         var group = admin.MapGroup("import").WithTags("Admin - Import")
             .DisableAntiforgery()
-            .AddEndpointFilter<CsvFileUploadValidationFilter>();
+            .AddEndpointFilter<CsvFileUploadValidationFilter>()
+            // CSV import bulk-upserts rows, which are otherwise indistinguishable from an ordinary
+            // create/update once they hit the AdminAuditInterceptor — this is the one caller that
+            // overrides the derived action so every row from an import is recorded as Import.
+            .AddEndpointFilter(async (efiContext, next) =>
+            {
+                var adminContext = (AdminContext)efiContext.HttpContext.RequestServices.GetRequiredService<IAdminContext>();
+                adminContext.ActionOverride = AdminAuditAction.Import;
+                return await next(efiContext);
+            });
 
         group.MapPost("alliances", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {

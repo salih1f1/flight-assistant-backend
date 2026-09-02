@@ -22,6 +22,7 @@ namespace FlightAssistant.Infrastructure
         {
             // EF interceptors
             services.AddScoped<DomainEventDispatchInterceptor>();
+            services.AddScoped<AdminAuditInterceptor>();
 
             // Repositories
             services.AddScoped<ITravelerRepository, TravelerRepository>();
