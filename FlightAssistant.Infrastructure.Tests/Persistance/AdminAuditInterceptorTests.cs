@@ -342,6 +342,28 @@ public class AdminAuditInterceptorTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
     }
 
+    // The append-only guard must fire regardless of who — or whether anyone — is saving. It used
+    // to sit below the actor gate, so a no-actor save (every ordinary traveler write, every
+    // hosted service, every future background job) could silently tamper with an audit row; the
+    // two tests above only exercised the guard through an actor-bearing context and so never
+    // caught that (#313 Task 2 review, F1/I1).
+    [Fact]
+    public async Task SaveChangesAsync_DeletingAnAuditRow_ThrowsEvenWithoutAnActor()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        using (var seed = CreateContext(dbName, AdminActor()))
+        {
+            seed.Countries.Add(Country.Create("TR", "Turkey"));
+            await seed.SaveChangesAsync(); // creates one AdminAuditLog row as a side effect
+        }
+
+        using var db = CreateContext(dbName, new AdminContext()); // no actor set
+        var auditRow = await db.AdminAuditLogs.SingleAsync();
+        db.AdminAuditLogs.Remove(auditRow);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
+    }
+
     // ── EntityId comes from EF primary-key metadata ────────────────────────────
 
     [Fact]
@@ -369,5 +391,62 @@ public class AdminAuditInterceptorTests
 
         var row = await db.AdminAuditLogs.SingleAsync();
         Assert.Equal("airports|3", row.EntityId);
+    }
+
+    // ── entry.Metadata.ClrType, not entry.Entity.GetType(), is what BuildAuditLog must key on ──
+    //
+    // Swapping BuildAuditLog's `entry.Metadata.ClrType` for `entry.Entity.GetType()` currently
+    // breaks zero shipped tests: nothing in the real model has a proxy or a mapped subclass, so
+    // the two are always identical there (#313 Task 2 review, F4). This model proves the
+    // divergence exists and that only Metadata.ClrType survives it, without pulling in the
+    // Microsoft.EntityFrameworkCore.Proxies package: EF's own entity-type resolution falls back
+    // from an unmapped runtime type to the nearest *mapped* ancestor — the exact mechanism that
+    // lets a lazy-loading proxy subclass be added through a DbSet<TBase> with no extra
+    // configuration. Adding a WidgetSubclass instance (never itself mapped) through
+    // DbSet<Widget> therefore produces an EntityEntry whose Metadata.ClrType is Widget but whose
+    // Entity.GetType() is WidgetSubclass.
+
+    private class Widget
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+    }
+
+    private sealed class WidgetSubclass : Widget
+    {
+    }
+
+    private sealed class ClrTypeProbeDbContext(DbContextOptions<ClrTypeProbeDbContext> options)
+        : DbContext(options)
+    {
+        public DbSet<Widget> Widgets => Set<Widget>();
+        public DbSet<AdminAuditLog> AdminAuditLogs => Set<AdminAuditLog>();
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            // WidgetSubclass is deliberately never mentioned here — that's what makes it unmapped.
+            modelBuilder.Entity<Widget>();
+            modelBuilder.Entity<AdminAuditLog>();
+        }
+    }
+
+    [Fact]
+    public async Task SaveChangesAsync_AddedEntityIsAnUnmappedSubclassOfAMappedType_RecordsTheMappedTypeName()
+    {
+        var options = new DbContextOptionsBuilder<ClrTypeProbeDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .AddInterceptors(new AdminAuditInterceptor(AdminActor()))
+            .Options;
+
+        using var db = new ClrTypeProbeDbContext(options);
+        db.Widgets.Add(new WidgetSubclass { Name = "gadget" }); // runtime type WidgetSubclass, mapped type Widget
+        await db.SaveChangesAsync();
+
+        var row = await db.AdminAuditLogs.SingleAsync();
+
+        // entry.Metadata.ClrType ("Widget", the mapped type) is what must be recorded. Swapping
+        // BuildAuditLog to entry.Entity.GetType() would record "WidgetSubclass" here instead and
+        // fails this assertion — proving the pin matters, unlike the untested claim before this.
+        Assert.Equal(nameof(Widget), row.EntityType);
     }
 }

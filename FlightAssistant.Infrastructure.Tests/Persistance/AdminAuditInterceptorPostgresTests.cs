@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FlightAssistant.Application.Administration;
+using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
@@ -66,6 +67,17 @@ public class AdminAuditInterceptorPostgresTests : PostgresTestBase
             // after commit, this assertion alone couldn't tell "rolled back together" apart from
             // "never attempted".
             await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+
+            // "No row persisted" alone doesn't discriminate a pre-commit interceptor (rolled back
+            // together with the failed write) from a post-commit one that simply never ran — both
+            // would leave zero persisted rows. This asserts the audit row was actually built and
+            // staged as Added *before* the failed commit, which only the pre-commit design can
+            // produce (#313 Task 2 review, F2/I2: a SavedChangesAsync/post-commit mutation sees
+            // only Unchanged entries here — nothing pending, because it never got to add anything
+            // before SaveChanges had already failed and unwound).
+            var pending = db.ChangeTracker.Entries<AdminAuditLog>().ToList();
+            Assert.Single(pending);
+            Assert.Equal(EntityState.Added, pending[0].State);
         }
 
         await using var verify = CreateDbContext(); // plain read, no interceptor needed
@@ -146,15 +158,19 @@ public class AdminAuditInterceptorPostgresTests : PostgresTestBase
     }
 
     /// <summary>
-    /// A store-generated key (<c>Airport.Id</c> is a Postgres identity column) is still unset at
-    /// <c>SavingChanges</c> time — the interceptor runs before the INSERT that assigns it, so it
-    /// records whatever value the property actually holds at that point rather than the real id the
-    /// row ends up with. This is the "record what you can, don't invent a value" case called out for
-    /// <c>EntityId</c>; asserting the two differ documents the behaviour instead of leaving it
-    /// implicit.
+    /// A store-generated key (<c>Airport.Id</c> is a Postgres identity column) genuinely does not
+    /// exist yet at <c>SavingChanges</c> time — the interceptor runs before the INSERT that
+    /// assigns it, and EF itself only holds a temporary placeholder for relationship fixup at that
+    /// point (<c>PropertyEntry.IsTemporary</c>). <c>EntityId</c> records <c>null</c> for exactly
+    /// this case rather than that placeholder or the CLR default (e.g. <c>"0"</c>): either of those
+    /// would look like real data and collide across every create of every store-generated-key
+    /// type, silently corrupting any future filter on <c>EntityId</c> (see
+    /// <c>AdminAuditInterceptor.GetEntityId</c> and <c>AdminAuditLog.EntityId</c> for the full
+    /// reasoning — #313 Task 2 review, F5/M5). The created row is still fully identifiable through
+    /// <c>After</c>, asserted below.
     /// </summary>
     [Fact]
-    public async Task SaveChangesAsync_AddedEntityWithStoreGeneratedKey_RecordsTheUnsetValue_NotTheRealId()
+    public async Task SaveChangesAsync_AddedEntityWithStoreGeneratedKey_RecordsNullEntityId_NotThePlaceholderOrTheRealId()
     {
         var adminContext = new AdminContext { ActorId = "admin-oid-1", ActorName = "Ada Admin" };
         var airport = Airport.Create("ZZZ", null, "Test Airport For #313", "Nowhere", "US");
@@ -181,9 +197,13 @@ public class AdminAuditInterceptorPostgresTests : PostgresTestBase
         var row = await verify.AdminAuditLogs.SingleAsync();
 
         Assert.Equal(nameof(Airport), row.EntityType);
-        // The value recorded during SavingChanges (before Postgres assigned the identity value)
-        // is not the real id — proving the interceptor captured whatever was present rather than
-        // waiting for (or inventing) the generated one.
+        // Pinned to null, not merely "not the real id" — a temporary placeholder value would also
+        // satisfy NotEqual but would be exactly the collision-prone hazard this design avoids.
+        Assert.Null(row.EntityId);
         Assert.NotEqual(realId.ToString(), row.EntityId);
+        // The created row is still identifiable through After even though EntityId is unknown.
+        Assert.NotNull(row.After);
+        using var after = JsonDocument.Parse(row.After);
+        Assert.Equal("ZZZ", after.RootElement.GetProperty(nameof(Airport.Iata)).GetString());
     }
 }

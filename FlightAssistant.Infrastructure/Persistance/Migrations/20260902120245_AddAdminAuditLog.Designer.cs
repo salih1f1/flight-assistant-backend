@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FlightAssistant.Infrastructure.Persistance.Migrations
 {
     [DbContext(typeof(FlightAssistantDbContext))]
-    [Migration("20260902082336_AddAdminAuditLog")]
+    [Migration("20260902120245_AddAdminAuditLog")]
     partial class AddAdminAuditLog
     {
         /// <inheritdoc />
@@ -55,7 +55,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasColumnType("jsonb");
 
                     b.Property<string>("EntityId")
-                        .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 

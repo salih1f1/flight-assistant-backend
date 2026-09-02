@@ -52,7 +52,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasColumnType("jsonb");
 
                     b.Property<string>("EntityId")
-                        .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 

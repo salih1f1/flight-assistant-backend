@@ -1,6 +1,5 @@
 using FlightAssistant.Application.Administration;
 using FlightAssistant.Application.Commands.Admin.Import;
-using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.API.Csv;
 using FlightAssistant.Domain.Administration.Enums;
 using MediatR;
@@ -19,7 +18,7 @@ public static class AdminImportEndpoints
             // overrides the derived action so every row from an import is recorded as Import.
             .AddEndpointFilter(async (efiContext, next) =>
             {
-                var adminContext = (AdminContext)efiContext.HttpContext.RequestServices.GetRequiredService<IAdminContext>();
+                var adminContext = efiContext.HttpContext.RequestServices.GetRequiredService<AdminContext>();
                 adminContext.ActionOverride = AdminAuditAction.Import;
                 return await next(efiContext);
             });

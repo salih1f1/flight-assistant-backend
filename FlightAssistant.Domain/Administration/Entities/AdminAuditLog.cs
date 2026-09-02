@@ -38,8 +38,16 @@ namespace FlightAssistant.Domain.Administration.Entities
         /// <summary>
         /// The written entity's key, stringified. Keys are <c>Guid</c> on some entities and
         /// <c>int</c> on others; composite keys join their parts with <c>|</c>.
+        ///
+        /// <para>
+        /// <c>null</c> on a <see cref="Domain.Administration.Enums.AdminAuditAction.Create"/> row
+        /// whose entity uses a store-generated key (e.g. a Postgres identity column): the real
+        /// value is assigned by the database during the very <c>SaveChanges</c> call this row is
+        /// written inside, so it genuinely does not exist yet when the row is built. This is never
+        /// blank/whitespace for any other action — <see cref="Create"/> still rejects that.
+        /// </para>
         /// </summary>
-        public string EntityId { get; private set; } = default!;
+        public string? EntityId { get; private set; }
 
         /// <summary>Short human-readable line, e.g. "Updated Airport LHR".</summary>
         public string Summary { get; private set; } = default!;
@@ -68,7 +76,7 @@ namespace FlightAssistant.Domain.Administration.Entities
             string? actorName,
             AdminAuditAction action,
             string entityType,
-            string entityId,
+            string? entityId,
             string summary,
             string? before = null,
             string? after = null,
@@ -77,7 +85,10 @@ namespace FlightAssistant.Domain.Administration.Entities
         {
             if (string.IsNullOrWhiteSpace(actorId)) throw new DomainException("ActorId is required.");
             if (string.IsNullOrWhiteSpace(entityType)) throw new DomainException("EntityType is required.");
-            if (string.IsNullOrWhiteSpace(entityId)) throw new DomainException("EntityId is required.");
+            // entityId may be null (store-generated key not yet assigned — see the property's
+            // doc comment) but never blank/whitespace: that would be a caller bug, not the
+            // legitimate "not known yet" case.
+            if (entityId is not null && string.IsNullOrWhiteSpace(entityId)) throw new DomainException("EntityId must not be blank; pass null when the id is not yet known.");
             if (string.IsNullOrWhiteSpace(summary)) throw new DomainException("Summary is required.");
 
             return new AdminAuditLog

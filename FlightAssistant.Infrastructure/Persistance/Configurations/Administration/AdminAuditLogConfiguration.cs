@@ -24,7 +24,11 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Administrati
                 .HasConversion<string>();
 
             b.Property(x => x.EntityType).IsRequired().HasMaxLength(200);
-            b.Property(x => x.EntityId).IsRequired().HasMaxLength(200);
+
+            // Nullable: a store-generated key (e.g. an identity column) does not exist yet at
+            // SavingChanges time, and the interceptor records that honestly as null rather than
+            // inventing a value (see AdminAuditLog.EntityId and AdminAuditInterceptor.GetEntityId).
+            b.Property(x => x.EntityId).HasMaxLength(200);
 
             b.Property(x => x.Summary).IsRequired().HasMaxLength(1000);
 

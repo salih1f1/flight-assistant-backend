@@ -30,6 +30,20 @@ namespace FlightAssistant.Infrastructure.Persistance
     /// database, is what puts it in the *same* transaction as the write it describes and lets a
     /// database failure roll both back together.
     /// </para>
+    ///
+    /// <para>
+    /// <b>Hazard: a retried <c>SaveChanges</c> on the same context double-audits.</b> After a
+    /// failed save, the write's entities stay <c>Added</c>/<c>Modified</c>/<c>Deleted</c> and the
+    /// audit row already staged for them stays tracked too. A second <c>SaveChangesAsync()</c> on
+    /// that same context re-enters <see cref="WriteAuditRows"/>, which happily skips the
+    /// already-tracked audit rows (see the loop below) but re-derives and adds a *new* one for
+    /// each original entry — two audit rows for one logical write. This is latent, not live,
+    /// today: <c>UseNpgsql</c> is configured with no <c>EnableRetryOnFailure</c>, and nothing in
+    /// this codebase retries a failed <c>SaveChanges</c> call. If a retrying execution strategy is
+    /// ever enabled, this becomes real. Accepted rather than guarded against, because the failure
+    /// mode is over-auditing (a duplicate row), not under-auditing (a missing one) — the safe
+    /// direction for an audit trail to fail in (#313 Task 2 review, F8/M8).
+    /// </para>
     /// </summary>
     public sealed class AdminAuditInterceptor : SaveChangesInterceptor
     {
@@ -72,18 +86,18 @@ namespace FlightAssistant.Infrastructure.Persistance
             // Cheap, expected case — EF can raise this event with no context attached.
             if (context is null) return;
 
-            // No actor ⇒ no row, immediately. Every ordinary traveler write goes through this
-            // same DbContext and this same interceptor; IAdminContext.ActorId is only ever
-            // populated for the admin endpoint group (see the Program.cs endpoint filter), so an
-            // unset actor means this save has nothing to do with an admin write.
-            var actorId = _adminContext.ActorId;
-            if (string.IsNullOrWhiteSpace(actorId)) return;
-
             // Snapshot before adding anything — enumerating ChangeTracker.Entries() while adding
             // newly-tracked entities to the same tracker is how this turns into an infinite loop.
             var entries = context.ChangeTracker.Entries().ToList();
 
-            // Append-only: nothing may edit or remove an audit row, ever.
+            // Append-only: nothing may edit or remove an audit row, ever — checked *before* the
+            // actor gate below, deliberately. This guard used to sit after the actor check, which
+            // meant it only ever fired on an admin-actor save; any save with no actor (every
+            // ordinary traveler write, every hosted service, every test helper, any future
+            // background job) went straight past it, so a bug anywhere outside the admin surface
+            // could silently rewrite or delete an audit row with no actor ever set. Tamper-evidence
+            // is the whole reason this log is transactional, so it cannot depend on who — or
+            // whether anyone — is saving. (issue #313 Task 2 review, F1.)
             var illegalChange = entries.FirstOrDefault(e =>
                 e.Metadata.ClrType == typeof(AdminAuditLog) &&
                 e.State is EntityState.Modified or EntityState.Deleted);
@@ -93,6 +107,13 @@ namespace FlightAssistant.Infrastructure.Persistance
                     $"AdminAuditLog rows are append-only. An entry was {illegalChange.State}; " +
                     "only Added is permitted for this entity.");
             }
+
+            // No actor ⇒ no row, immediately. Every ordinary traveler write goes through this
+            // same DbContext and this same interceptor; IAdminContext.ActorId is only ever
+            // populated for the admin endpoint group (see the Program.cs endpoint filter), so an
+            // unset actor means this save has nothing to do with an admin write.
+            var actorId = _adminContext.ActorId;
+            if (string.IsNullOrWhiteSpace(actorId)) return;
 
             var actionUtc = DateTime.UtcNow; // one instant shared by every row written in this save
             var traceId = Activity.Current?.Id;
@@ -143,7 +164,10 @@ namespace FlightAssistant.Infrastructure.Persistance
             // EntityId and EntityType can never be sensitive values (they come from primary-key
             // metadata and the CLR type name, never a registered property), so the summary needs
             // no masking pass of its own to satisfy the "no sensitive value in Summary" rule.
-            var summary = $"{VerbFor(action)} {clrType.Name} {entityId}";
+            // entityId is null only for a store-generated-key create (see GetEntityId) — rendered
+            // as "(pending id)" rather than an empty trailing space so the summary line still
+            // reads sensibly; the full created row is still recoverable from After.
+            var summary = $"{VerbFor(action)} {clrType.Name} {entityId ?? "(pending id)"}";
 
             return AdminAuditLog.Create(
                 actorId: actorId,
@@ -206,18 +230,39 @@ namespace FlightAssistant.Infrastructure.Persistance
 
         /// <summary>
         /// The entry's primary key via EF metadata, never a hand-picked "display" column.
-        /// Composite keys join their parts with <c>|</c>. A store-generated key (e.g. an int
-        /// identity column) on an <see cref="EntityState.Added"/> entry may still be unset at
-        /// SavingChanges time — this records whatever value is actually present rather than
-        /// inventing one.
+        /// Composite keys join their parts with <c>|</c>.
+        ///
+        /// <para>
+        /// A store-generated key (e.g. an int identity column, <c>ValueGeneratedOnAdd</c>) on an
+        /// <see cref="EntityState.Added"/> entry is genuinely unset at <c>SavingChanges</c> time —
+        /// Npgsql assigns the real value during <c>SaveChanges</c> via <c>INSERT … RETURNING</c>,
+        /// which runs *after* this interceptor. EF already knows this: it stamps such a property
+        /// with a placeholder (a negative sentinel for an <c>int</c>) purely for in-memory
+        /// relationship fixup, and marks the <see cref="PropertyEntry.IsTemporary"/> flag on it —
+        /// this method treats that flag as the source of truth, not the value itself, which is why
+        /// this records <c>null</c> rather than that placeholder (or the CLR default, e.g.
+        /// <c>"0"</c>). Either of those would look like real data and collide across every create
+        /// of every store-generated-key type, so filtering the audit log on it would return every
+        /// such create ever recorded — worse than admitting the id isn't known yet. Recovering the
+        /// real id would mean moving this write to run after the INSERT, which forfeits the
+        /// same-transaction guarantee the whole interceptor exists for (see the class comment).
+        /// The created entity stays identifiable through <see cref="AdminAuditLog.After"/>, which
+        /// carries its full property set regardless of whether the key made it in.
+        /// </para>
         /// </summary>
-        private static string GetEntityId(EntityEntry entry)
+        private static string? GetEntityId(EntityEntry entry)
         {
             var key = entry.Metadata.FindPrimaryKey();
             if (key is null) return string.Empty;
 
-            return string.Join("|", key.Properties.Select(p =>
-                entry.Property(p.Name).CurrentValue?.ToString() ?? string.Empty));
+            var properties = key.Properties.Select(p => entry.Property(p.Name)).ToList();
+
+            // Any part still temporary (store-generated, not yet assigned by the database) makes
+            // the whole id unknown rather than partially wrong — a composite key with one real
+            // part and one placeholder would be just as misleading as a single unset int key.
+            if (properties.Any(p => p.IsTemporary)) return null;
+
+            return string.Join("|", properties.Select(p => p.CurrentValue?.ToString() ?? string.Empty));
         }
 
         private static string VerbFor(AdminAuditAction action) => action switch

@@ -7,7 +7,6 @@ using FlightAssistant.API.Infrastructure;
 using FlightAssistant.API.Middleware;
 using FlightAssistant.Application;
 using FlightAssistant.Application.Administration;
-using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Infrastructure;
 using FlightAssistant.Infrastructure.Caching;
@@ -315,7 +314,7 @@ var adminGroup = app.MapGroup("admin")
 adminGroup.AddEndpointFilter(async (efiContext, next) =>
 {
     var http = efiContext.HttpContext;
-    var adminContext = (AdminContext)http.RequestServices.GetRequiredService<IAdminContext>();
+    var adminContext = http.RequestServices.GetRequiredService<AdminContext>();
     adminContext.ActorId = http.User.FindFirstValue("oid") ?? http.User.FindFirstValue("sub");
     adminContext.ActorName = http.User.FindFirstValue("name");
     return await next(efiContext);

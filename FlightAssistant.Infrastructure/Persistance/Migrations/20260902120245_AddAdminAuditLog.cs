@@ -21,7 +21,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     ActionUtc = table.Column<DateTime>(type: "timestamptz", nullable: false),
                     Action = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: false),
                     EntityType = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
-                    EntityId = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
+                    EntityId = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: true),
                     Summary = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: false),
                     Before = table.Column<string>(type: "jsonb", nullable: true),
                     After = table.Column<string>(type: "jsonb", nullable: true),

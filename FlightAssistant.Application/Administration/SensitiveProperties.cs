@@ -37,19 +37,50 @@ namespace FlightAssistant.Application.Administration
         private static readonly IReadOnlySet<string> Empty = new HashSet<string>(StringComparer.Ordinal);
 
         /// <summary>
-        /// Whether <paramref name="propertyName"/> on <paramref name="entityType"/> is
-        /// registered as sensitive. The comparison is case-correct (ordinal): a property name
-        /// that only differs by case from a registered one is not a match.
+        /// Walks <paramref name="entityType"/> and its base types (exact type first), not just
+        /// the exact type, when checking or collecting registrations below. A mapped derived
+        /// entity type (EF TPH, e.g. a hypothetical <c>PremiumTraveler : Traveler</c> configured
+        /// as its own entity type) reports its own exact <c>Type</c> as <c>Metadata.ClrType</c> —
+        /// an exact-match-only lookup would miss the registration on <c>Traveler</c> entirely and
+        /// let a subclass's sensitive properties through unmasked. This is deliberately the only
+        /// direction this registry is forgiving in: under-masking leaks PII into an audit row or
+        /// the admin panel, which cannot be undone once written; over-masking only redacts a value
+        /// that turns out not to have needed it, which loses nothing but detail. That asymmetry —
+        /// not symmetry, not performance — is why this walks up rather than matching exactly.
         /// </summary>
-        public static bool IsSensitive(Type entityType, string propertyName) =>
-            Registry.TryGetValue(entityType, out var properties) && properties.Contains(propertyName);
+        private static IEnumerable<Type> TypeAndAncestors(Type entityType)
+        {
+            for (var type = entityType; type is not null; type = type.BaseType)
+                yield return type;
+        }
 
         /// <summary>
-        /// All sensitive property names registered for <paramref name="entityType"/>, for a
-        /// caller that needs to mask a whole record (A4) rather than test one property at a time.
-        /// Returns an empty set for a type with no registered sensitive properties — never null.
+        /// Whether <paramref name="propertyName"/> on <paramref name="entityType"/> — or any base
+        /// type it derives from — is registered as sensitive. The comparison is case-correct
+        /// (ordinal): a property name that only differs by case from a registered one is not a
+        /// match.
         /// </summary>
-        public static IReadOnlySet<string> GetSensitiveProperties(Type entityType) =>
-            Registry.TryGetValue(entityType, out var properties) ? properties : Empty;
+        public static bool IsSensitive(Type entityType, string propertyName) =>
+            TypeAndAncestors(entityType).Any(t =>
+                Registry.TryGetValue(t, out var properties) && properties.Contains(propertyName));
+
+        /// <summary>
+        /// All sensitive property names registered for <paramref name="entityType"/> or any base
+        /// type it derives from, for a caller that needs to mask a whole record (A4) rather than
+        /// test one property at a time. Returns an empty set for a type with no registered
+        /// sensitive properties anywhere in its hierarchy — never null.
+        /// </summary>
+        public static IReadOnlySet<string> GetSensitiveProperties(Type entityType)
+        {
+            HashSet<string>? union = null;
+            foreach (var type in TypeAndAncestors(entityType))
+            {
+                if (!Registry.TryGetValue(type, out var properties)) continue;
+                union ??= new HashSet<string>(StringComparer.Ordinal);
+                union.UnionWith(properties);
+            }
+
+            return union ?? Empty;
+        }
     }
 }

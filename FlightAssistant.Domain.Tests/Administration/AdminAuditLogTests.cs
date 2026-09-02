@@ -77,6 +77,18 @@ namespace FlightAssistant.Domain.Tests.Administration
                 AdminAuditLog.Create("actor", null, AdminAuditAction.Create, "Traveler", " ", "Created Traveler"));
         }
 
+        // A null EntityId is the legitimate "not known yet" case (a store-generated key on a
+        // Create row — see AdminAuditInterceptor.GetEntityId), distinct from blank/whitespace,
+        // which is always a caller bug and still rejected above (#313 Task 2 review, F5/M5).
+        [Fact]
+        public void Create_WithNullEntityId_DoesNotThrow_AndRecordsNull()
+        {
+            var log = AdminAuditLog.Create(
+                "actor", null, AdminAuditAction.Create, "Airport", entityId: null, "Created Airport (pending id)");
+
+            Assert.Null(log.EntityId);
+        }
+
         [Fact]
         public void Create_WithBlankSummary_ThrowsDomainException()
         {
