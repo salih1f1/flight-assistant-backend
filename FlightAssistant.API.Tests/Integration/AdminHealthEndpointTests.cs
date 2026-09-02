@@ -1,0 +1,454 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+using FlightAssistant.API.HostedServices;
+using FlightAssistant.Contracts.Responses.Admin;
+using FlightAssistant.Infrastructure.Persistance;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
+
+namespace FlightAssistant.API.Tests.Integration;
+
+/// <summary>
+/// <c>GET /admin/health</c> hangs off the shared <c>/admin</c> group, so the auth cases here are
+/// really checking that it was mapped onto that group rather than standalone.
+///
+/// <para>
+/// The base factory clears every registered <c>IHealthCheck</c> (the real DB/Redis/APNs/AeroAPI
+/// checks all need infra this suite doesn't have), so most scenarios here register their own fake
+/// checks via <c>WithWebHostBuilder</c> instead.
+/// </para>
+/// </summary>
+[Collection("Integration")]
+public class AdminHealthEndpointTests(FlightAssistantWebApplicationFactory factory)
+{
+    private sealed class FixedHealthCheck(HealthCheckResult result) : IHealthCheck
+    {
+        public Task<HealthCheckResult> CheckHealthAsync(
+            HealthCheckContext context, CancellationToken cancellationToken = default)
+            => Task.FromResult(result);
+    }
+
+    /// <summary>
+    /// Swaps in a fake <c>IHostEnvironment</c> without touching the process's real
+    /// <c>ASPNETCORE_ENVIRONMENT</c> (which stays "Testing" so the host's own required
+    /// configuration — Postgres, Azure AD, AeroAPI — keeps resolving from
+    /// appsettings.Testing.json). Only <c>AdminHealthReportBuilder</c>'s
+    /// <c>env.IsProduction()</c> branch needs to see a different name.
+    /// </summary>
+    private sealed class FakeHostEnvironment(string environmentName) : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = environmentName;
+        public string ApplicationName { get; set; } = "FlightAssistant.API.Tests";
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+        public IFileProvider ContentRootFileProvider { get; set; } = null!;
+    }
+
+    private static readonly InvalidOperationException ApnsException = new("boom");
+
+    private static WebApplicationFactory<Program> WithThreeFakeChecks(
+        FlightAssistantWebApplicationFactory factory, string? environmentName = null)
+    {
+        return factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+            {
+                if (environmentName is not null)
+                    services.AddSingleton<IHostEnvironment>(new FakeHostEnvironment(environmentName));
+
+                services.Configure<HealthCheckServiceOptions>(opts =>
+                {
+                    opts.Registrations.Add(new HealthCheckRegistration(
+                        "database",
+                        new FixedHealthCheck(HealthCheckResult.Healthy()),
+                        failureStatus: null,
+                        tags: []));
+                    opts.Registrations.Add(new HealthCheckRegistration(
+                        "aeroapi",
+                        new FixedHealthCheck(HealthCheckResult.Degraded("Host unreachable")),
+                        failureStatus: null,
+                        tags: ["external"]));
+                    opts.Registrations.Add(new HealthCheckRegistration(
+                        "apns",
+                        new FixedHealthCheck(HealthCheckResult.Unhealthy("APNs check threw", ApnsException)),
+                        failureStatus: null,
+                        tags: ["external"]));
+                });
+            }));
+    }
+
+    /// <summary>
+    /// Repoints <see cref="FlightAssistantDbContext"/> at a real (Npgsql) relational provider aimed
+    /// at a dead endpoint, replacing the base factory's InMemory provider — the only way to
+    /// exercise "relational but unreachable", since <c>IsRelational()</c> alone answers <c>true</c>
+    /// for Npgsql regardless of whether Postgres is actually reachable. Mirrors the EF-Core-assembly
+    /// stripping <see cref="FlightAssistantWebApplicationFactory"/> itself does when swapping in
+    /// InMemory: EF's internal service provider is keyed on every registered database provider's
+    /// options, so the InMemory registration must be fully removed, not just shadowed by adding
+    /// Npgsql alongside it, or EF throws "Services for database providers ... have been registered".
+    /// </summary>
+    private static WebApplicationFactory<Program> WithDeadRelationalDatabase(
+        FlightAssistantWebApplicationFactory factory, string? environmentName = null)
+    {
+        return factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+            {
+                if (environmentName is not null)
+                    services.AddSingleton<IHostEnvironment>(new FakeHostEnvironment(environmentName));
+
+                var efCoreAssemblyPrefixes = new[]
+                {
+                    "Microsoft.EntityFrameworkCore",
+                    "Npgsql.EntityFrameworkCore",
+                };
+                var toRemove = services
+                    .Where(d =>
+                    {
+                        if (d.ServiceType == typeof(FlightAssistantDbContext)) return true;
+                        var svcAssembly = d.ServiceType.Assembly.GetName().Name;
+                        if (svcAssembly is not null && efCoreAssemblyPrefixes.Any(p => svcAssembly.StartsWith(p)))
+                            return true;
+                        var implAssembly = d.ImplementationType?.Assembly.GetName().Name;
+                        if (implAssembly is not null && efCoreAssemblyPrefixes.Any(p => implAssembly.StartsWith(p)))
+                            return true;
+                        return false;
+                    })
+                    .ToList();
+                foreach (var d in toRemove)
+                    services.Remove(d);
+
+                // Port 1 on loopback: nothing listens there, so the connection is refused
+                // immediately rather than hanging out the full Npgsql default timeout; the explicit
+                // Timeout/Command Timeout bound the worst case regardless.
+                services.AddDbContext<FlightAssistantDbContext>(opt =>
+                    opt.UseNpgsql("Host=127.0.0.1;Port=1;Timeout=2;Command Timeout=2"));
+            }));
+    }
+
+    /// <summary>WithWebHostBuilder hands back the base factory type, so the derived factory's
+    /// CreateAdminClient convenience is out of reach — same token shape, built here.</summary>
+    private static HttpClient AdminClient(WebApplicationFactory<Program> scopedFactory)
+    {
+        var client = scopedFactory.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", $"test-admin-{Guid.NewGuid()}");
+        return client;
+    }
+
+    /// <summary>
+    /// Registers a <see cref="FlightSyncHeartbeat"/> instance that already has a failed run on it —
+    /// DI resolves the last-registered descriptor for a given service type, so this overrides
+    /// Program.cs's own <c>AddSingleton&lt;FlightSyncHeartbeat&gt;()</c>, the same technique
+    /// <see cref="WithThreeFakeChecks"/> uses for <see cref="IHostEnvironment"/>. The integration
+    /// factory removes every <c>IHostedService</c>, so the background service that would normally
+    /// call <c>Mark*</c> never runs in this suite — this stands in for it directly.
+    /// </summary>
+    private static WebApplicationFactory<Program> WithFailedFlightSyncHeartbeat(
+        FlightAssistantWebApplicationFactory factory, string? environmentName = null)
+    {
+        var heartbeat = new FlightSyncHeartbeat();
+        heartbeat.MarkRunStarted();
+        heartbeat.MarkRunFailed(new InvalidOperationException("sync boom"), DateTime.UtcNow.AddMinutes(10));
+
+        return factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+            {
+                if (environmentName is not null)
+                    services.AddSingleton<IHostEnvironment>(new FakeHostEnvironment(environmentName));
+
+                services.AddSingleton(heartbeat);
+            }));
+    }
+
+    // Distinctive sentinel values for the redis/App Insights configured-ness test below. Chosen to
+    // be unmistakable in a failure diff and to never plausibly appear anywhere else in the response
+    // body.
+    private const string RedisConnectionStringSentinel =
+        "sentinel-redis-host.example.invalid:6380,password=SuperSecretRedisPassword123!";
+    private const string AppInsightsConnectionStringSentinel =
+        "InstrumentationKey=11111111-2222-3333-4444-555555555555;IngestionEndpoint=https://sentinel-appinsights.example.invalid/";
+
+    /// <summary>
+    /// Adds real (sentinel-valued) Redis and Application Insights connection strings to the test
+    /// host's configuration, via <c>ConfigureAppConfiguration</c> rather than a fake registration —
+    /// <c>AdminHealthReportBuilder.BuildSystem</c> reads straight off <c>IConfiguration</c>, so
+    /// nothing short of a real config value exercises the "is this actually configured" branch.
+    ///
+    /// <para>
+    /// This deliberately does not also make <c>Program.cs</c>'s own build-time
+    /// <c>hcBuilder.AddRedis(redisConnStr)</c> registration see the value: that read happens as a
+    /// plain top-level statement before this factory's <c>ConfigureAppConfiguration</c> delegate is
+    /// merged in (the same ordering the base factory's class comment already documents for
+    /// <c>Cfg()</c>), so no live Redis health check is ever registered here — and even if it were,
+    /// the base factory's <c>HealthCheckServiceOptions.Registrations.Clear()</c> means
+    /// <c>CheckHealthAsync</c> never invokes it. Either way this test cannot attempt a real Redis
+    /// connection; no <c>ConfigureServices</c> override to strip the health check is needed.
+    /// </para>
+    /// </summary>
+    private static WebApplicationFactory<Program> WithRedisAndAppInsightsConfigured(
+        FlightAssistantWebApplicationFactory factory)
+    {
+        return factory.WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, cfg) =>
+                cfg.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:Redis"] = RedisConnectionStringSentinel,
+                    ["ApplicationInsights:ConnectionString"] = AppInsightsConnectionStringSentinel,
+                })));
+    }
+
+    [Fact]
+    public async Task GetHealth_Anonymous_Returns401()
+    {
+        var client = factory.CreateClient();
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetHealth_AuthenticatedWithoutTheAdminRole_Returns403()
+    {
+        var client = factory.CreateUserClient();
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetHealth_Admin_NoChecksRegistered_Returns200_HealthyWithEmptyChecks()
+    {
+        // The base factory clears every health check and never re-adds any: the "nothing
+        // registered" edge case must render as Healthy with an empty list, not a 500.
+        var client = factory.CreateAdminClient();
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<AdminHealthDto>();
+        Assert.NotNull(dto);
+        Assert.Equal("Healthy", dto!.Status);
+        Assert.Empty(dto.Checks);
+
+        // Nothing is configured for Redis/AppInsights in appsettings.Testing.json — the booleans
+        // must reflect that, not default to a stale "true".
+        Assert.False(dto.System.RedisConfigured);
+        Assert.False(dto.System.AppInsightsConfigured);
+    }
+
+    [Fact]
+    public async Task GetHealth_Admin_InMemoryProvider_MigrationsAvailableIsFalse_AndDoesNotThrow()
+    {
+        // FlightAssistantWebApplicationFactory swaps in the EF Core InMemory provider, which
+        // throws on GetPendingMigrationsAsync/GetAppliedMigrationsAsync. "Available: false" is a
+        // distinct answer from "no migrations pending" — the request must not throw either way.
+        var client = factory.CreateAdminClient();
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<AdminHealthDto>();
+        Assert.NotNull(dto);
+        Assert.False(dto!.Migrations.Available);
+        Assert.Equal(0, dto.Migrations.AppliedCount);
+        Assert.Null(dto.Migrations.LastAppliedMigration);
+        Assert.Empty(dto.Migrations.Pending);
+        Assert.Equal("Non-relational database provider.", dto.Migrations.Error);
+    }
+
+    [Fact]
+    public async Task GetHealth_DatabaseUnreachable_Returns200_WithMigrationsUnavailable_NotA500()
+    {
+        // Regression test for final-review finding C1: IsRelational() answers a *provider*
+        // question (true for Npgsql whether or not Postgres is reachable), so it alone doesn't
+        // guard against a live-but-unreachable database — GetAppliedMigrationsAsync and
+        // GetPendingMigrationsAsync need a real connection and threw a raw NpgsqlException that
+        // took the whole report down with it (confirmed against exactly this dead-endpoint setup
+        // during review). BuildMigrationsAsync must degrade to Available: false instead, the same
+        // "cannot tell" shape the non-relational guard already produces — not 500.
+        using var scopedFactory = WithDeadRelationalDatabase(factory);
+        var client = AdminClient(scopedFactory);
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<AdminHealthDto>();
+        Assert.NotNull(dto);
+        Assert.False(dto!.Migrations.Available);
+        Assert.Equal(0, dto.Migrations.AppliedCount);
+        Assert.Null(dto.Migrations.LastAppliedMigration);
+        Assert.Empty(dto.Migrations.Pending);
+        // Testing (the ambient, non-overridden environment here) is non-Production, so the reason
+        // renders.
+        Assert.NotNull(dto.Migrations.Error);
+    }
+
+    [Fact]
+    public async Task GetHealth_DatabaseUnreachable_Production_NullsTheMigrationsError()
+    {
+        using var scopedFactory = WithDeadRelationalDatabase(factory, environmentName: Environments.Production);
+        var client = AdminClient(scopedFactory);
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<AdminHealthDto>();
+        Assert.NotNull(dto);
+        Assert.False(dto!.Migrations.Available);
+        Assert.Null(dto.Migrations.Error);
+    }
+
+    [Fact]
+    public async Task GetHealth_PerCheckShape_ReturnsNameStatusDescriptionTagsAndWorstStatusRollup()
+    {
+        using var scopedFactory = WithThreeFakeChecks(factory);
+        var client = AdminClient(scopedFactory);
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<AdminHealthDto>();
+        Assert.NotNull(dto);
+
+        // Unhealthy (apns) beats Degraded (aeroapi) beats Healthy (database).
+        Assert.Equal("Unhealthy", dto!.Status);
+        Assert.Equal(3, dto.Checks.Count);
+
+        var database = Assert.Single(dto.Checks, c => c.Name == "database");
+        Assert.Equal("Healthy", database.Status);
+        Assert.Empty(database.Tags);
+
+        var aeroapi = Assert.Single(dto.Checks, c => c.Name == "aeroapi");
+        Assert.Equal("Degraded", aeroapi.Status);
+        Assert.Equal("Host unreachable", aeroapi.Description);
+        Assert.Contains("external", aeroapi.Tags);
+
+        var apns = Assert.Single(dto.Checks, c => c.Name == "apns");
+        Assert.Equal("Unhealthy", apns.Status);
+        Assert.Equal("APNs check threw", apns.Description);
+        Assert.Contains("external", apns.Tags);
+    }
+
+    [Fact]
+    public async Task GetHealth_Development_PopulatesErrorForTheThrowingCheck()
+    {
+        // Note on what this test does and doesn't prove: it overrides IHostEnvironment to a
+        // concretely-named "Development" for readability, but Testing (the ambient environment
+        // this whole suite already runs under) is itself non-Production — so this assertion
+        // passes identically with the override removed and does not by itself demonstrate that
+        // the override mechanism works. GetHealth_Production_NullsTheErrorForTheThrowingCheck is
+        // the one that's discriminating (Testing would fail that assertion without its override),
+        // and the pair together prove both that population happens outside Production and that
+        // null in Production isn't merely an absent field.
+        using var scopedFactory = WithThreeFakeChecks(factory, environmentName: Environments.Development);
+        var client = AdminClient(scopedFactory);
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<AdminHealthDto>();
+        Assert.NotNull(dto);
+
+        var apns = Assert.Single(dto!.Checks, c => c.Name == "apns");
+        Assert.NotNull(apns.Error);
+        Assert.Contains("InvalidOperationException", apns.Error);
+        Assert.Contains("boom", apns.Error);
+    }
+
+    [Fact]
+    public async Task GetHealth_Production_NullsTheErrorForTheThrowingCheck()
+    {
+        // The security-relevant assertion in this set: exception detail must never reach a
+        // Production caller, even for the check that actually threw.
+        using var scopedFactory = WithThreeFakeChecks(factory, environmentName: Environments.Production);
+        var client = AdminClient(scopedFactory);
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<AdminHealthDto>();
+        Assert.NotNull(dto);
+
+        var apns = Assert.Single(dto!.Checks, c => c.Name == "apns");
+        Assert.Null(apns.Error);
+
+        // Description is author-written health-check text, not exception detail — it still
+        // renders even in Production.
+        Assert.Equal("APNs check threw", apns.Description);
+    }
+
+    [Fact]
+    public async Task GetHealth_FlightSyncFailed_PopulatesLastErrorOutsideProduction()
+    {
+        // I2 (final review): flightSync.lastError is gated by the same includeDiagnostics flag as
+        // checks[].error, but had no coverage at all. Mirrors GetHealth_Development_Populates.../
+        // GetHealth_Production_Nulls... for the checks[] field, for this field.
+        using var scopedFactory = WithFailedFlightSyncHeartbeat(factory, environmentName: Environments.Development);
+        var client = AdminClient(scopedFactory);
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<AdminHealthDto>();
+        Assert.NotNull(dto);
+
+        Assert.Equal("Failed", dto!.FlightSync.LastOutcome);
+        Assert.NotNull(dto.FlightSync.LastError);
+        Assert.Contains("InvalidOperationException", dto.FlightSync.LastError);
+        Assert.Contains("sync boom", dto.FlightSync.LastError);
+    }
+
+    [Fact]
+    public async Task GetHealth_FlightSyncFailed_Production_NullsTheLastError()
+    {
+        // The security-relevant half of the pair above: the sync loop's own exception detail must
+        // never reach a Production caller either.
+        using var scopedFactory = WithFailedFlightSyncHeartbeat(factory, environmentName: Environments.Production);
+        var client = AdminClient(scopedFactory);
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<AdminHealthDto>();
+        Assert.NotNull(dto);
+
+        Assert.Equal("Failed", dto!.FlightSync.LastOutcome);
+        Assert.Null(dto.FlightSync.LastError);
+    }
+
+    [Fact]
+    public async Task GetHealth_RedisAndAppInsightsConfigured_ReportsBooleansTrue_AndNeverLeaksTheConnectionStrings()
+    {
+        // I2 (final review): GetHealth_Admin_NoChecksRegistered_Returns200_HealthyWithEmptyChecks
+        // only proves the booleans are false when nothing is configured — which would also pass if
+        // they were hardcoded false. This is the real test: configure both, assert both flip to
+        // true, and — the point of these fields being booleans in the first place — assert neither
+        // sentinel value appears anywhere in the raw response body.
+        using var scopedFactory = WithRedisAndAppInsightsConfigured(factory);
+        var client = AdminClient(scopedFactory);
+
+        var response = await client.GetAsync("admin/health");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        // Read as a raw string first: this is what actually proves the connection strings can't
+        // escape through the endpoint, as opposed to merely checking the two booleans on the
+        // deserialised DTO (which would miss a leak into some other field entirely).
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(RedisConnectionStringSentinel, body);
+        Assert.DoesNotContain(AppInsightsConnectionStringSentinel, body);
+
+        var dto = JsonSerializer.Deserialize<AdminHealthDto>(
+            body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(dto);
+        Assert.True(dto!.System.RedisConfigured);
+        Assert.True(dto.System.AppInsightsConfigured);
+    }
+}

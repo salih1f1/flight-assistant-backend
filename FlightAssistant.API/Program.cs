@@ -136,6 +136,7 @@ if (!string.IsNullOrWhiteSpace(redisConnStr))
 
 // Hosted services
 
+builder.Services.AddSingleton<FlightSyncHeartbeat>();
 builder.Services.AddHostedService<FlightStatusSyncBackgroundService>();
 
 // ------------------------------------------------------------
@@ -311,6 +312,7 @@ adminGroup.MapAdminVerifyEndpoints();
 adminGroup.MapAdminExportEndpoints();
 adminGroup.MapAdminImportEndpoints();
 adminGroup.MapAdminUsageEndpoints();
+adminGroup.MapAdminHealthEndpoints();
 
 // Private endpoints (ping, secure-test, whoami)
 app.MapPrivateEndpoints();
