@@ -34,10 +34,17 @@ namespace FlightAssistant.API.Endpoints.Admin
                 FlightSyncHeartbeat heartbeat,
                 IHostEnvironment env,
                 IConfiguration configuration,
+                ILoggerFactory loggerFactory,
                 CancellationToken ct) =>
             {
+                // AdminHealthReportBuilder is a static class and so cannot itself be an ILogger<T>
+                // category — a plain string category (its own full name) sidesteps that without
+                // introducing a marker type just for this.
+                var logger = loggerFactory.CreateLogger(
+                    "FlightAssistant.API.Endpoints.Admin.AdminHealthReportBuilder");
+
                 var dto = await AdminHealthReportBuilder.BuildAsync(
-                    healthCheckService, db, heartbeat, env, configuration, ct);
+                    healthCheckService, db, heartbeat, env, configuration, logger, ct);
 
                 // Always 200, even when Status is "Unhealthy": this is a report, not a probe. A
                 // non-2xx response would make the panel's HTTP error handling swallow the very body
@@ -55,7 +62,11 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "EF Core migrations, and the flight-status sync's last-run heartbeat. Exception " +
                 "detail on individual checks and the sync's last error render outside Production " +
                 "only.")
-            .Produces<AdminHealthDto>(200);
+            .Produces<AdminHealthDto>(200)
+            // Every known failure mode degrades gracefully into the 200 payload (including a
+            // database outage — final review C1); this stays reachable for anything unexpected,
+            // e.g. HealthCheckService itself throwing.
+            .ProducesProblem(500);
         }
     }
 }

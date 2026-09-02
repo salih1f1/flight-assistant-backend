@@ -32,6 +32,12 @@ jobs:
       - name: Run tests
         run: dotnet test --configuration Release --no-build --verbosity normal
 
+      # -p:SourceRevisionId stamps AssemblyInformationalVersionAttribute with
+      # "+<sha>", which GET /admin/health parses back out as buildSha (see
+      # AdminHealthReportBuilder.ParseVersion). This step must actually build —
+      # adding --no-build here (e.g. to reuse the "Build with dotnet" step above)
+      # would silently drop the stamp, and buildSha would go null in production
+      # with nothing failing to flag it.
       - name: dotnet publish
         run: >
           dotnet publish FlightAssistant.API -c Release -o ${{env.DOTNET_ROOT}}/myapp

@@ -70,17 +70,23 @@ namespace FlightAssistant.Contracts.Responses.Admin
     );
 
     /// <summary>EF Core migration state.</summary>
-    /// <param name="Available"><c>false</c> on a non-relational EF Core provider — the InMemory
-    /// provider used by the integration test suite throws on migration lookups, so it is guarded
-    /// rather than called. When <c>false</c>, <see cref="AppliedCount"/>,
-    /// <see cref="LastAppliedMigration"/> and <see cref="Pending"/> are left at their empty/null
-    /// defaults — deliberately not faked as "no migrations pending", which is a different, stronger
-    /// claim than "cannot tell".</param>
+    /// <param name="Available"><c>false</c> either on a non-relational EF Core provider (the
+    /// InMemory provider used by the integration test suite throws on migration lookups) or when a
+    /// relational provider's migration-history read itself throws (e.g. the database is
+    /// unreachable) — both are "cannot tell", not "nothing to apply". When <c>false</c>,
+    /// <see cref="AppliedCount"/>, <see cref="LastAppliedMigration"/> and <see cref="Pending"/> are
+    /// left at their empty/null defaults — deliberately not faked as "no migrations pending", which
+    /// is a different, stronger claim than "cannot tell".</param>
+    /// <param name="Error">Why <see cref="Available"/> is <c>false</c> — either a fixed
+    /// "non-relational provider" note or the migration-lookup exception, formatted like
+    /// <see cref="AdminHealthCheckDto.Error"/>. Rendered outside Production only; always
+    /// <c>null</c> when <see cref="Available"/> is <c>true</c>.</param>
     public sealed record AdminHealthMigrationsDto(
         bool Available,
         int AppliedCount,
         string? LastAppliedMigration,
-        IReadOnlyList<string> Pending
+        IReadOnlyList<string> Pending,
+        string? Error
     );
 
     /// <summary>The flight-status sync background service's last-run heartbeat
