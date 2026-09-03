@@ -221,7 +221,7 @@ namespace FlightAssistant.Infrastructure.Persistance
             {
                 var name = property.Metadata.Name;
                 values[name] = SensitiveProperties.IsSensitive(clrType, name)
-                    ? "<redacted>"
+                    ? SensitiveProperties.RedactedPlaceholder
                     : (useOriginalValue ? property.OriginalValue : property.CurrentValue);
             }
 

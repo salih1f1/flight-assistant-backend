@@ -1,10 +1,12 @@
 using System.Text.Json;
 using FlightAssistant.Application.Administration;
+using FlightAssistant.Application.Commands.Admin.Travelers;
 using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
 using FlightAssistant.Infrastructure.Persistance;
+using FlightAssistant.Infrastructure.Persistance.Repositories;
 using FlightAssistant.Infrastructure.Tests.TestSupport;
 using Microsoft.EntityFrameworkCore;
 
@@ -249,5 +251,122 @@ public class AdminAuditInterceptorPostgresTests : PostgresTestBase
         Assert.Equal(entityId, row.EntityId);
         Assert.Null(row.Before);
         Assert.Null(row.After);
+    }
+
+    /// <summary>
+    /// #322 (the admin device-token delete): proves the "audited for free" claim end-to-end.
+    /// <c>DeleteDeviceTokenCommandHandler</c> never builds an <see cref="AdminAuditLog"/> itself —
+    /// it just calls <c>Traveler.RemoveDeviceToken</c> on a tracked, loaded aggregate and saves.
+    /// <c>DeviceTokenConfiguration</c> configures <c>DeviceToken</c>'s FK to
+    /// <c>Traveler</c> as <c>OnDelete(DeleteBehavior.Cascade)</c>, so removing a token from the
+    /// loaded, tracked <c>DeviceTokens</c> collection marks that <c>DeviceToken</c> entry
+    /// <see cref="EntityState.Deleted"/> — this is what <see cref="AdminAuditInterceptor"/> actually
+    /// audits, not the <c>Traveler</c> the caller loaded.
+    ///
+    /// <para>
+    /// <b>Why this has to run here, not through the API.</b>
+    /// <c>FlightAssistantWebApplicationFactory</c> (see #319) strips
+    /// <see cref="AdminAuditInterceptor"/> out of the <c>DbContext</c> registration entirely so the
+    /// rest of the API test suite gets a fast, isolated InMemory database — which means an
+    /// API-level integration test for this exact requirement could only ever observe "no audit row
+    /// was written", the opposite of what #322 requires. This test drives the real interceptor
+    /// against a real transaction instead, mirroring every other test in this file.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task SaveChangesAsync_DeviceTokenRemovedFromATrackedTraveler_WritesADeleteAuditRow_ForTheDeviceTokenNotTheTraveler()
+    {
+        var adminContext = new AdminContext { ActorId = "admin-oid-1", ActorName = "Ada Admin" };
+        var traveler = Traveler.Register($"{Guid.NewGuid():N}@example.com");
+        var token = traveler.AddDeviceToken("ios", $"raw-token-{Guid.NewGuid():N}");
+
+        // Seed through an un-audited context — only the delete below should produce a row.
+        await using (var seed = CreateAuditedDbContext(new AdminContext()))
+        {
+            seed.Travelers.Add(traveler);
+            await seed.SaveChangesAsync();
+        }
+
+        await using (var db = CreateAuditedDbContext(adminContext))
+        {
+            var loaded = await db.Travelers.Include(t => t.DeviceTokens).SingleAsync(t => t.Id == traveler.Id);
+            loaded.RemoveDeviceToken(token.Id);
+            await db.SaveChangesAsync();
+        }
+
+        await using var verify = CreateDbContext();
+        var rows = await verify.AdminAuditLogs.ToListAsync();
+
+        // Two entries actually change in that one SaveChangesAsync call: the removed DeviceToken
+        // (Deleted) and the parent Traveler itself (Modified — RemoveDeviceToken calls SetUpdated(),
+        // which touches UpdatedUtc). Each gets its own row, so this asserts both rather than
+        // over-narrowing to Single() and failing for the wrong reason if the parent's own Update
+        // row is ever the one that regresses.
+        Assert.Equal(2, rows.Count);
+
+        var deviceTokenRow = Assert.Single(rows, r => r.EntityType == nameof(DeviceToken));
+        Assert.Equal(AdminAuditAction.Delete, deviceTokenRow.Action);
+        Assert.Equal(token.Id.ToString(), deviceTokenRow.EntityId);
+        Assert.Equal("admin-oid-1", deviceTokenRow.ActorId);
+
+        var travelerRow = Assert.Single(rows, r => r.EntityType == nameof(Traveler));
+        Assert.Equal(AdminAuditAction.Update, travelerRow.Action);
+        Assert.Equal(traveler.Id.ToString(), travelerRow.EntityId);
+    }
+
+    /// <summary>
+    /// #322 fix round, M2: the test above proves the interceptor audits a tracked
+    /// <see cref="DeviceToken"/> removal, but it hand-rolls the same
+    /// <c>traveler.RemoveDeviceToken(...)</c> + <c>SaveChangesAsync()</c> steps
+    /// <see cref="DeleteDeviceTokenCommandHandler"/> happens to contain today rather than driving
+    /// the handler itself — so nothing ties *the handler's own execution* to the audit row
+    /// appearing. That gap is concrete: #295 already established that <c>ExecuteDeleteAsync</c>
+    /// works on PostgreSQL and throws on InMemory, so a future "optimisation" of this delete to
+    /// <c>ExecuteDeleteAsync</c> would bypass the change tracker — and this interceptor entirely —
+    /// while still deleting the row, still returning 204 from the API, and still passing every
+    /// existing test, because none of them construct the handler against an audited context and
+    /// check both effects together.
+    ///
+    /// <para>
+    /// This test drives the real <see cref="DeleteDeviceTokenCommandHandler"/>, constructed against
+    /// a real <see cref="AdminTravelerRepository"/> bound to this audited context, and then asserts
+    /// on both halves through a second, unaudited context: the token the handler was asked to
+    /// delete is actually gone, <b>and</b> the row describing that deletion exists. Any future
+    /// change that still deletes the token but stops going through the tracked-entity path fails
+    /// this test even though the token still ends up gone — which is exactly the silent-audit-loss
+    /// scenario #295 warns about.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Handle_DeviceTokenDeletedThroughTheRealHandler_WritesADeleteAuditRow()
+    {
+        var adminContext = new AdminContext { ActorId = "admin-oid-1", ActorName = "Ada Admin" };
+        var traveler = Traveler.Register($"{Guid.NewGuid():N}@example.com");
+        var token = traveler.AddDeviceToken("ios", $"raw-token-{Guid.NewGuid():N}");
+
+        // Seed through an un-audited context — only the handler's own delete below should produce
+        // a row.
+        await using (var seed = CreateAuditedDbContext(new AdminContext()))
+        {
+            seed.Travelers.Add(traveler);
+            await seed.SaveChangesAsync();
+        }
+
+        await using (var db = CreateAuditedDbContext(adminContext))
+        {
+            var handler = new DeleteDeviceTokenCommandHandler(new AdminTravelerRepository(db));
+            await handler.Handle(new DeleteDeviceTokenCommand(traveler.Id, token.Id), CancellationToken.None);
+        }
+
+        await using var verify = CreateDbContext();
+
+        // The handler's own delete actually happened...
+        Assert.False(await verify.DeviceTokens.AnyAsync(t => t.Id == token.Id));
+
+        // ...and it is *that* deletion the audit row describes.
+        var deviceTokenRow = await verify.AdminAuditLogs.SingleAsync(r => r.EntityType == nameof(DeviceToken));
+        Assert.Equal(AdminAuditAction.Delete, deviceTokenRow.Action);
+        Assert.Equal(token.Id.ToString(), deviceTokenRow.EntityId);
+        Assert.Equal("admin-oid-1", deviceTokenRow.ActorId);
     }
 }

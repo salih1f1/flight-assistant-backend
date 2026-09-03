@@ -22,6 +22,9 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         public Task<Traveler?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
             _db.Travelers.Include(t => t.DeviceTokens).FirstOrDefaultAsync(t => t.Id == id, ct);
 
+        public Task<Traveler?> GetDetailAsync(Guid id, CancellationToken ct = default) =>
+            _db.Travelers.AsNoTracking().Include(t => t.DeviceTokens).FirstOrDefaultAsync(t => t.Id == id, ct);
+
         public Task DeleteAsync(Traveler traveler, CancellationToken ct = default)
         {
             _db.Travelers.Remove(traveler);

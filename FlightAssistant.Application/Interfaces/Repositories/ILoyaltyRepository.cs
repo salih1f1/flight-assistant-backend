@@ -7,6 +7,11 @@ namespace FlightAssistant.Application.Interfaces.Repositories
     {
         Task<(IReadOnlyList<LoyaltyProgram> Items, int Total)> GetProgramsAsync(int page, int pageSize, CancellationToken ct = default);
         Task<(IReadOnlyList<TravelerLoyaltyMembership> Items, int Total)> GetMembershipsForTravelerAsync(Guid travelerId, int page, int pageSize, CancellationToken ct = default);
+
+        /// <summary>Every membership the traveler holds, unpaged — for the admin traveler
+        /// drill-down (#322), which returns the whole relationship in one call. The unpaged
+        /// sibling of <see cref="GetMembershipsForTravelerAsync"/>.</summary>
+        Task<IReadOnlyList<TravelerLoyaltyMembership>> GetAllMembershipsForTravelerAsync(Guid travelerId, CancellationToken ct = default);
         Task<TravelerLoyaltyMembership?> GetMembershipByIdAsync(Guid id, CancellationToken ct = default);
         Task AddMembershipAsync(TravelerLoyaltyMembership membership, CancellationToken ct = default);
         Task RemoveMembershipAsync(TravelerLoyaltyMembership membership, CancellationToken ct = default);
