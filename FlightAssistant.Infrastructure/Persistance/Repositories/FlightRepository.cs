@@ -72,6 +72,17 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             return (rows.Select(x => (x.tf, x.f)).ToList(), total);
         }
 
+        public async Task<IReadOnlyList<(TravelerFlight Tracking, Flight Flight)>> GetAllTravelerFlightsAsync(Guid travelerId, CancellationToken ct = default)
+        {
+            var rows = await _db.TravelerFlights
+                .AsNoTracking()
+                .Where(tf => tf.TravelerId == travelerId)
+                .Join(_db.Flights.AsNoTracking(), tf => tf.FlightId, f => f.Id, (tf, f) => new { tf, f })
+                .OrderByDescending(x => x.f.ServiceDateUtc)
+                .ToListAsync(ct);
+            return rows.Select(x => (x.tf, x.f)).ToList();
+        }
+
         public Task<TravelerFlight?> GetTravelerFlightAsync(Guid travelerId, int flightId, CancellationToken ct = default) =>
             _db.TravelerFlights.FirstOrDefaultAsync(tf => tf.TravelerId == travelerId && tf.FlightId == flightId, ct);
 
@@ -92,6 +103,15 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 .Where(e => e.FlightId == flightId)
                 .Include(e => e.Status)
                 .OrderByDescending(e => e.EffectiveAtUtc)
+                .ToListAsync(ct);
+
+        public async Task<IReadOnlyList<FlightStatusEvent>> GetRecentFlightStatusEventsAsync(int flightId, int limit, CancellationToken ct = default) =>
+            await _db.FlightStatusEvents
+                .AsNoTracking()
+                .Where(e => e.FlightId == flightId)
+                .Include(e => e.Status)
+                .OrderByDescending(e => e.EffectiveAtUtc)
+                .Take(limit)
                 .ToListAsync(ct);
 
         public async Task AddFlightStatusEventAsync(FlightStatusEvent evt, CancellationToken ct = default) =>

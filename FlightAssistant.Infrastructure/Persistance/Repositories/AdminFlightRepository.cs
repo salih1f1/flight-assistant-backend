@@ -25,6 +25,9 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         public Task<Flight?> GetByIntIdAsync(int id, CancellationToken ct = default) =>
             _db.Flights.FirstOrDefaultAsync(f => f.Id == id, ct);
 
+        public Task<Flight?> GetDetailAsync(int id, CancellationToken ct = default) =>
+            _db.Flights.AsNoTracking().FirstOrDefaultAsync(f => f.Id == id, ct);
+
         public Task DeleteAsync(Flight flight, CancellationToken ct = default)
         {
             _db.Flights.Remove(flight);

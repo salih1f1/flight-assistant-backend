@@ -37,6 +37,12 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             return (items, total);
         }
 
+        public async Task<IReadOnlyList<TravelerLoyaltyMembership>> GetAllMembershipsForTravelerAsync(Guid travelerId, CancellationToken ct = default) =>
+            await _db.TravelerLoyaltyMemberships
+                .AsNoTracking()
+                .Where(m => m.TravelerId == travelerId)
+                .ToListAsync(ct);
+
         public Task<TravelerLoyaltyMembership?> GetMembershipByIdAsync(Guid id, CancellationToken ct = default) =>
             _db.TravelerLoyaltyMemberships.FirstOrDefaultAsync(m => m.Id == id, ct);
 

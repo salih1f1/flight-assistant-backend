@@ -14,6 +14,31 @@ namespace FlightAssistant.API.Endpoints.Admin
             var group = admin.MapGroup("flights")
                 .WithTags("Admin - Flights");
 
+            // GET /admin/flights/{id}/detail — the flight with its current status and recent
+            // status-event history, newest first.
+            group.MapGet("{id:int}/detail", async (int id, IMediator mediator, CancellationToken ct) =>
+            {
+                var result = await mediator.Send(new GetAdminFlightDetailQuery(id), ct);
+                if (result is null) return Results.NotFound();
+                return Results.Ok(new AdminFlightDetailDto(
+                    result.Id, result.AirlineId, result.FlightNumber, result.DepartureAirportId, result.ArrivalAirportId,
+                    result.ServiceDate, result.ScheduledDepartureUtc, result.ScheduledArrivalUtc,
+                    result.EstimatedDepartureUtc, result.EstimatedArrivalUtc,
+                    result.ActualDepartureUtc, result.ActualArrivalUtc,
+                    result.EquipmentAircraftIcao, result.ExternalId,
+                    result.CurrentStatus is { } current ? ToStatusEventDto(current) : null,
+                    result.StatusHistory.Select(ToStatusEventDto).ToList()));
+            })
+            .WithName("AdminGetFlightDetail")
+            .WithSummary("Get flight detail")
+            .WithDescription(
+                $"Returns the flight with its current status and its {GetAdminFlightDetailQueryHandler.MaxStatusHistory} " +
+                "most recent status events, newest first — the record of what the sync actually saw. " +
+                "Not the full history: a long-tracked flight polled every couple of minutes accumulates " +
+                "status-event rows without bound.")
+            .Produces<AdminFlightDetailDto>(200)
+            .ProducesProblem(404);
+
             // GET /admin/flights
             group.MapGet("", async ([AsParameters] PagedRequest paging, IMediator mediator, CancellationToken ct) =>
             {
@@ -68,5 +93,8 @@ namespace FlightAssistant.API.Endpoints.Admin
             .WithSummary("Sync flight status")
             .Produces(200);
         }
+
+        private static AdminFlightStatusEventDto ToStatusEventDto(AdminFlightStatusEventResult e) => new(
+            e.Id, e.StatusCode, e.StatusName, e.ProviderRawStatus, e.EffectiveAtUtc, e.RecordedAtUtc, e.Source);
     }
 }
