@@ -1,13 +1,18 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Contracts.Paging;
 using FlightAssistant.Contracts.Requests.Admin;
 using FlightAssistant.Contracts.Responses.Admin;
+using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
 using FlightAssistant.Infrastructure.Persistance;
+using FlightAssistant.Infrastructure.Persistance.Repositories;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -478,6 +483,133 @@ public class AdminDataEndpointTests(FlightAssistantWebApplicationFactory factory
         var serialized = JsonSerializer.Serialize(row);
         Assert.Contains(nameof(Traveler.Email), serialized); // control: proves this check sees real content
         Assert.DoesNotContain(rawEmail, serialized);
+    }
+
+    /// <summary>
+    /// #318 final review, finding 2 (I2): a caller-supplied id that resolves the right row while
+    /// spelled non-canonically (braced, uppercase) must still produce an audit row whose
+    /// <c>EntityId</c> is the canonical form — <see cref="Guid.ToString()"/>'s default
+    /// (lowercase, unbraced) — because that is exactly what <c>AdminAuditInterceptor.GetEntityId</c>
+    /// writes for every other admin-write row on the same entity (it also calls
+    /// <c>.ToString()</c> on the same underlying <see cref="Guid"/> value). Before this fix the
+    /// handler stamped <c>request.Id</c> verbatim, so an auditor's
+    /// <c>WHERE entity_id = '&lt;guid&gt;'</c> — the exact query the test above runs — would
+    /// silently miss a reveal whose caller varied the id's spelling.
+    /// </summary>
+    [Fact]
+    public async Task Reveal_Admin_BracedUppercaseId_AuditRowEntityId_IsCanonical()
+    {
+        var rawEmail = $"very-secret-{Marker()}@example.com";
+        var traveler = Traveler.Register(rawEmail);
+        await SeedAsync(db => db.Travelers.Add(traveler));
+
+        var canonicalId = traveler.Id.ToString();
+        var nonCanonicalId = $"{{{canonicalId.ToUpperInvariant()}}}";
+
+        var response = await RevealAsync(factory.CreateAdminClient(), "travelers", nonCanonicalId, nameof(Traveler.Email));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        // Deliberately the same lookup an auditor would run, and the same one
+        // Reveal_Admin_SuccessfulReveal_WritesExactlyOneAuditRow... above uses: a plain equality
+        // match on the canonical id, not a Contains/starts-with that could mask a formatting bug.
+        var row = await db.AdminAuditLogs.SingleAsync(a => a.EntityId == canonicalId);
+
+        Assert.Equal(AdminAuditAction.Reveal, row.Action);
+        Assert.Contains(canonicalId, row.Summary);
+        Assert.DoesNotContain(nonCanonicalId, row.Summary);
+    }
+
+    // ── Ordering, proven at the endpoint too (#318 final review, M6) ────────────
+
+    /// <summary>
+    /// Delegates every method to a real <see cref="AdminAuditRepository"/> except
+    /// <see cref="SaveChangesAsync"/>, which always throws — the endpoint-level counterpart to
+    /// <c>RevealValueCommandHandlerTests.Handle_WhenTheAuditSaveFails_PropagatesAndNeverReturnsAValue</c>.
+    /// That handler-level test proves <c>Handle</c> throws; it stops one step short of proving the
+    /// HTTP caller actually receives no value in the response body (#318 final review, M6) — this
+    /// class is what lets a real end-to-end request exercise that failure without a real database
+    /// failure to provoke it.
+    /// </summary>
+    private sealed class SaveFailingAdminAuditRepository(IAdminAuditRepository inner) : IAdminAuditRepository
+    {
+        public Task<(IReadOnlyList<AdminAuditLog> Items, int Total)> SearchAsync(
+            int page, int pageSize, string? entityType, string? entityId, string? actorId,
+            AdminAuditAction? action, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct = default) =>
+            inner.SearchAsync(page, pageSize, entityType, entityId, actorId, action, fromUtc, toUtc, ct);
+
+        public Task AddAsync(AdminAuditLog entry, CancellationToken ct = default) => inner.AddAsync(entry, ct);
+
+        // Task.FromException, not a synchronous throw: a real Npgsql failure surfaces as a faulted
+        // Task from inside an async method's own state machine, observable only once awaited (or
+        // otherwise inspected) — not as an exception thrown on the calling thread before any Task
+        // even exists. The difference matters here specifically: a synchronous throw would propagate
+        // out of a "fire-and-forget" `_ = SaveChangesAsync(ct)` call before `.ContinueWith` could
+        // even attach to it, so it would still (accidentally) fail the request under that mutation
+        // and this test would pass for the wrong reason. A faulted Task instead behaves exactly like
+        // NSubstitute's ThrowsAsync does in the handler-level test, so both tests are checking the
+        // same failure shape.
+        public Task SaveChangesAsync(CancellationToken ct = default) =>
+            Task.FromException(new InvalidOperationException(
+                "M6: simulated audit save failure for the endpoint-level ordering test."));
+    }
+
+    /// <summary>A standalone factory (not the shared "Integration" collection fixture, so this
+    /// failure mode never leaks into any other test) that layers the throwing repository above onto
+    /// <see cref="FlightAssistantWebApplicationFactory"/>'s ordinary InMemory/test-auth composition
+    /// — mirrors <c>DbContextInterceptorWiringTests</c>' approach of building a bespoke factory for
+    /// one specific wiring concern rather than restructuring the shared one.</summary>
+    private sealed class SaveFailingWebApplicationFactory : FlightAssistantWebApplicationFactory
+    {
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            base.ConfigureWebHost(builder);
+
+            builder.ConfigureServices(services =>
+            {
+                var existing = services.Where(d => d.ServiceType == typeof(IAdminAuditRepository)).ToList();
+                foreach (var d in existing) services.Remove(d);
+
+                services.AddScoped<IAdminAuditRepository>(sp =>
+                    new SaveFailingAdminAuditRepository(new AdminAuditRepository(sp.GetRequiredService<FlightAssistantDbContext>())));
+            });
+        }
+    }
+
+    /// <summary>
+    /// #318 final review, M6: pushes the handler-level ordering assertion out to the HTTP
+    /// response. A forced audit-save failure must surface as the ordinary unhandled-exception 500
+    /// (<c>GlobalExceptionHandler</c>'s catch-all — <c>Title = "An unexpected error occurred."</c>,
+    /// no <c>Detail</c>) whose body carries no <c>value</c> anywhere — not the raw revealed email,
+    /// and not a <c>RevealedValueDto</c>-shaped success body under a different status code.
+    /// </summary>
+    [Fact]
+    public async Task Reveal_Admin_WhenTheAuditSaveFails_Returns500_WithNoValueInTheBody()
+    {
+        using var failingFactory = new SaveFailingWebApplicationFactory();
+        var rawEmail = $"very-secret-{Marker()}@example.com";
+        var traveler = Traveler.Register(rawEmail);
+        using (var scope = failingFactory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+            db.Travelers.Add(traveler);
+            await db.SaveChangesAsync();
+        }
+
+        var response = await RevealAsync(
+            failingFactory.CreateAdminClient(), "travelers", traveler.Id, nameof(Traveler.Email));
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(rawEmail, body);
+        Assert.DoesNotContain("\"value\"", body, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("traceId", body); // control: a real ProblemDetails body, not an empty one
+
+        using var verifyScope = failingFactory.Services.CreateScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        var auditRowCount = await verifyDb.AdminAuditLogs.CountAsync(a => a.EntityId == traveler.Id.ToString());
+        Assert.Equal(0, auditRowCount);
     }
 
     // ── Rate limit (#318) ────────────────────────────────────────────────────────

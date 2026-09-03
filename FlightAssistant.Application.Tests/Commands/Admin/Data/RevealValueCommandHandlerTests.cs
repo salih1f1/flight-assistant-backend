@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using FlightAssistant.Application.Administration;
 using FlightAssistant.Application.Commands.Admin.Data;
@@ -49,8 +50,8 @@ public class RevealValueCommandHandlerTests
         var ex = await Assert.ThrowsAsync<DomainException>(() => Handler().Handle(command, CancellationToken.None));
 
         Assert.Equal(404, ex.StatusCode);
-        await _dataRepository.DidNotReceive().GetRowAsync(
-            Arg.Any<BrowsableTable>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _dataRepository.DidNotReceive().GetValueAsync(
+            Arg.Any<BrowsableTable>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
         await _auditRepository.DidNotReceive().AddAsync(Arg.Any<AdminAuditLog>(), Arg.Any<CancellationToken>());
     }
 
@@ -63,7 +64,7 @@ public class RevealValueCommandHandlerTests
     public async Task Handle_UnknownId_Throws404_AndWritesNoAuditRow()
     {
         _dataRepository
-            .GetRowAsync(Arg.Any<BrowsableTable>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .GetValueAsync(Arg.Any<BrowsableTable>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .ReturnsNull();
 
         var command = new RevealValueCommand("travelers", Guid.NewGuid().ToString(), nameof(Traveler.Email));
@@ -82,15 +83,16 @@ public class RevealValueCommandHandlerTests
     /// never receives a value. If <see cref="RevealValueCommandHandler.Handle"/> ever returned the
     /// value before <c>SaveChangesAsync</c> completed — or awaited it but swallowed the exception —
     /// this is the test that would catch it. Without it, the ordering in the handler is only a
-    /// comment.
+    /// comment. (#318 final review, M6, pushes the same assertion out to the endpoint too — see
+    /// <c>AdminDataEndpointTests.Reveal_Admin_WhenTheAuditSaveFails_Returns500_WithNoValueInTheBody</c> —
+    /// but this handler-level test remains the fast, precise one.)
     /// </summary>
     [Fact]
     public async Task Handle_WhenTheAuditSaveFails_PropagatesAndNeverReturnsAValue()
     {
-        var row = new Dictionary<string, object?> { [nameof(Traveler.Email)] = "secret@example.com" };
         _dataRepository
-            .GetRowAsync(Arg.Any<BrowsableTable>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(row);
+            .GetValueAsync(Arg.Any<BrowsableTable>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new RevealedValue(Guid.NewGuid().ToString(), "secret@example.com"));
         _auditRepository.SaveChangesAsync(Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("simulated database failure"));
 
@@ -107,10 +109,9 @@ public class RevealValueCommandHandlerTests
     [Fact]
     public async Task Handle_SuccessfulReveal_WritesTheAuditRowAndReturnsTheValue()
     {
-        var row = new Dictionary<string, object?> { [nameof(Traveler.Email)] = "secret@example.com" };
         _dataRepository
-            .GetRowAsync(Arg.Any<BrowsableTable>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(row);
+            .GetValueAsync(Arg.Any<BrowsableTable>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new RevealedValue(Guid.NewGuid().ToString(), "secret@example.com"));
 
         var id = Guid.NewGuid().ToString();
         var command = new RevealValueCommand("travelers", id, nameof(Traveler.Email));
@@ -140,17 +141,16 @@ public class RevealValueCommandHandlerTests
     public async Task Handle_SuccessfulReveal_AuditRowNeverContainsTheRevealedValue_ButNamesTheColumnAsAControl()
     {
         const string secretValue = "very-secret-value-2a91f7";
-        var row = new Dictionary<string, object?> { [nameof(Traveler.Email)] = secretValue };
+        var entityId = Guid.NewGuid().ToString();
         _dataRepository
-            .GetRowAsync(Arg.Any<BrowsableTable>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(row);
+            .GetValueAsync(Arg.Any<BrowsableTable>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new RevealedValue(entityId, secretValue));
 
         AdminAuditLog? captured = null;
         _auditRepository
             .AddAsync(Arg.Do<AdminAuditLog>(a => captured = a), Arg.Any<CancellationToken>())
             .Returns(Task.CompletedTask);
 
-        var entityId = Guid.NewGuid().ToString();
         var command = new RevealValueCommand("travelers", entityId, nameof(Traveler.Email));
 
         await Handler().Handle(command, CancellationToken.None);
@@ -169,14 +169,110 @@ public class RevealValueCommandHandlerTests
         Assert.DoesNotContain(secretValue, serialized);
     }
 
+    /// <summary>
+    /// #318 final review, I2: the audit row's <see cref="AdminAuditLog.EntityId"/> must come from
+    /// the repository's resolved <see cref="RevealedValue.EntityId"/> — the canonical id, read off
+    /// the loaded row's own EF key metadata — never <see cref="RevealValueCommand.Id"/> echoed back
+    /// verbatim. A caller's id can resolve the right row while spelled non-canonically (braced,
+    /// uppercase); before this fix the handler stamped that raw spelling straight onto the audit
+    /// row, so <c>AdminAuditInterceptor</c>'s own canonical-format rows for the same entity could
+    /// never be found alongside it on a plain <c>WHERE entity_id = '&lt;guid&gt;'</c> query. Uses a
+    /// request id that deliberately differs from the mocked canonical id, so a handler that still
+    /// echoed <c>request.Id</c> would fail this assertion.
+    /// </summary>
+    [Fact]
+    public async Task Handle_SuccessfulReveal_AuditRowEntityId_UsesTheRepositorysCanonicalId_NotTheRawRequestId()
+    {
+        const string nonCanonicalRequestId = "{C118FC0E-396F-473B-9D82-90B40A00FB87}";
+        const string canonicalEntityId = "c118fc0e-396f-473b-9d82-90b40a00fb87";
+        _dataRepository
+            .GetValueAsync(Arg.Any<BrowsableTable>(), nonCanonicalRequestId, Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new RevealedValue(canonicalEntityId, "secret@example.com"));
+
+        AdminAuditLog? captured = null;
+        _auditRepository
+            .AddAsync(Arg.Do<AdminAuditLog>(a => captured = a), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+
+        var command = new RevealValueCommand("travelers", nonCanonicalRequestId, nameof(Traveler.Email));
+
+        await Handler().Handle(command, CancellationToken.None);
+
+        Assert.NotNull(captured);
+        Assert.Equal(canonicalEntityId, captured!.EntityId);
+        Assert.DoesNotContain(nonCanonicalRequestId, captured.EntityId!);
+        Assert.Contains(canonicalEntityId, captured.Summary);
+        Assert.DoesNotContain(nonCanonicalRequestId, captured.Summary);
+    }
+
+    // ── Trace correlation (#318 final review, I3) ───────────────────────────────
+
+    /// <summary>
+    /// <see cref="AdminAuditLog.Create"/> falls back to <see cref="Activity.Current"/>'s id when no
+    /// <c>traceId</c> is supplied explicitly (proven by
+    /// <c>AdminAuditLogTests.Create_WithoutTraceId_FallsBackToAmbientActivity</c>), and the handler
+    /// now passes <c>Activity.Current?.Id</c> explicitly at the call site to match
+    /// <c>AdminAuditInterceptor</c>'s own convention. Before #318's final review neither of those
+    /// was true from the handler's own tests: nothing in this file ever started an ambient
+    /// <see cref="Activity"/>, so a reveal's <c>TraceId</c> being null was unverified — every prior
+    /// test would pass identically whether or not the fallback (or an explicit pass-through) worked
+    /// at all. A real <see cref="Activity"/> must be started, exactly as the Domain-level test does,
+    /// so this assertion actually discriminates rather than trivially matching two nulls.
+    /// </summary>
+    [Fact]
+    public async Task Handle_SuccessfulReveal_WithAnAmbientActivity_AuditRowCarriesItsTraceId()
+    {
+        using var activity = new Activity("reveal-test").Start();
+
+        _dataRepository
+            .GetValueAsync(Arg.Any<BrowsableTable>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new RevealedValue(Guid.NewGuid().ToString(), "secret@example.com"));
+
+        AdminAuditLog? captured = null;
+        _auditRepository
+            .AddAsync(Arg.Do<AdminAuditLog>(a => captured = a), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+
+        var command = new RevealValueCommand("travelers", Guid.NewGuid().ToString(), nameof(Traveler.Email));
+
+        await Handler().Handle(command, CancellationToken.None);
+
+        Assert.NotNull(captured);
+        Assert.Equal(activity.Id, captured!.TraceId);
+    }
+
+    /// <summary>The other half of the pairing above: with no ambient <see cref="Activity"/> at all
+    /// (the condition every other test in this file already runs under), <c>TraceId</c> is
+    /// genuinely null, not some default/empty-string stand-in.</summary>
+    [Fact]
+    public async Task Handle_SuccessfulReveal_WithNoAmbientActivity_AuditRowTraceIdIsNull()
+    {
+        Assert.Null(Activity.Current);
+
+        _dataRepository
+            .GetValueAsync(Arg.Any<BrowsableTable>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new RevealedValue(Guid.NewGuid().ToString(), "secret@example.com"));
+
+        AdminAuditLog? captured = null;
+        _auditRepository
+            .AddAsync(Arg.Do<AdminAuditLog>(a => captured = a), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+
+        var command = new RevealValueCommand("travelers", Guid.NewGuid().ToString(), nameof(Traveler.Email));
+
+        await Handler().Handle(command, CancellationToken.None);
+
+        Assert.NotNull(captured);
+        Assert.Null(captured!.TraceId);
+    }
+
     [Fact]
     public async Task Handle_NoAuthenticatedAdminActor_Throws_AndWritesNoAuditRow()
     {
         _adminContext.ActorId = null;
-        var row = new Dictionary<string, object?> { [nameof(Traveler.Email)] = "secret@example.com" };
         _dataRepository
-            .GetRowAsync(Arg.Any<BrowsableTable>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(row);
+            .GetValueAsync(Arg.Any<BrowsableTable>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new RevealedValue(Guid.NewGuid().ToString(), "secret@example.com"));
 
         var command = new RevealValueCommand("travelers", Guid.NewGuid().ToString(), nameof(Traveler.Email));
 

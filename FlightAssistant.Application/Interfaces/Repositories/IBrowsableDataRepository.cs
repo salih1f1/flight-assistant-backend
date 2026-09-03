@@ -65,14 +65,18 @@ namespace FlightAssistant.Application.Interfaces.Repositories
             CancellationToken ct = default);
 
         /// <summary>
-        /// The single row of <paramref name="table"/> whose primary key stringifies to
-        /// <paramref name="id"/>, projected to only the columns <paramref name="table"/> exposes —
-        /// same projection <see cref="QueryAsync"/> uses, but keyed instead of paged. Backs the
-        /// audited reveal (#318): unlike every other read on this interface, the values returned
-        /// here are <b>never</b> masked by this method or any other reader upstream of the reveal
-        /// handler, so a caller must not expose this row wholesale — only the one column the
-        /// caller has already confirmed is both exposed and registered in
-        /// <c>SensitiveProperties</c> may ever leave the handler.
+        /// The single, unmasked value of <paramref name="column"/> on the one row of
+        /// <paramref name="table"/> whose primary key stringifies to <paramref name="id"/> — backs
+        /// the audited reveal (#318). Deliberately narrower than a whole-row read: the reveal
+        /// handler only ever wants exactly one already-confirmed-sensitive column, so this
+        /// signature makes wholesale exposure of every exposed column structurally impossible
+        /// rather than documentation-enforced (#318 final review, finding 4 — this replaced a prior
+        /// <c>GetRowAsync</c> that returned the whole projected row). <paramref name="column"/>
+        /// must already be confirmed both exposed (<c>BrowsableTables.IsColumnExposed</c>) and
+        /// sensitive (<c>SensitiveProperties.IsSensitive</c>) by the caller — this method does not
+        /// repeat that check itself, matching <see cref="QueryAsync"/>'s <paramref name="filterColumn"/>
+        /// contract; a name that doesn't exist on the entity at all still throws
+        /// <see cref="InvalidOperationException"/> defensively.
         /// </summary>
         /// <param name="id">
         /// The primary key, stringified exactly as <c>AdminAuditInterceptor.GetEntityId</c> would
@@ -81,16 +85,39 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// metadata (<c>IEntityType.FindPrimaryKey()</c>), not an assumption that the key property
         /// is called "Id" — several browsable entities key on something else entirely. A value
         /// that does not split into the right number of parts, or a part that fails to parse as
-        /// its key column's CLR type, is treated as "no such row" (a <c>null</c> return) rather
-        /// than a thrown exception — resolving to 404, never a 500, for what is ultimately just an
-        /// unrecognised id.
+        /// its key column's CLR type — including a <c>string</c>-typed key column
+        /// (<c>Country.Code</c>), which parses as itself (#318 final review, finding 1) — is
+        /// treated as "no such row" (a <c>null</c> return) rather than a thrown exception,
+        /// resolving to 404, never a 500, for what is ultimately just an unrecognised id. The match
+        /// is always exact, for every key type including string — <see cref="QueryAsync"/>'s
+        /// <paramref name="filterValue"/> case-insensitive <em>contains</em> semantics for a string
+        /// column do not apply here; a prefix must never resolve a different row's id.
         /// </param>
         /// <returns>
-        /// The row's exposed columns, unmasked, or <c>null</c> when no row has that id.
+        /// The resolved row's canonical id (see <see cref="RevealedValue.EntityId"/>) and the raw
+        /// <paramref name="column"/> value, or <c>null</c> when no row has that id.
         /// </returns>
-        Task<IReadOnlyDictionary<string, object?>?> GetRowAsync(
+        Task<RevealedValue?> GetValueAsync(
             BrowsableTable table,
             string id,
+            string column,
             CancellationToken ct = default);
     }
+
+    /// <summary>
+    /// The result of <see cref="IBrowsableDataRepository.GetValueAsync"/>.
+    /// </summary>
+    /// <param name="EntityId">
+    /// The resolved row's primary key, stringified from the same EF key metadata
+    /// <c>AdminAuditInterceptor.GetEntityId</c> reads (<c>IEntityType.FindPrimaryKey()</c>, each
+    /// part's <c>.ToString()</c>, joined with <c>|</c> for a composite key) — never the caller's
+    /// raw <c>id</c> argument echoed back. A caller's id may resolve the right row while carrying a
+    /// non-canonical spelling (a braced/uppercase Guid, for instance); deriving this from the
+    /// loaded row's own key instead means an audit row's <c>EntityId</c> always matches the format
+    /// every other admin-write audit row already uses, by construction rather than by a
+    /// caller-side normalisation step that could drift from the interceptor's own (#318 final
+    /// review, finding 2).
+    /// </param>
+    /// <param name="Value">The raw, unmasked value of the requested column.</param>
+    public sealed record RevealedValue(string EntityId, object? Value);
 }

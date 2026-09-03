@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FlightAssistant.Application.Administration;
 using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Application.Interfaces.Repositories;
@@ -18,7 +19,7 @@ namespace FlightAssistant.Application.Commands.Admin.Data
     /// doc comment for why an unknown slug is resolved to a 404 by the endpoint before this is ever
     /// sent, and re-checked defensively here for any other caller.</param>
     /// <param name="Id">
-    /// The row's primary key, stringified exactly as <see cref="IBrowsableDataRepository.GetRowAsync"/>
+    /// The row's primary key, stringified exactly as <see cref="IBrowsableDataRepository.GetValueAsync"/>
     /// expects — a single key's value as-is, or a composite key's parts joined with <c>|</c>.
     /// </param>
     /// <param name="Column">
@@ -106,10 +107,8 @@ namespace FlightAssistant.Application.Commands.Admin.Data
             // revealed if no such row exists, so nothing is recorded — an audit row for a 404
             // would itself be a false statement ("actor revealed X"), and it's the one ordering
             // mistake #318 explicitly calls out as easy to get wrong.
-            var row = await _dataRepository.GetRowAsync(table, request.Id, ct)
+            var revealed = await _dataRepository.GetValueAsync(table, request.Id, request.Column, ct)
                 ?? throw new DomainException($"No '{table.DisplayName}' row with id '{request.Id}'.", 404);
-
-            var value = row[request.Column];
 
             var actorId = _adminContext.ActorId;
             if (string.IsNullOrWhiteSpace(actorId))
@@ -139,19 +138,35 @@ namespace FlightAssistant.Application.Commands.Admin.Data
             // Summary — would put the plaintext straight back into admin_audit_log, undoing #313's
             // masking-on-write and turning this audit table into exactly the exfiltration path the
             // reveal audit exists to detect. Summary names the column, never the value.
+            //
+            // entityId/Summary use revealed.EntityId — the canonical id GetValueAsync derived from
+            // the loaded row's own EF key metadata — never request.Id verbatim: request.Id may have
+            // resolved the row while carrying a non-canonical spelling (e.g. a braced/uppercase
+            // Guid), and echoing that back would write an audit row that AdminAuditInterceptor's
+            // own canonical-format rows can never be found alongside on an EntityId lookup (#318
+            // final review, finding 2).
+            //
+            // traceId is passed explicitly, matching AdminAuditInterceptor's own posture of
+            // capturing Activity.Current?.Id once and threading it through rather than leaning on
+            // AdminAuditLog.Create's default-parameter fallback — the two are equivalent whenever an
+            // Activity is ambient (nothing between this line and Create's own fallback evaluation
+            // can change Activity.Current), but explicit here removes any doubt for this
+            // audit-critical field and mirrors the interceptor's convention (#318 final review,
+            // finding 3).
             var auditLog = AdminAuditLog.Create(
                 actorId: actorId,
                 actorName: _adminContext.ActorName,
                 action: AdminAuditAction.Reveal,
                 entityType: table.EntityType.Name,
-                entityId: request.Id,
-                summary: $"Revealed {request.Column} on {table.EntityType.Name} {request.Id}");
+                entityId: revealed.EntityId,
+                summary: $"Revealed {request.Column} on {table.EntityType.Name} {revealed.EntityId}",
+                traceId: Activity.Current?.Id);
 
             await _auditRepository.AddAsync(auditLog, ct);
             await _auditRepository.SaveChangesAsync(ct);
             // ==================================================================================
 
-            return new RevealResult(request.Table, request.Id, request.Column, value);
+            return new RevealResult(request.Table, request.Id, request.Column, revealed.Value);
         }
     }
 }
