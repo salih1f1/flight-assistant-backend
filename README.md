@@ -33,6 +33,8 @@ dotnet run --project FlightAssistant.API
 
 Swagger UI → http://localhost:5000/swagger
 
+**OpenAPI spec:** [`spec/openapi.json`](spec/openapi.json) is generated and committed — CI fails a PR if it drifts from the code. Regenerate with `scripts/generate-openapi.sh` (from the repo root) after any route or contract change.
+
 **HTTP Client:** Open `FlightAssistant.API/api.http` in VS Code (REST Client extension) or JetBrains Rider. Paste a B2C JWT into `@token` and run any request with one click.
 
 ---
