@@ -26,19 +26,27 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// <paramref name="table"/> exposes. <paramref name="sortColumn"/> and
         /// <paramref name="filterColumn"/> must already be validated against
         /// <c>BrowsableTables.IsColumnExposed</c> and confirmed non-sensitive by the caller — this
-        /// method trusts them and does not re-check, so an unvalidated caller is a bug, not a
-        /// runtime guard here.
+        /// method does not repeat that allowlist/sensitivity check itself, so an unvalidated caller
+        /// is a bug, not something this method guards against. Column-name resolution safety is
+        /// asymmetric between the two, though neither ever lets an unknown name become part of raw
+        /// SQL: see <paramref name="sortColumn"/> and <paramref name="filterColumn"/> below.
         /// </summary>
         /// <param name="sortColumn">
         /// A column name, or <c>null</c> for no caller-requested sort. Every ordering, including
         /// the no-sort case, still carries a deterministic primary-key tiebreaker — several
         /// browsable tables have no naturally unique column otherwise, and without a tiebreaker a
-        /// row can appear on two pages or none.
+        /// row can appear on two pages or none. Not re-checked against the entity by this method —
+        /// an unknown name surfaces as an <see cref="InvalidOperationException"/> thrown by EF
+        /// Core's own translation of <c>EF.Property</c> against model metadata, not from an explicit
+        /// guard here.
         /// </param>
         /// <param name="filterColumn">
         /// A column name, or <c>null</c> for no filter. Exact match for a non-string column;
         /// case-insensitive <c>contains</c> for a string column, translated to SQL rather than
-        /// evaluated client-side.
+        /// evaluated client-side. Unlike <paramref name="sortColumn"/>, this one <em>is</em>
+        /// re-checked explicitly via reflection and throws <see cref="InvalidOperationException"/>
+        /// for a name that doesn't exist on the entity — defense-in-depth alongside the caller's
+        /// own allowlist check, not a substitute for it.
         /// </param>
         /// <param name="filterValue">
         /// The raw filter value as received from the client. Ignored when

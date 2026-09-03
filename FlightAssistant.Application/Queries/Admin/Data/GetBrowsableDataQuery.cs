@@ -21,9 +21,12 @@ namespace FlightAssistant.Application.Queries.Admin.Data
     /// check blindly) for any caller that reaches the handler some other way.
     /// </param>
     /// <param name="Sort">
-    /// A column name, optionally prefixed with <c>-</c> for descending (e.g. <c>-createdUtc</c>).
-    /// <c>null</c> for no caller-requested sort — paging is still stable in that case via the
-    /// primary-key tiebreaker <see cref="IBrowsableDataRepository.QueryAsync"/> always appends.
+    /// A column name, optionally prefixed with <c>-</c> for descending (e.g. <c>-CreatedUtc</c>).
+    /// Column names are matched case-sensitively (<see cref="StringComparer.Ordinal"/>) against the
+    /// PascalCase property names in the <c>BrowsableTables</c> registry — <c>createdUtc</c> or
+    /// <c>-createdutc</c> is a 400, not a lenient match. <c>null</c> for no caller-requested sort —
+    /// paging is still stable in that case via the primary-key tiebreaker
+    /// <see cref="IBrowsableDataRepository.QueryAsync"/> always appends.
     /// </param>
     /// <param name="Filter">
     /// <c>column:value</c> — exact match for a non-string column, case-insensitive <c>contains</c>

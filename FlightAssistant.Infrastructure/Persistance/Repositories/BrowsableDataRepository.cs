@@ -216,7 +216,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             Expression body;
             if (propertyType == typeof(string))
             {
-                var lowerValue = rawValue.ToLower();
+                var lowerValue = rawValue.ToLowerInvariant();
                 var toLowerCall = Expression.Call(propertyAccess, typeof(string).GetMethod(nameof(string.ToLower), Type.EmptyTypes)!);
                 var containsCall = Expression.Call(
                     toLowerCall, typeof(string).GetMethod(nameof(string.Contains), new[] { typeof(string) })!, Expression.Constant(lowerValue));
@@ -275,7 +275,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 if (targetType == typeof(float)) return float.Parse(rawValue, CultureInfo.InvariantCulture);
                 if (targetType == typeof(decimal)) return decimal.Parse(rawValue, CultureInfo.InvariantCulture);
             }
-            catch (Exception ex) when (ex is FormatException or OverflowException)
+            // ArgumentException is what Enum.Parse throws for a name it doesn't recognise — including
+            // an empty string — not FormatException; without it here, an unparseable enum filter value
+            // (e.g. filter=Action:NotARealAction) escaped uncaught and surfaced as an unhandled 500.
+            catch (Exception ex) when (ex is FormatException or OverflowException or ArgumentException)
             {
                 throw new DomainException($"Invalid filter value '{rawValue}' for a {targetType.Name} column.", 400);
             }

@@ -146,11 +146,21 @@ public class AdminDataEndpointTests(FlightAssistantWebApplicationFactory factory
 
     // ── Unknown table / column ──────────────────────────────────────────────────
 
+    /// <summary>
+    /// M7: the unknown-slug path is thrown as a <c>DomainException</c> rather than returned as a
+    /// bare <c>Results.NotFound()</c>, specifically so it carries a real ProblemDetails body (with
+    /// a <c>traceId</c>) matching the endpoint's declared <c>.ProducesProblem(404)</c> — an empty
+    /// 404 body would satisfy only the status-code assertion, not the contract.
+    /// </summary>
     [Fact]
-    public async Task GetTableData_UnknownTableSlug_Returns404()
+    public async Task GetTableData_UnknownTableSlug_Returns404WithProblemDetailsBody()
     {
         var response = await factory.CreateAdminClient().GetAsync("admin/data/not-a-real-table");
+
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("not-a-real-table", body);
+        Assert.Contains("traceId", body);
     }
 
     [Fact]
