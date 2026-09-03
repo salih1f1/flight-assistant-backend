@@ -30,5 +30,24 @@ namespace FlightAssistant.Application.Interfaces.Repositories
             DateTime? fromUtc,
             DateTime? toUtc,
             CancellationToken ct = default);
+
+        /// <summary>
+        /// Stages <paramref name="entry"/> on the change tracker. Does not save — matches every
+        /// other repository's Add/Delete-then-explicit-<see cref="SaveChangesAsync"/> split in this
+        /// codebase (e.g. <c>IAdminTravelerRepository.DeleteAsync</c>), so a caller controls exactly
+        /// when the write commits.
+        ///
+        /// <para>
+        /// This exists only for a caller with nothing else on the change tracker to audit — the
+        /// audited reveal (#318), which is a read and so gives the <c>AdminAuditInterceptor</c>
+        /// (Infrastructure) nothing to observe on its own. Every ordinary admin write is still
+        /// audited automatically by that interceptor; calling this alongside a tracked
+        /// create/update/delete in the same <see cref="SaveChangesAsync"/> would double-audit that
+        /// write, so no other caller should reach for this.
+        /// </para>
+        /// </summary>
+        Task AddAsync(AdminAuditLog entry, CancellationToken ct = default);
+
+        Task SaveChangesAsync(CancellationToken ct = default);
     }
 }

@@ -1,7 +1,10 @@
 using FlightAssistant.Application.Administration;
+using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.Common.Exceptions;
+using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Domain.Lounges.Entities;
+using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
@@ -392,5 +395,159 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
         var count = await Repository(db).CountAsync(TravelersTable);
 
         Assert.Equal(3, count);
+    }
+
+    // ── GetValueAsync (#318 — the audited reveal's read half) ───────────────────
+
+    /// <summary>
+    /// Unlike every <c>QueryAsync</c> test above, this is the one read path in
+    /// <see cref="BrowsableDataRepository"/> that must hand back the real, unmasked value —
+    /// masking is applied by the reveal handler's caller-side allowlist check, never by this
+    /// method. Proven against real Postgres so a future change that routed this through the same
+    /// masking helper <c>GetBrowsableDataQueryHandler</c> uses would be caught here, not just in a
+    /// mocked handler test.
+    /// </summary>
+    [Fact]
+    public async Task GetValueAsync_ExistingId_ReturnsTheRawUnmaskedValue()
+    {
+        await using var db = CreateDbContext();
+        var traveler = NewTraveler("Findable Traveler");
+        db.Travelers.Add(traveler);
+        await db.SaveChangesAsync();
+
+        var revealed = await Repository(db).GetValueAsync(TravelersTable, traveler.Id.ToString(), nameof(Traveler.Email));
+
+        Assert.NotNull(revealed);
+        Assert.Equal(traveler.Email, revealed!.Value);
+        Assert.NotEqual("<redacted>", revealed.Value);
+    }
+
+    [Fact]
+    public async Task GetValueAsync_UnknownId_ReturnsNull()
+    {
+        await using var db = CreateDbContext();
+
+        var revealed = await Repository(db).GetValueAsync(TravelersTable, Guid.NewGuid().ToString(), nameof(Traveler.Email));
+
+        Assert.Null(revealed);
+    }
+
+    /// <summary>An id that doesn't even parse as the key column's CLR type (a Guid here) is "no
+    /// such row", not a thrown exception — an id lookup should never turn a mistyped id into a
+    /// 500.</summary>
+    [Fact]
+    public async Task GetValueAsync_IdThatDoesNotParseAsTheKeyType_ReturnsNull_NotAnException()
+    {
+        await using var db = CreateDbContext();
+        db.Travelers.Add(NewTraveler());
+        await db.SaveChangesAsync();
+
+        var revealed = await Repository(db).GetValueAsync(TravelersTable, "not-a-guid", nameof(Traveler.Email));
+
+        Assert.Null(revealed);
+    }
+
+    [Fact]
+    public async Task GetValueAsync_DeviceToken_ReturnsTheRawUnmaskedToken()
+    {
+        await using var db = CreateDbContext();
+        var traveler = NewTraveler();
+        var rawToken = $"very-secret-token-{Guid.NewGuid():N}";
+        var deviceToken = traveler.AddDeviceToken("ios", rawToken);
+        db.Travelers.Add(traveler);
+        await db.SaveChangesAsync();
+
+        var revealed = await Repository(db).GetValueAsync(DeviceTokensTable, deviceToken.Id.ToString(), nameof(DeviceToken.Token));
+
+        Assert.NotNull(revealed);
+        Assert.Equal(rawToken, revealed!.Value);
+    }
+
+    /// <summary>
+    /// #318 final review, finding 2: the returned <see cref="RevealedValue.EntityId"/> is the
+    /// canonical id — <see cref="Guid.ToString()"/>'s default (lowercase, unbraced) format, read off
+    /// the loaded row's own key — not the caller's raw id string, even when that raw string
+    /// resolved the row correctly. This is the exact format <c>AdminAuditInterceptor.GetEntityId</c>
+    /// writes for every other admin-write audit row (it also calls <c>.ToString()</c> on the same
+    /// underlying <see cref="Guid"/> value via <c>PropertyEntry.CurrentValue</c>), which is what
+    /// keeps a reveal's audit row and an ordinary create/update/delete row for the same entity
+    /// joinable on <c>EntityId</c> by construction.
+    /// </summary>
+    [Fact]
+    public async Task GetValueAsync_BracedUppercaseId_ReturnsTheCanonicalEntityId()
+    {
+        await using var db = CreateDbContext();
+        var traveler = NewTraveler("Findable Traveler");
+        db.Travelers.Add(traveler);
+        await db.SaveChangesAsync();
+
+        var nonCanonicalId = $"{{{traveler.Id.ToString().ToUpperInvariant()}}}";
+
+        var revealed = await Repository(db).GetValueAsync(TravelersTable, nonCanonicalId, nameof(Traveler.Email));
+
+        Assert.NotNull(revealed);
+        Assert.Equal(traveler.Id.ToString(), revealed!.EntityId);
+        Assert.NotEqual(nonCanonicalId, revealed.EntityId);
+    }
+
+    // ── String-keyed and composite-string-keyed lookups (#318 final review, finding 1) ──────────
+    //
+    // ConvertFilterValue had no `string` branch, so every id lookup against a string-typed key
+    // column fell through to its "not supported" throw, which GetValueGenericAsync swallowed into
+    // "no such row" — a permanent 404 for a correct id, on any table keyed (wholly or partly) on a
+    // string. Countries (Code) and SeedVersions (Dataset, Version) are the two such tables
+    // registered in BrowsableTables today.
+
+    private static readonly BrowsableTable CountriesTable = BrowsableTables.TryGetBySlug("countries")!;
+    private static readonly BrowsableTable SeedVersionsTable = BrowsableTables.TryGetBySlug("seed-versions")!;
+
+    [Fact]
+    public async Task GetValueAsync_StringKeyedEntity_ExactCode_ReturnsTheRow()
+    {
+        await using var db = CreateDbContext();
+        db.Countries.Add(Country.Create("DE", "Germany"));
+        await db.SaveChangesAsync();
+
+        var revealed = await Repository(db).GetValueAsync(CountriesTable, "DE", nameof(Country.Name));
+
+        Assert.NotNull(revealed);
+        Assert.Equal("Germany", revealed!.Value);
+        Assert.Equal("DE", revealed.EntityId);
+    }
+
+    /// <summary>The exactness guarantee <see cref="ApplyFilter{TEntity}"/>'s <c>Contains</c> branch
+    /// would not have given: a prefix of a valid code must never resolve a different row. Seeds a
+    /// second country so a wrongly-permissive match has something to (wrongly) find.</summary>
+    [Fact]
+    public async Task GetValueAsync_StringKeyedEntity_PrefixOfAnExistingCode_ReturnsNull()
+    {
+        await using var db = CreateDbContext();
+        db.Countries.AddRange(Country.Create("DE", "Germany"), Country.Create("DK", "Denmark"));
+        await db.SaveChangesAsync();
+
+        var revealed = await Repository(db).GetValueAsync(CountriesTable, "D", nameof(Country.Name));
+
+        Assert.Null(revealed);
+    }
+
+    /// <summary>The composite-key case named in the same finding: a string part combined with a
+    /// non-string part (<c>SeedVersion</c> keys on <c>(Dataset, Version)</c>).</summary>
+    [Fact]
+    public async Task GetValueAsync_CompositeKeyWithAStringPart_SeedVersions_ReturnsTheRow()
+    {
+        await using var db = CreateDbContext();
+        db.SeedVersions.Add(new SeedVersion
+        {
+            Dataset = "airports",
+            Version = 1,
+            AppliedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var revealed = await Repository(db).GetValueAsync(SeedVersionsTable, "airports|1", nameof(SeedVersion.Version));
+
+        Assert.NotNull(revealed);
+        Assert.Equal(1, revealed!.Value);
+        Assert.Equal("airports|1", revealed.EntityId);
     }
 }

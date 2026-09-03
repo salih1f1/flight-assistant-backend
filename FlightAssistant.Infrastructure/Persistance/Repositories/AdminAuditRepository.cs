@@ -68,6 +68,14 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             return (items, total);
         }
 
+        public Task AddAsync(AdminAuditLog entry, CancellationToken ct = default)
+        {
+            _db.AdminAuditLogs.Add(entry);
+            return Task.CompletedTask;
+        }
+
+        public Task SaveChangesAsync(CancellationToken ct = default) => _db.SaveChangesAsync(ct);
+
         /// <summary>
         /// Defense-in-depth against #313 final review C1: <c>ActionUtc</c> is <c>timestamptz</c>,
         /// and Npgsql throws <see cref="ArgumentException"/> writing anything but

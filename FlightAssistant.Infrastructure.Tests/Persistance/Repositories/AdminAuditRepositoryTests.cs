@@ -3,6 +3,7 @@ using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using FlightAssistant.Infrastructure.Tests.TestSupport;
+using Microsoft.EntityFrameworkCore;
 
 namespace FlightAssistant.Infrastructure.Tests.Persistance.Repositories;
 
@@ -212,5 +213,54 @@ public class AdminAuditRepositoryTests : PostgresTestBase
 
         Assert.Equal(6, seen.Count);
         Assert.Equal(6, seen.Distinct().Count());
+    }
+
+    // ── AddAsync / SaveChangesAsync (#318 — the audited reveal's write half) ────
+
+    /// <summary>
+    /// <c>AddAsync</c> only stages the row — matches every other repository's
+    /// Add-then-explicit-<c>SaveChangesAsync</c> split in this codebase. Proven against real
+    /// Postgres: nothing committed until <c>SaveChangesAsync</c> is called on this same context.
+    /// </summary>
+    [Fact]
+    public async Task AddAsync_DoesNotPersistUntilSaveChangesAsyncIsCalled()
+    {
+        await using var db = CreateDbContext();
+        var entry = AdminAuditLog.Create("actor-1", "Ada Admin", AdminAuditAction.Reveal, "Traveler", "1", "Revealed Email on Traveler 1");
+
+        await Repository(db).AddAsync(entry);
+
+        await using var verifyBeforeSave = CreateDbContext();
+        Assert.Empty(await verifyBeforeSave.AdminAuditLogs.ToListAsync());
+
+        await Repository(db).SaveChangesAsync();
+
+        await using var verifyAfterSave = CreateDbContext();
+        var persisted = await verifyAfterSave.AdminAuditLogs.SingleAsync();
+        Assert.Equal(AdminAuditAction.Reveal, persisted.Action);
+        Assert.Equal("Revealed Email on Traveler 1", persisted.Summary);
+    }
+
+    /// <summary>
+    /// <c>Before</c>/<c>After</c> are mapped <c>jsonb</c> (see <c>AdminAuditLogConfiguration</c>);
+    /// a reveal row leaves both null (#318 — writing the value into either would defeat the whole
+    /// point of an audited reveal). Proven as real Postgres <c>NULL</c>, not just an in-memory
+    /// null reference, since InMemory has no <c>jsonb</c> column type to get this wrong against.
+    /// </summary>
+    [Fact]
+    public async Task AddAsync_ThenSaveChangesAsync_PersistsNullBeforeAndAfter_AsRealPostgresNulls()
+    {
+        await using var db = CreateDbContext();
+        var entry = AdminAuditLog.Create(
+            "actor-1", "Ada Admin", AdminAuditAction.Reveal, "Traveler", "1", "Revealed Email on Traveler 1",
+            before: null, after: null);
+
+        await Repository(db).AddAsync(entry);
+        await Repository(db).SaveChangesAsync();
+
+        await using var verify = CreateDbContext();
+        var persisted = await verify.AdminAuditLogs.SingleAsync();
+        Assert.Null(persisted.Before);
+        Assert.Null(persisted.After);
     }
 }

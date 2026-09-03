@@ -79,8 +79,108 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             return query.ToQueryString();
         }
 
+        public Task<RevealedValue?> GetValueAsync(
+            BrowsableTable table, string id, string column, CancellationToken ct = default) =>
+            MakeGenericQuery<Task<RevealedValue?>>(
+                table.EntityType, nameof(GetValueGenericAsync), table, id, column, ct);
+
         private Task<int> CountGenericAsync<TEntity>(CancellationToken ct) where TEntity : class =>
             _db.Set<TEntity>().AsNoTracking().CountAsync(ct);
+
+        /// <summary>
+        /// The <see cref="IBrowsableDataRepository.GetValueAsync"/> implementation. Deliberately
+        /// does not reuse <see cref="ApplyFilter{TEntity}"/> for the equality half of this, even
+        /// though that method already builds an <c>EF.Property</c> equality expression off a string
+        /// value for a non-string column: <see cref="ApplyFilter{TEntity}"/>'s string branch is a
+        /// case-insensitive <em>contains</em>, not an exact match, and a handful of browsable
+        /// tables key on a string column (<c>Country.Code</c>). An id lookup that quietly degraded
+        /// to "contains" for such a table would be a correctness bug, not just a style
+        /// inconsistency, so the predicate here is built directly instead — it does reuse
+        /// <see cref="ConvertFilterValue"/>, the actual value-parsing logic <see cref="ApplyFilter{TEntity}"/>
+        /// itself calls internally, so there remains exactly one place a filter/id value is ever
+        /// converted from its raw string form. <see cref="ConvertFilterValue"/> parses a string key
+        /// part as itself (#318 final review, finding 1) rather than throwing, so this exact-match
+        /// guarantee actually applies to every key type this codebase uses, not just the ones
+        /// <see cref="ApplyFilter{TEntity}"/>'s non-string branch already covered.
+        /// </summary>
+        private async Task<RevealedValue?> GetValueGenericAsync<TEntity>(
+            BrowsableTable table, string id, string column, CancellationToken ct) where TEntity : class
+        {
+            var entityType = _db.Model.FindEntityType(typeof(TEntity))
+                ?? throw new InvalidOperationException($"{typeof(TEntity).Name} is not part of the EF model.");
+            var keyProperties = entityType.FindPrimaryKey()?.Properties
+                ?? throw new InvalidOperationException($"{typeof(TEntity).Name} has no primary key.");
+
+            // Composite keys stringify with '|' between parts (AdminAuditInterceptor.GetEntityId
+            // uses the same separator, for the same reason: neither format ever appears inside a
+            // Guid, int, or any other key part this codebase uses). A part count that doesn't match
+            // the key's own arity cannot be this table's id in any interpretation, so it is "no
+            // such row" rather than an error.
+            var idParts = id.Split('|');
+            if (idParts.Length != keyProperties.Count) return null;
+
+            Expression? predicateBody = null;
+            var parameter = Expression.Parameter(typeof(TEntity), "e");
+
+            for (var i = 0; i < keyProperties.Count; i++)
+            {
+                var propertyType = keyProperties[i].ClrType;
+                var underlyingType = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+
+                object typedValue;
+                try
+                {
+                    // Reuses the exact conversion ApplyFilter's non-string branch calls — the only
+                    // difference here is what the resulting Expression.Equal is combined into
+                    // (AndAlso across every key part, for a composite key) and that a value which
+                    // fails to parse means "not found", not a 400: an id the caller mistyped is a
+                    // 404 like any other unmatched id, not a client error about a filter's shape.
+                    typedValue = ConvertFilterValue(idParts[i], underlyingType);
+                }
+                catch (DomainException)
+                {
+                    return null;
+                }
+
+                var propertyAccess = Expression.Call(
+                    typeof(EF), nameof(EF.Property), new[] { propertyType },
+                    parameter, Expression.Constant(keyProperties[i].Name));
+                Expression valueExpression = Expression.Constant(typedValue, underlyingType);
+                if (underlyingType != propertyType)
+                    valueExpression = Expression.Convert(valueExpression, propertyType);
+
+                var equals = Expression.Equal(propertyAccess, valueExpression);
+                predicateBody = predicateBody is null ? equals : Expression.AndAlso(predicateBody, equals);
+            }
+
+            var predicate = Expression.Lambda<Func<TEntity, bool>>(predicateBody!, parameter);
+            var entity = await _db.Set<TEntity>().AsNoTracking().FirstOrDefaultAsync(predicate, ct);
+            if (entity is null) return null;
+
+            // Exactly one column is ever read off the entity here — this is what makes
+            // GetValueAsync safe to call for a reveal (#318 final review, finding 4: this used to
+            // project every column table.Columns exposes into a whole-row dictionary, materializing
+            // far more than the one value a reveal ever wants). Never masked: masking is applied by
+            // every other consumer of this repository (GetBrowsableDataQueryHandler.Mask); the
+            // reveal handler is the one caller allowed to see a raw value, and only for the single
+            // column it has already confirmed is both exposed and sensitive.
+            var property = typeof(TEntity).GetProperty(column)
+                ?? throw new InvalidOperationException(
+                    $"BrowsableTables registers column '{column}' for '{table.Slug}' but {typeof(TEntity).Name} has no such property.");
+            var value = property.GetValue(entity);
+
+            // The canonical id, read off the same EF key metadata (keyProperties, above) that
+            // AdminAuditInterceptor.GetEntityId reads off EntityEntry.Metadata.FindPrimaryKey() —
+            // .ToString() on each part, joined with '|' for a composite key, identically. Built from
+            // the loaded entity's own key values, never from the caller's raw id string: id may
+            // have resolved this row while carrying a non-canonical spelling (e.g. a
+            // braced/uppercase Guid), and echoing that back would let a reveal's audit row drift
+            // from the format every interceptor-written row uses (#318 final review, finding 2).
+            var entityId = string.Join("|", keyProperties.Select(p =>
+                typeof(TEntity).GetProperty(p.Name)!.GetValue(entity)?.ToString() ?? string.Empty));
+
+            return new RevealedValue(entityId, value);
+        }
 
         private async Task<(IReadOnlyList<IReadOnlyDictionary<string, object?>> Items, int Total)> QueryGenericAsync<TEntity>(
             BrowsableTable table,
@@ -252,9 +352,22 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         /// filter value that arrives as one opaque string rather than a typed query parameter. A
         /// value that fails to parse, or a column type this browser has no conversion for, is a 400
         /// <see cref="DomainException"/> — never an unhandled parse exception surfacing as a 500.
+        ///
+        /// <para>
+        /// <b>A <see cref="string"/> target parses as itself.</b> Before #318's final review this
+        /// method had no <see cref="string"/> branch at all, so a string-typed key column (e.g.
+        /// <c>Country.Code</c>) fell through to the "not supported" throw below — caught by
+        /// <see cref="GetValueGenericAsync{TEntity}"/> and turned into "no such row" for every id,
+        /// even a correct one. <see cref="ApplyFilter{TEntity}"/>'s own string handling (a
+        /// case-insensitive <c>contains</c>) never reaches this method — it branches before ever
+        /// calling it — so this addition changes nothing about filter/sort semantics; it only makes
+        /// an id lookup's string key part behave like every other key part instead of throwing.
+        /// </para>
         /// </summary>
         private static object ConvertFilterValue(string rawValue, Type targetType)
         {
+            if (targetType == typeof(string)) return rawValue;
+
             try
             {
                 if (targetType == typeof(Guid)) return Guid.Parse(rawValue);

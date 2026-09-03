@@ -206,4 +206,48 @@ public class AdminAuditInterceptorPostgresTests : PostgresTestBase
         using var after = JsonDocument.Parse(row.After);
         Assert.Equal("ZZZ", after.RootElement.GetProperty(nameof(Airport.Iata)).GetString());
     }
+
+    /// <summary>
+    /// #318 (the audited reveal): a reveal is a read, so the only thing that ever touches this
+    /// context's change tracker is the single <c>AdminAuditLog</c> row
+    /// <c>RevealValueCommandHandler</c> builds and stages explicitly — nothing else is ever
+    /// <c>Added</c>/<c>Modified</c>/<c>Deleted</c> in that save. This proves the interceptor's two
+    /// documented guarantees actually hold against a real <c>SaveChangesAsync</c>, not just by
+    /// reading the code: it does not try to audit an <c>AdminAuditLog</c> entity a second time
+    /// (exactly one row persists, not two — <c>SingleAsync</c> below throws if a double-audit ever
+    /// crept back in), and the append-only guard — which rejects <c>Modified</c>/<c>Deleted</c> —
+    /// does not also reject a plain <c>Added</c> row.
+    /// </summary>
+    [Fact]
+    public async Task SaveChangesAsync_RevealRowAddedDirectly_PersistsExactlyOneRow_NeverDoubleAudited()
+    {
+        var adminContext = new AdminContext { ActorId = "admin-oid-1", ActorName = "Ada Admin" };
+        var entityId = Guid.NewGuid().ToString();
+        var revealRow = AdminAuditLog.Create(
+            actorId: "admin-oid-1",
+            actorName: "Ada Admin",
+            action: AdminAuditAction.Reveal,
+            entityType: nameof(Traveler),
+            entityId: entityId,
+            summary: $"Revealed {nameof(Traveler.Email)} on {nameof(Traveler)} {entityId}");
+
+        await using (var db = CreateAuditedDbContext(adminContext))
+        {
+            db.AdminAuditLogs.Add(revealRow);
+            await db.SaveChangesAsync();
+        }
+
+        await using var verify = CreateDbContext();
+        // SingleAsync, not First/Any: this is what actually fails if the interceptor ever audited
+        // its own AdminAuditLog entry a second time — a plain count assertion would also catch it,
+        // but this is the same idiom the rest of this file already uses.
+        var row = await verify.AdminAuditLogs.SingleAsync();
+
+        Assert.Equal(AdminAuditAction.Reveal, row.Action);
+        Assert.Equal("admin-oid-1", row.ActorId);
+        Assert.Equal(nameof(Traveler), row.EntityType);
+        Assert.Equal(entityId, row.EntityId);
+        Assert.Null(row.Before);
+        Assert.Null(row.After);
+    }
 }

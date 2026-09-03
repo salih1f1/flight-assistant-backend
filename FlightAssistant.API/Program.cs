@@ -237,6 +237,30 @@ builder.Services.AddRateLimiter(rl =>
             QueueLimit = 0
         }));
 
+    // Admin reveal (#318) — authenticated, partition by actor, same oid/sub/IP fallback as
+    // loyalty-programs above (partitioning by IP alone would throttle every admin behind one
+    // office NAT together while letting a caller who simply rotates addresses dodge the limit
+    // entirely). Deliberately far tighter than loyalty-programs' 60/60s: that endpoint is an
+    // ordinary authenticated read; this one unmasks a value the data browser deliberately hides,
+    // and exists to be reached for occasionally — a handful of support tickets in a row — not
+    // browsed through. 10/60s comfortably covers that burst while making systematic enumeration
+    // (walking a table's sensitive column one row at a time) require a sustained, hours-long,
+    // fully-audited campaign rather than a quick script.
+    var revealLimit = builder.Configuration.GetValue("RateLimiting:AdminReveal:PermitLimit", 10);
+    var revealWindow = builder.Configuration.GetValue("RateLimiting:AdminReveal:WindowSeconds", 60);
+    rl.AddPolicy("admin-reveal", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        partitionKey: ctx.User.FindFirst("oid")?.Value
+                      ?? ctx.User.FindFirst("sub")?.Value
+                      ?? ctx.Connection.RemoteIpAddress?.ToString()
+                      ?? "unknown",
+        factory: _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = revealLimit,
+            Window = TimeSpan.FromSeconds(revealWindow),
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 0
+        }));
+
     // Add Retry-After header on 429
     rl.OnRejected = async (ctx, ct) =>
     {
