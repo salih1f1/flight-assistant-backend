@@ -2,10 +2,14 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FlightAssistant.Contracts.Paging;
+using FlightAssistant.Contracts.Requests.Admin;
 using FlightAssistant.Contracts.Responses.Admin;
+using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
 using FlightAssistant.Infrastructure.Persistance;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace FlightAssistant.API.Tests.Integration;
@@ -313,5 +317,214 @@ public class AdminDataEndpointTests(FlightAssistantWebApplicationFactory factory
         var row = Assert.Single(result!.Items);
         Assert.Equal("<redacted>", row[nameof(TravelerLoyaltyMembership.AccountNumber)].GetString());
         Assert.Equal(7, row[nameof(TravelerLoyaltyMembership.TierId)].GetInt32());
+    }
+
+    // ── POST /admin/data/{table}/{id}/reveal (#318) ─────────────────────────────
+
+    private async Task<int> AuditRowCountForEntityIdAsync(string entityId)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        return await db.AdminAuditLogs.CountAsync(a => a.EntityId == entityId);
+    }
+
+    private static Task<HttpResponseMessage> RevealAsync(HttpClient client, string table, object id, string column) =>
+        client.PostAsJsonAsync($"admin/data/{table}/{id}/reveal", new RevealValueRequest(column));
+
+    // ── Auth ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Reveal_Anonymous_Returns401()
+    {
+        var response = await RevealAsync(factory.CreateClient(), "travelers", Guid.NewGuid(), nameof(Traveler.Email));
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Reveal_AuthenticatedWithoutTheAdminRole_Returns403()
+    {
+        var response = await RevealAsync(factory.CreateUserClient(), "travelers", Guid.NewGuid(), nameof(Traveler.Email));
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    // ── Unknown table / id / column ──────────────────────────────────────────────
+
+    /// <summary>No audit row for a 404: the table doesn't even resolve, so nothing about a reveal
+    /// was ever attempted against real data.</summary>
+    [Fact]
+    public async Task Reveal_Admin_UnknownTableSlug_Returns404_AndWritesNoAuditRow()
+    {
+        var id = Guid.NewGuid().ToString();
+
+        var response = await RevealAsync(factory.CreateAdminClient(), "not-a-real-table", id, "Email");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(0, await AuditRowCountForEntityIdAsync(id));
+    }
+
+    /// <summary>The ordering rule #318 exists for, proven end-to-end: an id that resolves to no
+    /// row must 404 without ever constructing — let alone committing — an audit row.</summary>
+    [Fact]
+    public async Task Reveal_Admin_UnknownId_Returns404_AndWritesNoAuditRow()
+    {
+        var id = Guid.NewGuid().ToString();
+
+        var response = await RevealAsync(factory.CreateAdminClient(), "travelers", id, nameof(Traveler.Email));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(0, await AuditRowCountForEntityIdAsync(id));
+    }
+
+    /// <summary>An ordinary, already-unmasked column is rejected exactly like a made-up one — a
+    /// reveal is not a second way to read a row.</summary>
+    [Fact]
+    public async Task Reveal_Admin_NonSensitiveColumn_Returns400_AndWritesNoAuditRow()
+    {
+        var traveler = Traveler.Register($"{Marker()}@example.com", "Findable Name");
+        await SeedAsync(db => db.Travelers.Add(traveler));
+
+        var response = await RevealAsync(factory.CreateAdminClient(), "travelers", traveler.Id, nameof(Traveler.DisplayName));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains(nameof(Traveler.DisplayName), body);
+        Assert.Equal(0, await AuditRowCountForEntityIdAsync(traveler.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task Reveal_Admin_UnknownColumn_Returns400_AndWritesNoAuditRow()
+    {
+        var traveler = Traveler.Register($"{Marker()}@example.com");
+        await SeedAsync(db => db.Travelers.Add(traveler));
+
+        var response = await RevealAsync(factory.CreateAdminClient(), "travelers", traveler.Id, "NotARealColumn");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(0, await AuditRowCountForEntityIdAsync(traveler.Id.ToString()));
+    }
+
+    // ── Successful reveal ────────────────────────────────────────────────────────
+
+    /// <summary>The mirror image of the masking tests above: this is the one endpoint where the
+    /// raw value is expected to leave the API.</summary>
+    [Fact]
+    public async Task Reveal_Admin_SensitiveColumn_Returns200_WithTheRawUnmaskedValue()
+    {
+        var rawEmail = $"very-secret-{Marker()}@example.com";
+        var traveler = Traveler.Register(rawEmail);
+        await SeedAsync(db => db.Travelers.Add(traveler));
+
+        var response = await RevealAsync(factory.CreateAdminClient(), "travelers", traveler.Id, nameof(Traveler.Email));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains(rawEmail, body);
+        Assert.DoesNotContain("<redacted>", body);
+
+        var result = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+            body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(result);
+        Assert.Equal("travelers", result!["table"].GetString());
+        Assert.Equal(traveler.Id.ToString(), result["id"].GetString());
+        Assert.Equal(nameof(Traveler.Email), result["column"].GetString());
+        Assert.Equal(rawEmail, result["value"].GetString());
+    }
+
+    [Fact]
+    public async Task Reveal_Admin_SuccessfulReveal_ResponseCarriesCacheControlNoStore()
+    {
+        var traveler = Traveler.Register($"{Marker()}@example.com");
+        await SeedAsync(db => db.Travelers.Add(traveler));
+
+        var response = await RevealAsync(factory.CreateAdminClient(), "travelers", traveler.Id, nameof(Traveler.Email));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(response.Headers.CacheControl);
+        Assert.True(response.Headers.CacheControl!.NoStore);
+    }
+
+    /// <summary>
+    /// The security-critical audit-content assertions (#318), proven end-to-end through the real
+    /// endpoint rather than only at the handler level: exactly one row, the right actor/entity/
+    /// action, and — checked against the row's whole serialized form, with the column name as a
+    /// control so the "value absent" half of this assertion is proven to discriminate — the
+    /// revealed value appears nowhere in it.
+    /// </summary>
+    [Fact]
+    public async Task Reveal_Admin_SuccessfulReveal_WritesExactlyOneAuditRow_WithNoRevealedValueAnywhereInIt()
+    {
+        var actorId = $"actor-{Guid.NewGuid():N}";
+        var rawEmail = $"very-secret-{Marker()}@example.com";
+        var traveler = Traveler.Register(rawEmail);
+        await SeedAsync(db => db.Travelers.Add(traveler));
+
+        var response = await RevealAsync(
+            factory.CreateAdminClient(actorId), "travelers", traveler.Id, nameof(Traveler.Email));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        var rows = await db.AdminAuditLogs
+            .Where(a => a.EntityId == traveler.Id.ToString())
+            .ToListAsync();
+
+        var row = Assert.Single(rows);
+        Assert.Equal(AdminAuditAction.Reveal, row.Action);
+        Assert.Equal(actorId, row.ActorId);
+        Assert.Equal(nameof(Traveler), row.EntityType);
+        Assert.Null(row.Before);
+        Assert.Null(row.After);
+
+        var serialized = JsonSerializer.Serialize(row);
+        Assert.Contains(nameof(Traveler.Email), serialized); // control: proves this check sees real content
+        Assert.DoesNotContain(rawEmail, serialized);
+    }
+
+    // ── Rate limit (#318) ────────────────────────────────────────────────────────
+
+    private int RevealPermitLimit() =>
+        factory.Services.GetRequiredService<IConfiguration>().GetValue("RateLimiting:AdminReveal:PermitLimit", 10);
+
+    [Fact]
+    public async Task Reveal_RateLimit_Returns429AfterTheConfiguredPermitCount()
+    {
+        var traveler = Traveler.Register($"{Marker()}@example.com");
+        await SeedAsync(db => db.Travelers.Add(traveler));
+        var client = factory.CreateAdminClient($"rate-limit-solo-{Guid.NewGuid():N}");
+        var permitLimit = RevealPermitLimit();
+
+        for (var i = 0; i < permitLimit; i++)
+        {
+            var response = await RevealAsync(client, "travelers", traveler.Id, nameof(Traveler.Email));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        var rejected = await RevealAsync(client, "travelers", traveler.Id, nameof(Traveler.Email));
+        Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
+    }
+
+    /// <summary>Partitioned by actor (oid), not by IP alone: two admins never share a bucket, so
+    /// one exhausting their own limit never throttles the other.</summary>
+    [Fact]
+    public async Task Reveal_RateLimit_TwoDifferentActors_DoNotShareABucket()
+    {
+        var traveler = Traveler.Register($"{Marker()}@example.com");
+        await SeedAsync(db => db.Travelers.Add(traveler));
+        var actorA = factory.CreateAdminClient($"rate-limit-a-{Guid.NewGuid():N}");
+        var actorB = factory.CreateAdminClient($"rate-limit-b-{Guid.NewGuid():N}");
+        var permitLimit = RevealPermitLimit();
+
+        for (var i = 0; i < permitLimit; i++)
+        {
+            var response = await RevealAsync(actorA, "travelers", traveler.Id, nameof(Traveler.Email));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+        var actorARejected = await RevealAsync(actorA, "travelers", traveler.Id, nameof(Traveler.Email));
+        Assert.Equal(HttpStatusCode.TooManyRequests, actorARejected.StatusCode);
+
+        // Actor B has never called this endpoint before in this test — a fresh bucket, unaffected
+        // by actor A's exhausted one.
+        var actorBResponse = await RevealAsync(actorB, "travelers", traveler.Id, nameof(Traveler.Email));
+        Assert.Equal(HttpStatusCode.OK, actorBResponse.StatusCode);
     }
 }

@@ -1,6 +1,8 @@
 using FlightAssistant.Application.Administration;
+using FlightAssistant.Application.Commands.Admin.Data;
 using FlightAssistant.Application.Queries.Admin.Data;
 using FlightAssistant.Contracts.Paging;
+using FlightAssistant.Contracts.Requests.Admin;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Domain.Common.Exceptions;
 using MediatR;
@@ -73,6 +75,49 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "sensitive — a sensitive column would otherwise let a filter be used to guess a " +
                 "masked value one character at a time.")
             .Produces<PagedResult<Dictionary<string, object?>>>(200)
+            .ProducesValidationProblem()
+            .ProducesProblem(404);
+
+            // POST /admin/data/{table}/{id}/reveal
+            group.MapPost("{table}/{id}/reveal", async (
+                string table,
+                string id,
+                RevealValueRequest request,
+                IMediator mediator,
+                HttpResponse response,
+                CancellationToken ct) =>
+            {
+                // Same reasoning, and the same defensive re-check in the handler, as the GET
+                // above: an unknown slug is a 404, decided here rather than left to
+                // FluentValidation (which is hard-wired to 400 by GlobalExceptionHandler).
+                if (BrowsableTables.TryGetBySlug(table) is null)
+                    throw new DomainException($"Unknown table '{table}'.", 404);
+
+                var result = await mediator.Send(new RevealValueCommand(table, id, request.Column), ct);
+
+                // A revealed value must never rest in an intermediary cache or proxy — set on the
+                // success path only, deliberately: a 400/404/500 ProblemDetails response carries no
+                // value at all, so it has nothing that needs this guarantee.
+                response.Headers.CacheControl = "no-store";
+
+                return Results.Ok(new RevealedValueDto(result.Table, result.Id, result.Column, result.Value));
+            })
+            .WithName("AdminRevealValue")
+            .WithSummary("Reveal one sensitive value, audited")
+            .WithDescription(
+                "The escape hatch around the data browser's server-side masking (#315). Only a " +
+                "column registered in SensitiveProperties for the table's entity may be revealed " +
+                "— any other column, including an already-unmasked one, is a 400. Every " +
+                "successful reveal writes an admin_audit_log row (Action=Reveal) recording who " +
+                "revealed which column on which row and when; Before/After are never populated " +
+                "and the value itself never appears in the row, only its column name. The audit " +
+                "row is committed before this response is returned — a failed audit write fails " +
+                "the whole request with a 500 rather than returning a value with no audit trail. " +
+                "Responses carry Cache-Control: no-store. Rate-limited per actor " +
+                "(RateLimiting:AdminReveal), far tighter than the rest of the admin API: this " +
+                "endpoint exists to be used rarely, not as a second browsing mode.")
+            .RequireRateLimiting("admin-reveal")
+            .Produces<RevealedValueDto>(200)
             .ProducesValidationProblem()
             .ProducesProblem(404);
         }

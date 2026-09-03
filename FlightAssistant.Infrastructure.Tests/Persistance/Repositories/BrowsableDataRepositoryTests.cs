@@ -393,4 +393,70 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
 
         Assert.Equal(3, count);
     }
+
+    // ── GetRowAsync (#318 — the audited reveal's read half) ─────────────────────
+
+    /// <summary>
+    /// Unlike every <c>QueryAsync</c> test above, this is the one read path in
+    /// <see cref="BrowsableDataRepository"/> that must hand back the real, unmasked value —
+    /// masking is applied by the reveal handler's caller-side allowlist check, never by this
+    /// method. Proven against real Postgres so a future change that routed this through the same
+    /// masking helper <c>GetBrowsableDataQueryHandler</c> uses would be caught here, not just in a
+    /// mocked handler test.
+    /// </summary>
+    [Fact]
+    public async Task GetRowAsync_ExistingId_ReturnsTheRawUnmaskedValue()
+    {
+        await using var db = CreateDbContext();
+        var traveler = NewTraveler("Findable Traveler");
+        db.Travelers.Add(traveler);
+        await db.SaveChangesAsync();
+
+        var row = await Repository(db).GetRowAsync(TravelersTable, traveler.Id.ToString());
+
+        Assert.NotNull(row);
+        Assert.Equal(traveler.Email, row![nameof(Traveler.Email)]);
+        Assert.NotEqual("<redacted>", row[nameof(Traveler.Email)]);
+    }
+
+    [Fact]
+    public async Task GetRowAsync_UnknownId_ReturnsNull()
+    {
+        await using var db = CreateDbContext();
+
+        var row = await Repository(db).GetRowAsync(TravelersTable, Guid.NewGuid().ToString());
+
+        Assert.Null(row);
+    }
+
+    /// <summary>An id that doesn't even parse as the key column's CLR type (a Guid here) is "no
+    /// such row", not a thrown exception — an id lookup should never turn a mistyped id into a
+    /// 500.</summary>
+    [Fact]
+    public async Task GetRowAsync_IdThatDoesNotParseAsTheKeyType_ReturnsNull_NotAnException()
+    {
+        await using var db = CreateDbContext();
+        db.Travelers.Add(NewTraveler());
+        await db.SaveChangesAsync();
+
+        var row = await Repository(db).GetRowAsync(TravelersTable, "not-a-guid");
+
+        Assert.Null(row);
+    }
+
+    [Fact]
+    public async Task GetRowAsync_DeviceToken_ReturnsTheRawUnmaskedToken()
+    {
+        await using var db = CreateDbContext();
+        var traveler = NewTraveler();
+        var rawToken = $"very-secret-token-{Guid.NewGuid():N}";
+        var deviceToken = traveler.AddDeviceToken("ios", rawToken);
+        db.Travelers.Add(traveler);
+        await db.SaveChangesAsync();
+
+        var row = await Repository(db).GetRowAsync(DeviceTokensTable, deviceToken.Id.ToString());
+
+        Assert.NotNull(row);
+        Assert.Equal(rawToken, row![nameof(DeviceToken.Token)]);
+    }
 }

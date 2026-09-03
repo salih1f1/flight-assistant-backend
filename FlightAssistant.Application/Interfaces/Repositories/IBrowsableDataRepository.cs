@@ -63,5 +63,34 @@ namespace FlightAssistant.Application.Interfaces.Repositories
             string? filterColumn,
             string? filterValue,
             CancellationToken ct = default);
+
+        /// <summary>
+        /// The single row of <paramref name="table"/> whose primary key stringifies to
+        /// <paramref name="id"/>, projected to only the columns <paramref name="table"/> exposes —
+        /// same projection <see cref="QueryAsync"/> uses, but keyed instead of paged. Backs the
+        /// audited reveal (#318): unlike every other read on this interface, the values returned
+        /// here are <b>never</b> masked by this method or any other reader upstream of the reveal
+        /// handler, so a caller must not expose this row wholesale — only the one column the
+        /// caller has already confirmed is both exposed and registered in
+        /// <c>SensitiveProperties</c> may ever leave the handler.
+        /// </summary>
+        /// <param name="id">
+        /// The primary key, stringified exactly as <c>AdminAuditInterceptor.GetEntityId</c> would
+        /// format it — a single key's value as-is, or a composite key's parts joined with
+        /// <c>|</c> in the order EF's own metadata reports them. Resolved via that same EF
+        /// metadata (<c>IEntityType.FindPrimaryKey()</c>), not an assumption that the key property
+        /// is called "Id" — several browsable entities key on something else entirely. A value
+        /// that does not split into the right number of parts, or a part that fails to parse as
+        /// its key column's CLR type, is treated as "no such row" (a <c>null</c> return) rather
+        /// than a thrown exception — resolving to 404, never a 500, for what is ultimately just an
+        /// unrecognised id.
+        /// </param>
+        /// <returns>
+        /// The row's exposed columns, unmasked, or <c>null</c> when no row has that id.
+        /// </returns>
+        Task<IReadOnlyDictionary<string, object?>?> GetRowAsync(
+            BrowsableTable table,
+            string id,
+            CancellationToken ct = default);
     }
 }
