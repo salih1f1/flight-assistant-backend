@@ -1,0 +1,5369 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "FlightAssistant API",
+    "version": "v1"
+  },
+  "paths": {
+    "/admin/airlines/{id}/verify": {
+      "patch": {
+        "tags": [
+          "Admin - airlines"
+        ],
+        "summary": "Verify or unverify a Airline",
+        "operationId": "AdminVerifyAirline",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/airlines": {
+      "get": {
+        "tags": [
+          "Admin - Airlines"
+        ],
+        "summary": "List all airlines",
+        "operationId": "AdminGetAllAirlines",
+        "parameters": [
+          {
+            "name": "Page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "PageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AirlineAdminDtoPagedResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Admin - Airlines"
+        ],
+        "summary": "Create airline",
+        "operationId": "AdminCreateAirline",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAirlineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/airlines/{id}": {
+      "get": {
+        "tags": [
+          "Admin - Airlines"
+        ],
+        "summary": "Get airline by ID",
+        "operationId": "AdminGetAirlineById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AirlineAdminDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Admin - Airlines"
+        ],
+        "summary": "Update airline",
+        "operationId": "AdminUpdateAirline",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAirlineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Admin - Airlines"
+        ],
+        "summary": "Delete airline",
+        "operationId": "AdminDeleteAirline",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/airports/{id}/verify": {
+      "patch": {
+        "tags": [
+          "Admin - airports"
+        ],
+        "summary": "Verify or unverify a Airport",
+        "operationId": "AdminVerifyAirport",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/airports": {
+      "get": {
+        "tags": [
+          "Admin - Airports"
+        ],
+        "summary": "List all airports",
+        "operationId": "AdminGetAllAirports",
+        "parameters": [
+          {
+            "name": "Page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "PageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AirportAdminDtoPagedResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Admin - Airports"
+        ],
+        "summary": "Create airport",
+        "operationId": "AdminCreateAirport",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAirportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/airports/{id}": {
+      "get": {
+        "tags": [
+          "Admin - Airports"
+        ],
+        "summary": "Get airport by ID",
+        "operationId": "AdminGetAirportById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AirportAdminDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Admin - Airports"
+        ],
+        "summary": "Update airport",
+        "operationId": "AdminUpdateAirport",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAirportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Admin - Airports"
+        ],
+        "summary": "Delete airport",
+        "operationId": "AdminDeleteAirport",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/admin/alliances/{id}/verify": {
+      "patch": {
+        "tags": [
+          "Admin - alliances"
+        ],
+        "summary": "Verify or unverify a Alliance",
+        "operationId": "AdminVerifyAlliance",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/audit": {
+      "get": {
+        "tags": [
+          "Admin - Audit"
+        ],
+        "summary": "List admin audit log rows",
+        "description": "One row per admin write (#313 Tasks 1-2), newest first by ActionUtc then Id (a tiebreaker: many rows from the same write batch can share one ActionUtc instant). EntityType and EntityId together answer 'history of this row'; ActorId and Action narrow by who/what — ActorId matches case-insensitively, EntityType does not. FromUtc/ToUtc bound the range and are both inclusive; pass an explicit time-of-day, since a date alone (e.g. toUtc=2026-09-02) means midnight at the start of that day and so excludes everything that happened on it. All filters are optional and combine with AND. EntityId is null on a create of an entity with a store-generated key (the database assigns it during the very write this row records, so it does not exist yet) — such a row can never be found through the EntityId filter and is identified through its After payload instead, which holds the created entity's full property set.",
+        "operationId": "AdminGetAuditLog",
+        "parameters": [
+          {
+            "name": "Page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "PageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "entityType",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "entityId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actorId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/AdminAuditAction"
+            }
+          },
+          {
+            "name": "fromUtc",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "toUtc",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAuditDtoPagedResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/countries/{id}/verify": {
+      "patch": {
+        "tags": [
+          "Admin - countries"
+        ],
+        "summary": "Verify or unverify a Country",
+        "operationId": "AdminVerifyCountry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/data/tables": {
+      "get": {
+        "tags": [
+          "Admin - Data"
+        ],
+        "summary": "List every table the admin data browser can read",
+        "description": "Slug, display name and current row count for each table registered in BrowsableTables.",
+        "operationId": "AdminListBrowsableTables",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BrowsableTableDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/data/{table}": {
+      "get": {
+        "tags": [
+          "Admin - Data"
+        ],
+        "summary": "Read one browsable table's rows, masked and paginated",
+        "description": "Strictly read-only. Every column SensitiveProperties marks sensitive is replaced with \"<redacted>\" server-side before this response is built — the full value never leaves the API from this endpoint (a full reveal, audited, is a separate future endpoint). 'sort' is a column name, optionally prefixed with '-' for descending (e.g. sort=-CreatedUtc); paging is stable even without an explicit sort, via an always-appended primary-key tiebreaker. 'filter' is 'column:value' — exact match for a non-string column, case-insensitive contains for a string column, split on the first ':' only so a value such as an ISO-8601 timestamp can itself contain colons. Both 'sort' and 'filter' column names are matched case-sensitively (e.g. 'CreatedUtc', not 'createdUtc') against the table's exposed-column whitelist and rejected with 400 if unknown, wrong-case or sensitive — a sensitive column would otherwise let a filter be used to guess a masked value one character at a time.",
+        "operationId": "AdminGetBrowsableTableData",
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "PageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringObjectDictionaryPagedResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/data/{table}/{id}/reveal": {
+      "post": {
+        "tags": [
+          "Admin - Data"
+        ],
+        "summary": "Reveal one sensitive value, audited",
+        "description": "The escape hatch around the data browser's server-side masking (#315). Only a column registered in SensitiveProperties for the table's entity may be revealed — any other column, including an already-unmasked one, is a 400. Every successful reveal writes an admin_audit_log row (Action=Reveal) recording who revealed which column on which row and when; Before/After are never populated and the value itself never appears in the row, only its column name. The audit row is committed before this response is returned — a failed audit write fails the whole request with a 500 rather than returning a value with no audit trail. Responses carry Cache-Control: no-store. Rate-limited per actor (RateLimiting:AdminReveal), far tighter than the rest of the admin API: this endpoint exists to be used rarely, not as a second browsing mode.",
+        "operationId": "AdminRevealValue",
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevealValueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevealedValueDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/export/airports": {
+      "get": {
+        "tags": [
+          "Admin - Export"
+        ],
+        "summary": "Export all verified airports as CSV",
+        "operationId": "ExportAirports",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/admin/export/airlines": {
+      "get": {
+        "tags": [
+          "Admin - Export"
+        ],
+        "summary": "Export all verified airlines as CSV",
+        "operationId": "ExportAirlines",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/admin/export/alliances": {
+      "get": {
+        "tags": [
+          "Admin - Export"
+        ],
+        "summary": "Export all verified alliances as CSV",
+        "operationId": "ExportAlliances",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/admin/export/countries": {
+      "get": {
+        "tags": [
+          "Admin - Export"
+        ],
+        "summary": "Export all verified countries as CSV",
+        "operationId": "ExportCountries",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/admin/export/lounges": {
+      "get": {
+        "tags": [
+          "Admin - Export"
+        ],
+        "summary": "Export all verified lounges as CSV (Providers column is JSON-encoded)",
+        "operationId": "ExportLounges",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/admin/export/lounge-providers": {
+      "get": {
+        "tags": [
+          "Admin - Export"
+        ],
+        "summary": "Export all verified lounge providers as CSV",
+        "operationId": "ExportLoungeProviders",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/admin/export/loyalty-programs": {
+      "get": {
+        "tags": [
+          "Admin - Export"
+        ],
+        "summary": "Export all verified loyalty programs as CSV (Tiers column is JSON-encoded)",
+        "operationId": "ExportLoyaltyPrograms",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/admin/export/loyalty-program-kinds": {
+      "get": {
+        "tags": [
+          "Admin - Export"
+        ],
+        "summary": "Export all verified loyalty program kinds as CSV",
+        "operationId": "ExportLoyaltyProgramKinds",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/admin/flights/{id}/detail": {
+      "get": {
+        "tags": [
+          "Admin - Flights"
+        ],
+        "summary": "Get flight detail",
+        "description": "Returns the flight with its current status and its 50 most recent status events, newest first — the record of what the sync actually saw. Not the full history: a long-tracked flight polled every couple of minutes accumulates status-event rows without bound. StatusHistoryTruncated is true when the cap actually cut rows off; when it is, see GET /admin/data/flight-status-events for the rest.",
+        "operationId": "AdminGetFlightDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminFlightDetailDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/flights": {
+      "get": {
+        "tags": [
+          "Admin - Flights"
+        ],
+        "summary": "List all flights",
+        "operationId": "AdminGetAllFlights",
+        "parameters": [
+          {
+            "name": "Page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "PageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminFlightDtoPagedResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/flights/{id}": {
+      "get": {
+        "tags": [
+          "Admin - Flights"
+        ],
+        "summary": "Get flight by ID",
+        "operationId": "AdminGetFlightById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminFlightDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Admin - Flights"
+        ],
+        "summary": "Delete flight",
+        "operationId": "AdminDeleteFlight",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/admin/flights/{id}/sync": {
+      "post": {
+        "tags": [
+          "Admin - Flights"
+        ],
+        "summary": "Sync flight status",
+        "operationId": "AdminSyncFlightStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/admin/health": {
+      "get": {
+        "tags": [
+          "Admin - Health"
+        ],
+        "summary": "Operator health detail",
+        "description": "Runs every registered health check with no predicate — including 'aeroapi' and 'apns', tagged 'external' and excluded from the load-balancer probe at /health/ready — and always responds 200, even when the overall status is Unhealthy. Also reports process/build info (version, build SHA, uptime), pending EF Core migrations, and the flight-status sync's last-run heartbeat. Exception detail on individual checks and the sync's last error render outside Production only.",
+        "operationId": "AdminGetHealth",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminHealthDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/import/alliances": {
+      "post": {
+        "tags": [
+          "Admin - Import"
+        ],
+        "summary": "Import alliances from CSV (run before countries, airports, airlines). Upserts by Code.",
+        "operationId": "ImportAlliances",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "required": [
+                  "file"
+                ],
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              },
+              "encoding": {
+                "file": {
+                  "style": "form"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/import/countries": {
+      "post": {
+        "tags": [
+          "Admin - Import"
+        ],
+        "summary": "Import countries from CSV (run after alliances). Upserts by Code.",
+        "operationId": "ImportCountries",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "required": [
+                  "file"
+                ],
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              },
+              "encoding": {
+                "file": {
+                  "style": "form"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/import/airports": {
+      "post": {
+        "tags": [
+          "Admin - Import"
+        ],
+        "summary": "Import airports from CSV (run after countries). Upserts by IATA.",
+        "operationId": "ImportAirports",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "required": [
+                  "file"
+                ],
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              },
+              "encoding": {
+                "file": {
+                  "style": "form"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/import/airlines": {
+      "post": {
+        "tags": [
+          "Admin - Import"
+        ],
+        "summary": "Import airlines from CSV (run after airports). Upserts by IATA, fallback ICAO.",
+        "operationId": "ImportAirlines",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "required": [
+                  "file"
+                ],
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              },
+              "encoding": {
+                "file": {
+                  "style": "form"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/import/lounge-providers": {
+      "post": {
+        "tags": [
+          "Admin - Import"
+        ],
+        "summary": "Import lounge providers from CSV (run after airlines). Upserts by Code.",
+        "operationId": "ImportLoungeProviders",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "required": [
+                  "file"
+                ],
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              },
+              "encoding": {
+                "file": {
+                  "style": "form"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/import/loyalty-program-kinds": {
+      "post": {
+        "tags": [
+          "Admin - Import"
+        ],
+        "summary": "Import loyalty program kinds from CSV (run after airlines). Upserts by Code.",
+        "operationId": "ImportLoyaltyProgramKinds",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "required": [
+                  "file"
+                ],
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              },
+              "encoding": {
+                "file": {
+                  "style": "form"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/import/lounges": {
+      "post": {
+        "tags": [
+          "Admin - Import"
+        ],
+        "summary": "Import lounges from CSV (run after lounge-providers). Providers column is JSON-encoded. Upserts by Name+AirportIata+Terminal.",
+        "operationId": "ImportLounges",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "required": [
+                  "file"
+                ],
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              },
+              "encoding": {
+                "file": {
+                  "style": "form"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/import/loyalty-programs": {
+      "post": {
+        "tags": [
+          "Admin - Import"
+        ],
+        "summary": "Import loyalty programs from CSV (run after loyalty-program-kinds and airlines). Tiers column is JSON-encoded. Upserts by Code.",
+        "operationId": "ImportLoyaltyPrograms",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "required": [
+                  "file"
+                ],
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              },
+              "encoding": {
+                "file": {
+                  "style": "form"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/lounge-providers/{id}/verify": {
+      "patch": {
+        "tags": [
+          "Admin - lounge providers"
+        ],
+        "summary": "Verify or unverify a LoungeProvider",
+        "operationId": "AdminVerifyLoungeProvider",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/lounges/{id}/verify": {
+      "patch": {
+        "tags": [
+          "Admin - lounges"
+        ],
+        "summary": "Verify or unverify a Lounge",
+        "operationId": "AdminVerifyLounge",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/lounges": {
+      "get": {
+        "tags": [
+          "Admin - Lounges"
+        ],
+        "summary": "List all lounges",
+        "operationId": "AdminGetAllLounges",
+        "parameters": [
+          {
+            "name": "Page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "PageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLoungeDtoPagedResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Admin - Lounges"
+        ],
+        "summary": "Create lounge",
+        "operationId": "AdminCreateLounge",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLoungeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/lounges/{id}": {
+      "get": {
+        "tags": [
+          "Admin - Lounges"
+        ],
+        "summary": "Get lounge by ID",
+        "operationId": "AdminGetLoungeById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLoungeDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Admin - Lounges"
+        ],
+        "summary": "Update lounge",
+        "operationId": "AdminUpdateLounge",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLoungeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Admin - Lounges"
+        ],
+        "summary": "Delete lounge",
+        "operationId": "AdminDeleteLounge",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/admin/loyalty/programs": {
+      "get": {
+        "tags": [
+          "Admin - Loyalty"
+        ],
+        "summary": "List all loyalty programs",
+        "operationId": "AdminGetLoyaltyPrograms",
+        "parameters": [
+          {
+            "name": "Page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "PageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoyaltyProgramDtoPagedResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Admin - Loyalty"
+        ],
+        "summary": "Create loyalty program",
+        "operationId": "AdminCreateLoyaltyProgram",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLoyaltyProgramRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/loyalty/programs/{id}": {
+      "put": {
+        "tags": [
+          "Admin - Loyalty"
+        ],
+        "summary": "Update loyalty program",
+        "operationId": "AdminUpdateLoyaltyProgram",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLoyaltyProgramRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Admin - Loyalty"
+        ],
+        "summary": "Delete loyalty program",
+        "operationId": "AdminDeleteLoyaltyProgram",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/admin/loyalty-program-kinds/{id}/verify": {
+      "patch": {
+        "tags": [
+          "Admin - loyalty program kinds"
+        ],
+        "summary": "Verify or unverify a LoyaltyProgramKind",
+        "operationId": "AdminVerifyLoyaltyProgramKind",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/loyalty-programs/{id}/verify": {
+      "patch": {
+        "tags": [
+          "Admin - loyalty programs"
+        ],
+        "summary": "Verify or unverify a LoyaltyProgram",
+        "operationId": "AdminVerifyLoyaltyProgram",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/refdata/countries": {
+      "get": {
+        "tags": [
+          "Admin - Reference Data"
+        ],
+        "summary": "List all countries",
+        "operationId": "AdminGetAllCountries",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CountryAdminDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/refdata/alliances": {
+      "get": {
+        "tags": [
+          "Admin - Reference Data"
+        ],
+        "summary": "List all alliances",
+        "operationId": "AdminGetAllAlliances",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AllianceAdminDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/travelers/{id}/detail": {
+      "get": {
+        "tags": [
+          "Admin - Travelers"
+        ],
+        "summary": "Get traveler detail",
+        "description": "Returns the traveler together with its device tokens, tracked flights and loyalty memberships in one call. Email and every device token are masked as \"<redacted>\"; reveal the real value via POST /admin/data/{table}/{id}/reveal. TrackedFlights is capped at 50, newest first; TrackedFlightsTruncated is true when the cap actually cut rows off, and the full relationship is available via GET /admin/data/traveler-flights. Device tokens and loyalty memberships are not capped.",
+        "operationId": "AdminGetTravelerDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminTravelerDetailDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/travelers": {
+      "get": {
+        "tags": [
+          "Admin - Travelers"
+        ],
+        "summary": "List all travelers",
+        "operationId": "AdminGetAllTravelers",
+        "parameters": [
+          {
+            "name": "Page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "PageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminTravelerDtoPagedResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/travelers/{id}": {
+      "get": {
+        "tags": [
+          "Admin - Travelers"
+        ],
+        "summary": "Get traveler by ID",
+        "operationId": "AdminGetTravelerById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminTravelerDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Admin - Travelers"
+        ],
+        "summary": "Delete traveler",
+        "operationId": "AdminDeleteTraveler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/admin/travelers/{travelerId}/device-tokens/{tokenId}": {
+      "delete": {
+        "tags": [
+          "Admin - Travelers"
+        ],
+        "summary": "Delete device token",
+        "description": "Removes a stale APNs device token. This is NOT a device revocation: it only stops push notifications from reaching that token, and the client re-registers a fresh one on its next launch.",
+        "operationId": "AdminDeleteDeviceToken",
+        "parameters": [
+          {
+            "name": "travelerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "tokenId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/usage/aeroapi": {
+      "get": {
+        "tags": [
+          "Admin - Usage"
+        ],
+        "summary": "AeroAPI account usage and spend",
+        "description": "Proxies FlightAware's own GET /account/usage report — calls, pages and cost for the range, broken down by operation, alongside the configured monthly budget and the next available outbound throttle slot. Optional 'start' and 'end' are UTC instants; they default to the current UTC month to date. AeroAPI serves at most one year of history, so an earlier start is rejected. Cached for 10 minutes, matching FlightAware's own refresh cadence.",
+        "operationId": "AdminGetAeroApiUsage",
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AeroApiUsageDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flights/search": {
+      "get": {
+        "tags": [
+          "Flights"
+        ],
+        "summary": "Search flights by route or flight number on a date",
+        "description": "Searches scheduled flights to populate the 'add flight' picker. Each returned row has exactly the same shape as TrackFlightRequest (flightNumber, serviceDate, departureAirportIata, arrivalAirportIata, scheduledDepartureUtc, scheduledArrivalUtc), so a result can be posted straight to POST /flights, unmodified, to track it.\n\nSearch criteria (query params):\n- date (required): the departure date in YYYY-MM-DD format. Must fall within the provider's rolling past/future horizon.\n- from / to (optional): departure and arrival airport as 3-letter IATA codes (e.g. LHR, JFK). Case-insensitive. Must be supplied together.\n- flightNumber (optional): an IATA flight code — a 2-character airline prefix containing at least one letter, followed by 1–4 digits and an optional trailing letter (e.g. BA123, 6E4120, BA123A). Case-insensitive. The same rule POST /flights applies, so any flightNumber this endpoint accepts is trackable.\n- includeCodeshares (optional, default false): when true, includes codeshare-marketed rows for the same physical departure alongside the operating flight's own row; when false, only the operating flight's own row is returned.\n\nYou must provide either a full route (both from and to) OR a flightNumber, in addition to date; otherwise the request is rejected with 400.\n\nEach result is one flight designator — the same aircraft sold under several marketing numbers (e.g. TK1028 is also 6E4120, MS9668, RJ3710 and SQ6228) appears as one row per number, not grouped. There is no separate 'operating carrier' field: the airline is always the first two characters of the result's own flightNumber.\n\nResponses:\n- 200: list of matching flights (empty list when the provider responds successfully but nothing matches).\n- 400: invalid/insufficient parameters.\n- 500: server-side configuration issue with the flight data provider.\n- 502: the flight data provider was unreachable or returned an unexpected error.\n- 503: the flight data provider is throttling requests; retry after the period in the Retry-After header.",
+        "operationId": "SearchFlights",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "flightNumber",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "includeCodeshares",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FlightSearchResultDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flights": {
+      "get": {
+        "tags": [
+          "Flights"
+        ],
+        "summary": "List tracked flights",
+        "description": "Returns a paginated list of flights the authenticated traveler is tracking. Supports ?page and ?pageSize (default 50, max 200).",
+        "operationId": "GetTrackedFlights",
+        "parameters": [
+          {
+            "name": "Page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "PageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlightDtoPagedResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Flights"
+        ],
+        "summary": "Track a flight",
+        "description": "Adds a flight to the authenticated traveler's tracking list. A row returned by GET /flights/search can be posted here unmodified — this body is exactly that shape. If the flight already exists in the system (same airline, number, and service date) it is reused; otherwise a new flight record is created. The airline is derived from the first two characters of FlightNumber (e.g. 'BA123' -> 'BA', '6E4120' -> '6E'); there is no separate airline field. Body fields: FlightNumber (e.g. 'BA123' or '6E4120'), ServiceDate (YYYY-MM-DD), DepartureAirportIata, ArrivalAirportIata, ScheduledDepartureUtc, ScheduledArrivalUtc.",
+        "operationId": "TrackFlight",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrackFlightRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flights/{flightId}": {
+      "delete": {
+        "tags": [
+          "Flights"
+        ],
+        "summary": "Stop tracking a flight",
+        "description": "Removes the specified flight from the authenticated traveler's tracking list. Route parameter: flightId — the numeric ID returned when the flight was tracked.",
+        "operationId": "UntrackFlight",
+        "parameters": [
+          {
+            "name": "flightId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flights/{flightId}/notify": {
+      "patch": {
+        "tags": [
+          "Flights"
+        ],
+        "summary": "Toggle flight notifications",
+        "description": "Enables or disables push notifications for a tracked flight. Route parameter: flightId — the numeric flight ID. Body: { \"notify\": true } (true to enable, false to disable). Notifications are delivered via APNs to device tokens registered for the traveler.",
+        "operationId": "ToggleFlightNotifications",
+        "parameters": [
+          {
+            "name": "flightId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToggleNotifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flights/{flightId}/status": {
+      "get": {
+        "tags": [
+          "Flights"
+        ],
+        "summary": "Get flight status history",
+        "description": "Returns the ordered list of status events recorded for the flight. Each event captures the status code, gate/terminal info, baggage claim, and the time it became effective. Route parameter: flightId — the numeric flight ID.",
+        "operationId": "GetFlightStatus",
+        "parameters": [
+          {
+            "name": "flightId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FlightStatusEventDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flights/{flightId}/sync": {
+      "post": {
+        "tags": [
+          "Flights"
+        ],
+        "summary": "Manually sync flight status",
+        "description": "Triggers an on-demand status refresh for the specified flight by querying the external flight data provider. Returns { updated: true } if new status data was fetched and persisted, or { updated: false } if the data was already up to date. Route parameter: flightId — the numeric flight ID.",
+        "operationId": "SyncFlightStatus",
+        "parameters": [
+          {
+            "name": "flightId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/lounges": {
+      "get": {
+        "tags": [
+          "Lounges"
+        ],
+        "summary": "List lounges at an airport",
+        "description": "Returns all lounges at the specified airport, each annotated with whether the authenticated traveler is eligible to access it. Eligibility is computed from the traveler's loyalty memberships and tier benefits. Query parameter: airportIata — the IATA airport code (e.g. 'LHR', 'JFK').",
+        "operationId": "GetLoungesAtAirport",
+        "parameters": [
+          {
+            "name": "airportIata",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LoungeDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/loyalty/programs/search": {
+      "get": {
+        "tags": [
+          "Loyalty"
+        ],
+        "summary": "Search loyalty programs by airline",
+        "description": "Returns loyalty programs linked to the specified airline IATA code (e.g. 'BA'). Use this to populate the program picker when the user knows their airline.",
+        "operationId": "SearchLoyaltyPrograms",
+        "parameters": [
+          {
+            "name": "airlineIata",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LoyaltyProgramDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/loyalty/programs": {
+      "get": {
+        "tags": [
+          "Loyalty"
+        ],
+        "summary": "List loyalty programs",
+        "description": "Returns a paginated list of airline loyalty programs, including their full tier hierarchy. Use this to populate program/tier picker UIs. Supports ?page and ?pageSize (default 50, max 200).",
+        "operationId": "GetLoyaltyPrograms",
+        "parameters": [
+          {
+            "name": "Page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "PageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoyaltyProgramDtoPagedResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/loyalty/memberships": {
+      "get": {
+        "tags": [
+          "Loyalty"
+        ],
+        "summary": "List own memberships",
+        "description": "Returns a paginated list of the authenticated traveler's loyalty memberships. Supports ?page and ?pageSize (default 50, max 200).",
+        "operationId": "GetMemberships",
+        "parameters": [
+          {
+            "name": "Page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "PageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoyaltyMembershipDtoPagedResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Loyalty"
+        ],
+        "summary": "Add a loyalty membership",
+        "description": "Links a loyalty program membership to the authenticated traveler. Body fields: ProgramId (from GET /loyalty/programs), AccountNumber, TierId (optional, from the program's tier list), TierExpiryDate (optional, YYYY-MM-DD), PointsExpiryDate (optional, YYYY-MM-DD).",
+        "operationId": "AddMembership",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMembershipRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/loyalty/memberships/{id}": {
+      "put": {
+        "tags": [
+          "Loyalty"
+        ],
+        "summary": "Update a loyalty membership",
+        "description": "Replaces the account number, tier, and expiry dates for the specified membership. Route parameter: id — the membership ID returned when it was added. Only the authenticated traveler's own memberships can be updated.",
+        "operationId": "UpdateMembership",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMembershipRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Loyalty"
+        ],
+        "summary": "Remove a loyalty membership",
+        "description": "Deletes a loyalty membership from the authenticated traveler's profile. Route parameter: id — the membership ID to remove.",
+        "operationId": "RemoveMembership",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/private/ping": {
+      "get": {
+        "tags": [
+          "Private"
+        ],
+        "summary": "Ping",
+        "operationId": "Ping",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/private/secure-test": {
+      "get": {
+        "tags": [
+          "Private"
+        ],
+        "summary": "Authenticated ping",
+        "operationId": "SecureTest",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/private/whoami": {
+      "get": {
+        "tags": [
+          "Private"
+        ],
+        "summary": "Return decoded token claims",
+        "operationId": "WhoAmI",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/travelers": {
+      "post": {
+        "tags": [
+          "Travelers"
+        ],
+        "summary": "Register traveler",
+        "description": "Creates a traveler profile linked to the authenticated Azure AD B2C identity. Idempotent — safe to call on every login; does nothing if the traveler already exists.",
+        "operationId": "RegisterTraveler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterTravelerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterTravelerResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/travelers/me": {
+      "get": {
+        "tags": [
+          "Travelers"
+        ],
+        "summary": "Get own profile",
+        "description": "Returns the authenticated traveler's profile. Display name is owned by Azure AD B2C and is refreshed from the sign-in token on each login; it is read-only here.",
+        "operationId": "GetTravelerProfile",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TravelerDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/travelers/me/device-tokens": {
+      "post": {
+        "tags": [
+          "Travelers"
+        ],
+        "summary": "Register device token",
+        "description": "Registers a push notification device token for the authenticated traveler. Currently supports iOS (APNs). The token is used to send flight status alerts when notifications are enabled for a tracked flight.",
+        "operationId": "AddDeviceToken",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddDeviceTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Travelers"
+        ],
+        "summary": "List registered device tokens",
+        "description": "Returns all push notification device tokens registered for the authenticated traveler.",
+        "operationId": "GetDeviceTokens",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DeviceTokenDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/travelers/me/device-tokens/{deviceTokenId}": {
+      "delete": {
+        "tags": [
+          "Travelers"
+        ],
+        "summary": "Remove device token",
+        "description": "Removes a previously registered push notification device token. Use this when a user logs out or when the OS invalidates the token. Route parameter: deviceTokenId — the ID of the device token to remove.",
+        "operationId": "RemoveDeviceToken",
+        "parameters": [
+          {
+            "name": "deviceTokenId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AddDeviceTokenRequest": {
+        "type": "object",
+        "properties": {
+          "platform": {
+            "type": "string",
+            "nullable": true
+          },
+          "token": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AddMembershipRequest": {
+        "type": "object",
+        "properties": {
+          "programId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "accountNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "tierId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "tierExpiryDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "pointsExpiryDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminAuditAction": {
+        "enum": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "AdminAuditDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "actorId": {
+            "type": "string",
+            "nullable": true
+          },
+          "actorName": {
+            "type": "string",
+            "nullable": true
+          },
+          "actionUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "action": {
+            "type": "string",
+            "nullable": true
+          },
+          "entityType": {
+            "type": "string",
+            "nullable": true
+          },
+          "entityId": {
+            "type": "string",
+            "nullable": true
+          },
+          "summary": {
+            "type": "string",
+            "nullable": true
+          },
+          "before": {
+            "nullable": true
+          },
+          "after": {
+            "nullable": true
+          },
+          "traceId": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminAuditDtoPagedResult": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminAuditDto"
+            },
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminDeviceTokenDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "platform": {
+            "type": "string",
+            "nullable": true
+          },
+          "token": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastSeenUtc": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminFlightDetailDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "airlineId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "flightNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "departureAirportId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "arrivalAirportId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "serviceDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "scheduledDepartureUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "scheduledArrivalUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "estimatedDepartureUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "estimatedArrivalUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "actualDepartureUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "actualArrivalUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "equipmentAircraftIcao": {
+            "type": "string",
+            "nullable": true
+          },
+          "externalId": {
+            "type": "string",
+            "nullable": true
+          },
+          "currentStatus": {
+            "$ref": "#/components/schemas/AdminFlightStatusEventDto"
+          },
+          "statusHistory": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminFlightStatusEventDto"
+            },
+            "nullable": true
+          },
+          "statusHistoryTruncated": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminFlightDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "airlineId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "flightNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "departureAirportId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "arrivalAirportId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "serviceDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "scheduledDepartureUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "scheduledArrivalUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "estimatedDepartureUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "estimatedArrivalUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "actualDepartureUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "actualArrivalUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "equipmentAircraftIcao": {
+            "type": "string",
+            "nullable": true
+          },
+          "externalId": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminFlightDtoPagedResult": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminFlightDto"
+            },
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminFlightStatusEventDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "statusCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "statusName": {
+            "type": "string",
+            "nullable": true
+          },
+          "providerRawStatus": {
+            "type": "string",
+            "nullable": true
+          },
+          "effectiveAtUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "recordedAtUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminHealthCheckDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "durationMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminHealthDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "totalDurationMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminHealthCheckDto"
+            },
+            "nullable": true
+          },
+          "system": {
+            "$ref": "#/components/schemas/AdminHealthSystemDto"
+          },
+          "migrations": {
+            "$ref": "#/components/schemas/AdminHealthMigrationsDto"
+          },
+          "flightSync": {
+            "$ref": "#/components/schemas/AdminHealthFlightSyncDto"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminHealthFlightSyncDto": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "lastRunStartedUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastRunCompletedUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastOutcome": {
+            "type": "string",
+            "nullable": true
+          },
+          "flightsProcessed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "flightsFailed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "nextRunDueUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastError": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminHealthMigrationsDto": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "appliedCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "lastAppliedMigration": {
+            "type": "string",
+            "nullable": true
+          },
+          "pending": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminHealthSystemDto": {
+        "type": "object",
+        "properties": {
+          "environment": {
+            "type": "string",
+            "nullable": true
+          },
+          "version": {
+            "type": "string",
+            "nullable": true
+          },
+          "buildSha": {
+            "type": "string",
+            "nullable": true
+          },
+          "frameworkDescription": {
+            "type": "string",
+            "nullable": true
+          },
+          "startedUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "uptime": {
+            "type": "string",
+            "format": "date-span"
+          },
+          "redisConfigured": {
+            "type": "boolean"
+          },
+          "appInsightsConfigured": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminLoungeDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "airportId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "terminal": {
+            "type": "string",
+            "nullable": true
+          },
+          "locationHint": {
+            "type": "string",
+            "nullable": true
+          },
+          "hours": {
+            "type": "string",
+            "nullable": true
+          },
+          "isAirside": {
+            "type": "boolean"
+          },
+          "isDomesticOnly": {
+            "type": "boolean"
+          },
+          "isInternationalOnly": {
+            "type": "boolean"
+          },
+          "amenities": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminLoungeDtoPagedResult": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminLoungeDto"
+            },
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminMembershipDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "programId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "accountNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "tierId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "tierExpiryDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "pointsExpiryDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminTrackedFlightDto": {
+        "type": "object",
+        "properties": {
+          "trackingId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "flightId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "flightNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "airlineId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "departureAirportId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "arrivalAirportId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "serviceDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "notify": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminTravelerDetailDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "displayName": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deviceTokens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminDeviceTokenDto"
+            },
+            "nullable": true
+          },
+          "trackedFlights": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminTrackedFlightDto"
+            },
+            "nullable": true
+          },
+          "trackedFlightsTruncated": {
+            "type": "boolean"
+          },
+          "loyaltyMemberships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminMembershipDto"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminTravelerDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "displayName": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdUtc": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminTravelerDtoPagedResult": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminTravelerDto"
+            },
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AeroApiUsageDto": {
+        "type": "object",
+        "properties": {
+          "rangeStartUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "rangeEndUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "totalCalls": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalPages": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalCostUsd": {
+            "type": "number",
+            "format": "double"
+          },
+          "totalDiscountCostUsd": {
+            "type": "number",
+            "format": "double"
+          },
+          "totalSuccessfulCalls": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalFailedCalls": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "monthlyBudgetUsd": {
+            "type": "number",
+            "format": "double"
+          },
+          "byOperation": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AeroApiUsageOperationDto"
+            },
+            "nullable": true
+          },
+          "nextSlotUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AeroApiUsageOperationDto": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "nullable": true
+          },
+          "calls": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pages": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "costUsd": {
+            "type": "number",
+            "format": "double"
+          },
+          "successfulCalls": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failedCalls": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AirlineAdminDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "iata": {
+            "type": "string",
+            "nullable": true
+          },
+          "icao": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "countryCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "allianceCode": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AirlineAdminDtoPagedResult": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AirlineAdminDto"
+            },
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AirportAdminDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "iata": {
+            "type": "string",
+            "nullable": true
+          },
+          "icao": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "city": {
+            "type": "string",
+            "nullable": true
+          },
+          "countryCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "latitude": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "longitude": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "elevationFt": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AirportAdminDtoPagedResult": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AirportAdminDto"
+            },
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AllianceAdminDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "BrowsableTableDto": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "nullable": true
+          },
+          "displayName": {
+            "type": "string",
+            "nullable": true
+          },
+          "rowCount": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CountryAdminDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "alpha3": {
+            "type": "string",
+            "nullable": true
+          },
+          "numericCode": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "region": {
+            "type": "string",
+            "nullable": true
+          },
+          "subregion": {
+            "type": "string",
+            "nullable": true
+          },
+          "isEU": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "isSchengen": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "isEEA": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateAirlineRequest": {
+        "type": "object",
+        "properties": {
+          "iata": {
+            "type": "string",
+            "nullable": true
+          },
+          "icao": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "countryCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "allianceCode": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateAirportRequest": {
+        "type": "object",
+        "properties": {
+          "iata": {
+            "type": "string",
+            "nullable": true
+          },
+          "icao": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "city": {
+            "type": "string",
+            "nullable": true
+          },
+          "countryCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "latitude": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "longitude": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "elevationFt": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateLoungeRequest": {
+        "type": "object",
+        "properties": {
+          "airportId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "terminal": {
+            "type": "string",
+            "nullable": true
+          },
+          "locationHint": {
+            "type": "string",
+            "nullable": true
+          },
+          "hours": {
+            "type": "string",
+            "nullable": true
+          },
+          "isAirside": {
+            "type": "boolean"
+          },
+          "isDomesticOnly": {
+            "type": "boolean"
+          },
+          "isInternationalOnly": {
+            "type": "boolean"
+          },
+          "amenities": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateLoyaltyProgramRequest": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "kindId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "airlineId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "allianceCode": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "DeviceTokenDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "platform": {
+            "type": "string",
+            "nullable": true
+          },
+          "token": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastSeenUtc": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FlightDto": {
+        "type": "object",
+        "properties": {
+          "flightId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "airlineIata": {
+            "type": "string",
+            "nullable": true
+          },
+          "flightNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "serviceDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "departureAirportIata": {
+            "type": "string",
+            "nullable": true
+          },
+          "arrivalAirportIata": {
+            "type": "string",
+            "nullable": true
+          },
+          "scheduledDepartureUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "scheduledArrivalUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "estimatedDepartureUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "estimatedArrivalUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "actualDepartureUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "actualArrivalUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "latestStatusCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "notify": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FlightDtoPagedResult": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlightDto"
+            },
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FlightSearchResultDto": {
+        "type": "object",
+        "properties": {
+          "flightNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "serviceDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "departureAirportIata": {
+            "type": "string",
+            "nullable": true
+          },
+          "arrivalAirportIata": {
+            "type": "string",
+            "nullable": true
+          },
+          "scheduledDepartureUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "scheduledArrivalUtc": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FlightStatusEventDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "statusCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "statusName": {
+            "type": "string",
+            "nullable": true
+          },
+          "effectiveAtUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source": {
+            "type": "string",
+            "nullable": true
+          },
+          "gate": {
+            "type": "string",
+            "nullable": true
+          },
+          "terminal": {
+            "type": "string",
+            "nullable": true
+          },
+          "baggageClaim": {
+            "type": "string",
+            "nullable": true
+          },
+          "remarks": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "HttpValidationProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "detail": {
+            "type": "string",
+            "nullable": true
+          },
+          "instance": {
+            "type": "string",
+            "nullable": true
+          },
+          "errors": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": { }
+      },
+      "ImportResult": {
+        "type": "object",
+        "properties": {
+          "inserted": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "LoungeDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "terminal": {
+            "type": "string",
+            "nullable": true
+          },
+          "locationHint": {
+            "type": "string",
+            "nullable": true
+          },
+          "hours": {
+            "type": "string",
+            "nullable": true
+          },
+          "isAirside": {
+            "type": "boolean"
+          },
+          "isDomesticOnly": {
+            "type": "boolean"
+          },
+          "isInternationalOnly": {
+            "type": "boolean"
+          },
+          "amenities": {
+            "type": "string",
+            "nullable": true
+          },
+          "isEligible": {
+            "type": "boolean"
+          },
+          "eligibleVia": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "LoyaltyMembershipDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "programId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "accountNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "tierId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "tierExpiryDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "pointsExpiryDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "LoyaltyMembershipDtoPagedResult": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LoyaltyMembershipDto"
+            },
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "LoyaltyProgramDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "kind": {
+            "type": "string",
+            "nullable": true
+          },
+          "airlineId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "allianceCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "tiers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LoyaltyTierDto"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "LoyaltyProgramDtoPagedResult": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LoyaltyProgramDto"
+            },
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "LoyaltyTierDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "rank": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "allianceCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "allianceTierCode": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "detail": {
+            "type": "string",
+            "nullable": true
+          },
+          "instance": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": { }
+      },
+      "RegisterTravelerRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "displayName": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "RegisterTravelerResponse": {
+        "type": "object",
+        "properties": {
+          "travelerId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RevealValueRequest": {
+        "type": "object",
+        "properties": {
+          "column": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "RevealedValueDto": {
+        "type": "object",
+        "properties": {
+          "table": {
+            "type": "string",
+            "nullable": true
+          },
+          "id": {
+            "type": "string",
+            "nullable": true
+          },
+          "column": {
+            "type": "string",
+            "nullable": true
+          },
+          "value": {
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "StringObjectDictionaryPagedResult": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": { }
+            },
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ToggleNotifyRequest": {
+        "type": "object",
+        "properties": {
+          "notify": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TrackFlightRequest": {
+        "type": "object",
+        "properties": {
+          "flightNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "serviceDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "departureAirportIata": {
+            "type": "string",
+            "nullable": true
+          },
+          "arrivalAirportIata": {
+            "type": "string",
+            "nullable": true
+          },
+          "scheduledDepartureUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "scheduledArrivalUtc": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TravelerDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "displayName": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateAirlineRequest": {
+        "type": "object",
+        "properties": {
+          "iata": {
+            "type": "string",
+            "nullable": true
+          },
+          "icao": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "countryCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "allianceCode": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateAirportRequest": {
+        "type": "object",
+        "properties": {
+          "iata": {
+            "type": "string",
+            "nullable": true
+          },
+          "icao": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "city": {
+            "type": "string",
+            "nullable": true
+          },
+          "countryCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "latitude": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "longitude": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "elevationFt": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateLoungeRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "terminal": {
+            "type": "string",
+            "nullable": true
+          },
+          "locationHint": {
+            "type": "string",
+            "nullable": true
+          },
+          "hours": {
+            "type": "string",
+            "nullable": true
+          },
+          "isAirside": {
+            "type": "boolean"
+          },
+          "isDomesticOnly": {
+            "type": "boolean"
+          },
+          "isInternationalOnly": {
+            "type": "boolean"
+          },
+          "amenities": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateLoyaltyProgramRequest": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "kindId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "airlineId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "allianceCode": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateMembershipRequest": {
+        "type": "object",
+        "properties": {
+          "accountNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "tierId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "tierExpiryDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "pointsExpiryDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "VerifyRequest": {
+        "type": "object",
+        "properties": {
+          "isVerified": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "securitySchemes": {
+      "Bearer": {
+        "type": "http",
+        "description": "Enter 'Bearer' followed by a space and the JWT.",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  },
+  "security": [
+    {
+      "Bearer": [ ]
+    }
+  ]
+}

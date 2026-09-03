@@ -43,28 +43,16 @@ jobs:
           dotnet publish FlightAssistant.API -c Release -o ${{env.DOTNET_ROOT}}/myapp
           -p:SourceRevisionId=${{ github.sha }}
 
-      - name: Restore dotnet tools
-        run: dotnet tool restore
-
+      # spec/openapi.json (committed, #324) is the source of truth; ci.yml's
+      # drift check is what guarantees it matches on every PR. This step only
+      # keeps producing the same run-scoped artifact this workflow always has.
+      # scripts/generate-openapi.sh is what that drift check calls too — the
+      # dummy configuration block it injects to boot the host (AeroApiOptions.ApiKey
+      # is [Required] and validated on start, so the export won't start without
+      # *something*; generating the spec makes no outbound call) lives there once,
+      # not copied into this workflow as well.
       - name: Export OpenAPI spec
-        env:
-          ASPNETCORE_ENVIRONMENT: Development
-          PostgresConnectionString: "Host=localhost;Database=dummy;Username=dummy;Password=dummy"
-          Azure__TenantId: "00000000-0000-0000-0000-000000000000"
-          Azure__ClientId: "00000000-0000-0000-0000-000000000000"
-          Azure__Instance: "https://login.microsoftonline.com/"
-          Azure__Domain: "dummy.onmicrosoft.com"
-          Azure__SignUpSignInPolicyId: "B2C_1_signupsignin"
-          Azure__Issuer: "https://dummy.b2clogin.com/{0}/v2.0/"
-          Azure__Authority: "https://dummy.b2clogin.com/{0}/B2C_1_signupsignin/v2.0"
-          # AeroApiOptions.ApiKey is [Required] and validated on start, so the host — and
-          # therefore the spec export, which boots it — refuses to start without a value.
-          # A dummy is enough: generating the spec makes no outbound call.
-          AeroApi__ApiKey: "dummy"
-        run: >
-          dotnet swagger tofile
-          --output openapi.json
-          ${{env.DOTNET_ROOT}}/myapp/FlightAssistant.API.dll v1
+        run: scripts/generate-openapi.sh openapi.json ${{env.DOTNET_ROOT}}/myapp
 
       - name: Upload OpenAPI spec artifact
         uses: actions/upload-artifact@v4

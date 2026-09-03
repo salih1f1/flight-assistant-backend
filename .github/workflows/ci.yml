@@ -86,3 +86,43 @@ jobs:
             test-results.json
             TestResults/**/*.trx
           retention-days: 30
+
+      # spec/openapi.json is committed (#324) so every API change shows up as a
+      # reviewable diff in the PR that causes it, and the admin panel can fetch a
+      # fixed path instead of an expiring, run-id-keyed artifact. A committed spec
+      # nobody can prove is current is worse than no spec, so this regenerates it
+      # and fails the build if the committed file doesn't match byte-for-byte.
+      #
+      # `--no-build` reuses the compile the "Build" step above already did, so this
+      # only pays for `dotnet publish`'s packaging and `dotnet tool restore` —
+      # generation itself is sub-second (verified: SwaggerDoc uses a fixed Version,
+      # no build stamp, so the output is deterministic).
+      - name: Publish API for OpenAPI export
+        run: dotnet publish FlightAssistant.API --configuration Release --no-build -o openapi-publish
+
+      # Regenerates spec/openapi.json in place from the publish output above. The
+      # dummy configuration block that lets the host boot for export lives once, in
+      # this script — reused here and by development_flight-assistant-dev-api.yml's
+      # "Export OpenAPI spec" step, rather than copied into this workflow too.
+      - name: Regenerate OpenAPI spec
+        run: scripts/generate-openapi.sh spec/openapi.json openapi-publish
+
+      # A spec is a public-shaped document. It should never echo the dummy values
+      # above (or anything else config-shaped) — assert it before trusting the diff
+      # check below, since a byte-for-byte match on a leaking spec is no comfort.
+      - name: Assert OpenAPI spec has no leaked credential-shaped values
+        run: |
+          if grep -Eio 'dummy|password|apikey|connectionstring|b2clogin|onmicrosoft' spec/openapi.json; then
+            echo "::error::spec/openapi.json contains a value shaped like one of the dummy credentials scripts/generate-openapi.sh injects only to boot the host (see matches above). If this is a false positive, tighten the check in ci.yml — never commit a real credential to make it pass."
+            exit 1
+          fi
+
+      # The one check that matters: does the committed file still match what the
+      # current code produces? `git diff` against the just-regenerated working-tree
+      # copy prints exactly what changed, not just that something did.
+      - name: Verify spec/openapi.json is up to date
+        run: |
+          if ! git diff --exit-code -- spec/openapi.json; then
+            echo "::error::spec/openapi.json is out of date (diff above). Regenerate it with 'scripts/generate-openapi.sh' from the repo root and commit the result — see CLAUDE.md."
+            exit 1
+          fi

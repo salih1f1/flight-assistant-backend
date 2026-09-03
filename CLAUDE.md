@@ -32,6 +32,9 @@ dotnet test FlightAssistant.Domain.Tests/FlightAssistant.Domain.Tests.csproj --f
 # EF Core migrations
 dotnet ef migrations add <MigrationName> --project FlightAssistant.Infrastructure --startup-project FlightAssistant.API
 dotnet ef database update --project FlightAssistant.Infrastructure --startup-project FlightAssistant.API
+
+# Regenerate the committed OpenAPI spec (spec/openapi.json) — run from the repo root
+scripts/generate-openapi.sh
 ```
 
 ## Architecture
@@ -138,6 +141,8 @@ All live in `FlightAssistant.Domain/Common/`, **not** SharedKernel (which is emp
 **Paging:** Input `PagedRequest(Page=1, PageSize=50)`, output `PagedResult<T>(Items, Total, Page, PageSize)`. Validated by `PagedRequestValidator` (Page ≥ 1, PageSize 1–100). Reuse `PagedRequestValidator` in query validators via `.SetValidator(new PagedRequestValidator())`.
 
 **RefDataRepository:** Consolidates all reference data reads (airports, airlines, countries, alliances) in a single repository intentionally — see the file for rationale; planned to split later.
+
+**`spec/openapi.json` is generated, not hand-authored.** It comes from booting the API host and walking its own route/DTO metadata via Swashbuckle's CLI (`dotnet swagger tofile`, pinned in `.config/dotnet-tools.json`) — regenerate it with `scripts/generate-openapi.sh` from the repo root (the tool manifest is repo-local, so `dotnet swagger` only resolves there; run elsewhere and the dotnet CLI's answer — "You misspelled a built-in dotnet command" — points nowhere near the real cause, which is why the script checks first and says so plainly). The host needs *some* configuration to start — `AeroApiOptions.ApiKey` is `[Required]` and validated on start — so the script boots it on dummy values; the export makes no outbound call and the spec itself carries no configuration values, so a dummy is enough. That block is defined exactly once, inside the script, and both `ci.yml` and `development_flight-assistant-dev-api.yml`'s "Export OpenAPI spec" step call it rather than each keeping a copy. Generation is deterministic — `SwaggerDoc`'s `Version` is a fixed `"v1"`, not a build stamp — which is what lets `ci.yml` regenerate the spec on every PR and fail the build, diff and regenerate command included in the log, if it doesn't match the committed file byte-for-byte; that same check also asserts the regenerated spec contains none of the dummy credential values, since a public-shaped document is exactly where a future leaked example or default would surface. Never hand-edit `spec/openapi.json` — CI will only hand you back a diff, not a fix.
 
 ## Conventions
 
