@@ -111,20 +111,8 @@ public class GetAdminTravelerDetailQueryHandlerTests
         Assert.Empty(result.LoyaltyMemberships);
     }
 
-    /// <summary>
-    /// #322 fix round, M5: the cap is threaded through to the repository as a limit (proved below)
-    /// and the result says so when the repository actually returned that many rows — this is the one
-    /// thing a mock-based test can prove about the truncation flag; that the repository's own
-    /// <c>LIMIT</c> is what bounds the row count for real is proved against PostgreSQL in
-    /// <c>AdminDrilldownRepositoryTests</c> (Infrastructure.Tests).
-    /// </summary>
-    [Fact]
-    public async Task Handle_TrackedFlightsAtTheCap_SetsTrackedFlightsTruncatedTrue()
-    {
-        var travelerId = Guid.NewGuid();
-        var traveler = Traveler.Register(travelerId, "heavy-flyer@example.com");
-
-        var atCap = Enumerable.Range(0, GetAdminTravelerDetailQueryHandler.MaxTrackedFlights)
+    private List<(TravelerFlight, Flight)> TrackedFlights(Guid travelerId, int count) =>
+        Enumerable.Range(0, count)
             .Select(i =>
             {
                 var flight = Flight.Create(1, $"TK{i}", 10, 20,
@@ -133,9 +121,24 @@ public class GetAdminTravelerDetailQueryHandlerTests
             })
             .ToList();
 
+    /// <summary>
+    /// #322 fix round, M5: more rows exist than the cap allows, so the flag says so and only the
+    /// cap's worth are returned. The handler asks the repository for <c>MaxTrackedFlights + 1</c>
+    /// deliberately — see the companion test below for why one extra row is what makes the flag
+    /// exact. That the repository's own <c>LIMIT</c> is what bounds the count for real is proved
+    /// against PostgreSQL in <c>AdminDrilldownRepositoryTests</c> (Infrastructure.Tests).
+    /// </summary>
+    [Fact]
+    public async Task Handle_MoreTrackedFlightsThanTheCap_SetsTrackedFlightsTruncatedTrue()
+    {
+        var travelerId = Guid.NewGuid();
+        var traveler = Traveler.Register(travelerId, "heavy-flyer@example.com");
+
+        var overCap = TrackedFlights(travelerId, GetAdminTravelerDetailQueryHandler.MaxTrackedFlights + 1);
+
         _travelers.GetDetailAsync(travelerId, Arg.Any<CancellationToken>()).Returns(traveler);
         _flights.GetRecentTravelerFlightsAsync(travelerId, Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns((IReadOnlyList<(TravelerFlight, Flight)>)atCap);
+            .Returns((IReadOnlyList<(TravelerFlight, Flight)>)overCap);
         _loyalty.GetAllMembershipsForTravelerAsync(travelerId, Arg.Any<CancellationToken>())
             .Returns((IReadOnlyList<TravelerLoyaltyMembership>)[]);
 
@@ -145,9 +148,37 @@ public class GetAdminTravelerDetailQueryHandlerTests
         Assert.Equal(GetAdminTravelerDetailQueryHandler.MaxTrackedFlights, result!.TrackedFlights.Count);
         Assert.True(result.TrackedFlightsTruncated);
 
-        // The cap value itself is what got asked for — not merely applied after the fact.
+        // One more than the cap is what got asked for — the probe row that makes the flag exact.
         await _flights.Received(1).GetRecentTravelerFlightsAsync(
-            travelerId, GetAdminTravelerDetailQueryHandler.MaxTrackedFlights, Arg.Any<CancellationToken>());
+            travelerId, GetAdminTravelerDetailQueryHandler.MaxTrackedFlights + 1, Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// The boundary the probe row exists for: a traveler with <em>precisely</em>
+    /// <see cref="GetAdminTravelerDetailQueryHandler.MaxTrackedFlights"/> flights is complete, not
+    /// truncated. Inferring truncation from <c>Count == Max</c> would flag this response and send an
+    /// operator to the generic browser for rows that are not there. This test fails under that
+    /// inference and passes under the fetch-one-extra rule, which is the whole point of it.
+    /// </summary>
+    [Fact]
+    public async Task Handle_TrackedFlightsExactlyAtTheCap_LeavesTrackedFlightsTruncatedFalse()
+    {
+        var travelerId = Guid.NewGuid();
+        var traveler = Traveler.Register(travelerId, "exactly-at-cap@example.com");
+
+        var exactlyAtCap = TrackedFlights(travelerId, GetAdminTravelerDetailQueryHandler.MaxTrackedFlights);
+
+        _travelers.GetDetailAsync(travelerId, Arg.Any<CancellationToken>()).Returns(traveler);
+        _flights.GetRecentTravelerFlightsAsync(travelerId, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<(TravelerFlight, Flight)>)exactlyAtCap);
+        _loyalty.GetAllMembershipsForTravelerAsync(travelerId, Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<TravelerLoyaltyMembership>)[]);
+
+        var result = await _handler.Handle(new GetAdminTravelerDetailQuery(travelerId), CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(GetAdminTravelerDetailQueryHandler.MaxTrackedFlights, result!.TrackedFlights.Count);
+        Assert.False(result.TrackedFlightsTruncated);
     }
 
     /// <summary>

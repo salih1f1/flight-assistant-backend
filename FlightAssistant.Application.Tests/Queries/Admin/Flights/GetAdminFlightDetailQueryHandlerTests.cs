@@ -66,9 +66,17 @@ public class GetAdminFlightDetailQueryHandlerTests
     /// to the repository call, not merely applied after the fact — this is the one thing about the
     /// cap this mock-based test can prove; that the repository's <c>LIMIT</c> is what actually
     /// bounds the row count is proved separately against real PostgreSQL.
+    ///
+    /// <para>
+    /// It asks for <c>MaxStatusHistory + 1</c>, not <c>MaxStatusHistory</c>. The extra row is a
+    /// probe, never returned to the caller: it is the only way to distinguish "there are exactly
+    /// <c>Max</c> events" from "there are more", and inferring truncation from
+    /// <c>Count == Max</c> instead would flag a complete response as truncated and send an operator
+    /// to the generic browser for rows that are not there.
+    /// </para>
     /// </summary>
     [Fact]
-    public async Task Handle_RequestsExactlyTheConfiguredMaxStatusHistoryFromTheRepository()
+    public async Task Handle_RequestsOneMoreThanTheConfiguredMaxStatusHistoryFromTheRepository()
     {
         var flight = Flight.Create(1, "BA123", 10, 20,
             new DateOnly(2026, 9, 10), DateTime.UtcNow, DateTime.UtcNow.AddHours(2));
@@ -79,7 +87,7 @@ public class GetAdminFlightDetailQueryHandlerTests
         await _handler.Handle(new GetAdminFlightDetailQuery(5), CancellationToken.None);
 
         await _flights.Received(1).GetRecentFlightStatusEventsAsync(
-            5, GetAdminFlightDetailQueryHandler.MaxStatusHistory, Arg.Any<CancellationToken>());
+            5, GetAdminFlightDetailQueryHandler.MaxStatusHistory + 1, Arg.Any<CancellationToken>());
     }
 
     [Fact]

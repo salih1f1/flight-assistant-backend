@@ -111,7 +111,13 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
             var traveler = await _travelers.GetDetailAsync(request.Id, ct);
             if (traveler is null) return null;
 
-            var trackedFlights = await _flights.GetRecentTravelerFlightsAsync(request.Id, MaxTrackedFlights, ct);
+            // Fetch one more than the cap so "truncated" is exact rather than an inference.
+            // Comparing Count == MaxTrackedFlights would report a traveler with precisely
+            // MaxTrackedFlights flights as truncated when it is complete, sending an operator to
+            // the generic browser for rows that are not there.
+            var fetchedFlights = await _flights.GetRecentTravelerFlightsAsync(request.Id, MaxTrackedFlights + 1, ct);
+            var trackedFlightsTruncated = fetchedFlights.Count > MaxTrackedFlights;
+            var trackedFlights = fetchedFlights.Take(MaxTrackedFlights).ToList();
             var memberships = await _loyalty.GetAllMembershipsForTravelerAsync(request.Id, ct);
 
             return new AdminTravelerDetailResult(
@@ -136,7 +142,7 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
                     x.Tracking.Id, x.Flight.Id, x.Flight.FlightNumber, x.Flight.AirlineId,
                     x.Flight.DepartureAirportId, x.Flight.ArrivalAirportId, x.Flight.ServiceDateUtc, x.Tracking.Notify))
                     .ToList(),
-                trackedFlights.Count == MaxTrackedFlights,
+                trackedFlightsTruncated,
                 memberships.Select(m => new AdminMembershipResult(
                     m.Id,
                     m.ProgramId,

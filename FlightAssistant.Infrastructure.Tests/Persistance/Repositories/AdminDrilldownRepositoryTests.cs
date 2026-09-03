@@ -397,14 +397,52 @@ public class AdminDrilldownRepositoryTests : PostgresTestBase
     }
 
     /// <summary>
-    /// #322 fix round, M3: with exactly as many events as the cap, <c>StatusHistoryTruncated</c>
+    /// The boundary the probe row exists for: a flight with <em>precisely</em>
+    /// <see cref="GetAdminFlightDetailQueryHandler.MaxStatusHistory"/> events is complete, not
+    /// truncated. Inferring truncation from <c>Count == Max</c> would flag this response and send
+    /// an operator to the generic browser for rows that are not there. This test fails under that
+    /// inference and passes under the fetch-one-extra rule, which is the whole point of it.
+    /// </summary>
+    [Fact]
+    public async Task FlightDetail_HistoryExactlyAtTheCap_LeavesStatusHistoryTruncatedFalse()
+    {
+        int flightId;
+        await using (var seedDb = CreateDbContext())
+        {
+            flightId = await SeedFlightAsync(seedDb);
+            var scheduledId = await StatusIdAsync(seedDb, "SCH");
+
+            var baseTime = new DateTime(2026, 9, 10, 6, 0, 0, DateTimeKind.Utc);
+            var events = Enumerable.Range(0, GetAdminFlightDetailQueryHandler.MaxStatusHistory)
+                .Select(i => FlightStatusEvent.Create(flightId, scheduledId, baseTime.AddMinutes(i), source: "manual"))
+                .ToList();
+            seedDb.FlightStatusEvents.AddRange(events);
+            await seedDb.SaveChangesAsync();
+        }
+
+        var (db, _) = CreateCountingDbContext();
+        await using (db)
+        {
+            var handler = new GetAdminFlightDetailQueryHandler(new AdminFlightRepository(db), new FlightRepository(
+                db, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" })));
+
+            var result = await handler.Handle(new GetAdminFlightDetailQuery(flightId), CancellationToken.None);
+
+            Assert.NotNull(result);
+            Assert.Equal(GetAdminFlightDetailQueryHandler.MaxStatusHistory, result!.StatusHistory.Count);
+            Assert.False(result.StatusHistoryTruncated);
+        }
+    }
+
+    /// <summary>
+    /// #322 fix round, M3: with MORE events than the cap, <c>StatusHistoryTruncated</c>
     /// must say so — a caller reading only the JSON cannot otherwise tell "this flight had exactly
     /// 50 events" apart from "there are more, ask the browser". 51 events are seeded and exactly
     /// <see cref="GetAdminFlightDetailQueryHandler.MaxStatusHistory"/> come back, proving the flag
     /// tracks what was actually returned, not merely what was seeded.
     /// </summary>
     [Fact]
-    public async Task FlightDetail_HistoryAtTheCap_SetsStatusHistoryTruncatedTrue()
+    public async Task FlightDetail_HistoryOverTheCap_SetsStatusHistoryTruncatedTrue()
     {
         int flightId;
         await using (var seedDb = CreateDbContext())

@@ -85,8 +85,13 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
             var flight = await _adminFlights.GetDetailAsync(request.Id, ct);
             if (flight is null) return null;
 
-            var events = await _flights.GetRecentFlightStatusEventsAsync(request.Id, MaxStatusHistory, ct);
-            var history = events.Select(ToResult).ToList();
+            // Fetch one more than the cap so "truncated" is exact rather than an inference.
+            // Comparing Count == MaxStatusHistory would report a flight with precisely
+            // MaxStatusHistory events as truncated when it is complete, sending an operator to the
+            // generic browser for rows that are not there.
+            var events = await _flights.GetRecentFlightStatusEventsAsync(request.Id, MaxStatusHistory + 1, ct);
+            var truncated = events.Count > MaxStatusHistory;
+            var history = events.Take(MaxStatusHistory).Select(ToResult).ToList();
 
             return new AdminFlightDetailResult(
                 flight.Id,
@@ -105,7 +110,7 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
                 flight.ExternalId,
                 history.Count > 0 ? history[0] : null,
                 history,
-                history.Count == MaxStatusHistory);
+                truncated);
         }
 
         private static AdminFlightStatusEventResult ToResult(FlightStatusEvent e) => new(
