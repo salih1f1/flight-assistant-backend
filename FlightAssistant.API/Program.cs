@@ -333,6 +333,7 @@ adminGroup.MapAdminImportEndpoints();
 adminGroup.MapAdminUsageEndpoints();
 adminGroup.MapAdminHealthEndpoints();
 adminGroup.MapAdminAuditEndpoints();
+adminGroup.MapAdminDataEndpoints();
 
 // Private endpoints (ping, secure-test, whoami)
 app.MapPrivateEndpoints();
