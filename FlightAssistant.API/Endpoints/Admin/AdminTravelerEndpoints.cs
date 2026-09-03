@@ -27,7 +27,9 @@ namespace FlightAssistant.API.Endpoints.Admin
                     result.Id, result.Email, result.DisplayName, result.CreatedUtc,
                     result.DeviceTokens.Select(t => new AdminDeviceTokenDto(t.Id, t.Platform, t.Token, t.LastSeenUtc)).ToList(),
                     result.TrackedFlights.Select(f => new AdminTrackedFlightDto(
-                        f.TrackingId, f.FlightId, f.FlightNumber, f.AirlineId, f.ServiceDate, f.Notify)).ToList(),
+                        f.TrackingId, f.FlightId, f.FlightNumber, f.AirlineId,
+                        f.DepartureAirportId, f.ArrivalAirportId, f.ServiceDate, f.Notify)).ToList(),
+                    result.TrackedFlightsTruncated,
                     result.LoyaltyMemberships.Select(m => new AdminMembershipDto(
                         m.Id, m.ProgramId, m.AccountNumber, m.TierId, m.TierExpiryDate, m.PointsExpiryDate)).ToList()));
             })
@@ -36,7 +38,11 @@ namespace FlightAssistant.API.Endpoints.Admin
             .WithDescription(
                 "Returns the traveler together with its device tokens, tracked flights and loyalty " +
                 "memberships in one call. Email and every device token are masked as \"<redacted>\"; " +
-                "reveal the real value via POST /admin/data/{table}/{id}/reveal.")
+                "reveal the real value via POST /admin/data/{table}/{id}/reveal. TrackedFlights is " +
+                $"capped at {GetAdminTravelerDetailQueryHandler.MaxTrackedFlights}, newest first; " +
+                "TrackedFlightsTruncated is true when the cap actually cut rows off, and the full " +
+                "relationship is available via GET /admin/data/traveler-flights. Device tokens and " +
+                "loyalty memberships are not capped.")
             .Produces<AdminTravelerDetailDto>(200)
             .ProducesProblem(404);
 

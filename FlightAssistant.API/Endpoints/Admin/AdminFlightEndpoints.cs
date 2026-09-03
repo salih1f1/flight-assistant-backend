@@ -27,7 +27,8 @@ namespace FlightAssistant.API.Endpoints.Admin
                     result.ActualDepartureUtc, result.ActualArrivalUtc,
                     result.EquipmentAircraftIcao, result.ExternalId,
                     result.CurrentStatus is { } current ? ToStatusEventDto(current) : null,
-                    result.StatusHistory.Select(ToStatusEventDto).ToList()));
+                    result.StatusHistory.Select(ToStatusEventDto).ToList(),
+                    result.StatusHistoryTruncated));
             })
             .WithName("AdminGetFlightDetail")
             .WithSummary("Get flight detail")
@@ -35,7 +36,8 @@ namespace FlightAssistant.API.Endpoints.Admin
                 $"Returns the flight with its current status and its {GetAdminFlightDetailQueryHandler.MaxStatusHistory} " +
                 "most recent status events, newest first — the record of what the sync actually saw. " +
                 "Not the full history: a long-tracked flight polled every couple of minutes accumulates " +
-                "status-event rows without bound.")
+                "status-event rows without bound. StatusHistoryTruncated is true when the cap actually " +
+                "cut rows off; when it is, see GET /admin/data/flight-status-events for the rest.")
             .Produces<AdminFlightDetailDto>(200)
             .ProducesProblem(404);
 

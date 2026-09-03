@@ -41,6 +41,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             await _db.TravelerLoyaltyMemberships
                 .AsNoTracking()
                 .Where(m => m.TravelerId == travelerId)
+                // Deterministic order: without one, Postgres row order can churn between identical
+                // calls after an unrelated UPDATE (#322 fix round, M4) — ProgramId ascending is
+                // arbitrary but stable, matching tracked flights' own ORDER BY sibling.
+                .OrderBy(m => m.ProgramId)
                 .ToListAsync(ct);
 
         public Task<TravelerLoyaltyMembership?> GetMembershipByIdAsync(Guid id, CancellationToken ct = default) =>

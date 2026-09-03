@@ -17,6 +17,18 @@ namespace FlightAssistant.Application.Administration
     /// </summary>
     public static class SensitiveProperties
     {
+        /// <summary>
+        /// The one literal every masking consumer must render for a sensitive value — the audit
+        /// interceptor's before/after snapshots, the admin data browser (A4), and the traveler
+        /// detail drill-down (#322) all read this constant rather than each carrying their own
+        /// copy of the string. This registry already owns *what* is sensitive; centralising *what
+        /// masked looks like* here too closes the exact drift CLAUDE.md names for validator format
+        /// rules — three independently-typed literals are one rename away from a masked value that
+        /// no longer looks masked, which is worse than either an unmasked value (obviously wrong)
+        /// or a consistently masked one.
+        /// </summary>
+        public const string RedactedPlaceholder = "<redacted>";
+
         private static readonly IReadOnlyDictionary<Type, IReadOnlySet<string>> Registry =
             new Dictionary<Type, IReadOnlySet<string>>
             {

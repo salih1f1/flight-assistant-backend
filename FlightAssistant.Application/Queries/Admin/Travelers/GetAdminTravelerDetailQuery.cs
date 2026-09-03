@@ -12,12 +12,18 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
     public sealed record AdminDeviceTokenResult(Guid Id, string Platform, string Token, DateTime LastSeenUtc);
 
     /// <summary>One flight the traveler tracks, joined with its <see cref="Flight"/> row so the
-    /// caller never needs a second lookup per row.</summary>
+    /// caller never needs a second lookup per row — <c>DepartureAirportId</c>/<c>ArrivalAirportId</c>
+    /// are included for exactly that reason (#322 fix round, M6): the join already loads the whole
+    /// <see cref="Flight"/> row, so drawing a JFK→LAX-style route on this list should never cost a
+    /// second call to <c>/admin/flights/{id}/detail</c> per row just to learn the two airport
+    /// ids.</summary>
     public sealed record AdminTrackedFlightResult(
         Guid TrackingId,
         int FlightId,
         string FlightNumber,
         int AirlineId,
+        int DepartureAirportId,
+        int ArrivalAirportId,
         DateOnly ServiceDate,
         bool Notify);
 
@@ -34,7 +40,10 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
     /// <summary>
     /// The traveler with every relationship a generic browser (#315) can't assemble in one call:
     /// device tokens, tracked flights (joined with their <see cref="Flight"/> row) and loyalty
-    /// memberships. Backs <c>GET /admin/travelers/{id}/detail</c>.
+    /// memberships. Backs <c>GET /admin/travelers/{id}/detail</c>. <c>TrackedFlightsTruncated</c> is
+    /// true when <see cref="TrackedFlights"/> was cut off at
+    /// <see cref="GetAdminTravelerDetailQueryHandler.MaxTrackedFlights"/> — see that constant's own
+    /// doc comment for why tracked flights is the one relationship here worth bounding at all.
     /// </summary>
     public sealed record AdminTravelerDetailResult(
         Guid Id,
@@ -43,6 +52,7 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
         DateTime CreatedUtc,
         IReadOnlyList<AdminDeviceTokenResult> DeviceTokens,
         IReadOnlyList<AdminTrackedFlightResult> TrackedFlights,
+        bool TrackedFlightsTruncated,
         IReadOnlyList<AdminMembershipResult> LoyaltyMemberships);
 
     public sealed record GetAdminTravelerDetailQuery(Guid Id) : IRequest<AdminTravelerDetailResult?>;
@@ -68,7 +78,21 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
     /// </summary>
     public sealed class GetAdminTravelerDetailQueryHandler : IRequestHandler<GetAdminTravelerDetailQuery, AdminTravelerDetailResult?>
     {
-        private const string Redacted = "<redacted>";
+        /// <summary>
+        /// Tracked flights is the only one of the three traveler-detail relationships worth
+        /// bounding (#322 fix round, M5). Loyalty memberships are schema-bounded — at most one per
+        /// <c>loyalty_programs</c> row, via <c>UNIQUE(TravelerId, ProgramId)</c> — and device tokens
+        /// are tiny in practice, so both stay unpaged. <c>traveler_flights</c> has no such ceiling:
+        /// its only removal path is an explicit <c>UntrackFlightCommand</c> and there is no
+        /// retention/purge job anywhere in the codebase, so it grows monotonically with usage.
+        /// Capped the same way as
+        /// <see cref="FlightAssistant.Application.Queries.Admin.Flights.GetAdminFlightDetailQueryHandler.MaxStatusHistory"/>
+        /// — a real server-side <c>LIMIT</c> keeping the newest rows, plus a truncation flag on the
+        /// result — for the same reason: <c>GET /admin/data/traveler-flights</c> (A4) already pages
+        /// the full relationship, so this drill-down can stay the "recent" view and point a caller
+        /// at the browser for the rest instead of trying to be the archive itself.
+        /// </summary>
+        public const int MaxTrackedFlights = 50;
 
         private readonly IAdminTravelerRepository _travelers;
         private readonly IFlightRepository _flights;
@@ -87,7 +111,7 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
             var traveler = await _travelers.GetDetailAsync(request.Id, ct);
             if (traveler is null) return null;
 
-            var trackedFlights = await _flights.GetAllTravelerFlightsAsync(request.Id, ct);
+            var trackedFlights = await _flights.GetRecentTravelerFlightsAsync(request.Id, MaxTrackedFlights, ct);
             var memberships = await _loyalty.GetAllMembershipsForTravelerAsync(request.Id, ct);
 
             return new AdminTravelerDetailResult(
@@ -95,14 +119,24 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
                 Mask<Traveler>(nameof(Traveler.Email), traveler.Email),
                 traveler.DisplayName,
                 traveler.CreatedUtc,
-                traveler.DeviceTokens.Select(t => new AdminDeviceTokenResult(
+                // Ordered client-side, not via the repository's Include: PostgreSQL gives no row
+                // order guarantee without an explicit ORDER BY, so two identical calls could
+                // otherwise return the same tokens in a different order (#322 fix round, M4). A
+                // stable sort here is enough to make the response deterministic regardless of
+                // what order the database happened to hand rows back in — device tokens are loaded
+                // through the same Include as the Traveler row itself, so there is no separate
+                // IQueryable to chain an ORDER BY onto the way GetAllMembershipsForTravelerAsync
+                // does below.
+                traveler.DeviceTokens.OrderBy(t => t.LastSeenUtc).Select(t => new AdminDeviceTokenResult(
                     t.Id,
                     t.Platform,
                     Mask<DeviceToken>(nameof(DeviceToken.Token), t.Token),
                     t.LastSeenUtc)).ToList(),
                 trackedFlights.Select(x => new AdminTrackedFlightResult(
-                    x.Tracking.Id, x.Flight.Id, x.Flight.FlightNumber, x.Flight.AirlineId, x.Flight.ServiceDateUtc, x.Tracking.Notify))
+                    x.Tracking.Id, x.Flight.Id, x.Flight.FlightNumber, x.Flight.AirlineId,
+                    x.Flight.DepartureAirportId, x.Flight.ArrivalAirportId, x.Flight.ServiceDateUtc, x.Tracking.Notify))
                     .ToList(),
+                trackedFlights.Count == MaxTrackedFlights,
                 memberships.Select(m => new AdminMembershipResult(
                     m.Id,
                     m.ProgramId,
@@ -113,6 +147,8 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
         }
 
         private static string Mask<TEntity>(string propertyName, string value) =>
-            SensitiveProperties.IsSensitive(typeof(TEntity), propertyName) ? Redacted : value;
+            SensitiveProperties.IsSensitive(typeof(TEntity), propertyName)
+                ? SensitiveProperties.RedactedPlaceholder
+                : value;
     }
 }

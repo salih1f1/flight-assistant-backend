@@ -57,6 +57,7 @@ public class GetAdminFlightDetailQueryHandlerTests
         Assert.NotNull(result);
         Assert.Null(result!.CurrentStatus);
         Assert.Empty(result.StatusHistory);
+        Assert.False(result.StatusHistoryTruncated);
         Assert.Equal("BA123", result.FlightNumber);
     }
 

@@ -30,7 +30,7 @@ public class GetAdminTravelerDetailQueryHandlerTests
         // Short-circuits before ever asking about flights/memberships — one wasted repository
         // round trip for a 404 is exactly the kind of query-count creep #322's "no N+1" rule guards
         // against, even outside the "many related rows" case.
-        await _flights.DidNotReceive().GetAllTravelerFlightsAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>());
+        await _flights.DidNotReceive().GetRecentTravelerFlightsAsync(Arg.Any<Guid>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
         await _loyalty.DidNotReceive().GetAllMembershipsForTravelerAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>());
     }
 
@@ -60,7 +60,7 @@ public class GetAdminTravelerDetailQueryHandlerTests
         var membership = TravelerLoyaltyMembership.Create(travelerId, programId: 7, accountNumber: rawAccountNumber, tierId: 3);
 
         _travelers.GetDetailAsync(travelerId, Arg.Any<CancellationToken>()).Returns(traveler);
-        _flights.GetAllTravelerFlightsAsync(travelerId, Arg.Any<CancellationToken>())
+        _flights.GetRecentTravelerFlightsAsync(travelerId, Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns((IReadOnlyList<(TravelerFlight, Flight)>)[(tracking, flight)]);
         _loyalty.GetAllMembershipsForTravelerAsync(travelerId, Arg.Any<CancellationToken>())
             .Returns((IReadOnlyList<TravelerLoyaltyMembership>)[membership]);
@@ -79,6 +79,10 @@ public class GetAdminTravelerDetailQueryHandlerTests
 
         var trackedFlight = Assert.Single(result.TrackedFlights);
         Assert.Equal("BA123", trackedFlight.FlightNumber);
+        // M6: the join already loads the whole Flight row, so both airport ids ride along for free.
+        Assert.Equal(10, trackedFlight.DepartureAirportId);
+        Assert.Equal(20, trackedFlight.ArrivalAirportId);
+        Assert.False(result.TrackedFlightsTruncated); // one row, nowhere near the cap
 
         var membershipResult = Assert.Single(result.LoyaltyMemberships);
         Assert.Equal("<redacted>", membershipResult.AccountNumber);
@@ -93,7 +97,7 @@ public class GetAdminTravelerDetailQueryHandlerTests
         var traveler = Traveler.Register(travelerId, "solo@example.com");
 
         _travelers.GetDetailAsync(travelerId, Arg.Any<CancellationToken>()).Returns(traveler);
-        _flights.GetAllTravelerFlightsAsync(travelerId, Arg.Any<CancellationToken>())
+        _flights.GetRecentTravelerFlightsAsync(travelerId, Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns((IReadOnlyList<(TravelerFlight, Flight)>)[]);
         _loyalty.GetAllMembershipsForTravelerAsync(travelerId, Arg.Any<CancellationToken>())
             .Returns((IReadOnlyList<TravelerLoyaltyMembership>)[]);
@@ -103,6 +107,82 @@ public class GetAdminTravelerDetailQueryHandlerTests
         Assert.NotNull(result);
         Assert.Empty(result!.DeviceTokens);
         Assert.Empty(result.TrackedFlights);
+        Assert.False(result.TrackedFlightsTruncated);
         Assert.Empty(result.LoyaltyMemberships);
+    }
+
+    /// <summary>
+    /// #322 fix round, M5: the cap is threaded through to the repository as a limit (proved below)
+    /// and the result says so when the repository actually returned that many rows — this is the one
+    /// thing a mock-based test can prove about the truncation flag; that the repository's own
+    /// <c>LIMIT</c> is what bounds the row count for real is proved against PostgreSQL in
+    /// <c>AdminDrilldownRepositoryTests</c> (Infrastructure.Tests).
+    /// </summary>
+    [Fact]
+    public async Task Handle_TrackedFlightsAtTheCap_SetsTrackedFlightsTruncatedTrue()
+    {
+        var travelerId = Guid.NewGuid();
+        var traveler = Traveler.Register(travelerId, "heavy-flyer@example.com");
+
+        var atCap = Enumerable.Range(0, GetAdminTravelerDetailQueryHandler.MaxTrackedFlights)
+            .Select(i =>
+            {
+                var flight = Flight.Create(1, $"TK{i}", 10, 20,
+                    new DateOnly(2026, 9, 10).AddDays(i), DateTime.UtcNow, DateTime.UtcNow.AddHours(2));
+                return (TravelerFlight.Create(travelerId, flight.Id), flight);
+            })
+            .ToList();
+
+        _travelers.GetDetailAsync(travelerId, Arg.Any<CancellationToken>()).Returns(traveler);
+        _flights.GetRecentTravelerFlightsAsync(travelerId, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<(TravelerFlight, Flight)>)atCap);
+        _loyalty.GetAllMembershipsForTravelerAsync(travelerId, Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<TravelerLoyaltyMembership>)[]);
+
+        var result = await _handler.Handle(new GetAdminTravelerDetailQuery(travelerId), CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(GetAdminTravelerDetailQueryHandler.MaxTrackedFlights, result!.TrackedFlights.Count);
+        Assert.True(result.TrackedFlightsTruncated);
+
+        // The cap value itself is what got asked for — not merely applied after the fact.
+        await _flights.Received(1).GetRecentTravelerFlightsAsync(
+            travelerId, GetAdminTravelerDetailQueryHandler.MaxTrackedFlights, Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// #322 fix round, M4: PostgreSQL gives no row-order guarantee without an explicit
+    /// <c>ORDER BY</c>, and device tokens are loaded through the same <c>Include</c> as the
+    /// <c>Traveler</c> row rather than a separate <c>IQueryable</c> the repository could sort — so
+    /// <see cref="GetAdminTravelerDetailQueryHandler"/> sorts them itself before mapping. Seeded
+    /// deliberately out of chronological order to prove the handler is what re-orders them, not
+    /// that they merely happened to already be sorted.
+    /// </summary>
+    [Fact]
+    public async Task Handle_DeviceTokens_AreOrderedByLastSeenUtc_RegardlessOfInputOrder()
+    {
+        var travelerId = Guid.NewGuid();
+        var traveler = Traveler.Register(travelerId, "multi-device@example.com");
+        var oldest = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var middle = new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc);
+        var newest = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        // Added out of order: newest first, oldest last.
+        traveler.AddDeviceToken("ios", "token-newest", newest);
+        traveler.AddDeviceToken("android", "token-oldest", oldest);
+        traveler.AddDeviceToken("web", "token-middle", middle);
+
+        _travelers.GetDetailAsync(travelerId, Arg.Any<CancellationToken>()).Returns(traveler);
+        _flights.GetRecentTravelerFlightsAsync(travelerId, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<(TravelerFlight, Flight)>)[]);
+        _loyalty.GetAllMembershipsForTravelerAsync(travelerId, Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<TravelerLoyaltyMembership>)[]);
+
+        var result = await _handler.Handle(new GetAdminTravelerDetailQuery(travelerId), CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(3, result!.DeviceTokens.Count);
+        Assert.Equal(["android", "web", "ios"], result.DeviceTokens.Select(t => t.Platform));
+        Assert.Equal([oldest, middle, newest], result.DeviceTokens.Select(t => t.LastSeenUtc));
     }
 }

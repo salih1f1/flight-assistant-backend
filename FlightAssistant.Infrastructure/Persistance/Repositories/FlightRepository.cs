@@ -72,13 +72,14 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             return (rows.Select(x => (x.tf, x.f)).ToList(), total);
         }
 
-        public async Task<IReadOnlyList<(TravelerFlight Tracking, Flight Flight)>> GetAllTravelerFlightsAsync(Guid travelerId, CancellationToken ct = default)
+        public async Task<IReadOnlyList<(TravelerFlight Tracking, Flight Flight)>> GetRecentTravelerFlightsAsync(Guid travelerId, int limit, CancellationToken ct = default)
         {
             var rows = await _db.TravelerFlights
                 .AsNoTracking()
                 .Where(tf => tf.TravelerId == travelerId)
                 .Join(_db.Flights.AsNoTracking(), tf => tf.FlightId, f => f.Id, (tf, f) => new { tf, f })
                 .OrderByDescending(x => x.f.ServiceDateUtc)
+                .Take(limit)
                 .ToListAsync(ct);
             return rows.Select(x => (x.tf, x.f)).ToList();
         }

@@ -176,7 +176,7 @@ namespace FlightAssistant.Application.Queries.Admin.Data
             foreach (var (column, value) in row)
             {
                 masked[column] = SensitiveProperties.IsSensitive(table.EntityType, column)
-                    ? "<redacted>"
+                    ? SensitiveProperties.RedactedPlaceholder
                     : value;
             }
 

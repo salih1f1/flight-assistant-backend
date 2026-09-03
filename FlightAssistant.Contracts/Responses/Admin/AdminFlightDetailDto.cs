@@ -15,7 +15,9 @@ namespace FlightAssistant.Contracts.Responses.Admin
 
     /// <summary>The flight with its current status and recent status-event history, newest first.
     /// Backs <c>GET /admin/flights/{id}/detail</c>. <c>StatusHistory</c> is capped, not the full
-    /// history — see the endpoint's Swagger description for the limit.</summary>
+    /// history — see the endpoint's Swagger description for the limit. <c>StatusHistoryTruncated</c>
+    /// is true when the cap actually cut rows off; when it is, the full history is available via
+    /// <c>GET /admin/data/flight-status-events</c>.</summary>
     public record AdminFlightDetailDto(
         int Id,
         int AirlineId,
@@ -32,5 +34,6 @@ namespace FlightAssistant.Contracts.Responses.Admin
         string? EquipmentAircraftIcao,
         string? ExternalId,
         AdminFlightStatusEventDto? CurrentStatus,
-        IReadOnlyList<AdminFlightStatusEventDto> StatusHistory);
+        IReadOnlyList<AdminFlightStatusEventDto> StatusHistory,
+        bool StatusHistoryTruncated);
 }

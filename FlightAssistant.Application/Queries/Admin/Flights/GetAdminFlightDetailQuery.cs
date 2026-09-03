@@ -27,6 +27,10 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
     /// <c>GET /admin/flights/{id}/detail</c>. <c>CurrentStatus</c> is simply
     /// <c>StatusHistory[0]</c> (null when the flight has no recorded events yet) — a flight has no
     /// separate "current status" column of its own; it is always derived from the newest event.
+    /// <c>StatusHistoryTruncated</c> is true when <see cref="StatusHistory"/> was cut off at
+    /// <see cref="GetAdminFlightDetailQueryHandler.MaxStatusHistory"/> — without it, a response with
+    /// exactly 50 events is indistinguishable from "this flight had exactly 50 events", and a caller
+    /// has no signal to fall back to <c>GET /admin/data/flight-status-events</c> (A4) for the rest.
     /// </summary>
     public sealed record AdminFlightDetailResult(
         int Id,
@@ -44,7 +48,8 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
         string? EquipmentAircraftIcao,
         string? ExternalId,
         AdminFlightStatusEventResult? CurrentStatus,
-        IReadOnlyList<AdminFlightStatusEventResult> StatusHistory);
+        IReadOnlyList<AdminFlightStatusEventResult> StatusHistory,
+        bool StatusHistoryTruncated);
 
     public sealed record GetAdminFlightDetailQuery(int Id) : IRequest<AdminFlightDetailResult?>;
 
@@ -99,7 +104,8 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
                 flight.EquipmentAircraftIcao,
                 flight.ExternalId,
                 history.Count > 0 ? history[0] : null,
-                history);
+                history,
+                history.Count == MaxStatusHistory);
         }
 
         private static AdminFlightStatusEventResult ToResult(FlightStatusEvent e) => new(

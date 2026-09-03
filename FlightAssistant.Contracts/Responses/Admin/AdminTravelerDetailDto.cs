@@ -5,12 +5,16 @@ namespace FlightAssistant.Contracts.Responses.Admin
     /// <c>POST /admin/data/{table}/{id}/reveal</c>.</summary>
     public record AdminDeviceTokenDto(Guid Id, string Platform, string Token, DateTime LastSeenUtc);
 
-    /// <summary>One flight the traveler tracks, joined with its flight row.</summary>
+    /// <summary>One flight the traveler tracks, joined with its flight row — including both airport
+    /// ids, so rendering the route (e.g. JFK→LAX) never needs a second call to
+    /// <c>/admin/flights/{id}/detail</c> per row.</summary>
     public record AdminTrackedFlightDto(
         Guid TrackingId,
         int FlightId,
         string FlightNumber,
         int AirlineId,
+        int DepartureAirportId,
+        int ArrivalAirportId,
         DateOnly ServiceDate,
         bool Notify);
 
@@ -28,7 +32,10 @@ namespace FlightAssistant.Contracts.Responses.Admin
     /// <summary>The traveler with its device tokens, tracked flights and loyalty memberships in one
     /// response. Backs <c>GET /admin/travelers/{id}/detail</c>. <c>Email</c> arrives masked as
     /// <c>"&lt;redacted&gt;"</c> — stricter than <c>GET /admin/travelers</c>, which does not mask it
-    /// (#321).</summary>
+    /// (#321). <c>TrackedFlights</c> is capped, newest first; <c>TrackedFlightsTruncated</c> is true
+    /// when the cap cut rows off, and the full relationship is available via
+    /// <c>GET /admin/data/traveler-flights</c>. Device tokens and loyalty memberships are not capped
+    /// — see CLAUDE.md for why tracked flights is the one relationship here worth bounding.</summary>
     public record AdminTravelerDetailDto(
         Guid Id,
         string Email,
@@ -36,5 +43,6 @@ namespace FlightAssistant.Contracts.Responses.Admin
         DateTime CreatedUtc,
         IReadOnlyList<AdminDeviceTokenDto> DeviceTokens,
         IReadOnlyList<AdminTrackedFlightDto> TrackedFlights,
+        bool TrackedFlightsTruncated,
         IReadOnlyList<AdminMembershipDto> LoyaltyMemberships);
 }

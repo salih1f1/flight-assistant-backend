@@ -17,14 +17,17 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         Task<(IReadOnlyList<(TravelerFlight Tracking, Flight Flight)> Items, int Total)> GetTravelerFlightsAsync(Guid travelerId, int page, int pageSize, CancellationToken ct = default);
 
         /// <summary>
-        /// Every flight the traveler tracks, joined server-side with its <see cref="Flight"/> row —
-        /// the unpaged sibling of <see cref="GetTravelerFlightsAsync"/>, for the admin traveler
-        /// drill-down (#322), which returns the whole relationship in one call rather than a page
-        /// of it. A traveler's own tracked-flight count is bounded in practice (nothing like the
-        /// unbounded growth <see cref="GetRecentFlightStatusEventsAsync"/> guards against), so no
-        /// cap is applied here.
+        /// The <paramref name="limit"/> most recently-serviced flights the traveler tracks, newest
+        /// first, joined server-side with its <see cref="Flight"/> row — for the admin traveler
+        /// drill-down (#322), which returns this relationship in one call rather than a page of it.
+        /// Capped server-side (a <c>LIMIT</c> in the generated SQL, not a client-side <c>Take</c>
+        /// after loading everything), mirroring <see cref="GetRecentFlightStatusEventsAsync"/>:
+        /// <c>traveler_flights</c> has no retention/purge path and grows monotonically with usage
+        /// (#322 fix round, M5), unlike loyalty memberships (schema-bounded by
+        /// <c>UNIQUE(TravelerId, ProgramId)</c>) or device tokens (small in practice), neither of
+        /// which needs this treatment.
         /// </summary>
-        Task<IReadOnlyList<(TravelerFlight Tracking, Flight Flight)>> GetAllTravelerFlightsAsync(Guid travelerId, CancellationToken ct = default);
+        Task<IReadOnlyList<(TravelerFlight Tracking, Flight Flight)>> GetRecentTravelerFlightsAsync(Guid travelerId, int limit, CancellationToken ct = default);
 
         Task<TravelerFlight?> GetTravelerFlightAsync(Guid travelerId, int flightId, CancellationToken ct = default);
         Task AddTravelerFlightAsync(TravelerFlight tf, CancellationToken ct = default);

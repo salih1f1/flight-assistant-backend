@@ -180,9 +180,9 @@ public class AdminDrilldownRepositoryTests : PostgresTestBase
             Assert.Equal(relatedCount, result.TrackedFlights.Count);
             Assert.Equal(relatedCount, result.LoyaltyMemberships.Count);
 
-            // Exactly 3: GetDetailAsync (traveler + tokens via one Include), GetAllTravelerFlightsAsync
-            // (tracked flights joined with Flight), GetAllMembershipsForTravelerAsync. Fixed at 3 for
-            // both 1 and 5 related rows — the whole point of this test.
+            // Exactly 3: GetDetailAsync (traveler + tokens via one Include), GetRecentTravelerFlightsAsync
+            // (tracked flights joined with Flight, capped server-side), GetAllMembershipsForTravelerAsync.
+            // Fixed at 3 for both 1 and 5 related rows — the whole point of this test.
             Assert.Equal(3, counter.Count);
         }
     }
@@ -202,6 +202,111 @@ public class AdminDrilldownRepositoryTests : PostgresTestBase
 
             Assert.Null(result);
             Assert.Equal(1, counter.Count); // only the traveler lookup — short-circuits before the rest
+        }
+    }
+
+    /// <summary>
+    /// #322 fix round, M5: the cap itself, proved as a real server-side <c>LIMIT</c> rather than a
+    /// client-side truncation — mirrors <c>GetRecentFlightStatusEventsAsync_CapsServerSide_...</c>
+    /// below for the flight side. 4 tracked flights exist, the repository is asked for 2, and
+    /// exactly the 2 most recently-serviced come back, in a single query.
+    /// </summary>
+    [Fact]
+    public async Task GetRecentTravelerFlightsAsync_CapsServerSide_AndReturnsOnlyTheNewestRows()
+    {
+        Guid travelerId;
+        await using (var seedDb = CreateDbContext())
+        {
+            var (airlineId, departureAirportId, arrivalAirportId) = EnsureReferenceData(seedDb);
+            var traveler = Traveler.Register($"{Guid.NewGuid():N}@example.com");
+            seedDb.Travelers.Add(traveler);
+            await seedDb.SaveChangesAsync();
+
+            var flights = Enumerable.Range(0, 4)
+                .Select(i => Flight.Create(
+                    airlineId, $"TK{200 + i}", departureAirportId, arrivalAirportId,
+                    new DateOnly(2026, 9, 10).AddDays(i),
+                    DateTime.UtcNow.AddDays(i), DateTime.UtcNow.AddDays(i).AddHours(2)))
+                .ToList();
+            seedDb.Flights.AddRange(flights);
+            await seedDb.SaveChangesAsync();
+
+            seedDb.TravelerFlights.AddRange(flights.Select(f => TravelerFlight.Create(traveler.Id, f.Id)));
+            await seedDb.SaveChangesAsync();
+
+            travelerId = traveler.Id;
+        }
+
+        var (db, counter) = CreateCountingDbContext();
+        await using (db)
+        {
+            var repo = new FlightRepository(db, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" }));
+
+            var result = await repo.GetRecentTravelerFlightsAsync(travelerId, limit: 2, CancellationToken.None);
+
+            Assert.Equal(2, result.Count);
+            // The 2 newest by ServiceDateUtc: day+3 then day+2 (of the day+0..day+3 series seeded above).
+            Assert.Equal(new DateOnly(2026, 9, 13), result[0].Flight.ServiceDateUtc);
+            Assert.Equal(new DateOnly(2026, 9, 12), result[1].Flight.ServiceDateUtc);
+            Assert.Equal(1, counter.Count);
+        }
+    }
+
+    /// <summary>
+    /// #322 fix round, M4: memberships and device tokens now carry a deterministic order —
+    /// <c>ProgramId</c> ascending (a real SQL <c>ORDER BY</c> in <c>LoyaltyRepository</c>) and
+    /// <c>LastSeenUtc</c> ascending (sorted in the handler, since device tokens are loaded through
+    /// the same <c>Include</c> as the <c>Traveler</c> row). Both are seeded in the reverse of their
+    /// expected output order — reverse program-id insertion, reverse chronological token insertion —
+    /// so a passing assertion proves the fix re-orders them rather than merely preserving whatever
+    /// order they happened to be inserted in.
+    /// </summary>
+    [Fact]
+    public async Task TravelerDetail_MembershipsAndDeviceTokens_AreOrderedDeterministically()
+    {
+        Guid travelerId;
+        List<int> programIds;
+        await using (var seedDb = CreateDbContext())
+        {
+            programIds = CreateLoyaltyPrograms(seedDb, 3); // ascending ids: p0 < p1 < p2
+
+            var traveler = Traveler.Register($"{Guid.NewGuid():N}@example.com");
+            traveler.AddDeviceToken("web", "token-newest", new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc));
+            traveler.AddDeviceToken("android", "token-oldest", new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+            traveler.AddDeviceToken("ios", "token-middle", new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc));
+            seedDb.Travelers.Add(traveler);
+            await seedDb.SaveChangesAsync();
+
+            // Inserted in reverse of ascending ProgramId order: p2, p0, p1.
+            seedDb.TravelerLoyaltyMemberships.Add(TravelerLoyaltyMembership.Create(
+                traveler.Id, programIds[2], accountNumber: $"ACCT-2-{Guid.NewGuid():N}", tierId: null));
+            seedDb.TravelerLoyaltyMemberships.Add(TravelerLoyaltyMembership.Create(
+                traveler.Id, programIds[0], accountNumber: $"ACCT-0-{Guid.NewGuid():N}", tierId: null));
+            seedDb.TravelerLoyaltyMemberships.Add(TravelerLoyaltyMembership.Create(
+                traveler.Id, programIds[1], accountNumber: $"ACCT-1-{Guid.NewGuid():N}", tierId: null));
+            await seedDb.SaveChangesAsync();
+
+            travelerId = traveler.Id;
+        }
+
+        var (db, _) = CreateCountingDbContext();
+        await using (db)
+        {
+            var handler = new GetAdminTravelerDetailQueryHandler(
+                new AdminTravelerRepository(db),
+                new FlightRepository(db, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" })),
+                new LoyaltyRepository(db));
+
+            var result = await handler.Handle(new GetAdminTravelerDetailQuery(travelerId), CancellationToken.None);
+
+            Assert.NotNull(result);
+            Assert.Equal(3, result!.LoyaltyMemberships.Count);
+            // Compared against the known ascending program-id sequence, not a same-expression
+            // OrderBy-of-itself — that would trivially pass regardless of whether the fix works.
+            Assert.Equal(programIds, result.LoyaltyMemberships.Select(m => m.ProgramId).ToList());
+
+            Assert.Equal(3, result.DeviceTokens.Count);
+            Assert.Equal(["android", "ios", "web"], result.DeviceTokens.Select(t => t.Platform));
         }
     }
 
@@ -285,6 +390,47 @@ public class AdminDrilldownRepositoryTests : PostgresTestBase
             // event, null — "where recorded" — for the manual one with no payload at all.
             Assert.Equal("En Route / On Time", result.CurrentStatus.ProviderRawStatus);
             Assert.Null(result.StatusHistory[1].ProviderRawStatus);
+
+            // Well under the cap — #322 fix round, M3.
+            Assert.False(result.StatusHistoryTruncated);
+        }
+    }
+
+    /// <summary>
+    /// #322 fix round, M3: with exactly as many events as the cap, <c>StatusHistoryTruncated</c>
+    /// must say so — a caller reading only the JSON cannot otherwise tell "this flight had exactly
+    /// 50 events" apart from "there are more, ask the browser". 51 events are seeded and exactly
+    /// <see cref="GetAdminFlightDetailQueryHandler.MaxStatusHistory"/> come back, proving the flag
+    /// tracks what was actually returned, not merely what was seeded.
+    /// </summary>
+    [Fact]
+    public async Task FlightDetail_HistoryAtTheCap_SetsStatusHistoryTruncatedTrue()
+    {
+        int flightId;
+        await using (var seedDb = CreateDbContext())
+        {
+            flightId = await SeedFlightAsync(seedDb);
+            var scheduledId = await StatusIdAsync(seedDb, "SCH");
+
+            var baseTime = new DateTime(2026, 9, 10, 6, 0, 0, DateTimeKind.Utc);
+            var events = Enumerable.Range(0, GetAdminFlightDetailQueryHandler.MaxStatusHistory + 1)
+                .Select(i => FlightStatusEvent.Create(flightId, scheduledId, baseTime.AddMinutes(i), source: "manual"))
+                .ToList();
+            seedDb.FlightStatusEvents.AddRange(events);
+            await seedDb.SaveChangesAsync();
+        }
+
+        var (db, _) = CreateCountingDbContext();
+        await using (db)
+        {
+            var handler = new GetAdminFlightDetailQueryHandler(new AdminFlightRepository(db), new FlightRepository(
+                db, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" })));
+
+            var result = await handler.Handle(new GetAdminFlightDetailQuery(flightId), CancellationToken.None);
+
+            Assert.NotNull(result);
+            Assert.Equal(GetAdminFlightDetailQueryHandler.MaxStatusHistory, result!.StatusHistory.Count);
+            Assert.True(result.StatusHistoryTruncated);
         }
     }
 
