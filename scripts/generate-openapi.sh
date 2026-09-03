@@ -35,7 +35,15 @@ ASSEMBLY_DIR="${2:-}"
 
 CLEANUP_DIR=""
 cleanup() {
-  [[ -n "$CLEANUP_DIR" ]] && rm -rf "$CLEANUP_DIR"
+  # Capture the real exit status before running anything else — an EXIT trap's own
+  # exit status otherwise replaces the script's, so a no-op `[[ -n "$CLEANUP_DIR" ]]`
+  # (false, nothing to clean up) would silently turn a successful run into a
+  # reported failure.
+  local status=$?
+  if [[ -n "$CLEANUP_DIR" ]]; then
+    rm -rf "$CLEANUP_DIR"
+  fi
+  return "$status"
 }
 trap cleanup EXIT
 
