@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using FlightAssistant.Contracts.Paging;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
@@ -10,8 +12,9 @@ using Microsoft.Extensions.DependencyInjection;
 namespace FlightAssistant.API.Tests.Integration;
 
 /// <summary>
+/// <c>GET /admin/travelers</c>, <c>GET /admin/travelers/{id}</c> (#321),
 /// <c>GET /admin/travelers/{id}/detail</c> and
-/// <c>DELETE /admin/travelers/{travelerId}/device-tokens/{tokenId}</c> (#322). Both hang off the
+/// <c>DELETE /admin/travelers/{travelerId}/device-tokens/{tokenId}</c> (#322). All hang off the
 /// shared <c>/admin</c> group, so the auth cases here are really checking that they were mapped onto
 /// that group rather than standalone — mirrors <c>AdminDataEndpointTests</c>' own note on the
 /// identical pattern.
@@ -44,6 +47,99 @@ public class AdminTravelerEndpointTests(FlightAssistantWebApplicationFactory fac
         var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
         seed(db);
         await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Scans <c>GET /admin/travelers</c> page by page (ordered by <c>Email</c>, unfiltered — the
+    /// route takes no filter) until <paramref name="travelerId"/> turns up. The "Integration"
+    /// collection shares one fixed in-memory database
+    /// (<see cref="FlightAssistantWebApplicationFactory"/>) across every test class in it, so by the
+    /// time this runs an unpredictable number of other tests' travelers may already exist — page 1
+    /// alone is not guaranteed to contain the one this test just seeded. Asserting
+    /// <paramref name="rawEmail"/> absent on *every* page visited along the way is strictly stronger
+    /// than checking one page, and failing loudly when the traveler is never found at all (rather
+    /// than silently finishing the loop) is what stops this degrading into a vacuous pass if seeding
+    /// or pagination ever breaks.
+    /// </summary>
+    private async Task<(string Body, AdminTravelerDto Dto)> FindTravelerAcrossAllPagesAsync(Guid travelerId, string rawEmail)
+    {
+        const int pageSize = 100;
+        for (var page = 1; ; page++)
+        {
+            var response = await factory.CreateAdminClient().GetAsync($"admin/travelers?page={page}&pageSize={pageSize}");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.DoesNotContain(rawEmail, body);
+
+            var parsed = JsonSerializer.Deserialize<PagedResult<AdminTravelerDto>>(
+                body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.NotNull(parsed);
+
+            var match = parsed!.Items.FirstOrDefault(i => i.Id == travelerId);
+            if (match is not null) return (body, match);
+
+            Assert.True(
+                (long)page * pageSize < parsed.Total,
+                $"Traveler {travelerId} was not found across {page} page(s) of {parsed.Total} total — seeding or paging is broken.");
+        }
+    }
+
+    // ══════════════ GET /admin/travelers (#321) ══════════════
+    // Auth (401/403/non-403-for-admin) for this route is already covered by AuthEndpointTests —
+    // these two are specifically the #321 regression tests: before this fix, both routes below
+    // returned Traveler.Email in the clear, making the admin data browser's masking (#315) a speed
+    // bump rather than a control since the same value was one route away, unmasked.
+
+    /// <summary>
+    /// The bulk-list route #321 closes. Same discrimination proof as the <c>/detail</c> masking test
+    /// below: assert against the raw response body, and check the unmasked <c>DisplayName</c> control
+    /// from the very same page.
+    /// </summary>
+    [Fact]
+    public async Task GetAll_Admin_MasksEmail_ButLeavesDisplayNameUnmasked()
+    {
+        var marker = Marker();
+        var rawEmail = $"very-secret-{marker}@example.com";
+        var displayName = $"Findable Traveler {marker}";
+        var traveler = Traveler.Register(rawEmail, displayName);
+        await SeedAsync(db => db.Travelers.Add(traveler));
+
+        var (body, dto) = await FindTravelerAcrossAllPagesAsync(traveler.Id, rawEmail);
+
+        Assert.Contains("<redacted>", body);
+        Assert.Contains(displayName, body); // control: unmasked
+        Assert.Equal("<redacted>", dto.Email);
+        Assert.NotEqual(rawEmail, dto.Email);
+        Assert.Equal(displayName, dto.DisplayName);
+    }
+
+    // ══════════════ GET /admin/travelers/{id} (#321) ══════════════
+
+    /// <summary>The single-traveler route #321 closes, alongside the list above. Same
+    /// discrimination proof: raw body check plus the unmasked <c>DisplayName</c> control.</summary>
+    [Fact]
+    public async Task GetById_Admin_MasksEmail_ButLeavesDisplayNameUnmasked()
+    {
+        var marker = Marker();
+        var rawEmail = $"very-secret-{marker}@example.com";
+        var displayName = $"Findable Traveler {marker}";
+        var traveler = Traveler.Register(rawEmail, displayName);
+        await SeedAsync(db => db.Travelers.Add(traveler));
+
+        var response = await factory.CreateAdminClient().GetAsync($"admin/travelers/{traveler.Id}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(rawEmail, body);
+        Assert.Contains("<redacted>", body);
+        Assert.Contains(displayName, body); // control: unmasked
+
+        var dto = await response.Content.ReadFromJsonAsync<AdminTravelerDto>();
+        Assert.NotNull(dto);
+        Assert.Equal("<redacted>", dto!.Email);
+        Assert.NotEqual(rawEmail, dto.Email);
+        Assert.Equal(displayName, dto.DisplayName);
     }
 
     // ══════════════ GET /admin/travelers/{id}/detail ══════════════
