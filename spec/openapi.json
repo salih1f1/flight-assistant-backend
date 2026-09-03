@@ -2297,6 +2297,7 @@
           "Admin - Travelers"
         ],
         "summary": "List all travelers",
+        "description": "Returns every traveler, paged. Email is masked as \"<redacted>\"; reveal the real value via POST /admin/data/travelers/{id}/reveal, which audits the read. This is the intended posture, not a gap to be fixed back.",
         "operationId": "AdminGetAllTravelers",
         "parameters": [
           {
@@ -2346,6 +2347,7 @@
           "Admin - Travelers"
         ],
         "summary": "Get traveler by ID",
+        "description": "Returns one traveler. Email is masked as \"<redacted>\"; reveal the real value via POST /admin/data/travelers/{id}/reveal, which audits the read. This is the intended posture, not a gap to be fixed back.",
         "operationId": "AdminGetTravelerById",
         "parameters": [
           {

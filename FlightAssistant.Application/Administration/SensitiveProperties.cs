@@ -49,6 +49,17 @@ namespace FlightAssistant.Application.Administration
         private static readonly IReadOnlySet<string> Empty = new HashSet<string>(StringComparer.Ordinal);
 
         /// <summary>
+        /// Every entity type with at least one registered sensitive property. For a caller that
+        /// needs to enumerate the registry itself — e.g. a guard that scans an unrelated set of DTOs
+        /// for property names colliding with anything registered here (#321's
+        /// <c>AdminResultMaskingCompletenessTests</c>) — rather than test or collect against one
+        /// already-known type. Sourced directly from <see cref="Registry"/> rather than retyped, so
+        /// this stays in step with the registry automatically instead of becoming a second list that
+        /// can drift from it.
+        /// </summary>
+        public static IReadOnlyCollection<Type> RegisteredEntityTypes { get; } = Registry.Keys.ToList();
+
+        /// <summary>
         /// Walks <paramref name="entityType"/> and its base types (exact type first), not just
         /// the exact type, when checking or collecting registrations below. A mapped derived
         /// entity type (EF TPH, e.g. a hypothetical <c>PremiumTraveler : Traveler</c> configured

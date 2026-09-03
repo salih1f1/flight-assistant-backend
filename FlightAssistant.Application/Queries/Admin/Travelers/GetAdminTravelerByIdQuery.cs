@@ -6,6 +6,11 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
 {
     public record GetAdminTravelerByIdQuery(Guid Id) : IRequest<AdminTravelerResult?>;
 
+    /// <summary>
+    /// Masks <c>Email</c> via <see cref="AdminTravelerResult.FromEntity"/> — same posture as
+    /// <see cref="GetAllTravelersQueryHandler"/> (#321); see that type for why the masking lives on
+    /// the shared result rather than duplicated in each handler.
+    /// </summary>
     public sealed class GetAdminTravelerByIdQueryHandler : IRequestHandler<GetAdminTravelerByIdQuery, AdminTravelerResult?>
     {
         private readonly IAdminTravelerRepository _repo;
@@ -14,8 +19,7 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
         public async Task<AdminTravelerResult?> Handle(GetAdminTravelerByIdQuery request, CancellationToken ct)
         {
             var t = await _repo.GetByIdAsync(request.Id, ct);
-            if (t is null) return null;
-            return new AdminTravelerResult(t.Id, t.Email, t.DisplayName, t.CreatedUtc);
+            return t is null ? null : AdminTravelerResult.FromEntity(t);
         }
     }
 }

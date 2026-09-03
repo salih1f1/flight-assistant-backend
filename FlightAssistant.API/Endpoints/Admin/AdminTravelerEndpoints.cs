@@ -15,10 +15,10 @@ namespace FlightAssistant.API.Endpoints.Admin
 
             // GET /admin/travelers/{id}/detail — the traveler with device tokens, tracked flights
             // and loyalty memberships in one call. A separate route from GET /admin/travelers/{id}
-            // (below) rather than an extension of it: that route's AdminTravelerDto returns Email
-            // unmasked (#321, a known gap) and callers may already depend on its narrow shape, so
-            // changing its behaviour in place would be a silent breaking change. This route is new,
-            // so it can mask Email/Token/AccountNumber correctly from the start.
+            // (below) rather than an extension of it, so the two response shapes can stay distinct:
+            // the narrow list/by-id row versus the full relationship drill-down. Both mask Email the
+            // same way (#321) — this route additionally masks Token and AccountNumber, which the
+            // narrow shape below never returns at all.
             group.MapGet("{id:guid}/detail", async (Guid id, IMediator mediator, CancellationToken ct) =>
             {
                 var result = await mediator.Send(new GetAdminTravelerDetailQuery(id), ct);
@@ -56,6 +56,10 @@ namespace FlightAssistant.API.Endpoints.Admin
             })
             .WithName("AdminGetAllTravelers")
             .WithSummary("List all travelers")
+            .WithDescription(
+                "Returns every traveler, paged. Email is masked as \"<redacted>\"; reveal the real " +
+                "value via POST /admin/data/travelers/{id}/reveal, which audits the read. This is " +
+                "the intended posture, not a gap to be fixed back.")
             .Produces<PagedResult<AdminTravelerDto>>(200)
             .ProducesValidationProblem();
 
@@ -69,6 +73,10 @@ namespace FlightAssistant.API.Endpoints.Admin
             })
             .WithName("AdminGetTravelerById")
             .WithSummary("Get traveler by ID")
+            .WithDescription(
+                "Returns one traveler. Email is masked as \"<redacted>\"; reveal the real value via " +
+                "POST /admin/data/travelers/{id}/reveal, which audits the read. This is the intended " +
+                "posture, not a gap to be fixed back.")
             .Produces<AdminTravelerDto>(200)
             .ProducesProblem(404);
 
