@@ -146,13 +146,13 @@ namespace FlightAssistant.Application.Commands.Admin.Data
             // own canonical-format rows can never be found alongside on an EntityId lookup (#318
             // final review, finding 2).
             //
-            // traceId is passed explicitly, matching AdminAuditInterceptor's own posture of
-            // capturing Activity.Current?.Id once and threading it through rather than leaning on
-            // AdminAuditLog.Create's default-parameter fallback — the two are equivalent whenever an
-            // Activity is ambient (nothing between this line and Create's own fallback evaluation
-            // can change Activity.Current), but explicit here removes any doubt for this
-            // audit-critical field and mirrors the interceptor's convention (#318 final review,
-            // finding 3).
+            // traceId prefers IAdminContext.CorrelationId (#319) — the same string already on the
+            // response header and every Serilog line for this request — falling back to
+            // Activity.Current?.Id only when CorrelationId was never populated, mirroring
+            // AdminAuditInterceptor.WriteAuditRows' identical posture so the two audit writers can't
+            // drift on which identifier wins. Passed explicitly rather than leaning on
+            // AdminAuditLog.Create's own default-parameter fallback, for the same audit-critical-field
+            // reason #318's final review called out originally.
             var auditLog = AdminAuditLog.Create(
                 actorId: actorId,
                 actorName: _adminContext.ActorName,
@@ -160,7 +160,7 @@ namespace FlightAssistant.Application.Commands.Admin.Data
                 entityType: table.EntityType.Name,
                 entityId: revealed.EntityId,
                 summary: $"Revealed {request.Column} on {table.EntityType.Name} {revealed.EntityId}",
-                traceId: Activity.Current?.Id);
+                traceId: _adminContext.CorrelationId ?? Activity.Current?.Id);
 
             await _auditRepository.AddAsync(auditLog, ct);
             await _auditRepository.SaveChangesAsync(ct);

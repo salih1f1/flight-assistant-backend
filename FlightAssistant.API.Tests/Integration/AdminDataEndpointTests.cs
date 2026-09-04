@@ -486,6 +486,64 @@ public class AdminDataEndpointTests(FlightAssistantWebApplicationFactory factory
     }
 
     /// <summary>
+    /// #319, the whole point of the issue: an audit row written through the real pipeline must
+    /// carry a non-null <c>TraceId</c> equal to the request's own <c>X-Correlation-Id</c> response
+    /// header — the same string a caller can already see and an operator can already find in the
+    /// logs. This runs through <see cref="FlightAssistantWebApplicationFactory"/>'s real HTTP
+    /// pipeline (<c>CorrelationIdMiddleware</c> → the <c>/admin</c> endpoint filter →
+    /// <c>RevealValueCommandHandler</c>), and proves it despite the factory stripping
+    /// <c>AdminAuditInterceptor</c> (see that class's own remarks) only because a reveal's audit
+    /// row is written explicitly by the handler itself, never by the interceptor.
+    /// </summary>
+    [Fact]
+    public async Task Reveal_Admin_SuccessfulReveal_AuditRowTraceId_MatchesTheResponsesCorrelationIdHeader()
+    {
+        var traveler = Traveler.Register($"{Marker()}@example.com");
+        await SeedAsync(db => db.Travelers.Add(traveler));
+
+        var response = await RevealAsync(factory.CreateAdminClient(), "travelers", traveler.Id, nameof(Traveler.Email));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        Assert.True(response.Headers.TryGetValues("X-Correlation-Id", out var values));
+        var correlationId = Assert.Single(values);
+        Assert.False(string.IsNullOrWhiteSpace(correlationId));
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        var row = await db.AdminAuditLogs.SingleAsync(a => a.EntityId == traveler.Id.ToString());
+
+        Assert.Equal(correlationId, row.TraceId);
+    }
+
+    /// <summary>
+    /// #319: a caller-supplied <c>X-Correlation-Id</c> is not just echoed on the response — it is
+    /// the exact string that ends up on the audit row, so a caller who already has the id (from an
+    /// earlier response, or their own request tracing) can quote it and find the row it produced.
+    /// </summary>
+    [Fact]
+    public async Task Reveal_Admin_ClientSuppliedCorrelationId_FlowsThroughToTheAuditRow()
+    {
+        var traveler = Traveler.Register($"{Marker()}@example.com");
+        await SeedAsync(db => db.Travelers.Add(traveler));
+
+        var clientCorrelationId = $"client-supplied-{Guid.NewGuid():N}";
+        var client = factory.CreateAdminClient();
+        client.DefaultRequestHeaders.Add("X-Correlation-Id", clientCorrelationId);
+
+        var response = await RevealAsync(client, "travelers", traveler.Id, nameof(Traveler.Email));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        Assert.True(response.Headers.TryGetValues("X-Correlation-Id", out var values));
+        Assert.Equal(clientCorrelationId, Assert.Single(values));
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        var row = await db.AdminAuditLogs.SingleAsync(a => a.EntityId == traveler.Id.ToString());
+
+        Assert.Equal(clientCorrelationId, row.TraceId);
+    }
+
+    /// <summary>
     /// #318 final review, finding 2 (I2): a caller-supplied id that resolves the right row while
     /// spelled non-canonically (braced, uppercase) must still produce an audit row whose
     /// <c>EntityId</c> is the canonical form — <see cref="Guid.ToString()"/>'s default

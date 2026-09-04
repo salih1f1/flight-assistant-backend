@@ -266,6 +266,38 @@ public class RevealValueCommandHandlerTests
         Assert.Null(captured!.TraceId);
     }
 
+    /// <summary>
+    /// #319: <c>IAdminContext.CorrelationId</c> is primary, not <see cref="Activity.Current"/> —
+    /// the reverse of the posture the two tests above pin (which is now the *fallback* path, only
+    /// reached when <c>CorrelationId</c> is unset). Both a <c>CorrelationId</c> and an ambient
+    /// <see cref="Activity"/> carrying a different id are present here so the assertion actually
+    /// discriminates which source won, mirroring the equivalent precedence test added to
+    /// <c>AdminAuditInterceptorTests</c> for the other audit writer.
+    /// </summary>
+    [Fact]
+    public async Task Handle_SuccessfulReveal_WithACorrelationId_AuditRowTraceIdIsTheCorrelationId_NotTheAmbientActivity()
+    {
+        using var activity = new Activity("reveal-precedence-test").Start();
+        _adminContext.CorrelationId = "reveal-corr-id";
+
+        _dataRepository
+            .GetValueAsync(Arg.Any<BrowsableTable>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new RevealedValue(Guid.NewGuid().ToString(), "secret@example.com"));
+
+        AdminAuditLog? captured = null;
+        _auditRepository
+            .AddAsync(Arg.Do<AdminAuditLog>(a => captured = a), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+
+        var command = new RevealValueCommand("travelers", Guid.NewGuid().ToString(), nameof(Traveler.Email));
+
+        await Handler().Handle(command, CancellationToken.None);
+
+        Assert.NotNull(captured);
+        Assert.Equal("reveal-corr-id", captured!.TraceId);
+        Assert.NotEqual(activity.Id, captured.TraceId);
+    }
+
     [Fact]
     public async Task Handle_NoAuthenticatedAdminActor_Throws_AndWritesNoAuditRow()
     {
