@@ -58,7 +58,13 @@ namespace FlightAssistant.Domain.Administration.Entities
         /// <summary>Entity state after the write, serialized as JSON. Null for a delete.</summary>
         public string? After { get; private set; }
 
-        /// <summary><see cref="Activity.Current"/>'s id at the time of the write, for log correlation.</summary>
+        /// <summary>
+        /// The correlation id for the request that produced this write (#319) — in production, the
+        /// same string <c>CorrelationIdMiddleware</c> put on the <c>X-Correlation-Id</c> response
+        /// header and every Serilog line for that request — passed in explicitly by the caller (see
+        /// <see cref="Create"/>). Falls back to <see cref="Activity.Current"/>'s id only when a
+        /// caller has nothing else to pass.
+        /// </summary>
         public string? TraceId { get; private set; }
 
         private AdminAuditLog() { } // EF
@@ -68,8 +74,11 @@ namespace FlightAssistant.Domain.Administration.Entities
         /// default to "now" and the ambient <see cref="Activity.Current"/> id respectively when
         /// not supplied, mirroring how other factories in this codebase (e.g.
         /// <c>FlightStatusEvent.Create</c>) capture ambient state — but both are accepted as
-        /// explicit parameters so a caller (the Task 2 interceptor) can pin them precisely, and
-        /// so tests don't depend on wall-clock time or an ambient <see cref="Activity"/>.
+        /// explicit parameters so a caller can pin them precisely, and so tests don't depend on
+        /// wall-clock time or an ambient <see cref="Activity"/>. In production both writers
+        /// (<c>AdminAuditInterceptor</c>, <c>RevealValueCommandHandler</c>) pass the request's
+        /// correlation id explicitly (#319); the <see cref="Activity.Current"/> default here is
+        /// what a caller with nothing else to offer falls back to, not the primary source.
         /// </summary>
         public static AdminAuditLog Create(
             string actorId,

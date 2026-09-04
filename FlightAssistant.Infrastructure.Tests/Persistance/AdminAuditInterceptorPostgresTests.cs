@@ -369,4 +369,34 @@ public class AdminAuditInterceptorPostgresTests : PostgresTestBase
         Assert.Equal(token.Id.ToString(), deviceTokenRow.EntityId);
         Assert.Equal("admin-oid-1", deviceTokenRow.ActorId);
     }
+
+    /// <summary>
+    /// #319: <c>IAdminContext.CorrelationId</c> — populated in production from
+    /// <c>CorrelationIdMiddleware</c>'s id via the <c>/admin</c> endpoint filter — is what
+    /// <c>TraceId</c> carries through a real transaction and a real round trip, not just the
+    /// InMemory provider's in-process object graph. <see cref="AdminAuditInterceptorTests"/> covers
+    /// the fast/precedence cases; this is the one PostgreSQL-backed proof that the same value
+    /// actually persists and reads back unchanged.
+    /// </summary>
+    [Fact]
+    public async Task SaveChangesAsync_ActorWithCorrelationId_PersistsItAsTraceId()
+    {
+        var adminContext = new AdminContext
+        {
+            ActorId = "admin-oid-1",
+            ActorName = "Ada Admin",
+            CorrelationId = "postgres-corr-id-789"
+        };
+
+        await using (var db = CreateAuditedDbContext(adminContext))
+        {
+            db.Countries.Add(Country.Create("XZ", "Test Country For #319"));
+            await db.SaveChangesAsync();
+        }
+
+        await using var verify = CreateDbContext();
+        var row = await verify.AdminAuditLogs.SingleAsync();
+
+        Assert.Equal("postgres-corr-id-789", row.TraceId);
+    }
 }

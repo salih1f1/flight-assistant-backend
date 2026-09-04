@@ -95,6 +95,44 @@ public class GlobalExceptionHandlerTests
         Assert.False(string.IsNullOrWhiteSpace(body.GetProperty("traceId").GetString()));
     }
 
+    /// <summary>
+    /// #319: <c>traceId</c> must prefer <c>CorrelationIdMiddleware</c>'s value — stashed on
+    /// <c>HttpContext.Items</c> under <see cref="CorrelationIdMiddleware.ItemsKey"/> — over both
+    /// <see cref="Activity.Current"/> and <see cref="HttpContext.TraceIdentifier"/>. <c>Sut</c> sets
+    /// <c>TraceIdentifier</c> to a fixed, *different* string ("trace-abc"), so asserting equality to
+    /// the Items value (and inequality to "trace-abc") actually discriminates which source won,
+    /// rather than merely checking "some non-empty string came back" the way the older tests in
+    /// this file do.
+    /// </summary>
+    [Fact]
+    public async Task TraceId_PrefersHttpContextItems_OverTraceIdentifier()
+    {
+        var (handler, ctx) = Sut("Development");
+        ctx.Items[CorrelationIdMiddleware.ItemsKey] = "items-correlation-id";
+
+        await handler.TryHandleAsync(ctx, PlanRestriction(), CancellationToken.None);
+
+        var body = await BodyOf(ctx);
+        Assert.Equal("items-correlation-id", body.GetProperty("traceId").GetString());
+    }
+
+    /// <summary>
+    /// No <c>CorrelationIdMiddleware</c> value at all (defensive path — it is unconditional on
+    /// every real request, so this only covers a caller that bypasses it) still falls back to
+    /// <see cref="HttpContext.TraceIdentifier"/> when no <see cref="Activity"/> is ambient either,
+    /// exactly as before #319.
+    /// </summary>
+    [Fact]
+    public async Task TraceId_WithNoItemsValue_FallsBackToTraceIdentifier()
+    {
+        var (handler, ctx) = Sut("Development");
+
+        await handler.TryHandleAsync(ctx, PlanRestriction(), CancellationToken.None);
+
+        var body = await BodyOf(ctx);
+        Assert.Equal("trace-abc", body.GetProperty("traceId").GetString());
+    }
+
     [Fact]
     public async Task UnhandledException_CarriesTraceId_AndNoDetail()
     {

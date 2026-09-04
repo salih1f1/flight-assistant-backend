@@ -335,12 +335,18 @@ var adminGroup = app.MapGroup("admin")
 // (Infrastructure) has an actor to stamp onto every AdminAuditLog row it writes during this
 // request's SaveChanges call(s). A filter on this group only, not middleware on the whole pipeline,
 // so ordinary traveler traffic never populates an actor and therefore never gets audited.
+//
+// CorrelationId (#319) is read off HttpContext.Items rather than recomputed: CorrelationIdMiddleware
+// (which runs on every request, ahead of routing) already minted-or-accepted it and stashed it there
+// under CorrelationIdMiddleware.ItemsKey — this filter just carries that same value one hop further,
+// into Application-defined state Infrastructure can actually reach.
 adminGroup.AddEndpointFilter(async (efiContext, next) =>
 {
     var http = efiContext.HttpContext;
     var adminContext = http.RequestServices.GetRequiredService<AdminContext>();
     adminContext.ActorId = http.User.FindFirstValue("oid") ?? http.User.FindFirstValue("sub");
     adminContext.ActorName = http.User.FindFirstValue("name");
+    adminContext.CorrelationId = http.Items[CorrelationIdMiddleware.ItemsKey] as string;
     return await next(efiContext);
 });
 

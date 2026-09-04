@@ -191,6 +191,30 @@ public class AdminAuditEndpointTests(FlightAssistantWebApplicationFactory factor
         Assert.Contains("ToUtc", body);
     }
 
+    /// <summary>
+    /// #319: the same correlation id a caller sees on <c>X-Correlation-Id</c> is also the
+    /// <c>traceId</c> extension on a ProblemDetails error body — proven here via the endpoint's own
+    /// validator-driven 400 (<c>GetAudit_InvertedDateRange_Returns400WithAUsefulMessage</c> above),
+    /// so this is a real HTTP round trip through <c>CorrelationIdMiddleware</c> and
+    /// <c>GlobalExceptionHandler</c> together, not two units tested in isolation.
+    /// </summary>
+    [Fact]
+    public async Task GetAudit_InvertedDateRange_ProblemDetailsTraceId_MatchesTheResponsesCorrelationIdHeader()
+    {
+        var client = factory.CreateAdminClient();
+        var now = DateTime.UtcNow;
+
+        var response = await client.GetAsync(
+            $"admin/audit?fromUtc={Uri.EscapeDataString(now.ToString("O"))}&toUtc={Uri.EscapeDataString(now.AddDays(-1).ToString("O"))}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.True(response.Headers.TryGetValues("X-Correlation-Id", out var values));
+        var correlationId = Assert.Single(values);
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(correlationId, doc.RootElement.GetProperty("traceId").GetString());
+    }
+
     [Fact]
     public async Task GetAudit_Ordering_IsNewestFirst()
     {

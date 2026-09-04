@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using FlightAssistant.Application.Administration;
 using FlightAssistant.Domain.Administration.Entities;
@@ -391,6 +392,87 @@ public class AdminAuditInterceptorTests
 
         var row = await db.AdminAuditLogs.SingleAsync();
         Assert.Equal("airports|3", row.EntityId);
+    }
+
+    // ── Trace correlation (#319): IAdminContext.CorrelationId is primary, Activity.Current is a
+    //    secondary fallback — never the reverse. Nothing in this file exercised TraceId at all
+    //    before #319; these are the first tests on this interceptor's TraceId resolution.
+
+    [Fact]
+    public async Task SaveChangesAsync_ActorWithCorrelationId_AuditRowTraceIdMatchesIt()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        var adminContext = new AdminContext
+        {
+            ActorId = "admin-oid-1",
+            ActorName = "Ada Admin",
+            CorrelationId = "corr-abc-123"
+        };
+
+        using var db = CreateContext(dbName, adminContext);
+        db.Countries.Add(Country.Create("TC", "Trace Country"));
+        await db.SaveChangesAsync();
+
+        var row = await db.AdminAuditLogs.SingleAsync();
+        Assert.Equal("corr-abc-123", row.TraceId);
+    }
+
+    /// <summary>
+    /// Mutation-provable precedence check: with both a populated <c>CorrelationId</c> and an
+    /// ambient <see cref="Activity"/> carrying a *different* id, the row must carry the
+    /// <c>CorrelationId</c> — swapping the interceptor's <c>_adminContext.CorrelationId ??
+    /// Activity.Current?.Id</c> to the reverse order would make this fail while the pairing tests
+    /// below (each with only one source populated) would keep passing either way.
+    /// </summary>
+    [Fact]
+    public async Task SaveChangesAsync_CorrelationIdAndAmbientActivityBothPresent_TraceIdPrefersTheCorrelationId()
+    {
+        using var activity = new Activity("interceptor-trace-test").Start();
+        var dbName = Guid.NewGuid().ToString();
+        var adminContext = new AdminContext
+        {
+            ActorId = "admin-oid-1",
+            ActorName = "Ada Admin",
+            CorrelationId = "corr-wins-over-activity"
+        };
+
+        using var db = CreateContext(dbName, adminContext);
+        db.Countries.Add(Country.Create("TP", "Trace Precedence"));
+        await db.SaveChangesAsync();
+
+        var row = await db.AdminAuditLogs.SingleAsync();
+        Assert.Equal("corr-wins-over-activity", row.TraceId);
+        Assert.NotEqual(activity.Id, row.TraceId);
+    }
+
+    [Fact]
+    public async Task SaveChangesAsync_NoCorrelationIdButAmbientActivity_FallsBackToTheActivityId()
+    {
+        using var activity = new Activity("interceptor-trace-fallback-test").Start();
+        var dbName = Guid.NewGuid().ToString();
+        var adminContext = AdminActor(); // no CorrelationId set
+
+        using var db = CreateContext(dbName, adminContext);
+        db.Countries.Add(Country.Create("TF", "Trace Fallback"));
+        await db.SaveChangesAsync();
+
+        var row = await db.AdminAuditLogs.SingleAsync();
+        Assert.Equal(activity.Id, row.TraceId);
+    }
+
+    [Fact]
+    public async Task SaveChangesAsync_NeitherCorrelationIdNorActivity_TraceIdIsNull()
+    {
+        Assert.Null(Activity.Current);
+        var dbName = Guid.NewGuid().ToString();
+        var adminContext = AdminActor(); // no CorrelationId set
+
+        using var db = CreateContext(dbName, adminContext);
+        db.Countries.Add(Country.Create("TN", "Trace Null"));
+        await db.SaveChangesAsync();
+
+        var row = await db.AdminAuditLogs.SingleAsync();
+        Assert.Null(row.TraceId);
     }
 
     // ── entry.Metadata.ClrType, not entry.Entity.GetType(), is what BuildAuditLog must key on ──

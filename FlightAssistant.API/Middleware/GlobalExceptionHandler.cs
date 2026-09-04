@@ -88,12 +88,20 @@ namespace FlightAssistant.API.Middleware
         }
 
         /// <summary>
-        /// Stamps every problem response with the current trace id so a caller can quote it and an
-        /// operator can find the matching log entry, then writes it at the given status code.
+        /// Stamps every problem response with the request's correlation id (#319) — the same
+        /// string <see cref="CorrelationIdMiddleware"/> already put on the <c>X-Correlation-Id</c>
+        /// response header and every Serilog line for this request — so a caller can quote it and
+        /// an operator can find the matching log entry from the response alone. Falls back to
+        /// <see cref="Activity.Current"/>'s id, then <see cref="HttpContext.TraceIdentifier"/>, only
+        /// for the case <see cref="CorrelationIdMiddleware"/> never ran — it is unconditional on
+        /// every real request, so this is defensive, not the expected path — then writes the
+        /// problem at the given status code.
         /// </summary>
         private static Task WriteAsync(HttpContext ctx, ProblemDetails problem, int statusCode, CancellationToken ct)
         {
-            problem.Extensions["traceId"] = Activity.Current?.Id ?? ctx.TraceIdentifier;
+            problem.Extensions["traceId"] = ctx.Items[CorrelationIdMiddleware.ItemsKey] as string
+                ?? Activity.Current?.Id
+                ?? ctx.TraceIdentifier;
             ctx.Response.StatusCode = statusCode;
             return ctx.Response.WriteAsJsonAsync(problem, problem.GetType(), options: null, contentType: null, ct);
         }

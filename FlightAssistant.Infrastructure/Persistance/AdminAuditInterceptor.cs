@@ -116,7 +116,14 @@ namespace FlightAssistant.Infrastructure.Persistance
             if (string.IsNullOrWhiteSpace(actorId)) return;
 
             var actionUtc = DateTime.UtcNow; // one instant shared by every row written in this save
-            var traceId = Activity.Current?.Id;
+
+            // CorrelationIdMiddleware's id (#319) is primary: it's the one identifier guaranteed to
+            // also be on the response header and every Serilog line for this request, populated
+            // onto IAdminContext by the /admin endpoint filter (Program.cs) before this interceptor
+            // ever runs. Activity.Current is a fallback for the rare save that reaches here with an
+            // actor set but no CorrelationId populated (e.g. a caller that builds an AdminContext by
+            // hand rather than through the real request pipeline), not the expected path.
+            var traceId = _adminContext.CorrelationId ?? Activity.Current?.Id;
 
             foreach (var entry in entries)
             {
