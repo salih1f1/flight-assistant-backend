@@ -61,8 +61,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             var items = await query
                 .OrderByDescending(a => a.ActionUtc)
                 .ThenByDescending(a => a.Id)
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
+                .Page(page, pageSize)
                 .ToListAsync(ct);
 
             return (items, total);

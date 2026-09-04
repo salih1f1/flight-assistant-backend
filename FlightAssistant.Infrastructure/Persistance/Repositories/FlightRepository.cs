@@ -68,7 +68,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 .OrderByDescending(x => x.f.ServiceDateUtc);
 
             var total = await query.CountAsync(ct);
-            var rows = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+            var rows = await query.Page(page, pageSize).ToListAsync(ct);
             return (rows.Select(x => (x.tf, x.f)).ToList(), total);
         }
 

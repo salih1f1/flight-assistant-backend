@@ -176,6 +176,62 @@ public class ValidatorEdgeCaseTests
         AssertValid(v, new PagedRequest { Page = 1, PageSize = 200 });
     }
 
+    // ── Paging: Page/PageSize offset overflow (#316) ────────────────────────────
+    // Every paged repository computes the SQL OFFSET as (page - 1) * pageSize. Before #316 that was
+    // unbounded int arithmetic: a large enough Page overflowed it, wrapped around to a negative
+    // number, and Npgsql rejected the negative OFFSET as an unhandled 500. These three cases prove
+    // the validator's bound sits exactly at the overflow boundary and genuinely reads both fields,
+    // not just Page.
+
+    /// <summary>
+    /// An overflowing (Page, PageSize) pair is rejected, and grouped specifically under Page — not
+    /// PageSize, which is independently legal (200 is the maximum allowed value, not an invalid
+    /// one). Asserts the property name exactly rather than through AssertInvalid's Contains-based
+    /// match: "PageSize" itself contains the substring "Page", so a Contains check here would also
+    /// pass if the rule were wrongly grouped under PageSize instead of Page.
+    /// </summary>
+    [Fact]
+    public void PagedRequest_PageOverflowsOffset_Fails_GroupedExactlyUnderPage()
+    {
+        var v = new PagedRequestValidator();
+        var result = v.Validate(new PagedRequest { Page = int.MaxValue, PageSize = 200 });
+
+        Assert.False(result.IsValid);
+        var error = Assert.Single(result.Errors);
+        Assert.Equal("Page", error.PropertyName);
+    }
+
+    /// <summary>
+    /// The largest Page that does not overflow the offset at PageSize = 200 — 10,737,419, since
+    /// (10,737,419 - 1) * 200 = 2,147,483,600 &lt;= int.MaxValue — is accepted, and the very next
+    /// Page (10,737,420: (10,737,420 - 1) * 200 = 2,147,483,800 &gt; int.MaxValue) is rejected. Pins
+    /// the bound to the overflow boundary itself, off-by-one in both directions.
+    /// </summary>
+    [Fact]
+    public void PagedRequest_LargestLegalPageAtPageSize200_Passes_AndTheNextPageFails()
+    {
+        var v = new PagedRequestValidator();
+
+        AssertValid(v, new PagedRequest { Page = 10_737_419, PageSize = 200 });
+        AssertInvalid(v, new PagedRequest { Page = 10_737_420, PageSize = 200 }, "Page");
+    }
+
+    /// <summary>
+    /// Proves the rule genuinely reads PageSize off the request rather than hardcoding a fixed
+    /// ceiling on Page: Page = 10,737,420 comfortably fits at PageSize = 1
+    /// ((10,737,420 - 1) * 1 = 10,737,419) but is exactly the first Page the rule rejects at
+    /// PageSize = 200 (see the boundary test above). A Page-only bound could not distinguish these
+    /// two requests.
+    /// </summary>
+    [Fact]
+    public void PagedRequest_SamePage_PassesAtPageSize1_ButFailsAtPageSize200()
+    {
+        var v = new PagedRequestValidator();
+
+        AssertValid(v, new PagedRequest { Page = 10_737_420, PageSize = 1 });
+        AssertInvalid(v, new PagedRequest { Page = 10_737_420, PageSize = 200 }, "Page");
+    }
+
     // ── Loyalty membership ────────────────────────────────────────────────────
 
     [Fact]
