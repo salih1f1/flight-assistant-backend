@@ -72,6 +72,39 @@ public class AirportRepositoryTests : PostgresTestBase
     }
 
     /// <summary>
+    /// F1 fix round: the clamp is two-sided, not just the high (overflowing-Page) end the test
+    /// above covers. Page = 0 — reachable only by a caller that bypasses
+    /// <c>PagedRequestValidator</c> entirely, since its own <c>GreaterThanOrEqualTo(1)</c> rejects
+    /// this for every real caller — computes an offset of <c>(0 - 1) * pageSize</c>, negative before
+    /// any clamp, and used to reach Npgsql as the exact same <c>OFFSET must not be negative</c> the
+    /// high-end case throws. <see cref="PagedQueryableExtensions.Page{T}"/> now clamps the offset to
+    /// a floor of 0, so Page = 0 returns the same rows as Page = 1 — a deliberate behaviour choice
+    /// (see that method's doc comment for why), not a silent wrong answer: "skip nothing" is the
+    /// honest reading of an offset that went negative, and every caller that matters is already
+    /// stopped by the validator's 400 before it ever reaches this method.
+    /// </summary>
+    [Fact]
+    public async Task GetAllAsync_PageZero_ReturnsTheSameRowsAsPageOne_NotAnException()
+    {
+        await using var db = CreateDbContext();
+        db.Countries.Add(Country.Create("US", "United States"));
+        db.Airports.AddRange(
+            Airport.Create("AAA", null, "Airport A", "City A", "US"),
+            Airport.Create("BBB", null, "Airport B", "City B", "US"),
+            Airport.Create("CCC", null, "Airport C", "City C", "US"));
+        await db.SaveChangesAsync();
+
+        (IReadOnlyList<Airport> Items, int Total) result = (Array.Empty<Airport>(), -1);
+        var exception = await Record.ExceptionAsync(async () =>
+            result = await Repository(db).GetAllAsync(page: 0, pageSize: 2));
+
+        Assert.Null(exception);
+        Assert.Equal(3, result.Total);
+        // Same two rows GetAllAsync(page: 1, pageSize: 2) returns — see the ordinary-page test below.
+        Assert.Equal(["Airport A", "Airport B"], result.Items.Select(a => a.Name));
+    }
+
+    /// <summary>
     /// The other half of the refactor's safety net: converting all ten call sites to the shared
     /// helper must not silently change what an ordinary, in-range page returns. Three airports,
     /// pageSize = 2: page 1 returns the first two (alphabetically, per <c>GetAllAsync</c>'s own
