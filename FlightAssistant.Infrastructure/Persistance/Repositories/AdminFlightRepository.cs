@@ -15,7 +15,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 .OrderByDescending(f => f.ServiceDateUtc)
                 .ThenBy(f => f.FlightNumber);
             var total = await query.CountAsync(ct);
-            var items = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+            var items = await query.Page(page, pageSize).ToListAsync(ct);
             return (items, total);
         }
 

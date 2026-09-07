@@ -204,8 +204,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             query = ApplySort(query, sortColumn, sortDescending);
 
             var entities = await query
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
+                .Page(page, pageSize)
                 .ToListAsync(ct);
 
             // Projected in memory, not via another EF.Property expression: the rows are already
