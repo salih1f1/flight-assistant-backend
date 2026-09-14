@@ -183,18 +183,20 @@ public class AeroApiFlightStatusProviderTests
     {
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 30, 12, 0, 0, TimeSpan.Zero));
         var handler = new StubHttpMessageHandler(ReadFixture("flight-status.json"));
+        // Deliberately not the option defaults (10 and 2): with the defaults, a BuildUrl that
+        // hardcoded the literals instead of reading the options would pass this test too (#308).
         var options = new AeroApiOptions
         {
             ApiKey = "dummy",
-            StatusWindowPastDays = 10,
-            StatusWindowFutureDays = 2
+            StatusWindowPastDays = 3,
+            StatusWindowFutureDays = 1
         };
 
         await Provider(handler, timeProvider: clock, options: options)
             .GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
 
-        var expectedStart = Uri.EscapeDataString("2026-08-20T12:00:00Z");
-        var expectedEnd = Uri.EscapeDataString("2026-09-01T12:00:00Z");
+        var expectedStart = Uri.EscapeDataString("2026-08-27T12:00:00Z");
+        var expectedEnd = Uri.EscapeDataString("2026-08-31T12:00:00Z");
         Assert.Equal($"?start={expectedStart}&end={expectedEnd}", handler.LastRequestUri!.Query);
     }
 
@@ -205,13 +207,14 @@ public class AeroApiFlightStatusProviderTests
         // than being fixed at construction time.
         var clock = new FakeTimeProvider(new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero));
         var handler = new StubHttpMessageHandler(ReadFixture("flight-status.json"));
-        var options = new AeroApiOptions { ApiKey = "dummy", StatusWindowPastDays = 10, StatusWindowFutureDays = 2 };
+        // Non-default window, for the same reason as the test above (#308).
+        var options = new AeroApiOptions { ApiKey = "dummy", StatusWindowPastDays = 7, StatusWindowFutureDays = 1 };
 
         await Provider(handler, timeProvider: clock, options: options)
             .GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
 
-        var expectedStart = Uri.EscapeDataString("2026-12-22T00:00:00Z");
-        var expectedEnd = Uri.EscapeDataString("2027-01-03T00:00:00Z");
+        var expectedStart = Uri.EscapeDataString("2026-12-25T00:00:00Z");
+        var expectedEnd = Uri.EscapeDataString("2027-01-02T00:00:00Z");
         Assert.Equal($"?start={expectedStart}&end={expectedEnd}", handler.LastRequestUri!.Query);
     }
 
