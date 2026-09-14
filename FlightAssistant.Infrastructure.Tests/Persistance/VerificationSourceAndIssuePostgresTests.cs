@@ -20,7 +20,19 @@ namespace FlightAssistant.Infrastructure.Tests.Persistance;
 public class VerificationSourceAndIssuePostgresTests : PostgresTestBase
 {
     /// <summary>The migration immediately before <c>AddVerificationSourceAndIssue</c> — the state
-    /// the backfill test seeds against, before migrating back up runs the backfill SQL.</summary>
+    /// the backfill test seeds against, before migrating back up runs the backfill SQL.
+    ///
+    /// <para>
+    /// Migrating down to this pin also rolls back every migration <em>after</em> it — today that's
+    /// only <c>AddVerificationSourceAndIssue</c> itself, but as new migrations land ahead of this
+    /// one, their <c>Down</c> runs too. A later migration with a lossy or throwing <c>Down</c> would
+    /// then fail this test, not because the backfill broke but because rolling back an unrelated,
+    /// newer migration did. Once <c>AddVerificationSourceAndIssue</c> has actually run in every
+    /// environment (so there is no longer a real "before the backfill" state to prove), this test —
+    /// and the down/up dance it depends on — can simply be deleted rather than kept in sync with
+    /// every migration added after it.
+    /// </para>
+    /// </summary>
     private const string PreviousMigration = "20260914180431_DropUnwrittenEntityFields";
 
     private readonly PostgresContainerFixture _fixture;

@@ -153,10 +153,10 @@ public class AdminAuditInterceptorTests
         Assert.Single(await verify.AdminAuditLogs.ToListAsync());
     }
 
-    // ── Verify detection: exactly the IVerifiable trio, and not a superset ────
+    // ── Verify detection: modified properties non-empty and a subset of IVerifiable ───
 
     [Fact]
-    public async Task SaveChangesAsync_ModifiedExactlyVerifiableTrio_DerivesVerifyAction()
+    public async Task SaveChangesAsync_ModifiedVerificationSubset_DerivesVerifyAction()
     {
         var dbName = Guid.NewGuid().ToString();
         using (var seed = CreateContext(dbName, AdminActor()))
@@ -181,7 +181,7 @@ public class AdminAuditInterceptorTests
     }
 
     [Fact]
-    public async Task SaveChangesAsync_ModifiedTrioPlusAnotherProperty_DerivesUpdateAction()
+    public async Task SaveChangesAsync_VerificationPlusAnotherProperty_DerivesUpdateAction()
     {
         var dbName = Guid.NewGuid().ToString();
         using (var seed = CreateContext(dbName, AdminActor()))
