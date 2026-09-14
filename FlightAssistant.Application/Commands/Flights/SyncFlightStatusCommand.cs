@@ -96,7 +96,8 @@ namespace FlightAssistant.Application.Commands.Flights
                 result.EstimatedArrivalUtc,
                 result.ActualDepartureUtc,
                 result.ActualArrivalUtc,
-                result.EquipmentIcao);
+                result.EquipmentIcao,
+                DateTime.UtcNow);
 
             await _flights.AddFlightStatusEventAsync(evt, ct);
             await _flights.SaveChangesAsync(ct);

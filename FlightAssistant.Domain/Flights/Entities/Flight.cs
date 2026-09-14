@@ -1,5 +1,6 @@
 ﻿using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Common.Interfaces;
+using FlightAssistant.Domain.Flights.Enums;
 using FlightAssistant.Domain.Flights.Events;
 using FlightAssistant.Domain.ReferenceData.Entities;
 
@@ -24,6 +25,18 @@ namespace FlightAssistant.Domain.Flights.Entities
         public string? EquipmentAircraftIcao { get; private set; }
         public DateTime CreatedUtc { get; private set; } = DateTime.UtcNow;
         public DateTime UpdatedUtc { get; private set; } = DateTime.UtcNow;
+
+        public const string CancelledStatusCode = "CAN";
+
+        // --- Status sync schedule (#356). Written only by the sync, tracking and untracking.
+        public DateTime? LastSyncedUtc { get; private set; }
+        public DateTime? NextSyncDueUtc { get; private set; }
+        public FlightSyncMode? SyncMode { get; private set; }
+        public DateTime? ScheduleMissingSinceUtc { get; private set; }
+
+        /// <summary>When a status update first reported <c>CAN</c>; cleared by any later other code.
+        /// <c>Flight</c> doesn't store its current status, and the Stopped rule needs this.</summary>
+        public DateTime? CancelledAtUtc { get; private set; }
 
         public Airline Airline { get; private set; } = default!;
 
@@ -63,7 +76,8 @@ namespace FlightAssistant.Domain.Flights.Entities
             DateTime? estimatedArrivalUtc,
             DateTime? actualDepartureUtc,
             DateTime? actualArrivalUtc,
-            string? equipmentAircraftIcao)
+            string? equipmentAircraftIcao,
+            DateTime nowUtc)
         {
             EstimatedDepartureUtc = estimatedDepartureUtc;
             EstimatedArrivalUtc = estimatedArrivalUtc;
@@ -71,9 +85,26 @@ namespace FlightAssistant.Domain.Flights.Entities
             ActualArrivalUtc = actualArrivalUtc;
             if (equipmentAircraftIcao is not null)
                 EquipmentAircraftIcao = equipmentAircraftIcao;
-            UpdatedUtc = DateTime.UtcNow;
+            CancelledAtUtc = statusCode == CancelledStatusCode ? CancelledAtUtc ?? nowUtc : null;
+            UpdatedUtc = nowUtc;
 
-            Raise(new FlightStatusChanged(Id, FlightNumber, ServiceDateUtc, statusCode, DateTime.UtcNow));
+            Raise(new FlightStatusChanged(Id, FlightNumber, ServiceDateUtc, statusCode, nowUtc));
+        }
+
+        /// <summary>Records a check against the provider, whether or not anything changed.</summary>
+        public void MarkSynced(DateTime syncedUtc) => LastSyncedUtc = syncedUtc;
+
+        /// <summary>
+        /// Stores the planner's mode and next due time. Leaves <see cref="UpdatedUtc"/> alone: this
+        /// changes every few minutes and isn't a change to the flight.
+        /// </summary>
+        public void ApplySyncPlan(FlightSyncMode? mode, DateTime? nextSyncDueUtc)
+        {
+            if (nextSyncDueUtc is not null && mode is null or FlightSyncMode.Stopped)
+                throw new ArgumentException("A flight that isn't synced can't have a next sync time.", nameof(nextSyncDueUtc));
+
+            SyncMode = mode;
+            NextSyncDueUtc = nextSyncDueUtc;
         }
     }
 }
