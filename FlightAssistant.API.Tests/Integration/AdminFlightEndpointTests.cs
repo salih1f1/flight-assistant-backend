@@ -1,9 +1,13 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Contracts.Responses.Admin;
+using FlightAssistant.Contracts.Responses.Flights;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.Extensions.DependencyInjection;
+using NSubstitute;
 
 namespace FlightAssistant.API.Tests.Integration;
 
@@ -101,5 +105,72 @@ public class AdminFlightEndpointTests(FlightAssistantWebApplicationFactory facto
         Assert.NotNull(dto);
         Assert.Null(dto!.CurrentStatus);
         Assert.Empty(dto.StatusHistory);
+    }
+
+    // ══════════════ GET /admin/flights/search (#340) ══════════════
+
+    private static string InThirtyDays() => DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30)).ToString("yyyy-MM-dd");
+
+    [Fact]
+    public async Task Search_Anonymous_Returns401()
+    {
+        var response = await factory.CreateClient().GetAsync($"admin/flights/search?flightNumber=BA123&date={InThirtyDays()}");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Search_AuthenticatedWithoutTheAdminRole_Returns403()
+    {
+        var response = await factory.CreateUserClient().GetAsync($"admin/flights/search?flightNumber=BA123&date={InThirtyDays()}");
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    /// <summary>
+    /// The provider is faked, so this checks what reaches it (codes upper-cased, the codeshare flag
+    /// carried through) and that its rows come back in the shape <c>POST /admin/travelers/{id}/flights</c>
+    /// takes.
+    /// </summary>
+    [Fact]
+    public async Task Search_Admin_SendsTheCriteriaToTheProvider_AndReturnsItsRows()
+    {
+        var serviceDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30));
+        var row = new FlightSearchResult(
+            FlightNumber: "6E4120",
+            ServiceDate: serviceDate,
+            DepartureAirportIata: "SOF",
+            ArrivalAirportIata: "IST",
+            ScheduledDepartureUtc: serviceDate.ToDateTime(new TimeOnly(6, 35), DateTimeKind.Utc),
+            ScheduledArrivalUtc: serviceDate.ToDateTime(new TimeOnly(8, 5), DateTimeKind.Utc));
+
+        var provider = Substitute.For<IFlightSearchProvider>();
+        provider.SearchAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>()).Returns([row]);
+
+        using var scopedFactory = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services => services.AddScoped<IFlightSearchProvider>(_ => provider)));
+        var client = scopedFactory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", $"test-admin-{Guid.NewGuid()}");
+
+        var response = await client.GetAsync(
+            $"admin/flights/search?from=sof&to=ist&date={serviceDate:yyyy-MM-dd}&includeCodeshares=true");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await provider.Received(1).SearchAsync(
+            new FlightSearchCriteria("SOF", "IST", serviceDate, null, IncludeCodeshares: true),
+            Arg.Any<CancellationToken>());
+
+        var dto = Assert.Single((await response.Content.ReadFromJsonAsync<List<FlightSearchResultDto>>())!);
+        Assert.Equal(row.FlightNumber, dto.FlightNumber);
+        Assert.Equal(row.ServiceDate, dto.ServiceDate);
+        Assert.Equal(row.DepartureAirportIata, dto.DepartureAirportIata);
+        Assert.Equal(row.ArrivalAirportIata, dto.ArrivalAirportIata);
+        Assert.Equal(row.ScheduledDepartureUtc, dto.ScheduledDepartureUtc);
+        Assert.Equal(row.ScheduledArrivalUtc, dto.ScheduledArrivalUtc);
+    }
+
+    [Fact]
+    public async Task Search_Admin_NeitherRouteNorFlightNumber_Returns400()
+    {
+        var response = await factory.CreateAdminClient().GetAsync($"admin/flights/search?date={InThirtyDays()}");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 }

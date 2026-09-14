@@ -1,8 +1,11 @@
 using FlightAssistant.Application.Commands.Admin.Travelers;
+using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Queries.Admin.Travelers;
 using FlightAssistant.Contracts.Paging;
+using FlightAssistant.Contracts.Requests.Flights;
 using FlightAssistant.Contracts.Responses.Admin;
 using MediatR;
+using Microsoft.AspNetCore.Mvc;
 
 namespace FlightAssistant.API.Endpoints.Admin
 {
@@ -89,6 +92,37 @@ namespace FlightAssistant.API.Endpoints.Admin
             .WithName("AdminDeleteTraveler")
             .WithSummary("Delete traveler")
             .Produces(204);
+
+            // POST /admin/travelers/{id}/flights — track a flight for this traveler (#340), so an
+            // operator can test tracking for a traveler without that traveler's own sign-in.
+            group.MapPost("{id:guid}/flights", async (Guid id, [FromBody] TrackFlightRequest req, IMediator mediator, CancellationToken ct) =>
+            {
+                // TrackFlightCommand trusts its TravelerId: POST /flights takes it from the caller's
+                // own token. Here it comes from the URL, and no foreign key on traveler_flights
+                // would stop a tracking row for a traveler who doesn't exist.
+                if (await mediator.Send(new GetAdminTravelerByIdQuery(id), ct) is null) return Results.NotFound();
+
+                var flightId = await mediator.Send(new TrackFlightCommand(
+                    id,
+                    req.FlightNumber,
+                    req.ServiceDate,
+                    req.DepartureAirportIata,
+                    req.ArrivalAirportIata,
+                    req.ScheduledDepartureUtc,
+                    req.ScheduledArrivalUtc), ct);
+
+                return Results.Created($"/admin/flights/{flightId}", new { flightId });
+            })
+            .WithName("AdminTrackFlightForTraveler")
+            .WithSummary("Track a flight for a traveler")
+            .WithDescription(
+                "Adds a flight to this traveler's tracking list, exactly as POST /flights does for the " +
+                "signed-in traveler. A row from GET /admin/flights/search can be posted here unmodified. " +
+                "Tracking a flight the traveler already tracks changes nothing and still returns 201 with " +
+                "its flightId. An unknown traveler is a 404 and writes nothing.")
+            .Produces(201)
+            .ProducesValidationProblem()
+            .ProducesProblem(404);
 
             // DELETE /admin/travelers/{travelerId}/device-tokens/{tokenId}
             group.MapDelete("{travelerId:guid}/device-tokens/{tokenId:guid}",
