@@ -37,6 +37,7 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<IAdminTravelerRepository, AdminTravelerRepository>();
             services.AddScoped<IAdminFlightRepository, AdminFlightRepository>();
             services.AddScoped<IAdminAuditRepository, AdminAuditRepository>();
+            services.AddScoped<IAdminStatsRepository, AdminStatsRepository>();
             services.AddScoped<IBrowsableDataRepository, BrowsableDataRepository>();
             services.AddScoped<IAirlineRepository, AirlineRepository>();
             services.AddScoped<IAirportRepository, AirportRepository>();
