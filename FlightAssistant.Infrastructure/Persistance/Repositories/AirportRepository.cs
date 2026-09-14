@@ -11,7 +11,8 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
 
         public async Task<(IReadOnlyList<Airport> Items, int Total)> GetAllAsync(int page, int pageSize, CancellationToken ct = default)
         {
-            var query = _db.Airports.OrderBy(a => a.Name);
+            // Id tiebreaker: Name is not unique, and paging on a tie can repeat or skip rows (#328).
+            var query = _db.Airports.OrderBy(a => a.Name).ThenBy(a => a.Id);
             var total = await query.CountAsync(ct);
             var items = await query.Page(page, pageSize).ToListAsync(ct);
             return (items, total);

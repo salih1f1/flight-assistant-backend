@@ -35,8 +35,8 @@ namespace FlightAssistant.Infrastructure.Tests.Persistance.Repositories;
 /// <c>page = pageSize = 1</c> the swap is a no-op), which is why every test below checks the second
 /// page's count specifically, not just the first's. This is a pure LINQ query-composition property —
 /// unlike the overflow clamp itself, it does not depend on Postgres's OFFSET semantics — so it needs
-/// no real database and no explicit ORDER BY to hold (see the last test's own note on
-/// <c>LoyaltyRepository.GetMembershipsForTravelerAsync</c>, which has neither).
+/// no real database and does not depend on row order (each read's ORDER BY is pinned separately by
+/// <c>PagedRepositoryDeterministicOrderTests</c>, #328).
 /// </para>
 ///
 /// <para>
@@ -180,10 +180,8 @@ public class PagedRepositoryArgumentOrderTests
     }
 
     /// <summary>
-    /// <see cref="LoyaltyRepository.GetMembershipsForTravelerAsync"/> has no explicit
-    /// <c>ORDER BY</c> (pre-existing — tracked separately, not this issue's to fix). The count-based
-    /// assertion this file uses throughout does not depend on row order, only on how many rows each
-    /// page returns, so it holds regardless. Two distinct <see cref="LoyaltyProgram"/>s back the two
+    /// The count-based assertion this file uses throughout does not depend on row order, only on
+    /// how many rows each page returns. Two distinct <see cref="LoyaltyProgram"/>s back the two
     /// memberships rather than one: <c>TravelerLoyaltyMembership</c> is schema-bounded by
     /// <c>UNIQUE(TravelerId, ProgramId)</c>, so the same traveler cannot hold two memberships in the
     /// same program.
