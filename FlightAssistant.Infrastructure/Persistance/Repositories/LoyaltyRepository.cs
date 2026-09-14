@@ -22,7 +22,9 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             var query = _db.LoyaltyPrograms
                 .Include(p => p.Tiers)
                 .Include(p => p.Kind)
-                .OrderBy(p => p.Name);
+                // Id tiebreaker: Name is not unique, and paging on a tie can repeat or skip rows (#328).
+                .OrderBy(p => p.Name)
+                .ThenBy(p => p.Id);
             var total = await query.CountAsync(ct);
             var items = await query.Page(page, pageSize).ToListAsync(ct);
             return (items, total);
@@ -31,7 +33,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         public async Task<(IReadOnlyList<TravelerLoyaltyMembership> Items, int Total)> GetMembershipsForTravelerAsync(Guid travelerId, int page, int pageSize, CancellationToken ct = default)
         {
             var query = _db.TravelerLoyaltyMemberships
-                .Where(m => m.TravelerId == travelerId);
+                .Where(m => m.TravelerId == travelerId)
+                // Same order as GetAllMembershipsForTravelerAsync below. UNIQUE(TravelerId, ProgramId)
+                // makes ProgramId unique within this filter, so pages can't overlap or skip rows (#328).
+                .OrderBy(m => m.ProgramId);
             var total = await query.CountAsync(ct);
             var items = await query.Page(page, pageSize).ToListAsync(ct);
             return (items, total);

@@ -36,7 +36,9 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             var query = _db.Lounges
                 .Include(l => l.Providers)
                     .ThenInclude(link => link.Provider)
-                .OrderBy(l => l.Name);
+                // Id tiebreaker: Name is not unique, and paging on a tie can repeat or skip rows (#328).
+                .OrderBy(l => l.Name)
+                .ThenBy(l => l.Id);
             var total = await query.CountAsync(ct);
             var items = await query.Page(page, pageSize).ToListAsync(ct);
             return (items, total);

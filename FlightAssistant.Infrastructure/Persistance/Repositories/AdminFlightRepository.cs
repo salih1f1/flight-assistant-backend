@@ -13,7 +13,9 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         {
             var query = _db.Flights
                 .OrderByDescending(f => f.ServiceDateUtc)
-                .ThenBy(f => f.FlightNumber);
+                .ThenBy(f => f.FlightNumber)
+                // Id tiebreaker: two airlines can share a FlightNumber on one date (#328).
+                .ThenBy(f => f.Id);
             var total = await query.CountAsync(ct);
             var items = await query.Page(page, pageSize).ToListAsync(ct);
             return (items, total);

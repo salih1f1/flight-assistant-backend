@@ -65,7 +65,9 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             var query = _db.TravelerFlights
                 .Where(tf => tf.TravelerId == travelerId)
                 .Join(_db.Flights, tf => tf.FlightId, f => f.Id, (tf, f) => new { tf, f })
-                .OrderByDescending(x => x.f.ServiceDateUtc);
+                .OrderByDescending(x => x.f.ServiceDateUtc)
+                // Id tiebreaker: ServiceDateUtc is not unique, and paging on a tie can repeat or skip rows (#328).
+                .ThenBy(x => x.f.Id);
 
             var total = await query.CountAsync(ct);
             var rows = await query.Page(page, pageSize).ToListAsync(ct);
