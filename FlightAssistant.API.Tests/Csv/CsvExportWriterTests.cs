@@ -121,7 +121,13 @@ public class CsvExportWriterTests
 
         var bytes = CsvExportWriter.Write<AirportExportDto, AirportExportDtoMap>(data);
         var text = Encoding.UTF8.GetString(bytes);
+        var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var dataRowFields = lines[1].TrimEnd('\r').Split(',');
 
-        Assert.DoesNotContain("null", text);
+        // The trailing VerifiedAt, VerifiedBy, VerificationSource columns — every prior field
+        // (Iata, Icao, ..., ElevationFt) is also null here, so a substring check like
+        // DoesNotContain("null") can't distinguish "wrote empty fields" from "wrote nothing at
+        // all"; asserting the exact trailing fields is the only version that can actually fail.
+        Assert.Equal(["", "", ""], dataRowFields[^3..]);
     }
 }

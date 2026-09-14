@@ -25,6 +25,21 @@ public class AdminImportEndpointTests(FlightAssistantWebApplicationFactory facto
         return form;
     }
 
+    /// <summary>
+    /// Finds the one CSV data row starting with <paramref name="rowPrefix"/> and returns its
+    /// comma-split fields — used instead of a whole-export <c>Contains</c> check, which (over the
+    /// shared InMemory database other tests in this collection also populate) can't tell "this
+    /// row's own trailing fields are exactly right" apart from "some other row anywhere in the
+    /// export happens to contain this substring".
+    /// </summary>
+    private static string[] FindDataRowFields(string csv, string rowPrefix)
+    {
+        var line = csv.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(l => l.TrimEnd('\r'))
+            .Single(l => l.StartsWith(rowPrefix, StringComparison.Ordinal));
+        return line.Split(',');
+    }
+
     [Fact]
     public async Task ImportAlliances_ValidCsv_Returns200()
     {
@@ -224,9 +239,8 @@ public class AdminImportEndpointTests(FlightAssistantWebApplicationFactory facto
 
         var exportResponse = await client.GetAsync("admin/export/alliances");
         var exportCsv = await exportResponse.Content.ReadAsStringAsync();
-        Assert.Contains("2026-01-02T03:04:05", exportCsv);
-        Assert.Contains("prior-admin", exportCsv);
-        Assert.Contains("manual", exportCsv);
+        var exportedFields = FindDataRowFields(exportCsv, "SA,Star Alliance,");
+        Assert.Equal(["2026-01-02T03:04:05.0000000Z", "prior-admin", "manual"], exportedFields[^3..]);
 
         // Round trip: re-import the exact CSV the export just produced. Because all three columns
         // are present, the row must keep them as-is rather than being re-stamped `import` by
@@ -237,9 +251,8 @@ public class AdminImportEndpointTests(FlightAssistantWebApplicationFactory facto
 
         var reExportResponse = await client.GetAsync("admin/export/alliances");
         var reExportCsv = await reExportResponse.Content.ReadAsStringAsync();
-        Assert.Contains("2026-01-02T03:04:05", reExportCsv);
-        Assert.Contains("prior-admin", reExportCsv);
-        Assert.Contains("manual", reExportCsv);
+        var reExportedFields = FindDataRowFields(reExportCsv, "SA,Star Alliance,");
+        Assert.Equal(["2026-01-02T03:04:05.0000000Z", "prior-admin", "manual"], reExportedFields[^3..]);
     }
 
     [Fact]
@@ -270,9 +283,8 @@ public class AdminImportEndpointTests(FlightAssistantWebApplicationFactory facto
 
         var exportResponse = await client.GetAsync("admin/export/lounges");
         var exportCsv = await exportResponse.Content.ReadAsStringAsync();
-        Assert.Contains("2026-01-02T03:04:05", exportCsv);
-        Assert.Contains("prior-admin", exportCsv);
-        Assert.Contains("manual", exportCsv);
+        var exportedFields = FindDataRowFields(exportCsv, "Galleries Club,LHR,T5,");
+        Assert.Equal(["2026-01-02T03:04:05.0000000Z", "prior-admin", "manual"], exportedFields[^3..]);
 
         var secondImport = await client.PostAsync("admin/import/lounges",
             BuildMultipart(exportCsv, fileName: "lounges-export.csv"));
@@ -280,8 +292,7 @@ public class AdminImportEndpointTests(FlightAssistantWebApplicationFactory facto
 
         var reExportResponse = await client.GetAsync("admin/export/lounges");
         var reExportCsv = await reExportResponse.Content.ReadAsStringAsync();
-        Assert.Contains("2026-01-02T03:04:05", reExportCsv);
-        Assert.Contains("prior-admin", reExportCsv);
-        Assert.Contains("manual", reExportCsv);
+        var reExportedFields = FindDataRowFields(reExportCsv, "Galleries Club,LHR,T5,");
+        Assert.Equal(["2026-01-02T03:04:05.0000000Z", "prior-admin", "manual"], reExportedFields[^3..]);
     }
 }

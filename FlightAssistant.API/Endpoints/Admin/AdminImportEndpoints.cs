@@ -8,6 +8,16 @@ namespace FlightAssistant.API.Endpoints.Admin;
 
 public static class AdminImportEndpoints
 {
+    /// <summary>
+    /// The verification behaviour (#362) shared by all 8 import endpoints — kept out of each
+    /// route's <c>.WithSummary(...)</c> so the summary stays a one-line description, and out of
+    /// each's own duplicated string so this can't drift between endpoints.
+    /// </summary>
+    private const string VerificationDescription =
+        "Every row ends verified: kept as-is when the CSV's VerifiedAt/VerifiedBy/VerificationSource " +
+        "columns are all present, stamped `import` when none are present, or rejected into Errors " +
+        "(207, the rest of the file still imports) when only some are present.";
+
     public static void MapAdminImportEndpoints(this IEndpointRouteBuilder admin)
     {
         var group = admin.MapGroup("import").WithTags("Admin - Import")
@@ -30,7 +40,8 @@ public static class AdminImportEndpoints
             var result = await mediator.Send(new ImportAlliancesCommand(items), ct);
             return result.ToImportResponse();
         }).WithName("ImportAlliances")
-          .WithSummary("Import alliances from CSV (run before countries, airports, airlines). Upserts by Code. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.")
+          .WithSummary("Import alliances from CSV (run before countries, airports, airlines). Upserts by Code.")
+          .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
           .ProducesValidationProblem()
@@ -43,7 +54,8 @@ public static class AdminImportEndpoints
             var result = await mediator.Send(new ImportCountriesCommand(items), ct);
             return result.ToImportResponse();
         }).WithName("ImportCountries")
-          .WithSummary("Import countries from CSV (run after alliances). Upserts by Code. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.")
+          .WithSummary("Import countries from CSV (run after alliances). Upserts by Code.")
+          .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
           .ProducesValidationProblem()
@@ -56,7 +68,8 @@ public static class AdminImportEndpoints
             var result = await mediator.Send(new ImportAirportsCommand(items), ct);
             return result.ToImportResponse();
         }).WithName("ImportAirports")
-          .WithSummary("Import airports from CSV (run after countries). Upserts by IATA. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.")
+          .WithSummary("Import airports from CSV (run after countries). Upserts by IATA.")
+          .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
           .ProducesValidationProblem()
@@ -69,7 +82,8 @@ public static class AdminImportEndpoints
             var result = await mediator.Send(new ImportAirlinesCommand(items), ct);
             return result.ToImportResponse();
         }).WithName("ImportAirlines")
-          .WithSummary("Import airlines from CSV (run after airports). Upserts by IATA, fallback ICAO. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.")
+          .WithSummary("Import airlines from CSV (run after airports). Upserts by IATA, fallback ICAO.")
+          .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
           .ProducesValidationProblem()
@@ -82,7 +96,8 @@ public static class AdminImportEndpoints
             var result = await mediator.Send(new ImportLoungeProvidersCommand(items), ct);
             return result.ToImportResponse();
         }).WithName("ImportLoungeProviders")
-          .WithSummary("Import lounge providers from CSV (run after airlines). Upserts by Code. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.")
+          .WithSummary("Import lounge providers from CSV (run after airlines). Upserts by Code.")
+          .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
           .ProducesValidationProblem()
@@ -95,7 +110,8 @@ public static class AdminImportEndpoints
             var result = await mediator.Send(new ImportLoyaltyProgramKindsCommand(items), ct);
             return result.ToImportResponse();
         }).WithName("ImportLoyaltyProgramKinds")
-          .WithSummary("Import loyalty program kinds from CSV (run after airlines). Upserts by Code. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.")
+          .WithSummary("Import loyalty program kinds from CSV (run after airlines). Upserts by Code.")
+          .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
           .ProducesValidationProblem()
@@ -108,7 +124,8 @@ public static class AdminImportEndpoints
             var result = await mediator.Send(new ImportLoungesCommand(items), ct);
             return result.ToImportResponse();
         }).WithName("ImportLounges")
-          .WithSummary("Import lounges from CSV (run after lounge-providers). Providers column is JSON-encoded. Upserts by Name+AirportIata+Terminal. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.")
+          .WithSummary("Import lounges from CSV (run after lounge-providers). Providers column is JSON-encoded. Upserts by Name+AirportIata+Terminal.")
+          .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
           .ProducesValidationProblem()
@@ -121,7 +138,8 @@ public static class AdminImportEndpoints
             var result = await mediator.Send(new ImportLoyaltyProgramsCommand(items), ct);
             return result.ToImportResponse();
         }).WithName("ImportLoyaltyPrograms")
-          .WithSummary("Import loyalty programs from CSV (run after loyalty-program-kinds and airlines). Tiers column is JSON-encoded. Upserts by Code. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.")
+          .WithSummary("Import loyalty programs from CSV (run after loyalty-program-kinds and airlines). Tiers column is JSON-encoded. Upserts by Code.")
+          .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
           .ProducesValidationProblem()

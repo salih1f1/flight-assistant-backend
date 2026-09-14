@@ -9,10 +9,11 @@ namespace FlightAssistant.Application.Commands.Admin.Import;
 /// values as-is, stamp <see cref="VerificationSources.Import"/>, or reject the row — the #362 rule
 /// from the auto-verification design (spec §6):
 /// <list type="bullet">
-/// <item>all three present → kept, with <c>VerifiedAt</c> normalised to UTC (see below) — the CSV
-/// parser (<c>CsvImportParser</c>) already produces <see cref="DateTimeKind.Utc"/>, but this
-/// helper is called by all 8 handlers directly, not only from behind that parser, so it owns the
-/// guarantee itself rather than trusting every caller to have parsed correctly upstream.</item>
+/// <item>all three present (a whitespace-only <c>VerifiedBy</c>/<c>VerificationSource</c> counts
+/// as absent, not present) → kept, trimmed, with <c>VerifiedAt</c> normalised to UTC (see below) —
+/// the CSV parser (<c>CsvImportParser</c>) already produces <see cref="DateTimeKind.Utc"/>, but
+/// this helper is called by all 8 handlers directly, not only from behind that parser, so it owns
+/// the guarantee itself rather than trusting every caller to have parsed correctly upstream.</item>
 /// <item>none present (older export, or the columns absent entirely) → stamped with the importing
 /// admin (<paramref name="actorId"/>, falling back to <c>"admin"</c> when unset — the same fallback
 /// <c>AdminVerifyEndpoints</c> uses), <see cref="VerificationSources.Import"/>, and now (UTC).</item>
@@ -28,11 +29,11 @@ public static class ImportVerification
     {
         var missing = new List<string>(3);
         if (!verifiedAt.HasValue) missing.Add("VerifiedAt");
-        if (verifiedBy is null) missing.Add("VerifiedBy");
-        if (verificationSource is null) missing.Add("VerificationSource");
+        if (string.IsNullOrWhiteSpace(verifiedBy)) missing.Add("VerifiedBy");
+        if (string.IsNullOrWhiteSpace(verificationSource)) missing.Add("VerificationSource");
 
         if (missing.Count == 0)
-            return ImportVerificationOutcome.Keep(NormalizeToUtc(verifiedAt!.Value), verifiedBy!, verificationSource!);
+            return ImportVerificationOutcome.Keep(NormalizeToUtc(verifiedAt!.Value), verifiedBy!.Trim(), verificationSource!.Trim());
 
         if (missing.Count == 3)
             return ImportVerificationOutcome.Stamp(actorId ?? "admin");

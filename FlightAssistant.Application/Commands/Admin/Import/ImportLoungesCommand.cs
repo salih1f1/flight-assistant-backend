@@ -90,7 +90,7 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
                     continue;
                 }
 
-                var providerLinks = await ResolveProviderLinksAsync(dto, errors, ct);
+                var (providerLinks, anyProviderLinkSkipped) = await ResolveProviderLinksAsync(dto, errors, ct);
 
                 var existing = await _loungeRepo.FindByNaturalKeyWithProvidersAsync(airportId.Value, dto.Name, dto.Terminal, ct);
                 if (existing is null)
@@ -98,7 +98,15 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
                     var lounge = Lounge.Create(airportId.Value, dto.Name, dto.Terminal, dto.LocationHint,
                         dto.Hours, dto.IsAirside, dto.IsDomesticOnly, dto.IsInternationalOnly, dto.Amenities);
                     lounge.ReplaceAllProviders(providerLinks);
-                    verification.Apply(lounge);
+                    // A row that fails for any other reason (here: a provider link dropped for an
+                    // unknown role or code) must not end verified — see the same rule the per-row
+                    // reject path above enforces for partial verification columns. Keeping the
+                    // CSV's manual/prior-admin history on a lounge CsvHelper couldn't fully build
+                    // would be exactly the borrowed-trust problem #362 exists to prevent.
+                    if (anyProviderLinkSkipped)
+                        lounge.Unverify();
+                    else
+                        verification.Apply(lounge);
                     await _loungeRepo.AddAsync(lounge, ct);
                     inserted++;
                 }
@@ -107,7 +115,12 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
                     existing.Update(dto.Name, dto.Terminal, dto.LocationHint, dto.Hours,
                         dto.IsAirside, dto.IsDomesticOnly, dto.IsInternationalOnly, dto.Amenities);
                     existing.ReplaceAllProviders(providerLinks);
-                    verification.Apply(existing);
+                    // Same rule for an existing lounge: its old verification does not survive a
+                    // re-import that couldn't fully resolve this row's providers.
+                    if (anyProviderLinkSkipped)
+                        existing.Unverify();
+                    else
+                        verification.Apply(existing);
                     updated++;
                 }
             }
@@ -121,15 +134,21 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
         return new ImportResult(inserted, updated, errors);
     }
 
-    private async Task<List<LoungeProviderLink>> ResolveProviderLinksAsync(
+    /// <summary>Resolves each row's provider links, and reports whether any of them had to be
+    /// dropped (unknown role or unknown provider code) — the caller must not verify a lounge whose
+    /// providers couldn't be fully resolved, per the same "no borrowed trust" rule the per-row
+    /// verification-column reject path enforces.</summary>
+    private async Task<(List<LoungeProviderLink> Links, bool AnySkipped)> ResolveProviderLinksAsync(
         LoungeImportDto dto, List<string> errors, CancellationToken ct)
     {
         var links = new List<LoungeProviderLink>();
+        var anySkipped = false;
         foreach (var p in dto.Providers)
         {
             if (!Enum.TryParse<LoungeProviderRole>(p.Role, ignoreCase: true, out var role))
             {
                 errors.Add($"Lounge '{dto.Name}': unknown provider role '{p.Role}' for '{p.ProviderCode}' — skipped");
+                anySkipped = true;
                 continue;
             }
 
@@ -137,11 +156,12 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
             if (provider is null)
             {
                 errors.Add($"Lounge '{dto.Name}': provider '{p.ProviderCode}' not found — skipped");
+                anySkipped = true;
                 continue;
             }
 
             links.Add(LoungeProviderLink.Create(0, provider.Id, role, p.Notes, p.MinAllianceTierCode));
         }
-        return links;
+        return (links, anySkipped);
     }
 }

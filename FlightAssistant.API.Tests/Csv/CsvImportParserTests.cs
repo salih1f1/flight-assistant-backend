@@ -213,10 +213,10 @@ public class CsvImportParserTests
 
     // ── #362 fix round 1/2: one-row smoke test per import map, old and new format ──
     //
-    // Alliances (above) and Lounges (above) already cover one flat AutoMap-style map and one
-    // nested, fully-explicit map. These seven cover the rest — every remaining import ClassMap —
-    // so a future header rename or a dropped Optional() on any one of the 8 fails exactly its own
-    // pair of tests here, not just the two maps already exercised elsewhere.
+    // Alliances (above) and Lounges (above) already cover one flat map and one nested map. These
+    // six cover the rest — every remaining import ClassMap — so a future header rename or a
+    // dropped Optional() on any one of the 8 fails exactly its own pair of tests here, not just
+    // the two maps already exercised elsewhere.
 
     [Fact]
     public async Task ParseAirports_OldFormatCsv_ParsesWithNullVerificationValues()

@@ -35,6 +35,41 @@ public class ImportVerificationTests
     }
 
     /// <summary>
+    /// Final-review fix wave: a CSV cell padded with spaces (a common export/spreadsheet artifact)
+    /// must not carry the padding into the stored value.
+    /// </summary>
+    [Fact]
+    public void Resolve_AllThreePresent_PaddedWithSpaces_KeepsThemTrimmed()
+    {
+        var verifiedAt = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+
+        var outcome = ImportVerification.Resolve(verifiedAt, "  prior-admin  ", "  manual  ", actorId: "importing-admin");
+
+        Assert.False(outcome.IsRejected);
+        var entity = NewEntity();
+        outcome.Apply(entity);
+
+        Assert.Equal("prior-admin", entity.VerifiedBy);
+        Assert.Equal("manual", entity.VerificationSource);
+    }
+
+    /// <summary>
+    /// A whitespace-only cell is indistinguishable from an empty one for this purpose — it must
+    /// count as "missing", not "present", so a row with the other two columns filled is rejected
+    /// as partial rather than silently kept with a blank <c>VerifiedBy</c>.
+    /// </summary>
+    [Fact]
+    public void Resolve_VerifiedByIsWhitespaceOnly_CountsAsMissing_RejectsWithOtherTwoFilled()
+    {
+        var outcome = ImportVerification.Resolve(DateTime.UtcNow, "   ", "manual", actorId: "importing-admin");
+
+        Assert.True(outcome.IsRejected);
+        Assert.Contains("VerifiedBy", outcome.RejectionReason);
+        Assert.DoesNotContain("VerifiedAt", outcome.RejectionReason);
+        Assert.DoesNotContain("VerificationSource", outcome.RejectionReason);
+    }
+
+    /// <summary>
     /// The invariant this helper owns rather than trusts every caller to have already satisfied
     /// (#362 fix round 1): a caller other than the CSV parser — any future non-CSV caller of the 8
     /// import commands — could hand <see cref="Resolve"/> a <see cref="DateTimeKind.Local"/> value.

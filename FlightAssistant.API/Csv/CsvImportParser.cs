@@ -24,38 +24,10 @@ public static class CsvImportParser
     /// <see cref="ClassMap.Parameter(string)"/> entries, each <c>Optional()</c>;
     /// <c>VerifiedAt</c> additionally with UTC <see cref="DateTimeStyles"/>. Every import DTO is a
     /// positional record with no parameterless constructor, so CsvHelper always builds it via the
-    /// constructor.
-    ///
-    /// <para>
-    /// <b>#362 fix round 1: why this isn't AutoMap plus an override.</b> Two approaches were tried
-    /// and rejected before this one:
-    /// </para>
-    /// <list type="number">
-    /// <item><c>AutoMap(...)</c> then <see cref="ClassMap{T}.Map"/> to override the three members —
-    /// fails, because <c>Map()</c> configures a *property*, which CsvHelper never reads when
-    /// constructing a constructor-only type. AutoMap's own non-optional
-    /// <see cref="ClassMap.Parameter(string)"/> for the same name stays in force underneath it, so
-    /// an older CSV without the columns still failed header validation.</item>
-    /// <item><c>AutoMap(...)</c> then find AutoMap's own auto-registered <c>ParameterMap</c> in
-    /// <see cref="ClassMap.ParameterMaps"/> by name and configure it <em>in place</em>
-    /// (<c>Optional()</c>, UTC styles, even an explicit <c>.Name(...)</c>) — looks like it should
-    /// work (same object, <c>Data.IsOptional</c> confirmed <c>true</c> right up to the parse call),
-    /// but still throws the same header-validation error. Root cause, found via a minimal repro
-    /// isolated from this codebase: CsvHelper 33.1.0's <c>AutoMap</c> leaves every auto-registered
-    /// constructor parameter's <c>Data.Names</c> empty (confirmed by inspection, including for
-    /// parameters that resolve to a header without any override, like <c>Code</c>/<c>Name</c>), and
-    /// <c>CsvReader.ValidateHeader(ClassMap, List&lt;InvalidHeader&gt;)</c> resolves a header via
-    /// <c>GetFieldIndex(Data.Names, ...)</c> — which cannot resolve anything from an empty
-    /// collection, <c>Data.IsOptional</c> notwithstanding. This is a CsvHelper limitation for
-    /// constructor-parameter mapping, not a mistake in how it was invoked here.</item>
-    /// </list>
-    /// <para>
-    /// The explicit registration below — proved correct by the same repro — replaces AutoMap
-    /// entirely for the flat import maps rather than trying to patch its output; every constructor
-    /// parameter, verification columns included, is mapped fresh.
-    /// <c>ImportClassMapCompletenessTests</c> (API.Tests) guards all 8 maps against silently
-    /// dropping a future constructor parameter now that AutoMap no longer does that for free.
-    /// </para>
+    /// constructor — and in CsvHelper 33.1.0, a constructor parameter registered by <c>AutoMap</c>
+    /// cannot be made optional after the fact, so every parameter is listed explicitly instead
+    /// (see the maps in <c>ImportMaps.cs</c>). <c>ImportClassMapCompletenessTests</c> (API.Tests)
+    /// guards all 8 maps against silently dropping a future constructor parameter.
     /// </summary>
     public static void MapImportVerificationParameters<T>(this ClassMap<T> map)
     {
@@ -65,7 +37,7 @@ public static class CsvImportParser
     }
 
     /// <summary>
-    /// Parses a CSV into <typeparamref name="T"/> records via CsvHelper AutoMap.
+    /// Parses a CSV into <typeparamref name="T"/> records via the registered <typeparamref name="TMap"/>.
     /// </summary>
     /// <param name="rejectHeaders">
     /// Header names that must NOT be present in the CSV. Used to give a clear, actionable error

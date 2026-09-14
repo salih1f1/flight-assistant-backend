@@ -6,23 +6,11 @@ namespace FlightAssistant.API.Csv;
 // ── Flat entities ──────────────────────────────────────────────────────────────
 //
 // Every import DTO below is a positional record with no parameterless constructor, so CsvHelper
-// always builds it through the constructor. AutoMap over such a type registers one
-// ClassMap.Parameter(name) per constructor parameter, non-optional by default — and #362 fix
-// round 1 tried finding and mutating those three AutoMap-registered entries in place
-// (Optional()/DateTimeStyles, even .Name(...) too) rather than adding fresh ones. That mutation is
-// provably inert: CsvHelper 33.1.0's AutoMap leaves each auto-registered ParameterMap's
-// Data.Names empty (confirmed by inspection — printing it after AutoMap shows `[]` for every
-// parameter, including the ones that resolve to "Code"/"Name" as their header names without any
-// override), and header validation for a constructor parameter — CsvReader.ValidateHeader(ClassMap,
-// List<InvalidHeader>) — evaluates GetFieldIndex(Data.Names, ...), which cannot resolve a header
-// from an empty Names collection regardless of Data.IsOptional. A minimal repro outside this
-// codebase (AutoMap a record, then `ParameterMaps.Single(p => ...).Name(n).Optional()` on the
-// found entry) reproduces the exact same HeaderValidationException even with IsOptional
-// confirmed true and Name explicitly set on the same object right before parsing — so this is a
-// CsvHelper limitation for constructor-parameter mapping, not a mistake in how it was called here.
-// The fully explicit Parameter(...) registration below — proven correct by the same repro — is
-// the working alternative: registering fresh Parameter(name) entries (rather than reusing
-// AutoMap's) for every constructor parameter, verification columns included.
+// always builds it through the constructor. In CsvHelper 33.1.0, a constructor parameter
+// registered by AutoMap cannot be made optional — its ParameterMap.Data.Names stays empty even
+// after Optional() is set, so header validation can never resolve it. These maps therefore list
+// every constructor parameter explicitly (verification columns included) rather than relying on
+// AutoMap; ImportClassMapCompletenessTests guards that the list stays complete.
 
 public sealed class AllianceImportDtoMap : ClassMap<AllianceImportDto>
 {
