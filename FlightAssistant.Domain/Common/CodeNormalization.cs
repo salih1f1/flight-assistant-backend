@@ -5,7 +5,7 @@ namespace FlightAssistant.Domain.Common
     /// alliance) to their canonical form. These codes are case-insensitive on input but
     /// stored uppercase so lookups and joins are deterministic.
     /// </summary>
-    internal static class CodeNormalization
+    public static class CodeNormalization
     {
         /// <summary>Trim and uppercase a required code.</summary>
         public static string ToCanonicalCode(this string value) =>

@@ -1,5 +1,7 @@
 using FlightAssistant.Application.Commands.Admin.Verify;
 using FlightAssistant.Contracts.Requests.Admin;
+using FlightAssistant.Domain.Common;
+using FlightAssistant.Domain.Common.Interfaces;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
@@ -13,31 +15,50 @@ namespace FlightAssistant.API.Endpoints.Admin
     {
         public static void MapAdminVerifyEndpoints(this IEndpointRouteBuilder admin)
         {
-            MapVerifyEndpoint<Airport>(admin, "airports");
-            MapVerifyEndpoint<Airline>(admin, "airlines");
-            MapVerifyEndpoint<Alliance>(admin, "alliances");
-            MapVerifyEndpoint<Country>(admin, "countries");
-            MapVerifyEndpoint<Lounge>(admin, "lounges");
-            MapVerifyEndpoint<LoungeProvider>(admin, "lounge-providers");
-            MapVerifyEndpoint<LoyaltyProgram>(admin, "loyalty-programs");
-            MapVerifyEndpoint<LoyaltyProgramKind>(admin, "loyalty-program-kinds");
+            MapVerifyByIdEndpoint<Airport>(admin, "airports");
+            MapVerifyByIdEndpoint<Airline>(admin, "airlines");
+            MapVerifyByIdEndpoint<Alliance>(admin, "alliances");
+            MapVerifyByCodeEndpoint<Country>(admin, "countries");
+            MapVerifyByIdEndpoint<Lounge>(admin, "lounges");
+            MapVerifyByIdEndpoint<LoungeProvider>(admin, "lounge-providers");
+            MapVerifyByIdEndpoint<LoyaltyProgram>(admin, "loyalty-programs");
+            MapVerifyByIdEndpoint<LoyaltyProgramKind>(admin, "loyalty-program-kinds");
         }
 
-        private static void MapVerifyEndpoint<TEntity>(IEndpointRouteBuilder admin, string prefix)
-            where TEntity : class, Domain.Common.Interfaces.IVerifiable
+        private static void MapVerifyByIdEndpoint<TEntity>(IEndpointRouteBuilder admin, string prefix)
+            where TEntity : class, IVerifiable =>
+            MapVerifyEndpoint<TEntity>(admin, prefix, $"{prefix}/{{id:int}}/verify",
+                (int id, [FromBody] VerifyRequest req, ClaimsPrincipal user, IMediator mediator, CancellationToken ct) =>
+                    VerifyAsync<TEntity>(id, req, user, mediator, ct));
+
+        // Country is keyed by its 2-char Code, not an int id, so it gets its own route — the
+        // {code} route parameter carries no constraint, so a malformed code still matches the
+        // route and gets a real 404 rather than falling through to an unmatched-/admin-route
+        // CORS failure. The code is canonicalised with the same ToCanonicalCode() Country.Create
+        // uses, so "tr" finds "TR".
+        private static void MapVerifyByCodeEndpoint<TEntity>(IEndpointRouteBuilder admin, string prefix)
+            where TEntity : class, IVerifiable =>
+            MapVerifyEndpoint<TEntity>(admin, prefix, $"{prefix}/{{code}}/verify",
+                (string code, [FromBody] VerifyRequest req, ClaimsPrincipal user, IMediator mediator, CancellationToken ct) =>
+                    VerifyAsync<TEntity>(code.ToCanonicalCode(), req, user, mediator, ct));
+
+        private static void MapVerifyEndpoint<TEntity>(IEndpointRouteBuilder admin, string prefix, string routeTemplate, Delegate handler)
+            where TEntity : class, IVerifiable
         {
-            admin.MapPatch($"{prefix}/{{id:int}}/verify",
-                async (int id, [FromBody] VerifyRequest req, ClaimsPrincipal user, IMediator mediator, CancellationToken ct) =>
-                {
-                    var verifiedBy = user.FindFirstValue("oid") ?? user.FindFirstValue("sub") ?? "admin";
-                    var found = await mediator.Send(new VerifyEntityCommand<TEntity>(id, req.IsVerified, verifiedBy), ct);
-                    return found ? Results.NoContent() : Results.NotFound();
-                })
-            .WithName($"AdminVerify{typeof(TEntity).Name}")
-            .WithSummary($"Verify or unverify a {typeof(TEntity).Name}")
-            .WithTags($"Admin - {prefix.Replace("-", " ").Replace("s ", " ").Trim()}")
-            .Produces(204)
-            .ProducesProblem(404);
+            admin.MapPatch(routeTemplate, handler)
+                .WithName($"AdminVerify{typeof(TEntity).Name}")
+                .WithSummary($"Verify or unverify a {typeof(TEntity).Name}")
+                .WithTags($"Admin - {prefix.Replace("-", " ").Replace("s ", " ").Trim()}")
+                .Produces(204)
+                .ProducesProblem(404);
+        }
+
+        private static async Task<IResult> VerifyAsync<TEntity>(object key, VerifyRequest req, ClaimsPrincipal user, IMediator mediator, CancellationToken ct)
+            where TEntity : class, IVerifiable
+        {
+            var verifiedBy = user.FindFirstValue("oid") ?? user.FindFirstValue("sub") ?? "admin";
+            var found = await mediator.Send(new VerifyEntityCommand<TEntity>(key, req.IsVerified, verifiedBy), ct);
+            return found ? Results.NoContent() : Results.NotFound();
         }
     }
 }
