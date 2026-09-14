@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Lounges.Enums;
@@ -12,7 +13,8 @@ public record LoungeProviderLinkImportDto(string ProviderCode, string Role, stri
 public record LoungeImportDto(
     string Name, string AirportIata, string? Terminal, string? LocationHint, string? Hours,
     bool IsAirside, bool IsDomesticOnly, bool IsInternationalOnly, string? Amenities,
-    IReadOnlyList<LoungeProviderLinkImportDto> Providers);
+    IReadOnlyList<LoungeProviderLinkImportDto> Providers,
+    DateTime? VerifiedAt = null, string? VerifiedBy = null, string? VerificationSource = null);
 
 public record ImportLoungesCommand(IReadOnlyList<LoungeImportDto> Items) : IRequest<ImportResult>;
 
@@ -44,6 +46,8 @@ public sealed class ImportLoungesCommandValidator : AbstractValidator<ImportLoun
                 p.RuleFor(x => x.ProviderCode).NotEmpty().MaximumLength(32);
                 p.RuleFor(x => x.Role).NotEmpty();
             });
+            item.RuleFor(d => d.VerifiedBy).MaximumLength(255).When(d => d.VerifiedBy is not null);
+            item.RuleFor(d => d.VerificationSource).MaximumLength(100).When(d => d.VerificationSource is not null);
         });
     }
 }
@@ -52,11 +56,13 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
 {
     private readonly ILoungeRepository _loungeRepo;
     private readonly IRefDataRepository _refDataRepo;
+    private readonly IAdminContext _adminContext;
 
-    public ImportLoungesCommandHandler(ILoungeRepository loungeRepo, IRefDataRepository refDataRepo)
+    public ImportLoungesCommandHandler(ILoungeRepository loungeRepo, IRefDataRepository refDataRepo, IAdminContext adminContext)
     {
         _loungeRepo = loungeRepo;
         _refDataRepo = refDataRepo;
+        _adminContext = adminContext;
     }
 
     public async Task<ImportResult> Handle(ImportLoungesCommand request, CancellationToken ct)
@@ -69,6 +75,14 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
         {
             try
             {
+                var verification = ImportVerification.Resolve(
+                    dto.VerifiedAt, dto.VerifiedBy, dto.VerificationSource, _adminContext.ActorId);
+                if (verification.IsRejected)
+                {
+                    errors.Add($"Lounge '{dto.Name}': {verification.RejectionReason}");
+                    continue;
+                }
+
                 var airportId = await _refDataRepo.GetAirportIdByIataAsync(dto.AirportIata, ct);
                 if (airportId is null)
                 {
@@ -76,7 +90,7 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
                     continue;
                 }
 
-                var providerLinks = await ResolveProviderLinksAsync(dto, errors, ct);
+                var (providerLinks, anyProviderLinkSkipped) = await ResolveProviderLinksAsync(dto, errors, ct);
 
                 var existing = await _loungeRepo.FindByNaturalKeyWithProvidersAsync(airportId.Value, dto.Name, dto.Terminal, ct);
                 if (existing is null)
@@ -84,6 +98,15 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
                     var lounge = Lounge.Create(airportId.Value, dto.Name, dto.Terminal, dto.LocationHint,
                         dto.Hours, dto.IsAirside, dto.IsDomesticOnly, dto.IsInternationalOnly, dto.Amenities);
                     lounge.ReplaceAllProviders(providerLinks);
+                    // A row that fails for any other reason (here: a provider link dropped for an
+                    // unknown role or code) must not end verified — see the same rule the per-row
+                    // reject path above enforces for partial verification columns. Keeping the
+                    // CSV's manual/prior-admin history on a lounge CsvHelper couldn't fully build
+                    // would be exactly the borrowed-trust problem #362 exists to prevent.
+                    if (anyProviderLinkSkipped)
+                        lounge.Unverify();
+                    else
+                        verification.Apply(lounge);
                     await _loungeRepo.AddAsync(lounge, ct);
                     inserted++;
                 }
@@ -92,6 +115,12 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
                     existing.Update(dto.Name, dto.Terminal, dto.LocationHint, dto.Hours,
                         dto.IsAirside, dto.IsDomesticOnly, dto.IsInternationalOnly, dto.Amenities);
                     existing.ReplaceAllProviders(providerLinks);
+                    // Same rule for an existing lounge: its old verification does not survive a
+                    // re-import that couldn't fully resolve this row's providers.
+                    if (anyProviderLinkSkipped)
+                        existing.Unverify();
+                    else
+                        verification.Apply(existing);
                     updated++;
                 }
             }
@@ -105,15 +134,21 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
         return new ImportResult(inserted, updated, errors);
     }
 
-    private async Task<List<LoungeProviderLink>> ResolveProviderLinksAsync(
+    /// <summary>Resolves each row's provider links, and reports whether any of them had to be
+    /// dropped (unknown role or unknown provider code) — the caller must not verify a lounge whose
+    /// providers couldn't be fully resolved, per the same "no borrowed trust" rule the per-row
+    /// verification-column reject path enforces.</summary>
+    private async Task<(List<LoungeProviderLink> Links, bool AnySkipped)> ResolveProviderLinksAsync(
         LoungeImportDto dto, List<string> errors, CancellationToken ct)
     {
         var links = new List<LoungeProviderLink>();
+        var anySkipped = false;
         foreach (var p in dto.Providers)
         {
             if (!Enum.TryParse<LoungeProviderRole>(p.Role, ignoreCase: true, out var role))
             {
                 errors.Add($"Lounge '{dto.Name}': unknown provider role '{p.Role}' for '{p.ProviderCode}' — skipped");
+                anySkipped = true;
                 continue;
             }
 
@@ -121,11 +156,12 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
             if (provider is null)
             {
                 errors.Add($"Lounge '{dto.Name}': provider '{p.ProviderCode}' not found — skipped");
+                anySkipped = true;
                 continue;
             }
 
             links.Add(LoungeProviderLink.Create(0, provider.Id, role, p.Notes, p.MinAllianceTierCode));
         }
-        return links;
+        return (links, anySkipped);
     }
 }

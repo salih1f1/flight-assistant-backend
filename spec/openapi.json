@@ -1445,6 +1445,7 @@
           "Admin - Import"
         ],
         "summary": "Import alliances from CSV (run before countries, airports, airlines). Upserts by Code.",
+        "description": "Every row ends verified: kept as-is when the CSV's VerifiedAt/VerifiedBy/VerificationSource columns are all present, stamped `import` when none are present, or rejected into Errors (207, the rest of the file still imports) when only some are present.",
         "operationId": "ImportAlliances",
         "requestBody": {
           "content": {
@@ -1509,6 +1510,7 @@
           "Admin - Import"
         ],
         "summary": "Import countries from CSV (run after alliances). Upserts by Code.",
+        "description": "Every row ends verified: kept as-is when the CSV's VerifiedAt/VerifiedBy/VerificationSource columns are all present, stamped `import` when none are present, or rejected into Errors (207, the rest of the file still imports) when only some are present.",
         "operationId": "ImportCountries",
         "requestBody": {
           "content": {
@@ -1573,6 +1575,7 @@
           "Admin - Import"
         ],
         "summary": "Import airports from CSV (run after countries). Upserts by IATA.",
+        "description": "Every row ends verified: kept as-is when the CSV's VerifiedAt/VerifiedBy/VerificationSource columns are all present, stamped `import` when none are present, or rejected into Errors (207, the rest of the file still imports) when only some are present.",
         "operationId": "ImportAirports",
         "requestBody": {
           "content": {
@@ -1637,6 +1640,7 @@
           "Admin - Import"
         ],
         "summary": "Import airlines from CSV (run after airports). Upserts by IATA, fallback ICAO.",
+        "description": "Every row ends verified: kept as-is when the CSV's VerifiedAt/VerifiedBy/VerificationSource columns are all present, stamped `import` when none are present, or rejected into Errors (207, the rest of the file still imports) when only some are present.",
         "operationId": "ImportAirlines",
         "requestBody": {
           "content": {
@@ -1701,6 +1705,7 @@
           "Admin - Import"
         ],
         "summary": "Import lounge providers from CSV (run after airlines). Upserts by Code.",
+        "description": "Every row ends verified: kept as-is when the CSV's VerifiedAt/VerifiedBy/VerificationSource columns are all present, stamped `import` when none are present, or rejected into Errors (207, the rest of the file still imports) when only some are present.",
         "operationId": "ImportLoungeProviders",
         "requestBody": {
           "content": {
@@ -1765,6 +1770,7 @@
           "Admin - Import"
         ],
         "summary": "Import loyalty program kinds from CSV (run after airlines). Upserts by Code.",
+        "description": "Every row ends verified: kept as-is when the CSV's VerifiedAt/VerifiedBy/VerificationSource columns are all present, stamped `import` when none are present, or rejected into Errors (207, the rest of the file still imports) when only some are present.",
         "operationId": "ImportLoyaltyProgramKinds",
         "requestBody": {
           "content": {
@@ -1829,6 +1835,7 @@
           "Admin - Import"
         ],
         "summary": "Import lounges from CSV (run after lounge-providers). Providers column is JSON-encoded. Upserts by Name+AirportIata+Terminal.",
+        "description": "Every row ends verified: kept as-is when the CSV's VerifiedAt/VerifiedBy/VerificationSource columns are all present, stamped `import` when none are present, or rejected into Errors (207, the rest of the file still imports) when only some are present.",
         "operationId": "ImportLounges",
         "requestBody": {
           "content": {
@@ -1893,6 +1900,7 @@
           "Admin - Import"
         ],
         "summary": "Import loyalty programs from CSV (run after loyalty-program-kinds and airlines). Tiers column is JSON-encoded. Upserts by Code.",
+        "description": "Every row ends verified: kept as-is when the CSV's VerifiedAt/VerifiedBy/VerificationSource columns are all present, stamped `import` when none are present, or rejected into Errors (207, the rest of the file still imports) when only some are present.",
         "operationId": "ImportLoyaltyPrograms",
         "requestBody": {
           "content": {

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using FlightAssistant.API.Csv;
 using FlightAssistant.Application.Queries.Admin.Export;
@@ -11,8 +12,8 @@ public class CsvExportWriterTests
     {
         var data = new List<AllianceExportDto>
         {
-            new("SA", "Star Alliance"),
-            new("OW", "Oneworld")
+            new("SA", "Star Alliance", null, null, null),
+            new("OW", "Oneworld", null, null, null)
         };
 
         var bytes = CsvExportWriter.Write<AllianceExportDto, AllianceExportDtoMap>(data);
@@ -28,7 +29,7 @@ public class CsvExportWriterTests
     {
         var data = new List<AirportExportDto>
         {
-            new("SVO", null, "Sheremetyevo", "Moscow", "RU", null, null, null)
+            new("SVO", null, "Sheremetyevo", "Moscow", "RU", null, null, null, null, null, null)
         };
 
         var bytes = CsvExportWriter.Write<AirportExportDto, AirportExportDtoMap>(data);
@@ -45,7 +46,7 @@ public class CsvExportWriterTests
         var data = new List<LoungeExportDto>
         {
             new("The Lounge", "LHR", "T5", null, "24h", true, false, false, null,
-                [new LoungeProviderLinkExportDto("AMEX", "Primary", null, null)])
+                [new LoungeProviderLinkExportDto("AMEX", "Primary", null, null)], null, null, null)
         };
 
         var bytes = CsvExportWriter.Write<LoungeExportDto, LoungeExportDtoMap>(data);
@@ -62,7 +63,7 @@ public class CsvExportWriterTests
         var data = new List<LoyaltyProgramExportDto>
         {
             new("BAEC", "Executive Club", "AIRLINE", "BA", null,
-                [new LoyaltyTierExportDto("GOLD", "Gold", 1, null, null)])
+                [new LoyaltyTierExportDto("GOLD", "Gold", 1, null, null)], null, null, null)
         };
 
         var bytes = CsvExportWriter.Write<LoyaltyProgramExportDto, LoyaltyProgramExportDtoMap>(data);
@@ -70,5 +71,63 @@ public class CsvExportWriterTests
 
         Assert.Contains("BAEC", text);
         Assert.Contains("GOLD", text);
+    }
+
+    // ── #362: verification columns ───────────────────────────────────────────
+
+    [Fact]
+    public void WriteAlliances_VerificationColumns_ArePresentInOrderAfterExistingColumns()
+    {
+        var verifiedAt = new DateTime(2026, 9, 14, 20, 31, 12, 123, DateTimeKind.Utc).AddTicks(4560);
+        var data = new List<AllianceExportDto>
+        {
+            new("SA", "Star Alliance", verifiedAt, "admin@example.com", "manual")
+        };
+
+        var bytes = CsvExportWriter.Write<AllianceExportDto, AllianceExportDtoMap>(data);
+        var text = Encoding.UTF8.GetString(bytes);
+        var header = text.Split('\n')[0].TrimEnd('\r').TrimStart('﻿');
+
+        Assert.Equal("Code,Name,VerifiedAt,VerifiedBy,VerificationSource", header);
+        Assert.Contains("admin@example.com,manual", text);
+    }
+
+    [Fact]
+    public void WriteAlliances_VerifiedAt_IsWrittenInRoundTripUtcFormat()
+    {
+        var verifiedAt = new DateTime(2026, 9, 14, 20, 31, 12, 123, DateTimeKind.Utc).AddTicks(4560);
+        var data = new List<AllianceExportDto> { new("SA", "Star Alliance", verifiedAt, "admin", "manual") };
+
+        var bytes = CsvExportWriter.Write<AllianceExportDto, AllianceExportDtoMap>(data);
+        var text = Encoding.UTF8.GetString(bytes);
+        var dataLine = text.Split('\n')[1].TrimEnd('\r');
+        var verifiedAtField = dataLine.Split(',')[2];
+
+        // The "O" round-trip format: e.g. 2026-09-14T20:31:12.1234560Z — parsing it back with
+        // round-trip styles must reproduce the exact same UTC instant.
+        var parsedBack = DateTime.ParseExact(verifiedAtField, "O", CultureInfo.InvariantCulture,
+            DateTimeStyles.RoundtripKind);
+        Assert.Equal(DateTimeKind.Utc, parsedBack.Kind);
+        Assert.Equal(verifiedAt, parsedBack);
+    }
+
+    [Fact]
+    public void WriteAirports_NullVerifiedAt_WritesEmptyField()
+    {
+        var data = new List<AirportExportDto>
+        {
+            new("LHR", "EGLL", "Heathrow", "London", "GB", null, null, null, null, null, null)
+        };
+
+        var bytes = CsvExportWriter.Write<AirportExportDto, AirportExportDtoMap>(data);
+        var text = Encoding.UTF8.GetString(bytes);
+        var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var dataRowFields = lines[1].TrimEnd('\r').Split(',');
+
+        // The trailing VerifiedAt, VerifiedBy, VerificationSource columns — every prior field
+        // (Iata, Icao, ..., ElevationFt) is also null here, so a substring check like
+        // DoesNotContain("null") can't distinguish "wrote empty fields" from "wrote nothing at
+        // all"; asserting the exact trailing fields is the only version that can actually fail.
+        Assert.Equal(["", "", ""], dataRowFields[^3..]);
     }
 }

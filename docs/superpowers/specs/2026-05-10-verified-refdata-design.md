@@ -26,7 +26,7 @@ Deprecate the startup seeder, add a `Verified` flag (with audit metadata) to all
 - Hiding unverified data from end users (verification is a pure data quality flag; all records are served regardless).
 - Verified badge display in the client app (future work).
 - Bulk verify (all records of a type at once).
-- Import of verification state — imported records always arrive as unverified in the target environment.
+- Import of verification state — imported records always arrive as unverified in the target environment. Superseded by 2026-09-14-auto-verification-design.md §6/§7.
 
 ---
 

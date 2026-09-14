@@ -729,6 +729,150 @@ public class ValidatorEdgeCaseTests
             new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", "BA", null, [tier])]));
     }
 
+    // ── Import: verification columns (#362) — VerifiedBy ≤ 255, VerificationSource ≤ 100 ──────
+
+    [Fact]
+    public void ImportAlliances_VerifiedByExceeds255_Fails()
+    {
+        var v = new ImportAlliancesCommandValidator();
+        AssertInvalid(v, new ImportAlliancesCommand([
+            new AllianceImportDto("SA", "Star Alliance", VerifiedBy: new string('A', 256))]), "VerifiedBy");
+    }
+
+    [Fact]
+    public void ImportAlliances_VerificationSourceExceeds100_Fails()
+    {
+        var v = new ImportAlliancesCommandValidator();
+        AssertInvalid(v, new ImportAlliancesCommand([
+            new AllianceImportDto("SA", "Star Alliance", VerificationSource: new string('A', 101))]), "VerificationSource");
+    }
+
+    [Fact]
+    public void ImportCountries_VerifiedByExceeds255_Fails()
+    {
+        var v = new ImportCountriesCommandValidator();
+        AssertInvalid(v, new ImportCountriesCommand([
+            new CountryImportDto("GB", "United Kingdom", null, null, null, null, null, null, null,
+                VerifiedBy: new string('A', 256))]), "VerifiedBy");
+    }
+
+    [Fact]
+    public void ImportCountries_VerificationSourceExceeds100_Fails()
+    {
+        var v = new ImportCountriesCommandValidator();
+        AssertInvalid(v, new ImportCountriesCommand([
+            new CountryImportDto("GB", "United Kingdom", null, null, null, null, null, null, null,
+                VerificationSource: new string('A', 101))]), "VerificationSource");
+    }
+
+    [Fact]
+    public void ImportAirports_VerifiedByExceeds255_Fails()
+    {
+        var v = new ImportAirportsCommandValidator();
+        AssertInvalid(v, new ImportAirportsCommand([
+            new AirportImportDto("LHR", "EGLL", "Heathrow", "London", "GB", null, null, null,
+                VerifiedBy: new string('A', 256))]), "VerifiedBy");
+    }
+
+    [Fact]
+    public void ImportAirports_VerificationSourceExceeds100_Fails()
+    {
+        var v = new ImportAirportsCommandValidator();
+        AssertInvalid(v, new ImportAirportsCommand([
+            new AirportImportDto("LHR", "EGLL", "Heathrow", "London", "GB", null, null, null,
+                VerificationSource: new string('A', 101))]), "VerificationSource");
+    }
+
+    [Fact]
+    public void ImportAirlines_VerifiedByExceeds255_Fails()
+    {
+        var v = new ImportAirlinesCommandValidator();
+        AssertInvalid(v, new ImportAirlinesCommand([
+            new AirlineImportDto("BA", null, "British Airways", "GB", null,
+                VerifiedBy: new string('A', 256))]), "VerifiedBy");
+    }
+
+    [Fact]
+    public void ImportAirlines_VerificationSourceExceeds100_Fails()
+    {
+        var v = new ImportAirlinesCommandValidator();
+        AssertInvalid(v, new ImportAirlinesCommand([
+            new AirlineImportDto("BA", null, "British Airways", "GB", null,
+                VerificationSource: new string('A', 101))]), "VerificationSource");
+    }
+
+    [Fact]
+    public void ImportLoungeProviders_VerifiedByExceeds255_Fails()
+    {
+        var v = new ImportLoungeProvidersCommandValidator();
+        AssertInvalid(v, new ImportLoungeProvidersCommand([
+            new LoungeProviderImportDto("AMEX", "American Express", "Card", null,
+                VerifiedBy: new string('A', 256))]), "VerifiedBy");
+    }
+
+    [Fact]
+    public void ImportLoungeProviders_VerificationSourceExceeds100_Fails()
+    {
+        var v = new ImportLoungeProvidersCommandValidator();
+        AssertInvalid(v, new ImportLoungeProvidersCommand([
+            new LoungeProviderImportDto("AMEX", "American Express", "Card", null,
+                VerificationSource: new string('A', 101))]), "VerificationSource");
+    }
+
+    [Fact]
+    public void ImportLoungeProviderKinds_VerifiedByExceeds255_Fails()
+    {
+        var v = new ImportLoyaltyProgramKindsCommandValidator();
+        AssertInvalid(v, new ImportLoyaltyProgramKindsCommand([
+            new LoyaltyProgramKindImportDto("AIRLINE", "Airline", null,
+                VerifiedBy: new string('A', 256))]), "VerifiedBy");
+    }
+
+    [Fact]
+    public void ImportLoyaltyProgramKinds_VerificationSourceExceeds100_Fails()
+    {
+        var v = new ImportLoyaltyProgramKindsCommandValidator();
+        AssertInvalid(v, new ImportLoyaltyProgramKindsCommand([
+            new LoyaltyProgramKindImportDto("AIRLINE", "Airline", null,
+                VerificationSource: new string('A', 101))]), "VerificationSource");
+    }
+
+    [Fact]
+    public void ImportLounges_VerifiedByExceeds255_Fails()
+    {
+        var v = new ImportLoungesCommandValidator();
+        var dto = new LoungeImportDto("Test Lounge", "LHR", null, null, null, true, false, false, null, [],
+            VerifiedBy: new string('A', 256));
+        AssertInvalid(v, new ImportLoungesCommand([dto]), "VerifiedBy");
+    }
+
+    [Fact]
+    public void ImportLounges_VerificationSourceExceeds100_Fails()
+    {
+        var v = new ImportLoungesCommandValidator();
+        var dto = new LoungeImportDto("Test Lounge", "LHR", null, null, null, true, false, false, null, [],
+            VerificationSource: new string('A', 101));
+        AssertInvalid(v, new ImportLoungesCommand([dto]), "VerificationSource");
+    }
+
+    [Fact]
+    public void ImportLoyaltyPrograms_VerifiedByExceeds255_Fails()
+    {
+        var v = new ImportLoyaltyProgramsCommandValidator();
+        var dto = new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", "BA", null, [],
+            VerifiedBy: new string('A', 256));
+        AssertInvalid(v, new ImportLoyaltyProgramsCommand([dto]), "VerifiedBy");
+    }
+
+    [Fact]
+    public void ImportLoyaltyPrograms_VerificationSourceExceeds100_Fails()
+    {
+        var v = new ImportLoyaltyProgramsCommandValidator();
+        var dto = new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", "BA", null, [],
+            VerificationSource: new string('A', 101));
+        AssertInvalid(v, new ImportLoyaltyProgramsCommand([dto]), "VerificationSource");
+    }
+
     // ── Admin: Delete commands ────────────────────────────────────────────────
 
     [Fact]

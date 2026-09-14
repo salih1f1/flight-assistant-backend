@@ -24,6 +24,15 @@ namespace FlightAssistant.Domain.Common.Interfaces
         /// and <see cref="VerificationSource"/>; clears <see cref="VerificationIssue"/>.</summary>
         void Verify(string verifiedBy, string source);
 
+        /// <summary>
+        /// As <see cref="Verify(string, string)"/>, except <see cref="VerifiedAt"/> is set to
+        /// <paramref name="verifiedAtUtc"/> rather than <c>DateTime.UtcNow</c> — for CSV import
+        /// (#362), which keeps a row's own <c>VerifiedAt</c> from the file rather than restamping
+        /// the moment of import. <see cref="Verify(string, string)"/> delegates to this overload
+        /// with <c>DateTime.UtcNow</c> so the two cannot drift.
+        /// </summary>
+        void Verify(string verifiedBy, string source, DateTime verifiedAtUtc);
+
         /// <summary>Clears all five verification properties.</summary>
         void Unverify();
 

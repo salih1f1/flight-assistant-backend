@@ -6,7 +6,8 @@ namespace FlightAssistant.Application.Queries.Admin.Export;
 
 public record CountryExportDto(
     string Code, string Name, string? Alpha3, int? NumericCode,
-    string? Region, string? Subregion, bool? IsEU, bool? IsSchengen, bool? IsEEA);
+    string? Region, string? Subregion, bool? IsEU, bool? IsSchengen, bool? IsEEA,
+    DateTime? VerifiedAt, string? VerifiedBy, string? VerificationSource);
 
 public record ExportCountriesQuery : IRequest<IReadOnlyList<CountryExportDto>>;
 
@@ -20,6 +21,7 @@ public sealed class ExportCountriesQueryHandler : IRequestHandler<ExportCountrie
         var countries = await _repo.GetAllVerifiedAsync(ct);
         return countries.Select(c => new CountryExportDto(
             c.Code, c.Name, c.Alpha3, c.NumericCode,
-            c.Region, c.Subregion, c.IsEU, c.IsSchengen, c.IsEEA)).ToList();
+            c.Region, c.Subregion, c.IsEU, c.IsSchengen, c.IsEEA,
+            c.VerifiedAt, c.VerifiedBy, c.VerificationSource)).ToList();
     }
 }

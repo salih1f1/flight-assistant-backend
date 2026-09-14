@@ -8,7 +8,8 @@ public record LoungeProviderLinkExportDto(string ProviderCode, string Role, stri
 public record LoungeExportDto(
     string Name, string AirportIata, string? Terminal, string? LocationHint, string? Hours,
     bool IsAirside, bool IsDomesticOnly, bool IsInternationalOnly, string? Amenities,
-    IReadOnlyList<LoungeProviderLinkExportDto> Providers);
+    IReadOnlyList<LoungeProviderLinkExportDto> Providers,
+    DateTime? VerifiedAt, string? VerifiedBy, string? VerificationSource);
 
 public record ExportLoungesQuery : IRequest<IReadOnlyList<LoungeExportDto>>;
 
@@ -45,7 +46,8 @@ public sealed class ExportLoungesQueryHandler : IRequestHandler<ExportLoungesQue
                 providerCodeMap.GetValueOrDefault(p.ProviderId, p.ProviderId.ToString()),
                 p.Role.ToString(),
                 p.MinAllianceTierCode,
-                p.Notes)).ToList()
+                p.Notes)).ToList(),
+            l.VerifiedAt, l.VerifiedBy, l.VerificationSource
         )).ToList();
     }
 }

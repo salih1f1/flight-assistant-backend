@@ -9,9 +9,35 @@ namespace FlightAssistant.API.Csv;
 
 public static class CsvImportParser
 {
+    /// <summary>
+    /// Style used to parse the <c>VerifiedAt</c> import column (#362): without
+    /// <see cref="DateTimeStyles.AdjustToUniversal"/>/<see cref="DateTimeStyles.AssumeUniversal"/>,
+    /// CsvHelper's default <see cref="DateTime"/> parsing can yield
+    /// <see cref="DateTimeKind.Unspecified"/> — the bug class CLAUDE.md documents for date query
+    /// parameters, which Npgsql refuses against a <c>timestamptz</c> column, applies equally here.
+    /// </summary>
+    private const DateTimeStyles VerifiedAtStyles = DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal;
 
     /// <summary>
-    /// Parses a CSV into <typeparamref name="T"/> records via CsvHelper AutoMap.
+    /// Registers the three optional verification columns (#362) — <c>VerifiedAt</c>/
+    /// <c>VerifiedBy</c>/<c>VerificationSource</c> — as fresh, explicit
+    /// <see cref="ClassMap.Parameter(string)"/> entries, each <c>Optional()</c>;
+    /// <c>VerifiedAt</c> additionally with UTC <see cref="DateTimeStyles"/>. Every import DTO is a
+    /// positional record with no parameterless constructor, so CsvHelper always builds it via the
+    /// constructor — and in CsvHelper 33.1.0, a constructor parameter registered by <c>AutoMap</c>
+    /// cannot be made optional after the fact, so every parameter is listed explicitly instead
+    /// (see the maps in <c>ImportMaps.cs</c>). <c>ImportClassMapCompletenessTests</c> (API.Tests)
+    /// guards all 8 maps against silently dropping a future constructor parameter.
+    /// </summary>
+    public static void MapImportVerificationParameters<T>(this ClassMap<T> map)
+    {
+        map.Parameter("VerifiedAt").Name("VerifiedAt").TypeConverterOption.DateTimeStyles(VerifiedAtStyles).Optional();
+        map.Parameter("VerifiedBy").Name("VerifiedBy").Optional();
+        map.Parameter("VerificationSource").Name("VerificationSource").Optional();
+    }
+
+    /// <summary>
+    /// Parses a CSV into <typeparamref name="T"/> records via the registered <typeparamref name="TMap"/>.
     /// </summary>
     /// <param name="rejectHeaders">
     /// Header names that must NOT be present in the CSV. Used to give a clear, actionable error

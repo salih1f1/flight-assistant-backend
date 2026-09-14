@@ -1,3 +1,4 @@
+using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Lounges.Enums;
@@ -6,7 +7,9 @@ using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Import;
 
-public record LoungeProviderImportDto(string Code, string Name, string Kind, string? Description);
+public record LoungeProviderImportDto(
+    string Code, string Name, string Kind, string? Description,
+    DateTime? VerifiedAt = null, string? VerifiedBy = null, string? VerificationSource = null);
 
 public record ImportLoungeProvidersCommand(IReadOnlyList<LoungeProviderImportDto> Items) : IRequest<ImportResult>;
 
@@ -24,6 +27,8 @@ public sealed class ImportLoungeProvidersCommandValidator : AbstractValidator<Im
             item.RuleFor(d => d.Kind)
                 .Must(k => ValidKinds.Contains(k, StringComparer.OrdinalIgnoreCase))
                 .WithMessage("'{PropertyName}' must be a valid LoungeProviderKind value.");
+            item.RuleFor(d => d.VerifiedBy).MaximumLength(255).When(d => d.VerifiedBy is not null);
+            item.RuleFor(d => d.VerificationSource).MaximumLength(100).When(d => d.VerificationSource is not null);
         });
     }
 }
@@ -31,7 +36,13 @@ public sealed class ImportLoungeProvidersCommandValidator : AbstractValidator<Im
 public sealed class ImportLoungeProvidersCommandHandler : IRequestHandler<ImportLoungeProvidersCommand, ImportResult>
 {
     private readonly ILoungeRepository _repo;
-    public ImportLoungeProvidersCommandHandler(ILoungeRepository repo) => _repo = repo;
+    private readonly IAdminContext _adminContext;
+
+    public ImportLoungeProvidersCommandHandler(ILoungeRepository repo, IAdminContext adminContext)
+    {
+        _repo = repo;
+        _adminContext = adminContext;
+    }
 
     public async Task<ImportResult> Handle(ImportLoungeProvidersCommand request, CancellationToken ct)
     {
@@ -49,15 +60,26 @@ public sealed class ImportLoungeProvidersCommandHandler : IRequestHandler<Import
                     continue;
                 }
 
+                var verification = ImportVerification.Resolve(
+                    dto.VerifiedAt, dto.VerifiedBy, dto.VerificationSource, _adminContext.ActorId);
+                if (verification.IsRejected)
+                {
+                    errors.Add($"LoungeProvider '{dto.Code}': {verification.RejectionReason}");
+                    continue;
+                }
+
                 var existing = await _repo.FindProviderByCodeAsync(dto.Code, ct);
                 if (existing is null)
                 {
-                    await _repo.AddProviderAsync(LoungeProvider.Create(dto.Code, dto.Name, kind, dto.Description), ct);
+                    var provider = LoungeProvider.Create(dto.Code, dto.Name, kind, dto.Description);
+                    verification.Apply(provider);
+                    await _repo.AddProviderAsync(provider, ct);
                     inserted++;
                 }
                 else
                 {
                     existing.Update(dto.Name, kind, dto.Description);
+                    verification.Apply(existing);
                     updated++;
                 }
             }
