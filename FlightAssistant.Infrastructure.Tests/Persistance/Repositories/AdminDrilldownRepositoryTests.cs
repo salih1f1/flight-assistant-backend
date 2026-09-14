@@ -5,13 +5,11 @@ using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
-using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using FlightAssistant.Infrastructure.Tests.TestSupport;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.Extensions.Options;
 
 namespace FlightAssistant.Infrastructure.Tests.Persistance.Repositories;
 
@@ -170,7 +168,7 @@ public class AdminDrilldownRepositoryTests : PostgresTestBase
         {
             var handler = new GetAdminTravelerDetailQueryHandler(
                 new AdminTravelerRepository(db),
-                new FlightRepository(db, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" })),
+                new FlightRepository(db, TimeProvider.System),
                 new LoyaltyRepository(db));
 
             var result = await handler.Handle(new GetAdminTravelerDetailQuery(travelerId), CancellationToken.None);
@@ -195,7 +193,7 @@ public class AdminDrilldownRepositoryTests : PostgresTestBase
         {
             var handler = new GetAdminTravelerDetailQueryHandler(
                 new AdminTravelerRepository(db),
-                new FlightRepository(db, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" })),
+                new FlightRepository(db, TimeProvider.System),
                 new LoyaltyRepository(db));
 
             var result = await handler.Handle(new GetAdminTravelerDetailQuery(Guid.NewGuid()), CancellationToken.None);
@@ -240,7 +238,7 @@ public class AdminDrilldownRepositoryTests : PostgresTestBase
         var (db, counter) = CreateCountingDbContext();
         await using (db)
         {
-            var repo = new FlightRepository(db, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" }));
+            var repo = new FlightRepository(db, TimeProvider.System);
 
             var result = await repo.GetRecentTravelerFlightsAsync(travelerId, limit: 2, CancellationToken.None);
 
@@ -294,7 +292,7 @@ public class AdminDrilldownRepositoryTests : PostgresTestBase
         {
             var handler = new GetAdminTravelerDetailQueryHandler(
                 new AdminTravelerRepository(db),
-                new FlightRepository(db, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" })),
+                new FlightRepository(db, TimeProvider.System),
                 new LoyaltyRepository(db));
 
             var result = await handler.Handle(new GetAdminTravelerDetailQuery(travelerId), CancellationToken.None);
@@ -331,8 +329,7 @@ public class AdminDrilldownRepositoryTests : PostgresTestBase
         var (db, counter) = CreateCountingDbContext();
         await using (db)
         {
-            var handler = new GetAdminFlightDetailQueryHandler(new AdminFlightRepository(db), new FlightRepository(
-                db, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" })));
+            var handler = new GetAdminFlightDetailQueryHandler(new AdminFlightRepository(db), new FlightRepository(db, TimeProvider.System));
 
             var result = await handler.Handle(new GetAdminFlightDetailQuery(999_999), CancellationToken.None);
 
@@ -370,8 +367,7 @@ public class AdminDrilldownRepositoryTests : PostgresTestBase
         var (queryDb, _) = CreateCountingDbContext();
         await using (queryDb)
         {
-            var handler = new GetAdminFlightDetailQueryHandler(new AdminFlightRepository(queryDb), new FlightRepository(
-                queryDb, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" })));
+            var handler = new GetAdminFlightDetailQueryHandler(new AdminFlightRepository(queryDb), new FlightRepository(queryDb, TimeProvider.System));
 
             var result = await handler.Handle(new GetAdminFlightDetailQuery(flightId), CancellationToken.None);
 
@@ -423,8 +419,7 @@ public class AdminDrilldownRepositoryTests : PostgresTestBase
         var (db, _) = CreateCountingDbContext();
         await using (db)
         {
-            var handler = new GetAdminFlightDetailQueryHandler(new AdminFlightRepository(db), new FlightRepository(
-                db, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" })));
+            var handler = new GetAdminFlightDetailQueryHandler(new AdminFlightRepository(db), new FlightRepository(db, TimeProvider.System));
 
             var result = await handler.Handle(new GetAdminFlightDetailQuery(flightId), CancellationToken.None);
 
@@ -461,8 +456,7 @@ public class AdminDrilldownRepositoryTests : PostgresTestBase
         var (db, _) = CreateCountingDbContext();
         await using (db)
         {
-            var handler = new GetAdminFlightDetailQueryHandler(new AdminFlightRepository(db), new FlightRepository(
-                db, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" })));
+            var handler = new GetAdminFlightDetailQueryHandler(new AdminFlightRepository(db), new FlightRepository(db, TimeProvider.System));
 
             var result = await handler.Handle(new GetAdminFlightDetailQuery(flightId), CancellationToken.None);
 
@@ -497,7 +491,7 @@ public class AdminDrilldownRepositoryTests : PostgresTestBase
         var (db, counter) = CreateCountingDbContext();
         await using (db)
         {
-            var repo = new FlightRepository(db, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" }));
+            var repo = new FlightRepository(db, TimeProvider.System);
 
             var result = await repo.GetRecentFlightStatusEventsAsync(flightId, limit: 2, CancellationToken.None);
 
@@ -534,8 +528,7 @@ public class AdminDrilldownRepositoryTests : PostgresTestBase
         var (db, counter) = CreateCountingDbContext();
         await using (db)
         {
-            var handler = new GetAdminFlightDetailQueryHandler(new AdminFlightRepository(db), new FlightRepository(
-                db, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" })));
+            var handler = new GetAdminFlightDetailQueryHandler(new AdminFlightRepository(db), new FlightRepository(db, TimeProvider.System));
 
             var result = await handler.Handle(new GetAdminFlightDetailQuery(flightId), CancellationToken.None);
 

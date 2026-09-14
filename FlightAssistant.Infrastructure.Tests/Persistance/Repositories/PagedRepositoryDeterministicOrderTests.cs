@@ -2,13 +2,11 @@ using System.Data.Common;
 using System.Text.RegularExpressions;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
-using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using FlightAssistant.Infrastructure.Tests.TestSupport;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.Extensions.Options;
 
 namespace FlightAssistant.Infrastructure.Tests.Persistance.Repositories;
 
@@ -88,7 +86,7 @@ public class PagedRepositoryDeterministicOrderTests : PostgresTestBase
     }
 
     private static FlightRepository NewFlightRepository(FlightAssistantDbContext db) =>
-        new(db, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" }));
+        new(db, TimeProvider.System);
 
     // ── The paged ORDER BY ends on a unique column ──────────────────────────────
 

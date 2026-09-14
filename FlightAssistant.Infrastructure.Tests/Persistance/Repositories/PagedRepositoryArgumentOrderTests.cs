@@ -3,11 +3,9 @@ using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
-using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 
 namespace FlightAssistant.Infrastructure.Tests.Persistance.Repositories;
 
@@ -124,9 +122,8 @@ public class PagedRepositoryArgumentOrderTests
             TravelerFlight.Create(traveler.Id, flight2.Id));
         await db.SaveChangesAsync();
 
-        // TimeProvider/AeroApiOptions are unused by GetTravelerFlightsAsync (only
-        // GetActiveTrackedFlightsAsync reads them) — dummy values are enough.
-        var repo = new FlightRepository(db, TimeProvider.System, Options.Create(new AeroApiOptions { ApiKey = "dummy" }));
+        // TimeProvider is unused by GetTravelerFlightsAsync — a dummy value is enough.
+        var repo = new FlightRepository(db, TimeProvider.System);
         var (firstPage, total) = await repo.GetTravelerFlightsAsync(traveler.Id, page: 1, pageSize: 1);
         var (secondPage, _) = await repo.GetTravelerFlightsAsync(traveler.Id, page: 2, pageSize: 1);
 

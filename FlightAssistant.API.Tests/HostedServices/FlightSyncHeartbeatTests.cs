@@ -217,20 +217,4 @@ public class FlightSyncHeartbeatTests
 
         Assert.False(incoherentSnapshotObserved, $"Observed an incoherent snapshot: {offendingSnapshot}");
     }
-
-    [Fact]
-    public void IsActiveForFastPoll_StillWorks_UnaffectedByHeartbeatChanges()
-    {
-        // Guard against accidentally touching the untouched static predicate while wiring the
-        // heartbeat through FlightStatusSyncBackgroundService.
-        var now = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
-
-        var result = FlightStatusSyncBackgroundService.IsActiveForFastPoll(
-            scheduledDepartureUtc: now.AddHours(2),
-            scheduledArrivalUtc: now.AddHours(4),
-            actualArrivalUtc: null,
-            now: now);
-
-        Assert.True(result);
-    }
 }

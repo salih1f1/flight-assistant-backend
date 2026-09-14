@@ -1,31 +1,41 @@
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Interfaces.Repositories;
 using MediatR;
+using Microsoft.Extensions.Options;
 
 namespace FlightAssistant.API.HostedServices
 {
+    /// <summary>
+    /// Syncs tracked flights whose <c>NextSyncDueUtc</c> has passed, oldest due first (#356, spec
+    /// §2.2). Each flight's own sync mode sets when it's next due, so a flight near departure no
+    /// longer speeds up every other flight (#344), and a finished or not-yet-answerable flight makes
+    /// no call (#343, #345).
+    /// </summary>
     public class FlightStatusSyncBackgroundService : BackgroundService
     {
         private readonly IServiceScopeFactory _scopeFactory;
-        private readonly IConfiguration _config;
+        private readonly FlightSyncOptions _options;
+        private readonly TimeProvider _timeProvider;
         private readonly ILogger<FlightStatusSyncBackgroundService> _log;
         private readonly FlightSyncHeartbeat _heartbeat;
 
         public FlightStatusSyncBackgroundService(
             IServiceScopeFactory scopeFactory,
-            IConfiguration config,
+            IOptions<FlightSyncOptions> options,
+            TimeProvider timeProvider,
             ILogger<FlightStatusSyncBackgroundService> log,
             FlightSyncHeartbeat heartbeat)
         {
             _scopeFactory = scopeFactory;
-            _config = config;
+            _options = options.Value;
+            _timeProvider = timeProvider;
             _log = log;
             _heartbeat = heartbeat;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            if (!_config.GetValue("FlightSync:Enabled", true))
+            if (!_options.Enabled)
             {
                 _log.LogInformation("FlightStatusSyncBackgroundService is disabled via config.");
                 // Heartbeat is left untouched: it must stay NeverRun so the admin health endpoint
@@ -33,89 +43,82 @@ namespace FlightAssistant.API.HostedServices
                 return;
             }
 
-            while (!stoppingToken.IsCancellationRequested)
+            // PeriodicTimer doesn't queue missed ticks: a run longer than the interval is followed
+            // straight away by the next one. Due flights are taken oldest first, so none is skipped.
+            using var timer = new PeriodicTimer(_options.LoopInterval, _timeProvider);
+            try
             {
-                _heartbeat.MarkRunStarted();
-
-                TimeSpan delay;
-                try
+                do
                 {
-                    var result = await RunBatchAsync(stoppingToken);
-                    delay = result.Delay;
-                    _heartbeat.MarkRunSucceeded(result.Processed, result.Failed, DateTime.UtcNow + delay);
+                    await RunAndRecordAsync(stoppingToken);
                 }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    // Clean shutdown, not a failed run — heartbeat is left as-is.
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    var retryIn = _config.GetValue("FlightSync:Interval", TimeSpan.FromMinutes(10));
-                    _log.LogError(ex, "Flight status sync batch failed. Retrying in {Interval}.", retryIn);
-                    _heartbeat.MarkRunFailed(ex, DateTime.UtcNow + retryIn);
-                    delay = retryIn;
-                }
-
-                await Task.Delay(delay, stoppingToken);
+                while (await timer.WaitForNextTickAsync(stoppingToken));
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                // Clean shutdown, not a failed run — heartbeat is left as-is.
             }
         }
 
-        /// <summary>Outcome of a single sync batch: the delay before the next run, how many flights
-        /// the batch worked through, and how many of those threw in the per-flight
-        /// catch-and-continue loop.</summary>
-        private record BatchResult(TimeSpan Delay, int Processed, int Failed);
-
-        private async Task<BatchResult> RunBatchAsync(CancellationToken ct)
+        private async Task RunAndRecordAsync(CancellationToken ct)
         {
-            using var scope = _scopeFactory.CreateScope();
-            var flightRepo = scope.ServiceProvider.GetRequiredService<IFlightRepository>();
-            var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+            _heartbeat.MarkRunStarted();
+            var nextRunDueUtc = _timeProvider.GetUtcNow().UtcDateTime + _options.LoopInterval;
 
-            var flights = await flightRepo.GetActiveTrackedFlightsAsync(ct);
-
-            var now = DateTime.UtcNow;
-            var hasNearDeparture = false;
-            var failed = 0;
-
-            foreach (var flight in flights)
+            try
             {
-                try
-                {
-                    await mediator.Send(new SyncFlightStatusCommand(null, flight.Id, SyncTrigger.Scheduled), ct);
-                    _log.LogInformation("Synced flight {FlightId} ({FlightNumber})", flight.Id, flight.FlightNumber);
-                }
-                catch (Exception ex)
-                {
-                    _log.LogError(ex, "Failed to sync flight {FlightId}", flight.Id);
-                    failed++;
-                }
-
-                if (IsActiveForFastPoll(flight.ScheduledDepartureUtc, flight.ScheduledArrivalUtc, flight.ActualArrivalUtc, now))
-                    hasNearDeparture = true;
+                var result = await RunOnceAsync(ct);
+                _heartbeat.MarkRunSucceeded(result.Processed, result.Failed, nextRunDueUtc);
             }
-
-            var normalInterval = _config.GetValue("FlightSync:Interval", TimeSpan.FromMinutes(10));
-            var nearDeptInterval = _config.GetValue("FlightSync:NearDepartureInterval", TimeSpan.FromMinutes(2));
-            var delay = hasNearDeparture ? nearDeptInterval : normalInterval;
-            return new BatchResult(delay, flights.Count, failed);
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Flight status sync run failed. Retrying in {Interval}.", _options.LoopInterval);
+                _heartbeat.MarkRunFailed(ex, nextRunDueUtc);
+            }
         }
 
         /// <summary>
-        /// Determines whether a flight is within the genuinely-active fast-poll window:
-        /// from 4 hours before scheduled departure THROUGH arrival. Bounds the window so
-        /// flights that have already arrived no longer keep the service in the fast-poll
-        /// cycle (see #242).
+        /// One pass over the due flights. Each flight syncs in its own DI scope, so a flight that
+        /// fails part-way can't have its changes saved by the next flight's <c>SaveChanges</c>.
         /// </summary>
-        public static bool IsActiveForFastPoll(
-            DateTime scheduledDepartureUtc,
-            DateTime scheduledArrivalUtc,
-            DateTime? actualArrivalUtc,
-            DateTime now)
+        public async Task<FlightSyncRunResult> RunOnceAsync(CancellationToken ct)
         {
-            var hoursToDeparture = (scheduledDepartureUtc - now).TotalHours;
-            var notYetArrived = (actualArrivalUtc ?? scheduledArrivalUtc) > now;
-            return hoursToDeparture <= 4 && notYetArrived;
+            IReadOnlyList<int> flightIds;
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                flightIds = await scope.ServiceProvider.GetRequiredService<IFlightRepository>()
+                    .GetDueTrackedFlightIdsAsync(ct);
+            }
+
+            var failed = 0;
+            foreach (var flightId in flightIds)
+            {
+                using var scope = _scopeFactory.CreateScope();
+                try
+                {
+                    await scope.ServiceProvider.GetRequiredService<IMediator>()
+                        .Send(new SyncFlightStatusCommand(null, flightId, SyncTrigger.Scheduled), ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    // Its NextSyncDueUtc is unchanged, so the next loop retries it.
+                    _log.LogError(ex, "Failed to sync flight {FlightId}", flightId);
+                    failed++;
+                }
+            }
+
+            return new FlightSyncRunResult(flightIds.Count, failed);
         }
     }
+
+    /// <summary>How many due flights a run sent, and how many of those threw.</summary>
+    public sealed record FlightSyncRunResult(int Processed, int Failed);
 }

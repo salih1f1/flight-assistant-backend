@@ -1,8 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Flights.Entities;
-using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace FlightAssistant.Infrastructure.Persistance.Repositories
@@ -11,16 +9,13 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
     {
         private readonly FlightAssistantDbContext _db;
         private readonly TimeProvider _timeProvider;
-        private readonly int _statusWindowFutureDays;
 
         public FlightRepository(
             FlightAssistantDbContext db,
-            TimeProvider timeProvider,
-            IOptions<AeroApiOptions> aeroApiOptions)
+            TimeProvider timeProvider)
         {
             _db = db;
             _timeProvider = timeProvider;
-            _statusWindowFutureDays = aeroApiOptions.Value.StatusWindowFutureDays;
         }
 
         public async Task AddAsync(Flight entity, CancellationToken ct = default) =>
@@ -128,43 +123,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 .Where(s => s.Code == code)
                 .Select(s => (int?)s.Id)
                 .FirstOrDefaultAsync(ct);
-
-        /// <summary>
-        /// Candidates for <c>FlightStatusSyncBackgroundService</c> to poll. Bounded to the window
-        /// <c>AeroApiFlightStatusProvider</c>'s <c>GET /flights/{ident}</c> call can actually answer
-        /// for (issue #283) — without an upper bound, a flight tracked months ahead (the search
-        /// horizon reaches <c>AeroApi:MaxFutureMonths</c>, up to 12) got polled every sync cycle,
-        /// forever, always returning null, at metered-API cost.
-        ///
-        /// <para>
-        /// The lower bound stays exactly "today" on purpose: widening it to include yesterday's
-        /// departures would increase spend, the opposite of what this method exists to fix. (A
-        /// flight that departed yesterday can as a result never reach a final ARR status here — a
-        /// real gap, but a separate concern from this one; not addressed by this method.)
-        /// </para>
-        ///
-        /// <para>
-        /// <b>The pad.</b> <see cref="Flight.ServiceDateUtc"/> is the origin-local service date, not
-        /// a UTC instant (see CLAUDE.md's "ServiceDate is origin-local everywhere"), but it is
-        /// compared below against a plain UTC calendar date. The two can disagree by up to a day at
-        /// the window edge — an origin far enough east of UTC reports a local date that is already
-        /// "tomorrow" in UTC terms. The upper bound is therefore padded by one extra day beyond
-        /// <see cref="AeroApiOptions.StatusWindowFutureDays"/> so that a flight AeroAPI could still
-        /// answer for is never silently dropped from polling — a wasted query at the boundary is far
-        /// cheaper than a traveller who stops receiving status updates.
-        /// </para>
-        /// </summary>
-        public async Task<IReadOnlyList<Flight>> GetActiveTrackedFlightsAsync(CancellationToken ct = default)
-        {
-            var today = DateOnly.FromDateTime(_timeProvider.GetUtcNow().UtcDateTime);
-            var upperBound = today.AddDays(_statusWindowFutureDays + 1);
-
-            return await _db.Flights
-                .Where(f => f.ServiceDateUtc >= today &&
-                            f.ServiceDateUtc <= upperBound &&
-                            _db.TravelerFlights.Any(tf => tf.FlightId == f.Id))
-                .ToListAsync(ct);
-        }
 
         public async Task<IReadOnlyList<int>> GetDueTrackedFlightIdsAsync(CancellationToken ct = default)
         {
