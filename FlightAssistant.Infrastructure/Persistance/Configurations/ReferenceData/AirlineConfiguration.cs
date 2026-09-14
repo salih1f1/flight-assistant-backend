@@ -15,7 +15,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.ReferenceDat
             b.Property(x => x.Iata)
                 .HasMaxLength(3)
                 .HasConversion(
-                    v => v.ToUpperInvariant(),
+                    v => v == null ? null : v.ToUpperInvariant(),
                     v => v); // no down-conversion needed
             b.Property(x => x.Icao)
                 .HasMaxLength(4)
