@@ -1,0 +1,108 @@
+{
+  "commit": "1cc8f1a2966782782a2456e85d91eaa2fe0ff192",
+  "ref": "development",
+  "runId": "34761036906",
+  "total": 8,
+  "passed": 7,
+  "failed": 1,
+  "skipped": 0,
+  "durationMs": 275,
+  "suites": [
+    {
+      "suite": "FlightAssistant.API.Tests",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 256,
+      "tests": [
+        {
+          "name": "FlightAssistant.API.Tests.Integration.LoyaltyEndpointTests.GetPrograms_ValidToken_Returns200",
+          "class": "LoyaltyEndpointTests",
+          "outcome": "Passed",
+          "durationMs": 189,
+          "message": ""
+        },
+        {
+          "name": "FlightAssistant.API.Tests.Integration.AdminDataEndpointTests.GetTables_RowCount_ReflectsRowsSeededSinceTheLastCall",
+          "class": "AdminDataEndpointTests",
+          "outcome": "Passed",
+          "durationMs": 67,
+          "message": ""
+        }
+      ]
+    },
+    {
+      "suite": "FlightAssistant.Application.Tests",
+      "total": 2,
+      "passed": 1,
+      "failed": 1,
+      "skipped": 0,
+      "durationMs": 14,
+      "tests": [
+        {
+          "name": "FlightAssistant.Application.Tests.Commands.Loyalty.UpdateLoyaltyMembershipCommandHandlerTests.MembershipNotFound_Throws",
+          "class": "UpdateLoyaltyMembershipCommandHandlerTests",
+          "outcome": "Passed",
+          "durationMs": 2,
+          "message": ""
+        },
+        {
+          "name": "FlightAssistant.Application.Tests.Commands.Admin.Import.ImportAirportsCommandHandlerTests.Handle_NewAirport_InsertsAndReturnsInsertedCount",
+          "class": "ImportAirportsCommandHandlerTests",
+          "outcome": "Failed",
+          "durationMs": 12,
+          "message": "Assert.Equal() Failure: Values differ\nExpected: 404\nActual:   200\n   at FlightAssistant.Application.Tests.Example.Test() in /home/runner/work/Example.cs:line 42"
+        }
+      ]
+    },
+    {
+      "suite": "FlightAssistant.Domain.Tests",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 1,
+      "tests": [
+        {
+          "name": "FlightAssistant.Domain.Tests.Travelers.TravelerTests.Register_NormalizesEmailToLowercase",
+          "class": "TravelerTests",
+          "outcome": "Passed",
+          "durationMs": 0,
+          "message": ""
+        },
+        {
+          "name": "FlightAssistant.Domain.Tests.Lounges.LoungeVerificationTests.Lounge_Verify_SetsVerifiedStateWithTimestampAndActor",
+          "class": "LoungeVerificationTests",
+          "outcome": "Passed",
+          "durationMs": 1,
+          "message": ""
+        }
+      ]
+    },
+    {
+      "suite": "FlightAssistant.Infrastructure.Tests",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 4,
+      "tests": [
+        {
+          "name": "FlightAssistant.Infrastructure.Tests.TestSupport.PostgresCollectionMembershipTests.EveryPostgresCollectionMember_DerivesFromPostgresTestBase",
+          "class": "PostgresCollectionMembershipTests",
+          "outcome": "Passed",
+          "durationMs": 3,
+          "message": ""
+        },
+        {
+          "name": "FlightAssistant.Infrastructure.Tests.ExternalServices.AeroApi.AeroApiFlightStatusProviderTests.GetStatusAsync_RequestsTheIdentPath",
+          "class": "AeroApiFlightStatusProviderTests",
+          "outcome": "Passed",
+          "durationMs": 1,
+          "message": ""
+        }
+      ]
+    }
+  ]
+}

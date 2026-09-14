@@ -362,6 +362,7 @@ adminGroup.MapAdminExportEndpoints();
 adminGroup.MapAdminImportEndpoints();
 adminGroup.MapAdminUsageEndpoints();
 adminGroup.MapAdminHealthEndpoints();
+adminGroup.MapAdminCiEndpoints();
 adminGroup.MapAdminAuditEndpoints();
 adminGroup.MapAdminDataEndpoints();
 

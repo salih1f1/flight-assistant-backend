@@ -1,10 +1,12 @@
 using System.Net;
+using System.Net.Http.Headers;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
+using FlightAssistant.Infrastructure.ExternalServices.GitHub;
 using FlightAssistant.Infrastructure.Notifications;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
@@ -177,6 +179,44 @@ namespace FlightAssistant.Infrastructure
 
             services.AddScoped<IAeroApiAccountUsageProvider>(sp =>
                 sp.GetRequiredService<AeroApiAccountUsageProvider>());
+
+            // CI results (issue #332): the admin tests page reads the CI workflow's runs and its
+            // test-results artifact through the API, so the panel never holds a GitHub token.
+            // GitHub:Token is optional; without it the CI endpoints answer 503 and the app still starts.
+            services.AddOptions<GitHubOptions>()
+                .BindConfiguration("GitHub")
+                .ValidateDataAnnotations()
+                .ValidateOnStart();
+
+            // The token client never follows redirects. An artifact download 302s to signed blob
+            // storage, which GitHubCiRunProvider fetches with the download client below, and that
+            // client carries no credentials.
+            services.AddHttpClient(GitHubCiRunProvider.ApiClientName, (sp, client) =>
+                {
+                    var options = sp.GetRequiredService<IOptions<GitHubOptions>>().Value;
+                    client.BaseAddress = new Uri(GitHubOptions.ApiBaseUrl);
+                    client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+                    client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+                    client.DefaultRequestHeaders.UserAgent.ParseAdd("FlightAssistant-API");
+                    if (options.IsConfigured)
+                        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.Token);
+                    client.Timeout = TimeSpan.FromSeconds(30);
+                })
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+
+            services.AddHttpClient(GitHubCiRunProvider.DownloadClientName, client =>
+                    client.Timeout = TimeSpan.FromSeconds(60))
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+
+            services.AddScoped<ICiRunProvider>(sp =>
+            {
+                var clients = sp.GetRequiredService<IHttpClientFactory>();
+                return new GitHubCiRunProvider(
+                    clients.CreateClient(GitHubCiRunProvider.ApiClientName),
+                    clients.CreateClient(GitHubCiRunProvider.DownloadClientName),
+                    sp.GetRequiredService<IOptions<GitHubOptions>>(),
+                    sp.GetRequiredService<ILogger<GitHubCiRunProvider>>());
+            });
 
             // Push notifications — singleton so the APNs client is created once and reused
             services.AddOptions<ApnsOptions>()
