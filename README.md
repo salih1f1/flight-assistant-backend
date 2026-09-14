@@ -33,6 +33,15 @@ dotnet run --project FlightAssistant.API
 
 Swagger UI → http://localhost:5000/swagger
 
+**Flight status sync is off for local runs.** `launchSettings.json` sets `FlightSync__Enabled=false` in every profile, because a local run shares the dev database with the deployed dev API, and both would poll AeroAPI for the same tracked flights and be billed twice. To test the sync itself, turn it back on for one run:
+
+```bash
+ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://localhost:5100 FlightSync__Enabled=true \
+  dotnet run --project FlightAssistant.API --no-launch-profile
+```
+
+`--no-launch-profile` is required: a launch profile's variables override the shell's, so without it the profile's `false` wins.
+
 **OpenAPI spec:** [`spec/openapi.json`](spec/openapi.json) is generated and committed — CI fails a PR if it drifts from the code. Regenerate with `scripts/generate-openapi.sh` (from the repo root) after any route or contract change.
 
 **HTTP Client:** Open `FlightAssistant.API/api.http` in VS Code (REST Client extension) or JetBrains Rider. Paste a B2C JWT into `@token` and run any request with one click.
