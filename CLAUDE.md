@@ -60,7 +60,7 @@ ASP.NET Core Web API using **Clean Architecture + CQRS** (MediatR) with **Domain
 All live in `FlightAssistant.Domain/Common/`, **not** SharedKernel (which is empty):
 
 - `BaseEntity` — `Guid Id`, in-memory domain events list, equality by Id.
-- `AuditableEntity` — extends `BaseEntity`; adds `CreatedUtc`, `CreatedBy`, `UpdatedUtc`, `UpdatedBy`.
+- `AuditableEntity` — extends `BaseEntity`; adds `CreatedUtc`, `UpdatedUtc`.
 - `DomainEvent` — abstract `record` implementing MediatR `INotification`; carries `OccurredUtc`, optional `CorrelationId`/`CausationId`.
 - `IAggregateRoot` — empty marker interface; `Traveler` and `Flight` implement it.
 - `ValueObject` — equality by `GetEqualityComponents()`.

@@ -10,8 +10,8 @@ namespace FlightAssistant.Domain.Administration.Entities
     /// (see the EF interceptor added in Infrastructure by Task 2 of #313).
     ///
     /// Extends <see cref="BaseEntity"/>, not <see cref="AuditableEntity"/> — an audit row that
-    /// audits itself is absurd, and <c>CreatedBy</c>/<c>UpdatedBy</c> would just duplicate
-    /// <see cref="ActorId"/>.
+    /// audits itself is absurd, and <c>CreatedUtc</c> would just duplicate
+    /// <see cref="ActionUtc"/>.
     ///
     /// Lives in <c>Domain</c> (a new <c>Administration</c> area, deliberately not under
     /// <c>Configuration</c> alongside <c>SeedVersion</c> — that folder is the reference-data

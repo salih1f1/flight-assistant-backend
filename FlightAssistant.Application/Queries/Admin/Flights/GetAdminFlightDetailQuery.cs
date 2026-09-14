@@ -46,7 +46,6 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
         DateTime? ActualDepartureUtc,
         DateTime? ActualArrivalUtc,
         string? EquipmentAircraftIcao,
-        string? ExternalId,
         AdminFlightStatusEventResult? CurrentStatus,
         IReadOnlyList<AdminFlightStatusEventResult> StatusHistory,
         bool StatusHistoryTruncated);
@@ -107,7 +106,6 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
                 flight.ActualDepartureUtc,
                 flight.ActualArrivalUtc,
                 flight.EquipmentAircraftIcao,
-                flight.ExternalId,
                 history.Count > 0 ? history[0] : null,
                 history,
                 truncated);

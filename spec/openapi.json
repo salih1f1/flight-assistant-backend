@@ -3872,10 +3872,6 @@
             "type": "string",
             "nullable": true
           },
-          "externalId": {
-            "type": "string",
-            "nullable": true
-          },
           "currentStatus": {
             "$ref": "#/components/schemas/AdminFlightStatusEventDto"
           },
@@ -3948,10 +3944,6 @@
             "nullable": true
           },
           "equipmentAircraftIcao": {
-            "type": "string",
-            "nullable": true
-          },
-          "externalId": {
             "type": "string",
             "nullable": true
           }

@@ -19,8 +19,7 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
         DateTime? EstimatedArrivalUtc,
         DateTime? ActualDepartureUtc,
         DateTime? ActualArrivalUtc,
-        string? EquipmentAircraftIcao,
-        string? ExternalId
+        string? EquipmentAircraftIcao
     );
 
     public record GetAllFlightsAdminQuery(PagedRequest Paging) : IRequest<PagedResult<AdminFlightResult>>;
@@ -46,7 +45,7 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
                 f.ServiceDateUtc, f.ScheduledDepartureUtc, f.ScheduledArrivalUtc,
                 f.EstimatedDepartureUtc, f.EstimatedArrivalUtc,
                 f.ActualDepartureUtc, f.ActualArrivalUtc,
-                f.EquipmentAircraftIcao, f.ExternalId
+                f.EquipmentAircraftIcao
             )).ToList();
             return new PagedResult<AdminFlightResult>(items, total, request.Paging.Page, request.Paging.PageSize);
         }

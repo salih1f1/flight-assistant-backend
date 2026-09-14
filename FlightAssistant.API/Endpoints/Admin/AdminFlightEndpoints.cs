@@ -25,7 +25,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                     result.ServiceDate, result.ScheduledDepartureUtc, result.ScheduledArrivalUtc,
                     result.EstimatedDepartureUtc, result.EstimatedArrivalUtc,
                     result.ActualDepartureUtc, result.ActualArrivalUtc,
-                    result.EquipmentAircraftIcao, result.ExternalId,
+                    result.EquipmentAircraftIcao,
                     result.CurrentStatus is { } current ? ToStatusEventDto(current) : null,
                     result.StatusHistory.Select(ToStatusEventDto).ToList(),
                     result.StatusHistoryTruncated));
@@ -50,7 +50,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                     f.ServiceDate, f.ScheduledDepartureUtc, f.ScheduledArrivalUtc,
                     f.EstimatedDepartureUtc, f.EstimatedArrivalUtc,
                     f.ActualDepartureUtc, f.ActualArrivalUtc,
-                    f.EquipmentAircraftIcao, f.ExternalId)).ToList();
+                    f.EquipmentAircraftIcao)).ToList();
                 return Results.Ok(new PagedResult<AdminFlightDto>(dtos, result.Total, result.Page, result.PageSize));
             })
             .WithName("AdminGetAllFlights")
@@ -68,7 +68,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                     f.ServiceDate, f.ScheduledDepartureUtc, f.ScheduledArrivalUtc,
                     f.EstimatedDepartureUtc, f.EstimatedArrivalUtc,
                     f.ActualDepartureUtc, f.ActualArrivalUtc,
-                    f.EquipmentAircraftIcao, f.ExternalId));
+                    f.EquipmentAircraftIcao));
             })
             .WithName("AdminGetFlightById")
             .WithSummary("Get flight by ID")

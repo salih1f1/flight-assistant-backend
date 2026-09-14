@@ -14,7 +14,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Flights
 
             b.Property(x => x.FlightNumber).IsRequired().HasMaxLength(8);
             b.Property(x => x.EquipmentAircraftIcao).HasMaxLength(8);
-            b.Property(x => x.ExternalId).HasMaxLength(64);
 
             b.Property(x => x.ServiceDateUtc).HasColumnType("date");
 
