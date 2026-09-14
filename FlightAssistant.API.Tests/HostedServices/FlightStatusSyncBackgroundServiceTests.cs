@@ -158,7 +158,8 @@ public class FlightStatusSyncBackgroundServiceTests
     [Fact]
     public async Task OverTenMinutes_AFlightNearDeparture_DoesNotSpeedUpTheOthers()
     {
-        var options = new FlightSyncOptions(); // Fast 2 min, Live 10 min, Fast window 4 h
+        // Non-default intervals (#308): Fast every 3 min, Live every 20 min; Fast window stays 4 h.
+        var options = new FlightSyncOptions { NearDepartureInterval = TimeSpan.FromMinutes(3), Interval = TimeSpan.FromMinutes(20) };
         var fast = WithId(Flight.Create(1, "TK1", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(3), Now.AddHours(6)), 1);
         var live = WithId(Flight.Create(1, "TK2", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(30), Now.AddHours(33)), 2);
         var schedule = WithId(Flight.Create(1, "TK3", 10, 20, DateOnly.FromDateTime(Now.AddDays(20)), Now.AddDays(20), Now.AddDays(20).AddHours(3)), 3);
@@ -190,7 +191,7 @@ public class FlightStatusSyncBackgroundServiceTests
             _clock.Advance(TimeSpan.FromMinutes(1));
         }
 
-        await provider.Received(5).GetStatusAsync("TK1", Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()); // minutes 0, 2, 4, 6, 8
+        await provider.Received(4).GetStatusAsync("TK1", Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()); // minutes 0, 3, 6, 9
         await provider.Received(1).GetStatusAsync("TK2", Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()); // minute 0 only
         await provider.DidNotReceive().GetStatusAsync("TK3", Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
         Assert.Single(Sent(), c => c.FlightId == 3); // planned once, next due when Live starts
