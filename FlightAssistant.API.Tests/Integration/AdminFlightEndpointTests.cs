@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Contracts.Responses.Flights;
@@ -172,5 +173,21 @@ public class AdminFlightEndpointTests(FlightAssistantWebApplicationFactory facto
     {
         var response = await factory.CreateAdminClient().GetAsync($"admin/flights/search?date={InThirtyDays()}");
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    // ── Sync (#356): response shape unchanged; the real host resolves the new handler dependencies ──
+
+    [Fact]
+    public async Task PostSync_Admin_UntrackedFlight_Returns200_WithOnlyUpdatedFalse()
+    {
+        // Untracked, so the handler plans "none" and makes no provider call.
+        var flight = await SeedFlightAsync($"TK{Marker()}");
+
+        var response = await factory.CreateAdminClient().PostAsync($"admin/flights/{flight.Id}/sync", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("updated", Assert.Single(body.EnumerateObject()).Name);
+        Assert.Equal(JsonValueKind.False, body.GetProperty("updated").ValueKind);
     }
 }

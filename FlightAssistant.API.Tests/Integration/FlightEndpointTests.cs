@@ -1,7 +1,12 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Contracts.Requests.Flights;
+using FlightAssistant.Domain.Flights.Entities;
+using FlightAssistant.Domain.Flights.Enums;
+using FlightAssistant.Infrastructure.Persistance;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 
@@ -129,5 +134,41 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
         Assert.Equal(fakeResult.ArrivalAirportIata, row.ArrivalAirportIata);
         Assert.Equal(fakeResult.ScheduledDepartureUtc, row.ScheduledDepartureUtc);
         Assert.Equal(fakeResult.ScheduledArrivalUtc, row.ScheduledArrivalUtc);
+    }
+
+    [Fact]
+    public async Task PostSync_TrackingTraveler_FlightDaysAway_Returns200WithUpdatedFalse_AndPlansTheFlight()
+    {
+        var userId = Guid.NewGuid();
+        var client = factory.CreateUserClient(userId.ToString());
+        await client.PostAsJsonAsync("travelers", new { email = $"{userId}@example.com", displayName = "Test", countryCode = (string?)null });
+
+        // 30 days out: Schedule mode, so no provider call in this step.
+        var departure = DateTime.UtcNow.Date.AddDays(30).AddHours(9);
+        var flight = Flight.Create(1, $"TK{Random.Shared.Next(1000, 9999)}", 10, 20, DateOnly.FromDateTime(departure), departure, departure.AddHours(3));
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+            db.Flights.Add(flight);
+            await db.SaveChangesAsync();
+            db.TravelerFlights.Add(TravelerFlight.Create(userId, flight.Id));
+            await db.SaveChangesAsync();
+        }
+
+        var response = await client.PostAsync($"flights/{flight.Id}/sync", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("updated", Assert.Single(body.EnumerateObject()).Name);
+        Assert.Equal(JsonValueKind.False, body.GetProperty("updated").ValueKind);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+            var saved = await db.Flights.AsNoTracking().SingleAsync(f => f.Id == flight.Id);
+            Assert.Equal(FlightSyncMode.Schedule, saved.SyncMode);
+            // AeroApi:StatusWindowFutureDays defaults to 2: proves the host's IFlightStatusWindowOptions reaches the handler.
+            Assert.Equal(departure.AddDays(-2), saved.NextSyncDueUtc);
+        }
     }
 }

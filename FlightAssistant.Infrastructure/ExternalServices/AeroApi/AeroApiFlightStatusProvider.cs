@@ -119,7 +119,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         /// two behaved identically when this was written (the recorded fixture that motivated this
         /// change spanned roughly the same −10/+2 days these defaults produce), but leaving the
         /// bound implicit meant it could silently drift out of step with
-        /// <c>FlightRepository.GetActiveTrackedFlightsAsync</c>'s own window, which is derived from
+        /// <c>FlightSyncPlanner</c>'s Live window, which is derived from
         /// the same <see cref="AeroApiOptions"/>.
         ///
         /// <para>
