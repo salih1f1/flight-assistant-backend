@@ -211,12 +211,51 @@ public class CsvImportParserTests
         Assert.Equal("manual", result[0].VerificationSource);
     }
 
-    // ── #362 fix round 1: one-row smoke test per import map, old and new format ────
+    // ── #362 fix round 1/2: one-row smoke test per import map, old and new format ──
     //
     // Alliances (above) and Lounges (above) already cover one flat AutoMap-style map and one
-    // nested, fully-explicit map. These six cover the rest — every remaining import ClassMap —
+    // nested, fully-explicit map. These seven cover the rest — every remaining import ClassMap —
     // so a future header rename or a dropped Optional() on any one of the 8 fails exactly its own
     // pair of tests here, not just the two maps already exercised elsewhere.
+
+    [Fact]
+    public async Task ParseAirports_OldFormatCsv_ParsesWithNullVerificationValues()
+    {
+        // Deliberately no Timezone column (CsvImportParser.ParseAsync's rejectHeaders would throw
+        // on that — see ParseAirports_CsvStillHasTimezoneColumn_ThrowsClearDomainException above,
+        // unrelated to #362) and no VerifiedAt/VerifiedBy/VerificationSource columns at all — the
+        // exact shape a pre-#362 airports export carries.
+        const string csv = """
+            Iata,Icao,Name,City,CountryCode,Latitude,Longitude,ElevationFt
+            LHR,EGLL,Heathrow,London,GB,51.477,-0.461,83
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<AirportImportDto, AirportImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.Equal("LHR", result[0].Iata);
+        Assert.Null(result[0].VerifiedAt);
+        Assert.Null(result[0].VerifiedBy);
+        Assert.Null(result[0].VerificationSource);
+    }
+
+    [Fact]
+    public async Task ParseAirports_NewFormatCsv_ParsesVerificationValues()
+    {
+        const string csv = """
+            Iata,Icao,Name,City,CountryCode,Latitude,Longitude,ElevationFt,VerifiedAt,VerifiedBy,VerificationSource
+            LHR,EGLL,Heathrow,London,GB,51.477,-0.461,83,2026-09-14T20:31:12.1234567Z,admin@example.com,manual
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<AirportImportDto, AirportImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.Equal(DateTimeKind.Utc, result[0].VerifiedAt!.Value.Kind);
+        Assert.Equal("admin@example.com", result[0].VerifiedBy);
+        Assert.Equal("manual", result[0].VerificationSource);
+    }
 
     [Fact]
     public async Task ParseCountries_OldFormatCsv_ParsesWithNullVerificationValues()
