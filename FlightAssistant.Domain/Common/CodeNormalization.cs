@@ -1,8 +1,3 @@
-// AdminVerifyEndpoints (#331) canonicalises the country-code route parameter with
-// ToCanonicalCode() before lookup, the same helper Country.Create uses — hence API needing
-// InternalsVisibleTo here.
-[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("FlightAssistant.API")]
-
 namespace FlightAssistant.Domain.Common
 {
     /// <summary>
@@ -10,7 +5,7 @@ namespace FlightAssistant.Domain.Common
     /// alliance) to their canonical form. These codes are case-insensitive on input but
     /// stored uppercase so lookups and joins are deterministic.
     /// </summary>
-    internal static class CodeNormalization
+    public static class CodeNormalization
     {
         /// <summary>Trim and uppercase a required code.</summary>
         public static string ToCanonicalCode(this string value) =>
