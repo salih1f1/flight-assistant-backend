@@ -1,16 +1,28 @@
+using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Flights.Entities;
+using FlightAssistant.Domain.Flights.Enums;
 using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.Logging;
 
 namespace FlightAssistant.Application.Commands.Flights
 {
-    /// <summary>Fetches live status from external providers and persists a FlightStatusEvent if new.</summary>
+    /// <summary>Who asked for a sync. Only the background loop skips a Stopped flight.</summary>
+    public enum SyncTrigger
+    {
+        Scheduled,
+        Admin,
+        Traveler
+    }
+
+    /// <summary>
+    /// Syncs one flight when its sync mode calls for it, then stores when it's next due (#356).
+    /// </summary>
     /// <param name="TravelerId">When set, enforces that the traveler is tracking the flight. Pass null for admin/background callers.</param>
-    public record SyncFlightStatusCommand(Guid? TravelerId, int FlightId) : IRequest<bool>; // returns true if a new event was recorded
+    public record SyncFlightStatusCommand(Guid? TravelerId, int FlightId, SyncTrigger Trigger) : IRequest<bool>; // true if a new event was recorded
 
     public sealed class SyncFlightStatusCommandHandler : IRequestHandler<SyncFlightStatusCommand, bool>
     {
@@ -22,13 +34,24 @@ namespace FlightAssistant.Application.Commands.Flights
 
         private readonly IFlightRepository _flights;
         private readonly IFlightStatusProvider _provider;
+        private readonly IFlightSyncOptions _syncOptions;
+        private readonly IFlightStatusWindowOptions _windowOptions;
+        private readonly TimeProvider _timeProvider;
         private readonly ILogger<SyncFlightStatusCommandHandler> _logger;
 
         public SyncFlightStatusCommandHandler(
-            IFlightRepository flights, IFlightStatusProvider provider, ILogger<SyncFlightStatusCommandHandler> logger)
+            IFlightRepository flights,
+            IFlightStatusProvider provider,
+            IFlightSyncOptions syncOptions,
+            IFlightStatusWindowOptions windowOptions,
+            TimeProvider timeProvider,
+            ILogger<SyncFlightStatusCommandHandler> logger)
         {
             _flights = flights;
             _provider = provider;
+            _syncOptions = syncOptions;
+            _windowOptions = windowOptions;
+            _timeProvider = timeProvider;
             _logger = logger;
         }
 
@@ -44,8 +67,50 @@ namespace FlightAssistant.Application.Commands.Flights
             var flight = await _flights.GetFlightByIdAsync(cmd.FlightId, ct)
                 ?? throw new DomainException($"Flight {cmd.FlightId} not found.", 404);
 
-            // Build the flight number string: e.g. "BA123"
-            // We stored flightNumber already normalised in the aggregate.
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            var options = FlightSyncPlanOptions.From(_syncOptions, _windowOptions);
+            var isTracked = cmd.TravelerId is not null || await _flights.IsFlightTrackedAsync(flight.Id, ct);
+            var plan = FlightSyncPlanner.Plan(flight, isTracked, now, options);
+
+            switch (plan.Mode)
+            {
+                case null:
+                    flight.ApplySyncPlan(null, null);
+                    await _flights.SaveChangesAsync(ct);
+                    return false;
+
+                // The loop never calls for a finished flight (#345); a person asking still gets a call.
+                case FlightSyncMode.Stopped when cmd.Trigger == SyncTrigger.Scheduled:
+                    flight.ApplySyncPlan(FlightSyncMode.Stopped, null);
+                    await _flights.SaveChangesAsync(ct);
+                    return false;
+
+                // AeroAPI can't answer before Live starts (#343). Step 2 of #349 adds a daily
+                // /schedules check here; until then there is nothing to call.
+                case FlightSyncMode.Schedule:
+                    flight.ApplySyncPlan(FlightSyncMode.Schedule, FlightSyncPlanner.LiveStartsAtUtc(flight, options));
+                    await _flights.SaveChangesAsync(ct);
+                    return false;
+            }
+
+            var recorded = await ApplyLiveStatusAsync(flight, now, ct);
+
+            // Any call that returned counts as a sync, even an empty or duplicate one. Re-plan from
+            // the times the call may just have changed.
+            flight.MarkSynced(now);
+            var next = FlightSyncPlanner.Plan(flight, isTracked, now, options);
+            flight.ApplySyncPlan(next.Mode, next.NextSyncDueUtc);
+
+            await _flights.SaveChangesAsync(ct);
+            return recorded;
+        }
+
+        /// <summary>
+        /// Fetches the live status and, if it's new, records it. Changes the flight only after every
+        /// step that can throw, so a failure leaves it untouched for the next attempt.
+        /// </summary>
+        private async Task<bool> ApplyLiveStatusAsync(Flight flight, DateTime now, CancellationToken ct)
+        {
             var result = await _provider.GetStatusAsync(flight.FlightNumber, flight.ServiceDateUtc, ct);
             if (result is null) return false;
 
@@ -73,7 +138,6 @@ namespace FlightAssistant.Application.Commands.Flights
                         404);
             }
 
-            // Dedup check
             var dedupHash = FlightStatusEvent.ComputeDedupHash(flight.Id, statusId.Value, result.EffectiveAtUtc, _provider.ProviderName, result.ExternalId);
             if (await _flights.FlightStatusEventExistsAsync(dedupHash, ct)) return false;
 
@@ -88,8 +152,8 @@ namespace FlightAssistant.Application.Commands.Flights
                 result.BaggageClaim,
                 rawPayloadJson: result.RawPayloadJson);
 
-            // ApplyStatusUpdate raises FlightStatusChanged domain event, which the
-            // DomainEventDispatchInterceptor will publish after SaveChanges succeeds.
+            // ApplyStatusUpdate raises FlightStatusChanged, which the DomainEventDispatchInterceptor
+            // publishes after SaveChanges succeeds.
             flight.ApplyStatusUpdate(
                 resolvedStatusCode,
                 result.EstimatedDepartureUtc,
@@ -97,11 +161,9 @@ namespace FlightAssistant.Application.Commands.Flights
                 result.ActualDepartureUtc,
                 result.ActualArrivalUtc,
                 result.EquipmentIcao,
-                DateTime.UtcNow);
+                now);
 
             await _flights.AddFlightStatusEventAsync(evt, ct);
-            await _flights.SaveChangesAsync(ct);
-
             return true;
         }
     }

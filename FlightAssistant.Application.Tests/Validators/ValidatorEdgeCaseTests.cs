@@ -951,7 +951,7 @@ public class ValidatorEdgeCaseTests
     public void SyncFlightStatus_FlightId0_Fails()
     {
         var v = new SyncFlightStatusCommandValidator();
-        AssertInvalid(v, new SyncFlightStatusCommand(Guid.NewGuid(), 0), "FlightId");
+        AssertInvalid(v, new SyncFlightStatusCommand(Guid.NewGuid(), 0, SyncTrigger.Traveler), "FlightId");
     }
 
     [Fact]

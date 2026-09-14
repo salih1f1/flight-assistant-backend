@@ -174,7 +174,7 @@ namespace FlightAssistant.API.Endpoints
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
-                var updated = await mediator.Send(new SyncFlightStatusCommand(travelerId, flightId), ct);
+                var updated = await mediator.Send(new SyncFlightStatusCommand(travelerId, flightId, SyncTrigger.Traveler), ct);
                 return Results.Ok(new { updated });
             })
             .WithName("SyncFlightStatus")
