@@ -18,6 +18,16 @@ namespace FlightAssistant.Application.Commands.Flights
             if (tf is null) return; // already untracked — idempotent
 
             await _flights.RemoveTravelerFlightAsync(tf, ct);
+
+            // Last tracker gone: nothing syncs the flight any more. LastSyncedUtc is kept (spec §2.5).
+            // The unsaved removal can still come back from the query, so ignore it by id.
+            var trackings = await _flights.GetTrackingsByFlightIdAsync(cmd.FlightId, ct);
+            if (trackings.All(t => t.Id == tf.Id))
+            {
+                var flight = await _flights.GetFlightByIdAsync(cmd.FlightId, ct);
+                flight?.ApplySyncPlan(null, null);
+            }
+
             await _flights.SaveChangesAsync(ct);
         }
     }
