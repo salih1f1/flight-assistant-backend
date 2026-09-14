@@ -13,6 +13,7 @@ using FlightAssistant.Application.Commands.Admin.Import;
 using FlightAssistant.Application.Commands.Admin.Travelers;
 using FlightAssistant.Contracts.Paging;
 using FluentValidation;
+using Microsoft.Extensions.Time.Testing;
 
 namespace FlightAssistant.Application.Tests.Validators;
 
@@ -45,7 +46,7 @@ public class ValidatorEdgeCaseTests
     [InlineData("bA123a")]     // mixed case
     public void TrackFlight_ValidFlightNumbers_Pass(string flightNumber)
     {
-        var v = new TrackFlightCommandValidator();
+        var v = new TrackFlightCommandValidator(TimeProvider.System);
         var cmd = ValidTrackFlightCommand() with { FlightNumber = flightNumber };
         AssertValid(v, cmd);
     }
@@ -57,26 +58,65 @@ public class ValidatorEdgeCaseTests
     [InlineData("")]           // empty
     public void TrackFlight_InvalidFlightNumbers_Fail(string flightNumber)
     {
-        var v = new TrackFlightCommandValidator();
+        var v = new TrackFlightCommandValidator(TimeProvider.System);
         var cmd = ValidTrackFlightCommand() with { FlightNumber = flightNumber };
         AssertInvalid(v, cmd, "FlightNumber");
     }
 
+    // ── Past flights (#350) ──────────────────────────────────────────────────
+    // ServiceDate is the origin's local date, so comparing it with today's UTC date rejected
+    // tonight's flight west of UTC once the UTC date had rolled over, even though search still
+    // returned it. A flight is in the past only once its scheduled arrival is.
+
+    private static TrackFlightCommandValidator TrackValidatorAt(int day, int hour) =>
+        new(new FakeTimeProvider(new DateTimeOffset(2026, 9, day, hour, 0, 0, TimeSpan.Zero)));
+
     [Fact]
-    public void TrackFlight_PastServiceDate_Fails()
+    public void TrackFlight_TonightsFlightAfterUtcMidnight_Passes()
     {
-        var v = new TrackFlightCommandValidator();
+        // LAX 22:30 PDT on 2026-09-14 is 05:30 UTC on the 15th. It's 20:00 PDT, 03:00 UTC on the 15th.
+        var v = TrackValidatorAt(day: 15, hour: 3);
         var cmd = ValidTrackFlightCommand() with
         {
-            ServiceDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1))
+            ServiceDate = new DateOnly(2026, 9, 14),
+            ScheduledDepartureUtc = new DateTime(2026, 9, 15, 5, 30, 0, DateTimeKind.Utc),
+            ScheduledArrivalUtc = new DateTime(2026, 9, 15, 14, 0, 0, DateTimeKind.Utc)
         };
-        AssertInvalid(v, cmd, "ServiceDate");
+        AssertValid(v, cmd);
+    }
+
+    [Fact]
+    public void TrackFlight_StillInTheAirAfterItsServiceDate_Passes()
+    {
+        // LHR→SIN departed 20:00 UTC on the 14th and lands 09:00 UTC on the 15th. It's 04:00 UTC.
+        var v = TrackValidatorAt(day: 15, hour: 4);
+        var cmd = ValidTrackFlightCommand() with
+        {
+            ServiceDate = new DateOnly(2026, 9, 14),
+            ScheduledDepartureUtc = new DateTime(2026, 9, 14, 20, 0, 0, DateTimeKind.Utc),
+            ScheduledArrivalUtc = new DateTime(2026, 9, 15, 9, 0, 0, DateTimeKind.Utc)
+        };
+        AssertValid(v, cmd);
+    }
+
+    [Fact]
+    public void TrackFlight_ScheduledArrivalInThePast_Fails()
+    {
+        // Landed 16:00 UTC yesterday. It's 12:00 UTC.
+        var v = TrackValidatorAt(day: 15, hour: 12);
+        var cmd = ValidTrackFlightCommand() with
+        {
+            ServiceDate = new DateOnly(2026, 9, 14),
+            ScheduledDepartureUtc = new DateTime(2026, 9, 14, 8, 0, 0, DateTimeKind.Utc),
+            ScheduledArrivalUtc = new DateTime(2026, 9, 14, 16, 0, 0, DateTimeKind.Utc)
+        };
+        AssertInvalid(v, cmd, "ScheduledArrivalUtc");
     }
 
     [Fact]
     public void TrackFlight_ArrivalBeforeDeparture_Fails()
     {
-        var v = new TrackFlightCommandValidator();
+        var v = new TrackFlightCommandValidator(TimeProvider.System);
         var now = DateTime.UtcNow;
         var cmd = ValidTrackFlightCommand() with
         {
@@ -96,7 +136,7 @@ public class ValidatorEdgeCaseTests
     [InlineData("jFk")]    // mixed case
     public void TrackFlight_ValidAirportIata_Pass(string iata)
     {
-        var v = new TrackFlightCommandValidator();
+        var v = new TrackFlightCommandValidator(TimeProvider.System);
         var cmd = ValidTrackFlightCommand() with { DepartureAirportIata = iata };
         AssertValid(v, cmd);
     }
@@ -107,7 +147,7 @@ public class ValidatorEdgeCaseTests
     [InlineData("1LH")]    // digit prefix
     public void TrackFlight_InvalidAirportIata_Fail(string iata)
     {
-        var v = new TrackFlightCommandValidator();
+        var v = new TrackFlightCommandValidator(TimeProvider.System);
         var cmd = ValidTrackFlightCommand() with { DepartureAirportIata = iata };
         AssertInvalid(v, cmd, "DepartureAirportIata");
     }
@@ -489,7 +529,7 @@ public class ValidatorEdgeCaseTests
             .Validate(new SearchFlightsQuery(null, null, DateOnly.FromDateTime(DateTime.UtcNow), flightNumber))
             .IsValid;
 
-        var trackAccepts = new TrackFlightCommandValidator()
+        var trackAccepts = new TrackFlightCommandValidator(TimeProvider.System)
             .Validate(ValidTrackFlightCommand() with { FlightNumber = flightNumber })
             .IsValid;
 
@@ -818,7 +858,7 @@ public class ValidatorEdgeCaseTests
                             // not this regex's. Must stay valid.
     public void TrackFlight_NumericPrefixFlightNumbers_Pass(string flightNumber)
     {
-        var v = new TrackFlightCommandValidator();
+        var v = new TrackFlightCommandValidator(TimeProvider.System);
         var cmd = ValidTrackFlightCommand() with { FlightNumber = flightNumber };
         AssertValid(v, cmd);
     }
@@ -828,7 +868,7 @@ public class ValidatorEdgeCaseTests
     [InlineData("12345A")] // same, with a valid digit run and suffix — only the prefix is wrong
     public void TrackFlight_AllDigitPrefixFlightNumbers_Fail(string flightNumber)
     {
-        var v = new TrackFlightCommandValidator();
+        var v = new TrackFlightCommandValidator(TimeProvider.System);
         var cmd = ValidTrackFlightCommand() with { FlightNumber = flightNumber };
         AssertInvalid(v, cmd, "FlightNumber");
     }

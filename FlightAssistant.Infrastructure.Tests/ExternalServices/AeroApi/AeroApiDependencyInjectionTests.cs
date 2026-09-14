@@ -8,6 +8,8 @@ using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
 using FluentValidation;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using FlightAssistant.Application.Commands.Flights;
+using FlightAssistant.Application.Validators;
 
 namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroApi;
 
@@ -205,6 +207,18 @@ public class AeroApiDependencyInjectionTests
         var validator = provider.GetRequiredService<IValidator<SearchFlightsQuery>>();
 
         Assert.IsType<SearchFlightsQueryValidator>(validator);
+    }
+
+    [Fact]
+    public void AddApplication_ResolvesTrackFlightCommandValidator_WithItsTimeProviderDependency()
+    {
+        using var provider = BuildContainer();
+
+        // TrackFlightCommandValidator takes a TimeProvider (#350). As with the test above, only
+        // building it through the container would expose a missing registration.
+        var validator = provider.GetRequiredService<IValidator<TrackFlightCommand>>();
+
+        Assert.IsType<TrackFlightCommandValidator>(validator);
     }
 
     [Fact]

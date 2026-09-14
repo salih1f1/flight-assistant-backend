@@ -54,8 +54,10 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
     }
 
     [Fact]
-    public async Task TrackFlight_PastServiceDate_Returns400()
+    public async Task TrackFlight_AlreadyLanded_Returns400()
     {
+        // Scheduled arrival 6 hours ago: a flight is in the past once it has landed, not once its
+        // service date has (#350).
         var client = factory.CreateUserClient();
         var yesterday = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)).ToString("yyyy-MM-dd");
 
