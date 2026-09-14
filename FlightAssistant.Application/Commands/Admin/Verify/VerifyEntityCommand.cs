@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Common.Interfaces;
 using MediatR;
 
@@ -18,7 +19,7 @@ namespace FlightAssistant.Application.Commands.Admin.Verify
             var entity = await _repo.FindByKeyAsync(cmd.Key, ct);
             if (entity is null) return false;
 
-            if (cmd.IsVerified) entity.Verify(cmd.VerifiedBy);
+            if (cmd.IsVerified) entity.Verify(cmd.VerifiedBy, VerificationSources.Manual);
             else entity.Unverify();
 
             await _repo.SaveChangesAsync(ct);

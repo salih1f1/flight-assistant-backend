@@ -52,7 +52,7 @@ This design adds:
 
 ### 2.1 New columns on all 8 verifiable entities
 
-Added to `IVerifiable`, so `AdminAuditInterceptor`'s Verify detection (modified properties equal the `IVerifiable` set) includes them without a name list.
+Added to `IVerifiable`, so `AdminAuditInterceptor`'s Verify detection (modified properties non-empty and all belong to the `IVerifiable` set, derived from the interface, no name list) includes them automatically.
 
 | Column | Type | Meaning |
 |---|---|---|

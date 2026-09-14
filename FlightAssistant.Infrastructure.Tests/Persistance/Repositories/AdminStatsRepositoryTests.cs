@@ -81,7 +81,7 @@ public class AdminStatsRepositoryTests : PostgresTestBase
         T Add<T>(T entity, string sourceType, DateTime firstSeenAt, bool verified = false) where T : SeedableEntity
         {
             entity.SourceType = sourceType;
-            if (verified) entity.Verify("admin@example.com");
+            if (verified) entity.Verify("admin@example.com", VerificationSources.Manual);
             db.Add(entity);
             db.Entry(entity).Property(e => e.FirstSeenAt).CurrentValue = firstSeenAt;
             return entity;
@@ -115,7 +115,7 @@ public class AdminStatsRepositoryTests : PostgresTestBase
         await db.SaveChangesAsync();
 
         var added = Lounge.Create(airport.Id, "Added Lounge");
-        added.Verify("admin@example.com");
+        added.Verify("admin@example.com", VerificationSources.Manual);
         db.Lounges.AddRange(added, Lounge.CreateSeeded(airport.Id, "Seeded Lounge"));
         db.LoyaltyPrograms.AddRange(
             LoyaltyProgram.Create("NEW", "Added Program", kind.Id),

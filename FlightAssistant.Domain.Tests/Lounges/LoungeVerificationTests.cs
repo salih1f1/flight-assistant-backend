@@ -1,103 +1,121 @@
+using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Common.Interfaces;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Lounges.Enums;
 
 namespace FlightAssistant.Domain.Tests.Lounges
 {
+    /// <summary>
+    /// <see cref="IVerifiable"/> behaviour (#355 Task 1) for <see cref="Lounge"/> and
+    /// <see cref="LoungeProvider"/>, which each implement <see cref="IVerifiable"/> directly (they
+    /// are not <c>SeedableEntity</c> subtypes). One theory over a factory per entity rather than
+    /// two near-identical copies of the same test.
+    /// </summary>
     public class LoungeVerificationTests
     {
-        // --- Lounge ---
-
-        [Fact]
-        public void Lounge_DefaultState_IsNotVerified()
+        public static IEnumerable<object[]> Factories()
         {
-            var lounge = Lounge.Create(1, "Test Lounge");
-
-            Assert.False(lounge.IsVerified);
-            Assert.Null(lounge.VerifiedAt);
-            Assert.Null(lounge.VerifiedBy);
+            yield return new object[] { "Lounge", (Func<IVerifiable>)(() => Lounge.Create(1, "Test Lounge")) };
+            yield return new object[] { "LoungeProvider", (Func<IVerifiable>)(() => LoungeProvider.Create("PP", "Priority Pass", LoungeProviderKind.Contract)) };
         }
 
-        [Fact]
-        public void Lounge_Verify_SetsVerifiedStateWithTimestampAndActor()
+        [Theory]
+        [MemberData(nameof(Factories))]
+        public void DefaultState_IsNotVerified(string name, Func<IVerifiable> create)
         {
-            var lounge = Lounge.Create(1, "Test Lounge");
+            Assert.NotEmpty(name); // theory label, asserted so the parameter isn't flagged unused
+            var entity = create();
+
+            Assert.False(entity.IsVerified);
+            Assert.Null(entity.VerifiedAt);
+            Assert.Null(entity.VerifiedBy);
+            Assert.Null(entity.VerificationSource);
+            Assert.Null(entity.VerificationIssue);
+        }
+
+        [Theory]
+        [MemberData(nameof(Factories))]
+        public void Verify_SetsVerifiedStateSourceAndClearsIssue(string name, Func<IVerifiable> create)
+        {
+            Assert.NotEmpty(name); // theory label, asserted so the parameter isn't flagged unused
+            var entity = create();
+            entity.MarkVerificationFailed("stale seed data"); // start from Needs attention
             var before = DateTime.UtcNow;
 
-            lounge.Verify("admin@example.com");
+            entity.Verify("admin@example.com", VerificationSources.Manual);
 
-            Assert.True(lounge.IsVerified);
-            Assert.NotNull(lounge.VerifiedAt);
-            Assert.True(lounge.VerifiedAt >= before);
-            Assert.Equal("admin@example.com", lounge.VerifiedBy);
+            Assert.True(entity.IsVerified);
+            Assert.NotNull(entity.VerifiedAt);
+            Assert.True(entity.VerifiedAt >= before);
+            Assert.Equal("admin@example.com", entity.VerifiedBy);
+            Assert.Equal(VerificationSources.Manual, entity.VerificationSource);
+            Assert.Null(entity.VerificationIssue);
         }
 
-        [Fact]
-        public void Lounge_Unverify_ResetsVerifiedState()
+        [Theory]
+        [MemberData(nameof(Factories))]
+        public void Unverify_ClearsAllFiveVerificationProperties(string name, Func<IVerifiable> create)
         {
-            var lounge = Lounge.Create(1, "Test Lounge");
-            lounge.Verify("admin@example.com");
+            Assert.NotEmpty(name); // theory label, asserted so the parameter isn't flagged unused
+            var entity = create();
+            entity.Verify("admin@example.com", VerificationSources.Manual);
 
-            lounge.Unverify();
+            entity.Unverify();
 
-            Assert.False(lounge.IsVerified);
-            Assert.Null(lounge.VerifiedAt);
-            Assert.Null(lounge.VerifiedBy);
+            Assert.False(entity.IsVerified);
+            Assert.Null(entity.VerifiedAt);
+            Assert.Null(entity.VerifiedBy);
+            Assert.Null(entity.VerificationSource);
+            Assert.Null(entity.VerificationIssue);
         }
 
-        [Fact]
-        public void Lounge_SatisfiesIVerifiableInterface()
+        /// <summary>
+        /// The counterpart to <see cref="Unverify_ClearsAllFiveVerificationProperties"/>: that test
+        /// seeds via <c>Verify</c>, which already leaves <c>VerificationIssue</c> null, so it could
+        /// never catch <c>Unverify</c> failing to clear that one property. This seeds from Needs
+        /// attention (<c>VerificationIssue</c> set, <c>VerificationSource</c> already null) instead,
+        /// so clearing the issue is the thing actually being exercised.
+        /// </summary>
+        [Theory]
+        [MemberData(nameof(Factories))]
+        public void Unverify_FromNeedsAttention_ClearsVerificationIssue(string name, Func<IVerifiable> create)
         {
-            var lounge = Lounge.Create(1, "Test Lounge");
+            Assert.NotEmpty(name); // theory label, asserted so the parameter isn't flagged unused
+            var entity = create();
+            entity.MarkVerificationFailed("stale seed data");
 
-            Assert.IsAssignableFrom<IVerifiable>(lounge);
+            entity.Unverify();
+
+            Assert.False(entity.IsVerified);
+            Assert.Null(entity.VerifiedAt);
+            Assert.Null(entity.VerifiedBy);
+            Assert.Null(entity.VerificationSource);
+            Assert.Null(entity.VerificationIssue);
         }
 
-        // --- LoungeProvider ---
-
-        [Fact]
-        public void LoungeProvider_DefaultState_IsNotVerified()
+        [Theory]
+        [MemberData(nameof(Factories))]
+        public void MarkVerificationFailed_OnVerifiedEntity_ClearsVerifiedStateAndSetsIssue(string name, Func<IVerifiable> create)
         {
-            var provider = LoungeProvider.Create("PP", "Priority Pass", LoungeProviderKind.Contract);
+            Assert.NotEmpty(name); // theory label, asserted so the parameter isn't flagged unused
+            var entity = create();
+            entity.Verify("admin@example.com", VerificationSources.Manual);
 
-            Assert.False(provider.IsVerified);
-            Assert.Null(provider.VerifiedAt);
-            Assert.Null(provider.VerifiedBy);
+            entity.MarkVerificationFailed("Name, City differ (ourairports)");
+
+            Assert.False(entity.IsVerified);
+            Assert.Null(entity.VerifiedAt);
+            Assert.Null(entity.VerifiedBy);
+            Assert.Null(entity.VerificationSource);
+            Assert.Equal("Name, City differ (ourairports)", entity.VerificationIssue);
         }
 
-        [Fact]
-        public void LoungeProvider_Verify_SetsVerifiedStateWithTimestampAndActor()
+        [Theory]
+        [MemberData(nameof(Factories))]
+        public void SatisfiesIVerifiableInterface(string name, Func<IVerifiable> create)
         {
-            var provider = LoungeProvider.Create("PP", "Priority Pass", LoungeProviderKind.Contract);
-            var before = DateTime.UtcNow;
-
-            provider.Verify("admin@example.com");
-
-            Assert.True(provider.IsVerified);
-            Assert.NotNull(provider.VerifiedAt);
-            Assert.True(provider.VerifiedAt >= before);
-            Assert.Equal("admin@example.com", provider.VerifiedBy);
-        }
-
-        [Fact]
-        public void LoungeProvider_Unverify_ResetsVerifiedState()
-        {
-            var provider = LoungeProvider.Create("PP", "Priority Pass", LoungeProviderKind.Contract);
-            provider.Verify("admin@example.com");
-
-            provider.Unverify();
-
-            Assert.False(provider.IsVerified);
-            Assert.Null(provider.VerifiedAt);
-            Assert.Null(provider.VerifiedBy);
-        }
-
-        [Fact]
-        public void LoungeProvider_SatisfiesIVerifiableInterface()
-        {
-            var provider = LoungeProvider.Create("PP", "Priority Pass", LoungeProviderKind.Contract);
-
-            Assert.IsAssignableFrom<IVerifiable>(provider);
+            Assert.NotEmpty(name); // theory label, asserted so the parameter isn't flagged unused
+            Assert.IsAssignableFrom<IVerifiable>(create());
         }
     }
 }

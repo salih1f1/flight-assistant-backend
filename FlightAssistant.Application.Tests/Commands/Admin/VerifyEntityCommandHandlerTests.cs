@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Commands.Admin.Verify;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using NSubstitute;
 using NSubstitute.ReturnsExtensions;
@@ -30,10 +31,39 @@ public class VerifyEntityCommandHandlerTests
     }
 
     [Fact]
+    public async Task Handle_ExistingEntity_Verifies_RecordsManualAsVerificationSource()
+    {
+        var airport = Airport.Create("LHR", null, "Heathrow", "London", "GB", null, null, null);
+        _repo.FindByKeyAsync(1, Arg.Any<CancellationToken>()).Returns(airport);
+        var handler = new VerifyEntityCommandHandler<Airport>(_repo);
+
+        await handler.Handle(new VerifyEntityCommand<Airport>(1, true, "admin@example.com"), CancellationToken.None);
+
+        // The manual verify route always records VerificationSources.Manual, never the admin's own
+        // id/email or any other value the caller might pass — VerifyEntityCommand carries no source
+        // field for exactly that reason.
+        Assert.Equal(VerificationSources.Manual, airport.VerificationSource);
+    }
+
+    [Fact]
+    public async Task Handle_EntityInNeedsAttention_Verify_ClearsVerificationIssue()
+    {
+        var airport = Airport.Create("LHR", null, "Heathrow", "London", "GB", null, null, null);
+        airport.MarkVerificationFailed("Name differs (ourairports)"); // Needs attention state
+        _repo.FindByKeyAsync(1, Arg.Any<CancellationToken>()).Returns(airport);
+        var handler = new VerifyEntityCommandHandler<Airport>(_repo);
+
+        await handler.Handle(new VerifyEntityCommand<Airport>(1, true, "admin@example.com"), CancellationToken.None);
+
+        Assert.True(airport.IsVerified);
+        Assert.Null(airport.VerificationIssue);
+    }
+
+    [Fact]
     public async Task Handle_ExistingEntity_UnverifiesAndSavesAndReturnsTrue()
     {
         var airport = Airport.Create("LHR", null, "Heathrow", "London", "GB", null, null, null);
-        airport.Verify("admin@example.com");
+        airport.Verify("admin@example.com", VerificationSources.Manual);
         _repo.FindByKeyAsync(1, Arg.Any<CancellationToken>()).Returns(airport);
         var handler = new VerifyEntityCommandHandler<Airport>(_repo);
 
@@ -44,6 +74,7 @@ public class VerifyEntityCommandHandlerTests
         Assert.True(result);
         Assert.False(airport.IsVerified);
         Assert.Null(airport.VerifiedBy);
+        Assert.Null(airport.VerificationSource);
         await _repo.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 
@@ -79,6 +110,7 @@ public class VerifyEntityCommandHandlerTests
         Assert.True(result);
         Assert.True(country.IsVerified);
         Assert.Equal("admin@example.com", country.VerifiedBy);
+        Assert.Equal(VerificationSources.Manual, country.VerificationSource);
         await _countryRepo.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 
@@ -86,7 +118,7 @@ public class VerifyEntityCommandHandlerTests
     public async Task Handle_VerifiedCountry_UnverifiesAndSavesAndReturnsTrue()
     {
         var country = Country.Create("TR", "Turkey");
-        country.Verify("admin@example.com");
+        country.Verify("admin@example.com", VerificationSources.Manual);
         _countryRepo.FindByKeyAsync("TR", Arg.Any<CancellationToken>()).Returns(country);
         var handler = new VerifyEntityCommandHandler<Country>(_countryRepo);
 
@@ -98,6 +130,7 @@ public class VerifyEntityCommandHandlerTests
         Assert.False(country.IsVerified);
         Assert.Null(country.VerifiedBy);
         Assert.Null(country.VerifiedAt);
+        Assert.Null(country.VerificationSource);
         await _countryRepo.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 

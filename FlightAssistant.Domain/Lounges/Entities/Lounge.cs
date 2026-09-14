@@ -26,17 +26,21 @@ namespace FlightAssistant.Domain.Lounges.Entities
         public bool IsVerified { get; private set; }
         public DateTime? VerifiedAt { get; private set; }
         public string? VerifiedBy { get; private set; }
+        public string? VerificationSource { get; private set; }
+        public string? VerificationIssue { get; private set; }
 
         private readonly List<LoungeProviderLink> _providers = new();
         public IReadOnlyCollection<LoungeProviderLink> Providers => _providers;
 
         private Lounge() { } // EF
 
-        public void Verify(string verifiedBy)
+        public void Verify(string verifiedBy, string source)
         {
             IsVerified = true;
             VerifiedAt = DateTime.UtcNow;
             VerifiedBy = verifiedBy;
+            VerificationSource = source;
+            VerificationIssue = null;
         }
 
         public void Unverify()
@@ -44,6 +48,17 @@ namespace FlightAssistant.Domain.Lounges.Entities
             IsVerified = false;
             VerifiedAt = null;
             VerifiedBy = null;
+            VerificationSource = null;
+            VerificationIssue = null;
+        }
+
+        public void MarkVerificationFailed(string issue)
+        {
+            IsVerified = false;
+            VerifiedAt = null;
+            VerifiedBy = null;
+            VerificationSource = null;
+            VerificationIssue = issue;
         }
 
         public static Lounge Create(int airportId, string name, string? terminal = null,
