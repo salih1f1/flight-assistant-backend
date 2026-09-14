@@ -6,7 +6,7 @@ namespace FlightAssistant.Application.Validators
 {
     public sealed class TrackFlightCommandValidator : AbstractValidator<TrackFlightCommand>
     {
-        public TrackFlightCommandValidator()
+        public TrackFlightCommandValidator(TimeProvider timeProvider)
         {
             RuleFor(x => x.FlightNumber)
                 .NotEmpty()
@@ -14,10 +14,6 @@ namespace FlightAssistant.Application.Validators
                 // must be one constant and not two copies of a regex.
                 .Matches(FlightNumberFormat.Pattern, RegexOptions.IgnoreCase)
                 .WithMessage("FlightNumber must be in the format AA1234 or AA1234A.");
-
-            RuleFor(x => x.ServiceDate)
-                .Must(d => d >= DateOnly.FromDateTime(DateTime.UtcNow.Date))
-                .WithMessage("ServiceDate cannot be in the past.");
 
             RuleFor(x => x.DepartureAirportIata)
                 .NotEmpty()
@@ -36,6 +32,14 @@ namespace FlightAssistant.Application.Validators
                 .NotEmpty()
                 .GreaterThan(x => x.ScheduledDepartureUtc)
                 .WithMessage("ScheduledArrivalUtc must be after ScheduledDepartureUtc.");
+
+            // A flight is in the past once it has landed. ServiceDate is deliberately not checked:
+            // it is the origin airport's local date, so comparing it with today's UTC date rejected
+            // tonight's flight west of UTC once the UTC date had rolled over, and a flight still in
+            // the air after its service date (#350).
+            RuleFor(x => x.ScheduledArrivalUtc)
+                .Must(arrival => arrival > timeProvider.GetUtcNow().UtcDateTime)
+                .WithMessage("This flight has already landed: ScheduledArrivalUtc is in the past.");
         }
     }
 }
