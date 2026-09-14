@@ -30,8 +30,10 @@ namespace FlightAssistant.Application.Queries.Admin.Data
     /// </param>
     /// <param name="Filter">
     /// <c>column:value</c> — exact match for a non-string column, case-insensitive <c>contains</c>
-    /// for a string column. Split on the *first* colon only, since a filter value (an ISO-8601
-    /// timestamp, for instance) can itself contain colons.
+    /// for a string column. On a date column, <c>column:&gt;=value</c> means "on or after" and a null
+    /// date never matches (#334); on a string column the <c>&gt;=</c> stays part of the text to find.
+    /// Split on the *first* colon only, since a filter value (an ISO-8601 timestamp, for instance)
+    /// can itself contain colons.
     /// </param>
     public sealed record GetBrowsableDataQuery(
         string Table,

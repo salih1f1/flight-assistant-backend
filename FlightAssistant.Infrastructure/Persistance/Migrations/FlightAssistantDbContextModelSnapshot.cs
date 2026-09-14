@@ -365,6 +365,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
+                    b.Property<DateTime?>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_utc");
+
                     b.Property<string>("Hours")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
@@ -507,6 +511,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .IsRequired()
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
+
+                    b.Property<DateTime?>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_utc");
 
                     b.Property<bool>("IsVerified")
                         .ValueGeneratedOnAdd()

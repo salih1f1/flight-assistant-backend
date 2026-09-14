@@ -15,6 +15,13 @@ namespace FlightAssistant.Domain.Loyalty.Entities
         public int? AirlineId { get; private set; }             // FK -> airlines (optional)
         public string? AllianceCode { get; private set; }       // "STAR","OW","ST" (optional)
 
+        /// <summary>
+        /// When an admin or an import added the program. Null when unknown: rows from before this
+        /// column existed, and rows from the seed files, which nobody added (#334). The dashboard
+        /// counts only a known date as new.
+        /// </summary>
+        public DateTime? CreatedUtc { get; private set; }
+
         public bool IsVerified { get; private set; }
         public DateTime? VerifiedAt { get; private set; }
         public string? VerifiedBy { get; private set; }
@@ -29,8 +36,17 @@ namespace FlightAssistant.Domain.Loyalty.Entities
                 Name = name,
                 KindId = kindId,
                 AirlineId = airlineId,
-                AllianceCode = allianceCode
+                AllianceCode = allianceCode,
+                CreatedUtc = DateTime.UtcNow
             };
+
+        /// <summary>A program from the seed files: as <see cref="Create"/>, but with no creation time.</summary>
+        public static LoyaltyProgram CreateSeeded(string code, string name, int kindId, int? airlineId = null, string? allianceCode = null)
+        {
+            var program = Create(code, name, kindId, airlineId, allianceCode);
+            program.CreatedUtc = null;
+            return program;
+        }
 
         public void Update(string code, string name, int kindId, int? airlineId, string? allianceCode)
         {

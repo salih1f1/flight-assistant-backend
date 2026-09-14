@@ -68,5 +68,14 @@ public class ReferenceDataSeederTests
         Assert.Equal("AE", emirates.CountryCode);
         Assert.Equal("UAE", emirates.Icao);
         Assert.True(await db.Airlines.CountAsync() > 1);
+
+        // Lounges and loyalty programs from the seed files have no creation date (#334): they
+        // weren't added by anyone, and a fresh environment must not report its whole seed as new.
+        var lounges = await db.Lounges.ToListAsync();
+        Assert.NotEmpty(lounges);
+        Assert.All(lounges, l => Assert.Null(l.CreatedUtc));
+        var programs = await db.LoyaltyPrograms.ToListAsync();
+        Assert.NotEmpty(programs);
+        Assert.All(programs, p => Assert.Null(p.CreatedUtc));
     }
 }

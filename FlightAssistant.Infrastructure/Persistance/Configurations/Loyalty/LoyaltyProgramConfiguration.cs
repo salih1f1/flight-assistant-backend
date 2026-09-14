@@ -28,6 +28,9 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Loyalty
                 .HasForeignKey(x => x.AirlineId)
                 .OnDelete(DeleteBehavior.SetNull);
 
+            // Nullable with no default: existing rows stay unknown rather than all looking new (#334).
+            b.Property(x => x.CreatedUtc).HasColumnName("created_utc");
+
             b.Property(x => x.IsVerified).HasColumnName("is_verified").HasDefaultValue(false);
             b.Property(x => x.VerifiedAt).HasColumnName("verified_at");
             b.Property(x => x.VerifiedBy).HasColumnName("verified_by").HasMaxLength(255);
