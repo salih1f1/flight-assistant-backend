@@ -36,7 +36,7 @@ public class AdminFlightEndpointTests(FlightAssistantWebApplicationFactory facto
     {
         var flight = Flight.Create(1, flightNumber, 10, 20,
             new DateOnly(2026, 9, 20), DateTime.UtcNow, DateTime.UtcNow.AddHours(3),
-            externalId: "ext-1", equipmentAircraftIcao: "A320");
+            equipmentAircraftIcao: "A320");
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
@@ -86,7 +86,6 @@ public class AdminFlightEndpointTests(FlightAssistantWebApplicationFactory facto
         Assert.Equal(flight.DepartureAirportId, dto.DepartureAirportId);
         Assert.Equal(flight.ArrivalAirportId, dto.ArrivalAirportId);
         Assert.Equal(flight.ServiceDateUtc, dto.ServiceDate);
-        Assert.Equal("ext-1", dto.ExternalId);
         Assert.Equal("A320", dto.EquipmentAircraftIcao);
     }
 

@@ -98,7 +98,6 @@ public class GetAdminFlightDetailQueryHandlerTests
             serviceDate: new DateOnly(2026, 10, 1),
             scheduledDepartureUtc: new DateTime(2026, 10, 1, 8, 0, 0, DateTimeKind.Utc),
             scheduledArrivalUtc: new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc),
-            externalId: "ext-1",
             equipmentAircraftIcao: "A320");
         _adminFlights.GetDetailAsync(9, Arg.Any<CancellationToken>()).Returns(flight);
         _flights.GetRecentFlightStatusEventsAsync(9, Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -112,7 +111,6 @@ public class GetAdminFlightDetailQueryHandlerTests
         Assert.Equal(11, result.DepartureAirportId);
         Assert.Equal(22, result.ArrivalAirportId);
         Assert.Equal(new DateOnly(2026, 10, 1), result.ServiceDate);
-        Assert.Equal("ext-1", result.ExternalId);
         Assert.Equal("A320", result.EquipmentAircraftIcao);
     }
 }

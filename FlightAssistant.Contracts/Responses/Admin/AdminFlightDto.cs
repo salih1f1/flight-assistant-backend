@@ -13,7 +13,6 @@ namespace FlightAssistant.Contracts.Responses.Admin
         DateTime? EstimatedArrivalUtc,
         DateTime? ActualDepartureUtc,
         DateTime? ActualArrivalUtc,
-        string? EquipmentAircraftIcao,
-        string? ExternalId
+        string? EquipmentAircraftIcao
     );
 }

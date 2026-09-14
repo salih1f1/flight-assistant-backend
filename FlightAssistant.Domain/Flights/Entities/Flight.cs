@@ -22,7 +22,6 @@ namespace FlightAssistant.Domain.Flights.Entities
         public DateTime? ActualArrivalUtc { get; private set; }
 
         public string? EquipmentAircraftIcao { get; private set; }
-        public string? ExternalId { get; private set; }
         public DateTime CreatedUtc { get; private set; } = DateTime.UtcNow;
         public DateTime UpdatedUtc { get; private set; } = DateTime.UtcNow;
 
@@ -38,7 +37,6 @@ namespace FlightAssistant.Domain.Flights.Entities
             DateOnly serviceDate,
             DateTime scheduledDepartureUtc,
             DateTime scheduledArrivalUtc,
-            string? externalId = null,
             string? equipmentAircraftIcao = null)
         {
             if (string.IsNullOrWhiteSpace(flightNumber))
@@ -53,7 +51,6 @@ namespace FlightAssistant.Domain.Flights.Entities
                 ServiceDateUtc = serviceDate,
                 ScheduledDepartureUtc = scheduledDepartureUtc,
                 ScheduledArrivalUtc = scheduledArrivalUtc,
-                ExternalId = externalId,
                 EquipmentAircraftIcao = equipmentAircraftIcao,
                 CreatedUtc = DateTime.UtcNow,
                 UpdatedUtc = DateTime.UtcNow

@@ -32,7 +32,6 @@ namespace FlightAssistant.Contracts.Responses.Admin
         DateTime? ActualDepartureUtc,
         DateTime? ActualArrivalUtc,
         string? EquipmentAircraftIcao,
-        string? ExternalId,
         AdminFlightStatusEventDto? CurrentStatus,
         IReadOnlyList<AdminFlightStatusEventDto> StatusHistory,
         bool StatusHistoryTruncated);
