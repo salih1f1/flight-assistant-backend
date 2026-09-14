@@ -165,5 +165,23 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                             _db.TravelerFlights.Any(tf => tf.FlightId == f.Id))
                 .ToListAsync(ct);
         }
+
+        public async Task<IReadOnlyList<int>> GetDueTrackedFlightIdsAsync(CancellationToken ct = default)
+        {
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+
+            // Any(), not a join: a flight tracked by several travelers is synced once.
+            return await _db.Flights
+                .Where(f => f.NextSyncDueUtc != null &&
+                            f.NextSyncDueUtc <= now &&
+                            _db.TravelerFlights.Any(tf => tf.FlightId == f.Id))
+                .OrderBy(f => f.NextSyncDueUtc)
+                .ThenBy(f => f.Id)
+                .Select(f => f.Id)
+                .ToListAsync(ct);
+        }
+
+        public Task<bool> IsFlightTrackedAsync(int flightId, CancellationToken ct = default) =>
+            _db.TravelerFlights.AnyAsync(tf => tf.FlightId == flightId, ct);
     }
 }

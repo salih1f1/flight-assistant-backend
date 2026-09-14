@@ -1,4 +1,5 @@
 using FlightAssistant.Domain.Flights.Entities;
+using FlightAssistant.Domain.Flights.Enums;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
@@ -249,5 +250,116 @@ public class FlightRepositoryTests : PostgresTestBase
 
         Assert.Single(result);
         Assert.Equal("TK1028", result[0].FlightNumber);
+    }
+
+    private static readonly DateTime SyncNow = new(2026, 9, 14, 12, 0, 0, DateTimeKind.Utc);
+
+    private static FakeTimeProvider ClockAt(DateTime utc) => new(new DateTimeOffset(utc));
+
+    /// <summary>A saved flight with the given next sync time, tracked by one new traveler unless
+    /// <paramref name="tracked"/> is false.</summary>
+    private static Flight FlightDue(FlightAssistantDbContext db, string flightNumber, DateTime? nextSyncDueUtc, bool tracked = true)
+    {
+        var (airlineId, departureAirportId, arrivalAirportId) = EnsureReferenceData(db);
+        var flight = Flight.Create(airlineId, flightNumber, departureAirportId, arrivalAirportId,
+            new DateOnly(2026, 9, 14), SyncNow.AddHours(1), SyncNow.AddHours(3));
+        if (nextSyncDueUtc is not null)
+            flight.ApplySyncPlan(FlightSyncMode.Fast, nextSyncDueUtc);
+        db.Flights.Add(flight);
+        db.SaveChanges();
+
+        if (tracked)
+            AddTracker(db, flight);
+
+        return flight;
+    }
+
+    private static void AddTracker(FlightAssistantDbContext db, Flight flight)
+    {
+        var travelerId = Guid.NewGuid();
+        EnsureTraveler(db, travelerId);
+        db.TravelerFlights.Add(TravelerFlight.Create(travelerId, flight.Id));
+        db.SaveChanges();
+    }
+
+    [Fact]
+    public async Task GetDueTrackedFlightIdsAsync_ReturnsDueFlights_OldestDueFirst()
+    {
+        using var db = CreateContext();
+        // Inserted out of due order, so only an ORDER BY can produce the expected order.
+        var dueAnHourAgo = FlightDue(db, "TK1", SyncNow.AddHours(-1));
+        var dueTenMinutesAgo = FlightDue(db, "TK2", SyncNow.AddMinutes(-10));
+        var dueHalfAnHourAgo = FlightDue(db, "TK3", SyncNow.AddMinutes(-30));
+
+        var ids = await Repository(db, ClockAt(SyncNow)).GetDueTrackedFlightIdsAsync();
+
+        Assert.Equal(new[] { dueAnHourAgo.Id, dueHalfAnHourAgo.Id, dueTenMinutesAgo.Id }, ids);
+    }
+
+    [Fact]
+    public async Task GetDueTrackedFlightIdsAsync_IncludesAFlightDueExactlyNow_ExcludesOneDueAMinuteLater()
+    {
+        using var db = CreateContext();
+        var dueNow = FlightDue(db, "TK1", SyncNow);
+        FlightDue(db, "TK2", SyncNow.AddMinutes(1));
+
+        var ids = await Repository(db, ClockAt(SyncNow)).GetDueTrackedFlightIdsAsync();
+
+        Assert.Equal(new[] { dueNow.Id }, ids);
+    }
+
+    [Fact]
+    public async Task GetDueTrackedFlightIdsAsync_ExcludesAFlightWithNoNextSync()
+    {
+        using var db = CreateContext();
+        FlightDue(db, "TK1", nextSyncDueUtc: null);
+
+        Assert.Empty(await Repository(db, ClockAt(SyncNow)).GetDueTrackedFlightIdsAsync());
+    }
+
+    [Fact]
+    public async Task GetDueTrackedFlightIdsAsync_ExcludesAnUntrackedFlight_EvenWhenDue()
+    {
+        using var db = CreateContext();
+        FlightDue(db, "TK1", SyncNow.AddHours(-1), tracked: false);
+
+        Assert.Empty(await Repository(db, ClockAt(SyncNow)).GetDueTrackedFlightIdsAsync());
+    }
+
+    [Fact]
+    public async Task GetDueTrackedFlightIdsAsync_ReturnsAFlightOnce_WhenSeveralTravelersTrackIt()
+    {
+        using var db = CreateContext();
+        var flight = FlightDue(db, "TK1", SyncNow.AddHours(-1));
+        AddTracker(db, flight);
+
+        Assert.Equal(new[] { flight.Id }, await Repository(db, ClockAt(SyncNow)).GetDueTrackedFlightIdsAsync());
+    }
+
+    [Fact]
+    public async Task GetDueTrackedFlightIdsAsync_ReadsTheClockOnEveryCall()
+    {
+        using var db = CreateContext();
+        var clock = ClockAt(SyncNow);
+        var repository = Repository(db, clock);
+        var flight = FlightDue(db, "TK1", SyncNow.AddMinutes(5));
+
+        Assert.Empty(await repository.GetDueTrackedFlightIdsAsync());
+
+        clock.Advance(TimeSpan.FromMinutes(5));
+
+        Assert.Equal(new[] { flight.Id }, await repository.GetDueTrackedFlightIdsAsync());
+    }
+
+    [Fact]
+    public async Task IsFlightTrackedAsync_TrueOnlyForATrackedFlight()
+    {
+        using var db = CreateContext();
+        var tracked = FlightDue(db, "TK1", null);
+        var untracked = FlightDue(db, "TK2", null, tracked: false);
+        var repository = Repository(db, ClockAt(SyncNow));
+
+        Assert.True(await repository.IsFlightTrackedAsync(tracked.Id));
+        Assert.False(await repository.IsFlightTrackedAsync(untracked.Id));
     }
 }

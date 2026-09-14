@@ -94,6 +94,11 @@ namespace FlightAssistant.Application.Administration
                 nameof(Flight.EquipmentAircraftIcao),
                 nameof(Flight.CreatedUtc),
                 nameof(Flight.UpdatedUtc),
+                nameof(Flight.LastSyncedUtc),
+                nameof(Flight.NextSyncDueUtc),
+                nameof(Flight.SyncMode),
+                nameof(Flight.ScheduleMissingSinceUtc),
+                nameof(Flight.CancelledAtUtc),
             }),
 
             new("traveler-flights", typeof(TravelerFlight), "Traveler Flights", new[]

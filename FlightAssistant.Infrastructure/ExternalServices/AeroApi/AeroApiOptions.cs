@@ -13,7 +13,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     /// referenced from Application — see the DI registration in
     /// <c>FlightAssistant.Infrastructure.DependencyInjection</c>.
     /// </summary>
-    public sealed class AeroApiOptions : IFlightSearchHorizonOptions, IAeroApiBudgetOptions
+    public sealed class AeroApiOptions : IFlightSearchHorizonOptions, IAeroApiBudgetOptions, IFlightStatusWindowOptions
     {
         /// <summary>Sent as the <c>x-apikey</c> header on every request. Never logged.</summary>
         [Required]

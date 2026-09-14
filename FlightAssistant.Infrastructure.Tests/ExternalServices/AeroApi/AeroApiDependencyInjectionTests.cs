@@ -25,13 +25,14 @@ namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroApi;
 /// </summary>
 public class AeroApiDependencyInjectionTests
 {
-    private static ServiceProvider BuildContainer()
+    private static ServiceProvider BuildContainer(IDictionary<string, string?>? extraSettings = null)
     {
+        var settings = new Dictionary<string, string?> { ["AeroApi:ApiKey"] = "dummy-test-key" };
+        foreach (var (key, value) in extraSettings ?? new Dictionary<string, string?>())
+            settings[key] = value;
+
         var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["AeroApi:ApiKey"] = "dummy-test-key"
-            })
+            .AddInMemoryCollection(settings)
             .Build();
 
         var services = new ServiceCollection();
@@ -285,5 +286,15 @@ public class AeroApiDependencyInjectionTests
         var validator = provider.GetRequiredService<IValidator<GetAeroApiUsageQuery>>();
 
         Assert.IsType<GetAeroApiUsageQueryValidator>(validator);
+    }
+
+    [Fact]
+    public void AddInfrastructure_ResolvesIFlightStatusWindowOptions_FromTheBoundAeroApiOptions()
+    {
+        // FlightSyncPlanner starts Live polling this many days before departure (#343). A
+        // non-default value, so a translation that ignores configuration can't pass.
+        using var provider = BuildContainer(new Dictionary<string, string?> { ["AeroApi:StatusWindowFutureDays"] = "1" });
+
+        Assert.Equal(1, provider.GetRequiredService<IFlightStatusWindowOptions>().StatusWindowFutureDays);
     }
 }

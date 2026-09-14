@@ -50,5 +50,15 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         Task<bool> FlightStatusEventExistsAsync(string dedupHash, CancellationToken ct = default);
         Task<int?> GetFlightStatusIdByCodeAsync(string code, CancellationToken ct = default);
         Task<IReadOnlyList<Flight>> GetActiveTrackedFlightsAsync(CancellationToken ct = default);
+
+        /// <summary>
+        /// Ids of tracked flights whose <see cref="Flight.NextSyncDueUtc"/> is now or earlier, oldest
+        /// due first, for <c>FlightStatusSyncBackgroundService</c> (#356). "Now" comes from the
+        /// repository's <see cref="TimeProvider"/> on every call.
+        /// </summary>
+        Task<IReadOnlyList<int>> GetDueTrackedFlightIdsAsync(CancellationToken ct = default);
+
+        /// <summary>Whether any traveler tracks the flight.</summary>
+        Task<bool> IsFlightTrackedAsync(int flightId, CancellationToken ct = default);
     }
 }

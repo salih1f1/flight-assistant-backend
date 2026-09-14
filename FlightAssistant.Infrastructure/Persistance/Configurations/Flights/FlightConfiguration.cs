@@ -17,12 +17,16 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Flights
 
             b.Property(x => x.ServiceDateUtc).HasColumnType("date");
 
+            // Text, so the data browser shows "Live" rather than 1.
+            b.Property(x => x.SyncMode).HasConversion<string>().HasMaxLength(16);
+
             // indexes for fast lookups
             b.HasIndex(x => new { x.AirlineId, x.FlightNumber, x.ServiceDateUtc })
              .IsUnique()
              .HasDatabaseName("ix_flight_lookup");
             b.HasIndex(x => new { x.DepartureAirportId, x.ServiceDateUtc }).HasDatabaseName("ix_flight_dep_day");
             b.HasIndex(x => new { x.ArrivalAirportId, x.ServiceDateUtc }).HasDatabaseName("ix_flight_arr_day");
+            b.HasIndex(x => x.NextSyncDueUtc).HasDatabaseName("ix_flight_next_sync_due");
 
             b.HasOne<Airline>().WithMany().HasForeignKey(x => x.AirlineId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne<Airport>().WithMany().HasForeignKey(x => x.DepartureAirportId).OnDelete(DeleteBehavior.Restrict);
