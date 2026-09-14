@@ -4,7 +4,9 @@ using MediatR;
 
 namespace FlightAssistant.Application.Queries.Admin.Export;
 
-public record AllianceExportDto(string Code, string Name);
+public record AllianceExportDto(
+    string Code, string Name,
+    DateTime? VerifiedAt, string? VerifiedBy, string? VerificationSource);
 
 public record ExportAlliancesQuery : IRequest<IReadOnlyList<AllianceExportDto>>;
 
@@ -16,6 +18,7 @@ public sealed class ExportAlliancesQueryHandler : IRequestHandler<ExportAlliance
     public async Task<IReadOnlyList<AllianceExportDto>> Handle(ExportAlliancesQuery request, CancellationToken ct)
     {
         var alliances = await _repo.GetAllVerifiedAsync(ct);
-        return alliances.Select(a => new AllianceExportDto(a.Code, a.Name)).ToList();
+        return alliances.Select(a => new AllianceExportDto(
+            a.Code, a.Name, a.VerifiedAt, a.VerifiedBy, a.VerificationSource)).ToList();
     }
 }

@@ -17,6 +17,8 @@ public class ExportLoungesQueryHandlerTests
         var lounge = Lounge.Create(1, "Galleries Club", "T3", null, "06:00-22:00", true, false, false, "WiFi");
         var link = LoungeProviderLink.Create(0, 5, LoungeProviderRole.Operator, "Members only", "GOLD");
         lounge.ReplaceAllProviders(new[] { link });
+        var verifiedAt = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        lounge.Verify("admin@example.com", "manual", verifiedAt);
 
         _loungeRepo.GetAllVerifiedWithLinksAsync(Arg.Any<CancellationToken>())
             .Returns(new List<Lounge> { lounge });
@@ -44,6 +46,9 @@ public class ExportLoungesQueryHandlerTests
         Assert.Equal("Operator", dto.Providers[0].Role);
         Assert.Equal("Members only", dto.Providers[0].Notes);
         Assert.Equal("GOLD", dto.Providers[0].MinAllianceTierCode);
+        Assert.Equal(verifiedAt, dto.VerifiedAt);
+        Assert.Equal("admin@example.com", dto.VerifiedBy);
+        Assert.Equal("manual", dto.VerificationSource);
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FluentValidation;
@@ -6,7 +7,9 @@ using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Import;
 
-public record AirlineImportDto(string? Iata, string? Icao, string Name, string CountryCode, string? AllianceCode);
+public record AirlineImportDto(
+    string? Iata, string? Icao, string Name, string CountryCode, string? AllianceCode,
+    DateTime? VerifiedAt = null, string? VerifiedBy = null, string? VerificationSource = null);
 
 public record ImportAirlinesCommand(IReadOnlyList<AirlineImportDto> Items) : IRequest<ImportResult>;
 
@@ -32,6 +35,8 @@ public sealed class ImportAirlinesCommandValidator : AbstractValidator<ImportAir
                 .Matches("^[A-Z]{2}$", RegexOptions.IgnoreCase).WithMessage("'{PropertyName}' must be a 2-letter ISO country code.");
             item.RuleFor(d => d.AllianceCode)
                 .MaximumLength(8).When(d => d.AllianceCode is not null);
+            item.RuleFor(d => d.VerifiedBy).MaximumLength(255).When(d => d.VerifiedBy is not null);
+            item.RuleFor(d => d.VerificationSource).MaximumLength(100).When(d => d.VerificationSource is not null);
         });
     }
 }
@@ -39,7 +44,13 @@ public sealed class ImportAirlinesCommandValidator : AbstractValidator<ImportAir
 public sealed class ImportAirlinesCommandHandler : IRequestHandler<ImportAirlinesCommand, ImportResult>
 {
     private readonly IAirlineRepository _repo;
-    public ImportAirlinesCommandHandler(IAirlineRepository repo) => _repo = repo;
+    private readonly IAdminContext _adminContext;
+
+    public ImportAirlinesCommandHandler(IAirlineRepository repo, IAdminContext adminContext)
+    {
+        _repo = repo;
+        _adminContext = adminContext;
+    }
 
     public async Task<ImportResult> Handle(ImportAirlinesCommand request, CancellationToken ct)
     {
@@ -51,6 +62,14 @@ public sealed class ImportAirlinesCommandHandler : IRequestHandler<ImportAirline
         {
             try
             {
+                var verification = ImportVerification.Resolve(
+                    dto.VerifiedAt, dto.VerifiedBy, dto.VerificationSource, _adminContext.ActorId);
+                if (verification.IsRejected)
+                {
+                    errors.Add($"Airline '{dto.Iata ?? dto.Icao ?? dto.Name}': {verification.RejectionReason}");
+                    continue;
+                }
+
                 Airline? existing = null;
                 if (!string.IsNullOrWhiteSpace(dto.Iata))
                     existing = await _repo.FindByIataAsync(dto.Iata, ct);
@@ -59,12 +78,15 @@ public sealed class ImportAirlinesCommandHandler : IRequestHandler<ImportAirline
 
                 if (existing is null)
                 {
-                    await _repo.AddAsync(Airline.Create(dto.Iata, dto.Icao, dto.Name, dto.CountryCode, dto.AllianceCode), ct);
+                    var airline = Airline.Create(dto.Iata, dto.Icao, dto.Name, dto.CountryCode, dto.AllianceCode);
+                    verification.Apply(airline);
+                    await _repo.AddAsync(airline, ct);
                     inserted++;
                 }
                 else
                 {
                     existing.Update(dto.Iata, dto.Icao, dto.Name, dto.CountryCode, dto.AllianceCode);
+                    verification.Apply(existing);
                     updated++;
                 }
             }

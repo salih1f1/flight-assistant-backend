@@ -51,6 +51,28 @@ namespace FlightAssistant.Domain.Tests.Loyalty
             Assert.Null(entity.VerificationIssue);
         }
 
+        /// <summary>
+        /// The three-argument overload (#362), used by CSV import to keep a row's own
+        /// <c>VerifiedAt</c> from the file rather than restamping the moment of import.
+        /// </summary>
+        [Theory]
+        [MemberData(nameof(Factories))]
+        public void Verify_WithExplicitVerifiedAtUtc_SetsAllFourAndClearsIssue(string name, Func<IVerifiable> create)
+        {
+            Assert.NotEmpty(name); // theory label, asserted so the parameter isn't flagged unused
+            var entity = create();
+            entity.MarkVerificationFailed("stale seed data"); // start from Needs attention
+            var explicitVerifiedAt = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+
+            entity.Verify("import", VerificationSources.Import, explicitVerifiedAt);
+
+            Assert.True(entity.IsVerified);
+            Assert.Equal(explicitVerifiedAt, entity.VerifiedAt);
+            Assert.Equal("import", entity.VerifiedBy);
+            Assert.Equal(VerificationSources.Import, entity.VerificationSource);
+            Assert.Null(entity.VerificationIssue);
+        }
+
         [Theory]
         [MemberData(nameof(Factories))]
         public void Unverify_ClearsAllFiveVerificationProperties(string name, Func<IVerifiable> create)

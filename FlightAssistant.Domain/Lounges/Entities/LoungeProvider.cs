@@ -30,10 +30,12 @@ namespace FlightAssistant.Domain.Lounges.Entities
             Description = description;
         }
 
-        public void Verify(string verifiedBy, string source)
+        public void Verify(string verifiedBy, string source) => Verify(verifiedBy, source, DateTime.UtcNow);
+
+        public void Verify(string verifiedBy, string source, DateTime verifiedAtUtc)
         {
             IsVerified = true;
-            VerifiedAt = DateTime.UtcNow;
+            VerifiedAt = verifiedAtUtc;
             VerifiedBy = verifiedBy;
             VerificationSource = source;
             VerificationIssue = null;

@@ -4,7 +4,9 @@ using MediatR;
 
 namespace FlightAssistant.Application.Queries.Admin.Export;
 
-public record LoyaltyProgramKindExportDto(string Code, string Name, string? Description);
+public record LoyaltyProgramKindExportDto(
+    string Code, string Name, string? Description,
+    DateTime? VerifiedAt, string? VerifiedBy, string? VerificationSource);
 
 public record ExportLoyaltyProgramKindsQuery : IRequest<IReadOnlyList<LoyaltyProgramKindExportDto>>;
 
@@ -16,6 +18,8 @@ public sealed class ExportLoyaltyProgramKindsQueryHandler : IRequestHandler<Expo
     public async Task<IReadOnlyList<LoyaltyProgramKindExportDto>> Handle(ExportLoyaltyProgramKindsQuery request, CancellationToken ct)
     {
         var kinds = await _repo.GetAllVerifiedAsync(ct);
-        return kinds.Select(k => new LoyaltyProgramKindExportDto(k.Code, k.Name, k.Description)).ToList();
+        return kinds.Select(k => new LoyaltyProgramKindExportDto(
+            k.Code, k.Name, k.Description,
+            k.VerifiedAt, k.VerifiedBy, k.VerificationSource)).ToList();
     }
 }

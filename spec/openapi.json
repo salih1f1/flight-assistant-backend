@@ -1444,7 +1444,7 @@
         "tags": [
           "Admin - Import"
         ],
-        "summary": "Import alliances from CSV (run before countries, airports, airlines). Upserts by Code.",
+        "summary": "Import alliances from CSV (run before countries, airports, airlines). Upserts by Code. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.",
         "operationId": "ImportAlliances",
         "requestBody": {
           "content": {
@@ -1508,7 +1508,7 @@
         "tags": [
           "Admin - Import"
         ],
-        "summary": "Import countries from CSV (run after alliances). Upserts by Code.",
+        "summary": "Import countries from CSV (run after alliances). Upserts by Code. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.",
         "operationId": "ImportCountries",
         "requestBody": {
           "content": {
@@ -1572,7 +1572,7 @@
         "tags": [
           "Admin - Import"
         ],
-        "summary": "Import airports from CSV (run after countries). Upserts by IATA.",
+        "summary": "Import airports from CSV (run after countries). Upserts by IATA. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.",
         "operationId": "ImportAirports",
         "requestBody": {
           "content": {
@@ -1636,7 +1636,7 @@
         "tags": [
           "Admin - Import"
         ],
-        "summary": "Import airlines from CSV (run after airports). Upserts by IATA, fallback ICAO.",
+        "summary": "Import airlines from CSV (run after airports). Upserts by IATA, fallback ICAO. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.",
         "operationId": "ImportAirlines",
         "requestBody": {
           "content": {
@@ -1700,7 +1700,7 @@
         "tags": [
           "Admin - Import"
         ],
-        "summary": "Import lounge providers from CSV (run after airlines). Upserts by Code.",
+        "summary": "Import lounge providers from CSV (run after airlines). Upserts by Code. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.",
         "operationId": "ImportLoungeProviders",
         "requestBody": {
           "content": {
@@ -1764,7 +1764,7 @@
         "tags": [
           "Admin - Import"
         ],
-        "summary": "Import loyalty program kinds from CSV (run after airlines). Upserts by Code.",
+        "summary": "Import loyalty program kinds from CSV (run after airlines). Upserts by Code. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.",
         "operationId": "ImportLoyaltyProgramKinds",
         "requestBody": {
           "content": {
@@ -1828,7 +1828,7 @@
         "tags": [
           "Admin - Import"
         ],
-        "summary": "Import lounges from CSV (run after lounge-providers). Providers column is JSON-encoded. Upserts by Name+AirportIata+Terminal.",
+        "summary": "Import lounges from CSV (run after lounge-providers). Providers column is JSON-encoded. Upserts by Name+AirportIata+Terminal. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.",
         "operationId": "ImportLounges",
         "requestBody": {
           "content": {
@@ -1892,7 +1892,7 @@
         "tags": [
           "Admin - Import"
         ],
-        "summary": "Import loyalty programs from CSV (run after loyalty-program-kinds and airlines). Tiers column is JSON-encoded. Upserts by Code.",
+        "summary": "Import loyalty programs from CSV (run after loyalty-program-kinds and airlines). Tiers column is JSON-encoded. Upserts by Code. Every row ends verified (kept from the CSV's VerifiedAt/VerifiedBy/VerificationSource if all three are present, else stamped `import`); a row with only some of the three filled in is rejected into Errors.",
         "operationId": "ImportLoyaltyPrograms",
         "requestBody": {
           "content": {

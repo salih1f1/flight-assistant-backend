@@ -133,4 +133,81 @@ public class CsvImportParserTests
         await Assert.ThrowsAnyAsync<Exception>(() =>
             CsvImportParser.ParseAsync<LoungeImportDto, LoungeImportDtoMap>(stream));
     }
+
+    // ── #362: verification columns are optional, and VerifiedAt parses as UTC ──────
+
+    [Fact]
+    public async Task ParseAlliances_NoVerificationColumns_ParsesWithNullValues()
+    {
+        // The exact CSV shape an older export (pre-#362) would carry: no VerifiedAt/VerifiedBy/
+        // VerificationSource columns at all. The three new columns must be optional, or this
+        // (and every real old-format re-import) would throw a header validation error.
+        const string csv = """
+            Code,Name
+            SA,Star Alliance
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<AllianceImportDto, AllianceImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.Null(result[0].VerifiedAt);
+        Assert.Null(result[0].VerifiedBy);
+        Assert.Null(result[0].VerificationSource);
+    }
+
+    [Fact]
+    public async Task ParseAlliances_WithVerificationColumns_ParsesVerifiedAtAsUtc()
+    {
+        const string csv = """
+            Code,Name,VerifiedAt,VerifiedBy,VerificationSource
+            SA,Star Alliance,2026-09-14T20:31:12.1234567Z,admin@example.com,manual
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<AllianceImportDto, AllianceImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.NotNull(result[0].VerifiedAt);
+        Assert.Equal(DateTimeKind.Utc, result[0].VerifiedAt!.Value.Kind);
+        Assert.Equal("admin@example.com", result[0].VerifiedBy);
+        Assert.Equal("manual", result[0].VerificationSource);
+    }
+
+    [Fact]
+    public async Task ParseLounges_NoVerificationColumns_ParsesWithNullValues()
+    {
+        // Same optionality check as the flat-DTO case above, but for a ClassMap that maps
+        // constructor Parameters explicitly rather than via AutoMap.
+        const string csv = """
+            Name,AirportIata,Terminal,LocationHint,Hours,IsAirside,IsDomesticOnly,IsInternationalOnly,Amenities,Providers
+            "The Lounge",LHR,T5,,24h,true,false,false,,[]
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<LoungeImportDto, LoungeImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.Null(result[0].VerifiedAt);
+        Assert.Null(result[0].VerifiedBy);
+        Assert.Null(result[0].VerificationSource);
+    }
+
+    [Fact]
+    public async Task ParseLounges_WithVerificationColumns_ParsesVerifiedAtAsUtc()
+    {
+        const string csv = """
+            Name,AirportIata,Terminal,LocationHint,Hours,IsAirside,IsDomesticOnly,IsInternationalOnly,Amenities,Providers,VerifiedAt,VerifiedBy,VerificationSource
+            "The Lounge",LHR,T5,,24h,true,false,false,,[],2026-09-14T20:31:12.1234567Z,admin@example.com,manual
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<LoungeImportDto, LoungeImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.NotNull(result[0].VerifiedAt);
+        Assert.Equal(DateTimeKind.Utc, result[0].VerifiedAt!.Value.Kind);
+        Assert.Equal("admin@example.com", result[0].VerifiedBy);
+        Assert.Equal("manual", result[0].VerificationSource);
+    }
 }

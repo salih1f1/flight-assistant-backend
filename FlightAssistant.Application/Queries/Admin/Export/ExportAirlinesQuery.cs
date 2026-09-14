@@ -5,7 +5,8 @@ using MediatR;
 namespace FlightAssistant.Application.Queries.Admin.Export;
 
 public record AirlineExportDto(
-    string? Iata, string? Icao, string Name, string CountryCode, string? AllianceCode);
+    string? Iata, string? Icao, string Name, string CountryCode, string? AllianceCode,
+    DateTime? VerifiedAt, string? VerifiedBy, string? VerificationSource);
 
 public record ExportAirlinesQuery : IRequest<IReadOnlyList<AirlineExportDto>>;
 
@@ -18,6 +19,7 @@ public sealed class ExportAirlinesQueryHandler : IRequestHandler<ExportAirlinesQ
     {
         var airlines = await _repo.GetAllVerifiedAsync(ct);
         return airlines.Select(a => new AirlineExportDto(
-            a.Iata, a.Icao, a.Name, a.CountryCode, a.AllianceCode)).ToList();
+            a.Iata, a.Icao, a.Name, a.CountryCode, a.AllianceCode,
+            a.VerifiedAt, a.VerifiedBy, a.VerificationSource)).ToList();
     }
 }

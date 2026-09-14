@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Lounges.Enums;
@@ -12,7 +13,8 @@ public record LoungeProviderLinkImportDto(string ProviderCode, string Role, stri
 public record LoungeImportDto(
     string Name, string AirportIata, string? Terminal, string? LocationHint, string? Hours,
     bool IsAirside, bool IsDomesticOnly, bool IsInternationalOnly, string? Amenities,
-    IReadOnlyList<LoungeProviderLinkImportDto> Providers);
+    IReadOnlyList<LoungeProviderLinkImportDto> Providers,
+    DateTime? VerifiedAt = null, string? VerifiedBy = null, string? VerificationSource = null);
 
 public record ImportLoungesCommand(IReadOnlyList<LoungeImportDto> Items) : IRequest<ImportResult>;
 
@@ -44,6 +46,8 @@ public sealed class ImportLoungesCommandValidator : AbstractValidator<ImportLoun
                 p.RuleFor(x => x.ProviderCode).NotEmpty().MaximumLength(32);
                 p.RuleFor(x => x.Role).NotEmpty();
             });
+            item.RuleFor(d => d.VerifiedBy).MaximumLength(255).When(d => d.VerifiedBy is not null);
+            item.RuleFor(d => d.VerificationSource).MaximumLength(100).When(d => d.VerificationSource is not null);
         });
     }
 }
@@ -52,11 +56,13 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
 {
     private readonly ILoungeRepository _loungeRepo;
     private readonly IRefDataRepository _refDataRepo;
+    private readonly IAdminContext _adminContext;
 
-    public ImportLoungesCommandHandler(ILoungeRepository loungeRepo, IRefDataRepository refDataRepo)
+    public ImportLoungesCommandHandler(ILoungeRepository loungeRepo, IRefDataRepository refDataRepo, IAdminContext adminContext)
     {
         _loungeRepo = loungeRepo;
         _refDataRepo = refDataRepo;
+        _adminContext = adminContext;
     }
 
     public async Task<ImportResult> Handle(ImportLoungesCommand request, CancellationToken ct)
@@ -69,6 +75,14 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
         {
             try
             {
+                var verification = ImportVerification.Resolve(
+                    dto.VerifiedAt, dto.VerifiedBy, dto.VerificationSource, _adminContext.ActorId);
+                if (verification.IsRejected)
+                {
+                    errors.Add($"Lounge '{dto.Name}': {verification.RejectionReason}");
+                    continue;
+                }
+
                 var airportId = await _refDataRepo.GetAirportIdByIataAsync(dto.AirportIata, ct);
                 if (airportId is null)
                 {
@@ -84,6 +98,7 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
                     var lounge = Lounge.Create(airportId.Value, dto.Name, dto.Terminal, dto.LocationHint,
                         dto.Hours, dto.IsAirside, dto.IsDomesticOnly, dto.IsInternationalOnly, dto.Amenities);
                     lounge.ReplaceAllProviders(providerLinks);
+                    verification.Apply(lounge);
                     await _loungeRepo.AddAsync(lounge, ct);
                     inserted++;
                 }
@@ -92,6 +107,7 @@ public sealed class ImportLoungesCommandHandler : IRequestHandler<ImportLoungesC
                     existing.Update(dto.Name, dto.Terminal, dto.LocationHint, dto.Hours,
                         dto.IsAirside, dto.IsDomesticOnly, dto.IsInternationalOnly, dto.Amenities);
                     existing.ReplaceAllProviders(providerLinks);
+                    verification.Apply(existing);
                     updated++;
                 }
             }

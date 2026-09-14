@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FluentValidation;
@@ -11,7 +12,8 @@ public record LoyaltyTierImportDto(string Code, string Name, int Rank, string? A
 public record LoyaltyProgramImportDto(
     string Code, string Name, string KindCode,
     string? AirlineIata, string? AllianceCode,
-    IReadOnlyList<LoyaltyTierImportDto> Tiers);
+    IReadOnlyList<LoyaltyTierImportDto> Tiers,
+    DateTime? VerifiedAt = null, string? VerifiedBy = null, string? VerificationSource = null);
 
 public record ImportLoyaltyProgramsCommand(IReadOnlyList<LoyaltyProgramImportDto> Items) : IRequest<ImportResult>;
 
@@ -36,6 +38,8 @@ public sealed class ImportLoyaltyProgramsCommandValidator : AbstractValidator<Im
                 t.RuleFor(x => x.Name).NotEmpty().MaximumLength(200);
                 t.RuleFor(x => x.Rank).GreaterThan(0);
             });
+            item.RuleFor(d => d.VerifiedBy).MaximumLength(255).When(d => d.VerifiedBy is not null);
+            item.RuleFor(d => d.VerificationSource).MaximumLength(100).When(d => d.VerificationSource is not null);
         });
     }
 }
@@ -44,11 +48,13 @@ public sealed class ImportLoyaltyProgramsCommandHandler : IRequestHandler<Import
 {
     private readonly ILoyaltyRepository _loyaltyRepo;
     private readonly IRefDataRepository _refDataRepo;
+    private readonly IAdminContext _adminContext;
 
-    public ImportLoyaltyProgramsCommandHandler(ILoyaltyRepository loyaltyRepo, IRefDataRepository refDataRepo)
+    public ImportLoyaltyProgramsCommandHandler(ILoyaltyRepository loyaltyRepo, IRefDataRepository refDataRepo, IAdminContext adminContext)
     {
         _loyaltyRepo = loyaltyRepo;
         _refDataRepo = refDataRepo;
+        _adminContext = adminContext;
     }
 
     public async Task<ImportResult> Handle(ImportLoyaltyProgramsCommand request, CancellationToken ct)
@@ -61,6 +67,14 @@ public sealed class ImportLoyaltyProgramsCommandHandler : IRequestHandler<Import
         {
             try
             {
+                var verification = ImportVerification.Resolve(
+                    dto.VerifiedAt, dto.VerifiedBy, dto.VerificationSource, _adminContext.ActorId);
+                if (verification.IsRejected)
+                {
+                    errors.Add($"LoyaltyProgram '{dto.Code}': {verification.RejectionReason}");
+                    continue;
+                }
+
                 var kind = await _loyaltyRepo.FindKindByCodeAsync(dto.KindCode, ct);
                 if (kind is null)
                 {
@@ -85,6 +99,7 @@ public sealed class ImportLoyaltyProgramsCommandHandler : IRequestHandler<Import
                     var program = LoyaltyProgram.Create(dto.Code, dto.Name, kind.Id, airlineId, dto.AllianceCode);
                     foreach (var t in dto.Tiers)
                         program.AddTier(LoyaltyTier.Create(0, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode));
+                    verification.Apply(program);
                     await _loyaltyRepo.AddProgramAsync(program, ct);
                     inserted++;
                 }
@@ -93,6 +108,7 @@ public sealed class ImportLoyaltyProgramsCommandHandler : IRequestHandler<Import
                     existing.Update(dto.Code, dto.Name, kind.Id, airlineId, dto.AllianceCode);
                     existing.ReplaceAllTiers(dto.Tiers.Select(t =>
                         LoyaltyTier.Create(existing.Id, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode)));
+                    verification.Apply(existing);
                     updated++;
                 }
             }

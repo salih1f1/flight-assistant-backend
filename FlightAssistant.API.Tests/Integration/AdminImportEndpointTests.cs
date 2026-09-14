@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 
 namespace FlightAssistant.API.Tests.Integration;
 
@@ -155,5 +156,132 @@ public class AdminImportEndpointTests(FlightAssistantWebApplicationFactory facto
         var response = await client.PostAsync("admin/import/lounges", BuildMultipart(csv));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    // ── #362: import verifies rows, export carries verification details ───────────
+
+    [Fact]
+    public async Task ImportAlliances_OldFormatCsv_RowEndsVerifiedAsImportByActor()
+    {
+        var userId = Guid.NewGuid().ToString();
+        var client = factory.CreateAdminClient(userId);
+
+        var importResponse = await client.PostAsync("admin/import/alliances", BuildMultipart(ValidAlliancesCsv));
+        Assert.Equal(HttpStatusCode.OK, importResponse.StatusCode);
+
+        var exportResponse = await client.GetAsync("admin/export/alliances");
+        var exportCsv = await exportResponse.Content.ReadAsStringAsync();
+
+        Assert.Contains("SA,Star Alliance,", exportCsv);
+        // VerifiedBy,VerificationSource are adjacent trailing columns: this confirms the row was
+        // stamped by this request's actor with source `import`, not left unverified or manual.
+        Assert.Contains($"{userId},import", exportCsv);
+    }
+
+    [Fact]
+    public async Task ImportAlliances_OnePartiallyFilledVerificationRow_Returns207AndImportsTheOthers()
+    {
+        var client = factory.CreateAdminClient();
+
+        // Codes distinct from every other test in this class — the InMemory database is shared
+        // across the collection's tests, so reusing "SA"/"OW" would make this an update rather
+        // than an insert depending on run order. "ZP" fills only VerifiedBy — partial verification
+        // data, rejected into Errors. "ZQ" fills none — stamped `import` and still succeeds in the
+        // same file.
+        const string csv = """
+            Code,Name,VerifiedAt,VerifiedBy,VerificationSource
+            ZP,Zeta Partial Alliance,,prior-admin,
+            ZQ,Zeta Quiet Alliance,,,
+            """;
+
+        var response = await client.PostAsync("admin/import/alliances", BuildMultipart(csv));
+
+        Assert.Equal((HttpStatusCode)207, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(body);
+        Assert.Equal(1, doc.RootElement.GetProperty("inserted").GetInt32());
+        var errors = doc.RootElement.GetProperty("errors").EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Single(errors);
+        Assert.Contains("ZP", errors[0]);
+
+        var exportResponse = await client.GetAsync("admin/export/alliances");
+        var exportCsv = await exportResponse.Content.ReadAsStringAsync();
+        Assert.Contains("ZQ,Zeta Quiet Alliance,", exportCsv);
+        Assert.DoesNotContain("ZP,Zeta Partial Alliance", exportCsv);
+    }
+
+    [Fact]
+    public async Task ImportExportRoundTrip_Alliances_KeepsVerificationDetails()
+    {
+        var client = factory.CreateAdminClient();
+        const string csv = """
+            Code,Name,VerifiedAt,VerifiedBy,VerificationSource
+            SA,Star Alliance,2026-01-02T03:04:05.0000000Z,prior-admin,manual
+            """;
+
+        var firstImport = await client.PostAsync("admin/import/alliances", BuildMultipart(csv));
+        Assert.Equal(HttpStatusCode.OK, firstImport.StatusCode);
+
+        var exportResponse = await client.GetAsync("admin/export/alliances");
+        var exportCsv = await exportResponse.Content.ReadAsStringAsync();
+        Assert.Contains("2026-01-02T03:04:05", exportCsv);
+        Assert.Contains("prior-admin", exportCsv);
+        Assert.Contains("manual", exportCsv);
+
+        // Round trip: re-import the exact CSV the export just produced. Because all three columns
+        // are present, the row must keep them as-is rather than being re-stamped `import` by
+        // whoever ran this second import.
+        var secondImport = await client.PostAsync("admin/import/alliances",
+            BuildMultipart(exportCsv, fileName: "alliances-export.csv"));
+        Assert.Equal(HttpStatusCode.OK, secondImport.StatusCode);
+
+        var reExportResponse = await client.GetAsync("admin/export/alliances");
+        var reExportCsv = await reExportResponse.Content.ReadAsStringAsync();
+        Assert.Contains("2026-01-02T03:04:05", reExportCsv);
+        Assert.Contains("prior-admin", reExportCsv);
+        Assert.Contains("manual", reExportCsv);
+    }
+
+    [Fact]
+    public async Task ImportExportRoundTrip_Lounges_KeepsVerificationDetails()
+    {
+        var client = factory.CreateAdminClient();
+
+        const string airportsCsv = """
+            Iata,Icao,Name,City,CountryCode,Latitude,Longitude,ElevationFt
+            LHR,EGLL,Heathrow Airport,London,GB,51.4706,-0.461941,83
+            """;
+        Assert.Equal(HttpStatusCode.OK,
+            (await client.PostAsync("admin/import/airports", BuildMultipart(airportsCsv))).StatusCode);
+
+        const string providersCsv = """
+            Code,Name,Kind,Description
+            PLAZA,Plaza Premium,Contract,
+            """;
+        Assert.Equal(HttpStatusCode.OK,
+            (await client.PostAsync("admin/import/lounge-providers", BuildMultipart(providersCsv))).StatusCode);
+
+        const string loungesCsv = """
+            Name,AirportIata,Terminal,LocationHint,Hours,IsAirside,IsDomesticOnly,IsInternationalOnly,Amenities,Providers,VerifiedAt,VerifiedBy,VerificationSource
+            "Galleries Club",LHR,T5,,24h,true,false,false,,[],2026-01-02T03:04:05.0000000Z,prior-admin,manual
+            """;
+        var firstImport = await client.PostAsync("admin/import/lounges", BuildMultipart(loungesCsv));
+        Assert.Equal(HttpStatusCode.OK, firstImport.StatusCode);
+
+        var exportResponse = await client.GetAsync("admin/export/lounges");
+        var exportCsv = await exportResponse.Content.ReadAsStringAsync();
+        Assert.Contains("2026-01-02T03:04:05", exportCsv);
+        Assert.Contains("prior-admin", exportCsv);
+        Assert.Contains("manual", exportCsv);
+
+        var secondImport = await client.PostAsync("admin/import/lounges",
+            BuildMultipart(exportCsv, fileName: "lounges-export.csv"));
+        Assert.Equal(HttpStatusCode.OK, secondImport.StatusCode);
+
+        var reExportResponse = await client.GetAsync("admin/export/lounges");
+        var reExportCsv = await reExportResponse.Content.ReadAsStringAsync();
+        Assert.Contains("2026-01-02T03:04:05", reExportCsv);
+        Assert.Contains("prior-admin", reExportCsv);
+        Assert.Contains("manual", reExportCsv);
     }
 }

@@ -15,6 +15,8 @@ public class ExportLoyaltyProgramsQueryHandlerTests
     {
         var program = LoyaltyProgram.Create("BAEC", "BA Executive Club", kindId: 1, airlineId: 2, "OW");
         program.AddTier(LoyaltyTier.Create(0, "Bronze", "Bronze", 1, "OW", "ONEWORLD_BRONZE"));
+        var verifiedAt = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        program.Verify("admin@example.com", "manual", verifiedAt);
 
         _loyaltyRepo.GetAllVerifiedWithTiersAsync(Arg.Any<CancellationToken>())
             .Returns(new List<LoyaltyProgram> { program });
@@ -40,6 +42,9 @@ public class ExportLoyaltyProgramsQueryHandlerTests
         Assert.Equal(1, dto.Tiers[0].Rank);
         Assert.Equal("OW", dto.Tiers[0].AllianceCode);
         Assert.Equal("ONEWORLD_BRONZE", dto.Tiers[0].AllianceTierCode);
+        Assert.Equal(verifiedAt, dto.VerifiedAt);
+        Assert.Equal("admin@example.com", dto.VerifiedBy);
+        Assert.Equal("manual", dto.VerificationSource);
     }
 
     [Fact]

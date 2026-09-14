@@ -9,6 +9,36 @@ namespace FlightAssistant.API.Csv;
 
 public static class CsvImportParser
 {
+    /// <summary>
+    /// Style used to parse the <c>VerifiedAt</c> import column (#362): without
+    /// <see cref="DateTimeStyles.AdjustToUniversal"/>/<see cref="DateTimeStyles.AssumeUniversal"/>,
+    /// CsvHelper's default <see cref="DateTime"/> parsing can yield
+    /// <see cref="DateTimeKind.Unspecified"/> — the bug class CLAUDE.md documents for date query
+    /// parameters, which Npgsql refuses against a <c>timestamptz</c> column, applies equally here.
+    /// </summary>
+    private const DateTimeStyles VerifiedAtStyles = DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal;
+
+    /// <summary>
+    /// Maps the three optional verification columns (#362) shared by every import DTO —
+    /// <c>VerifiedAt</c>/<c>VerifiedBy</c>/<c>VerificationSource</c> — by constructor
+    /// <see cref="ClassMap.Parameter(string)"/> rather than <see cref="ClassMap{T}.Map"/>.
+    /// Every import DTO is a positional record with no parameterless constructor, so CsvHelper
+    /// (including its own <c>AutoMap</c>) always builds it via the constructor: a property
+    /// <c>Map</c> configures a member CsvHelper never actually reads from when constructing the
+    /// object, leaving the AutoMap-generated, non-optional <see cref="ClassMap.Parameter"/> for
+    /// the same name in force — which is exactly why an older CSV without these columns kept
+    /// failing header validation until this switched to re-mapping the <em>parameter</em>. Each
+    /// <c>Parameter(name)</c> call here replaces that DTO's own AutoMap-registered parameter for
+    /// the same name (CsvHelper matches by name, not by call site), so it is marked
+    /// <c>Optional()</c> — a CSV without them (an older export) still parses, the columns are
+    /// simply left null — and <c>VerifiedAt</c> is parsed with UTC styles.
+    /// </summary>
+    public static void MapImportVerificationParameters<T>(this ClassMap<T> map)
+    {
+        map.Parameter("VerifiedAt").Name("VerifiedAt").TypeConverterOption.DateTimeStyles(VerifiedAtStyles).Optional();
+        map.Parameter("VerifiedBy").Name("VerifiedBy").Optional();
+        map.Parameter("VerificationSource").Name("VerificationSource").Optional();
+    }
 
     /// <summary>
     /// Parses a CSV into <typeparamref name="T"/> records via CsvHelper AutoMap.

@@ -4,7 +4,9 @@ using MediatR;
 
 namespace FlightAssistant.Application.Queries.Admin.Export;
 
-public record LoungeProviderExportDto(string Code, string Name, string Kind, string? Description);
+public record LoungeProviderExportDto(
+    string Code, string Name, string Kind, string? Description,
+    DateTime? VerifiedAt, string? VerifiedBy, string? VerificationSource);
 
 public record ExportLoungeProvidersQuery : IRequest<IReadOnlyList<LoungeProviderExportDto>>;
 
@@ -17,6 +19,7 @@ public sealed class ExportLoungeProvidersQueryHandler : IRequestHandler<ExportLo
     {
         var providers = await _repo.GetAllVerifiedAsync(ct);
         return providers.Select(p => new LoungeProviderExportDto(
-            p.Code, p.Name, p.Kind.ToString(), p.Description)).ToList();
+            p.Code, p.Name, p.Kind.ToString(), p.Description,
+            p.VerifiedAt, p.VerifiedBy, p.VerificationSource)).ToList();
     }
 }
