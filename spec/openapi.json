@@ -622,6 +622,171 @@
         }
       }
     },
+    "/admin/ci/runs": {
+      "get": {
+        "tags": [
+          "Admin - CI"
+        ],
+        "summary": "Recent CI runs",
+        "description": "Proxies GitHub's run list for the CI workflow (GitHub:Workflow, default ci.yml), newest first. Optional 'branch' filters to one branch; 'limit' is 1–50, default 20. Cached for 60 seconds. Test counts are not part of a run: read them from GET /admin/ci/runs/{id}/tests. 503 when GitHub:Token is not set.",
+        "operationId": "AdminGetCiRuns",
+        "parameters": [
+          {
+            "name": "branch",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CiRunDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/ci/runs/{id}/tests": {
+      "get": {
+        "tags": [
+          "Admin - CI"
+        ],
+        "summary": "A CI run's test report",
+        "description": "Reads the test-results.json from the run's test-results artifact: totals, then each test project with every test's outcome, duration and failure message. 404 when the run doesn't exist, has no report (still running, or stopped before its tests reported), or its report has expired. Cached by artifact, since an artifact never changes. 503 when GitHub:Token is not set.",
+        "operationId": "AdminGetCiRunTests",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CiTestReportDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/countries/{id}/verify": {
       "patch": {
         "tags": [
@@ -4406,6 +4571,178 @@
           "rowCount": {
             "type": "integer",
             "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CiRunDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "runNumber": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "runAttempt": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "event": {
+            "type": "string",
+            "nullable": true
+          },
+          "branch": {
+            "type": "string",
+            "nullable": true
+          },
+          "commitSha": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "conclusion": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startedUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "durationSeconds": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "htmlUrl": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CiTestCaseDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "class": {
+            "type": "string",
+            "nullable": true
+          },
+          "outcome": {
+            "type": "string",
+            "nullable": true
+          },
+          "durationMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "message": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CiTestReportDto": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "commit": {
+            "type": "string",
+            "nullable": true
+          },
+          "ref": {
+            "type": "string",
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "passed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "durationMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "suites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CiTestSuiteDto"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CiTestSuiteDto": {
+        "type": "object",
+        "properties": {
+          "suite": {
+            "type": "string",
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "passed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "durationMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CiTestCaseDto"
+            },
+            "nullable": true
           }
         },
         "additionalProperties": false

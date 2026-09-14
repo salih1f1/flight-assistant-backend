@@ -1,0 +1,45 @@
+{
+  "total_count": 2,
+  "artifacts": [
+    {
+      "id": 10318990001,
+      "node_id": "MDg6QXJ0aWZhY3QxMDMxOTAwNjUxOQ==",
+      "name": "test-results",
+      "size_in_bytes": 231765,
+      "url": "https://api.github.com/repos/salih1f1/flight-assistant-backend/actions/artifacts/10319006519",
+      "archive_download_url": "https://api.github.com/repos/salih1f1/flight-assistant-backend/actions/artifacts/10319006519/zip",
+      "expired": false,
+      "digest": "sha256:aa2bdf0ad5900f228a70bb26667a76a43406637748939693a903a65b07c9f33f",
+      "created_at": "2026-09-13T13:40:02Z",
+      "updated_at": "2026-09-13T13:40:02Z",
+      "expires_at": "2026-09-18T13:40:02Z",
+      "workflow_run": {
+        "id": 34761036906,
+        "repository_id": 1037567459,
+        "head_repository_id": 1037567459,
+        "head_branch": "development",
+        "head_sha": "1cc8f1a2966782782a2456e85d91eaa2fe0ff192"
+      }
+    },
+    {
+      "id": 10319006519,
+      "node_id": "MDg6QXJ0aWZhY3QxMDMxOTAwNjUxOQ==",
+      "name": "test-results",
+      "size_in_bytes": 231765,
+      "url": "https://api.github.com/repos/salih1f1/flight-assistant-backend/actions/artifacts/10319006519",
+      "archive_download_url": "https://api.github.com/repos/salih1f1/flight-assistant-backend/actions/artifacts/10319006519/zip",
+      "expired": false,
+      "digest": "sha256:aa2bdf0ad5900f228a70bb26667a76a43406637748939693a903a65b07c9f33f",
+      "created_at": "2026-09-13T13:54:19Z",
+      "updated_at": "2026-09-13T13:54:19Z",
+      "expires_at": "2026-09-18T13:52:09Z",
+      "workflow_run": {
+        "id": 34761036906,
+        "repository_id": 1037567459,
+        "head_repository_id": 1037567459,
+        "head_branch": "development",
+        "head_sha": "1cc8f1a2966782782a2456e85d91eaa2fe0ff192"
+      }
+    }
+  ]
+}
