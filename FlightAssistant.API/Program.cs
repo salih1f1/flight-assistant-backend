@@ -364,6 +364,7 @@ adminGroup.MapAdminUsageEndpoints();
 adminGroup.MapAdminHealthEndpoints();
 adminGroup.MapAdminCiEndpoints();
 adminGroup.MapAdminAuditEndpoints();
+adminGroup.MapAdminStatsEndpoints();
 adminGroup.MapAdminDataEndpoints();
 
 // Private endpoints (ping, secure-test, whoami)

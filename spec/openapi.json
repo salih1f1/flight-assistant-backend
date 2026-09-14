@@ -2413,6 +2413,47 @@
         }
       }
     },
+    "/admin/stats": {
+      "get": {
+        "tags": [
+          "Admin - Stats"
+        ],
+        "summary": "Dashboard card counts: totals, new in a period, verified",
+        "description": "For travelers, flights, airlines, airports, lounges and loyalty programs: the total, how many were added in the period with a per-bucket series, and verified/unverified counts (null for travelers and flights). 'period' is 24h, 7d, 30d or 90d (default 7d), resolved to whole hourly (24h) or UTC-day buckets ending with the current one, so NewInPeriod always equals the sum of Series. 'Added' is CreatedUtc, or FirstSeenAt for airlines and airports; rows with no known date and seeded airlines and airports never count as new.",
+        "operationId": "AdminGetStats",
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminStatsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/travelers/{id}/detail": {
       "get": {
         "tags": [
@@ -3732,6 +3773,46 @@
         },
         "additionalProperties": false
       },
+      "AdminEntityStatsDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "nullable": true
+          },
+          "dateColumn": {
+            "type": "string",
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "newInPeriod": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "verified": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "unverified": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "AdminFlightDetailDto": {
         "type": "object",
         "properties": {
@@ -4199,6 +4280,35 @@
           "pointsExpiryDate": {
             "type": "string",
             "format": "date",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminStatsDto": {
+        "type": "object",
+        "properties": {
+          "fromUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "toUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "period": {
+            "type": "string",
+            "nullable": true
+          },
+          "bucket": {
+            "type": "string",
+            "nullable": true
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminEntityStatsDto"
+            },
             "nullable": true
           }
         },
