@@ -51,8 +51,8 @@ A flight's mode comes from its tracking, its times and its status, at a given mo
 |---|---|---|---|---|
 | 1 | *(none)* | No traveler tracks the flight | never | none |
 | 2 | **Stopped** | `ActualArrivalUtc` ≤ now − 30 min; or `CancelledAtUtc` ≤ now − 30 min; or no `ActualArrivalUtc` and (`EstimatedArrivalUtc` ?? `ScheduledArrivalUtc`) ≤ now − 24 h | never | none |
-| 3 | **Fast** | (`EstimatedDepartureUtc` ?? `ScheduledDepartureUtc`) − 4 h ≤ now | 2 min | `GET /flights/{ident}` |
-| 4 | **Live** | `ScheduledDepartureUtc` − 2 days ≤ now | 10 min | `GET /flights/{ident}` |
+| 3 | **Fast** | (`EstimatedDepartureUtc` ?? `ScheduledDepartureUtc`) − 4 h ≤ now | 5 min | `GET /flights/{ident}` |
+| 4 | **Live** | `ScheduledDepartureUtc` − 2 days ≤ now | 30 min | `GET /flights/{ident}` |
 | 5 | **Schedule** | otherwise (departure more than 2 days away) | 1 day | `GET /schedules/{date}/{date}` by flight number |
 
 Notes:
@@ -68,8 +68,8 @@ After a flight is synced at `now`, its next sync is set from its (recalculated) 
 
 | Mode | `NextSyncDueUtc` |
 |---|---|
-| Fast | now + 2 min |
-| Live | min(now + 10 min, start of Fast) |
+| Fast | now + 5 min |
+| Live | min(now + 30 min, start of Fast) |
 | Schedule | min(now + 1 day, start of Live) |
 | Stopped, none | null |
 
@@ -180,8 +180,8 @@ Responses: 200, 404 (unknown flight), 502/503 (AeroAPI unavailable, as today).
 |---|---|---|
 | `Enabled` | `true` | existing |
 | `LoopInterval` | `00:01:00` | new |
-| `NearDepartureInterval` | `00:02:00` | existing, now the Fast interval |
-| `Interval` | `00:10:00` | existing, now the Live interval |
+| `NearDepartureInterval` | `00:05:00` | existing, now the Fast interval; lengthened from 00:02:00 for cost (#364) |
+| `Interval` | `00:30:00` | existing, now the Live interval; lengthened from 00:10:00 for cost (#364) |
 | `ScheduleCheckInterval` | `1.00:00:00` | new |
 | `FastWindowBeforeDeparture` | `04:00:00` | new (hardcoded 4 h today) |
 | `StopAfterArrival` | `00:30:00` | new |
@@ -243,8 +243,8 @@ A small legend sits above the grid. The `SyncMode` column is always visible text
 
 | Mode | Most calls per day |
 |---|---|
-| Fast | 720 (only for the hours between 4 h before departure and 30 min after arrival) |
-| Live | 144 |
+| Fast | 288 (only for the hours between 4 h before departure and 30 min after arrival) |
+| Live | 48 |
 | Schedule | 1 |
 | Stopped, none | 0 |
 

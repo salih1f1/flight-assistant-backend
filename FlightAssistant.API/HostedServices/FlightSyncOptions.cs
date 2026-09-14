@@ -20,11 +20,11 @@ namespace FlightAssistant.API.HostedServices
 
         /// <summary>The Fast interval.</summary>
         [Range(typeof(TimeSpan), "00:01:00", "01:00:00")]
-        public TimeSpan NearDepartureInterval { get; set; } = TimeSpan.FromMinutes(2);
+        public TimeSpan NearDepartureInterval { get; set; } = TimeSpan.FromMinutes(5);
 
         /// <summary>The Live interval.</summary>
         [Range(typeof(TimeSpan), "00:01:00", "06:00:00")]
-        public TimeSpan Interval { get; set; } = TimeSpan.FromMinutes(10);
+        public TimeSpan Interval { get; set; } = TimeSpan.FromMinutes(30);
 
         [Range(typeof(TimeSpan), "01:00:00", "7.00:00:00")]
         public TimeSpan ScheduleCheckInterval { get; set; } = TimeSpan.FromDays(1);

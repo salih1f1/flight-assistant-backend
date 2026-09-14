@@ -26,8 +26,8 @@ public class FlightSyncOptionsTests
 
         Assert.True(options.Enabled);
         Assert.Equal(TimeSpan.FromMinutes(1), options.LoopInterval);
-        Assert.Equal(TimeSpan.FromMinutes(2), options.NearDepartureInterval);
-        Assert.Equal(TimeSpan.FromMinutes(10), options.Interval);
+        Assert.Equal(TimeSpan.FromMinutes(5), options.NearDepartureInterval);
+        Assert.Equal(TimeSpan.FromMinutes(30), options.Interval);
         Assert.Equal(TimeSpan.FromDays(1), options.ScheduleCheckInterval);
         Assert.Equal(TimeSpan.FromHours(4), options.FastWindowBeforeDeparture);
         Assert.Equal(TimeSpan.FromMinutes(30), options.StopAfterArrival);
@@ -54,6 +54,37 @@ public class FlightSyncOptionsTests
         Assert.Equal(TimeSpan.FromHours(3), options.FastWindowBeforeDeparture);
         Assert.Equal(TimeSpan.FromMinutes(20), options.StopAfterArrival);
         Assert.Equal(TimeSpan.FromHours(12), options.StopWithoutArrivalAfter);
+    }
+
+    [Fact]
+    public void AppSettingsJson_FlightSyncSection_MatchesTheCodeDefaults()
+    {
+        // The deployed app binds appsettings.json, which overrides the class defaults. If the two
+        // disagree, the defaults that tests and docs describe aren't the ones that run.
+        var config = new ConfigurationBuilder().AddJsonFile(ApiAppSettingsPath(), optional: false).Build();
+        var shipped = new FlightSyncOptions();
+        config.GetSection(FlightSyncOptions.SectionName).Bind(shipped);
+        var defaults = new FlightSyncOptions();
+
+        Assert.Equal(defaults.Enabled, shipped.Enabled);
+        Assert.Equal(defaults.LoopInterval, shipped.LoopInterval);
+        Assert.Equal(defaults.NearDepartureInterval, shipped.NearDepartureInterval);
+        Assert.Equal(defaults.Interval, shipped.Interval);
+        Assert.Equal(defaults.ScheduleCheckInterval, shipped.ScheduleCheckInterval);
+        Assert.Equal(defaults.FastWindowBeforeDeparture, shipped.FastWindowBeforeDeparture);
+        Assert.Equal(defaults.StopAfterArrival, shipped.StopAfterArrival);
+        Assert.Equal(defaults.StopWithoutArrivalAfter, shipped.StopWithoutArrivalAfter);
+    }
+
+    /// <summary>The API project's own appsettings.json, found by walking up from the test output directory.</summary>
+    private static string ApiAppSettingsPath()
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, "FlightAssistant.API", "appsettings.json");
+            if (File.Exists(candidate)) return candidate;
+        }
+        throw new FileNotFoundException("FlightAssistant.API/appsettings.json not found above " + AppContext.BaseDirectory);
     }
 
     [Theory]
