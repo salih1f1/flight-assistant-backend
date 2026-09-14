@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using FlightAssistant.Contracts.Requests.Admin;
+using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.EntityFrameworkCore;
@@ -48,6 +49,7 @@ public class AdminVerifyEndpointTests(FlightAssistantWebApplicationFactory facto
         Assert.NotNull(country);
         Assert.True(country!.IsVerified);
         Assert.NotNull(country.VerifiedBy);
+        Assert.Equal(VerificationSources.Manual, country.VerificationSource);
     }
 
     [Fact]
@@ -90,7 +92,7 @@ public class AdminVerifyEndpointTests(FlightAssistantWebApplicationFactory facto
     public async Task VerifyCountry_Admin_VerifiedCountry_UnverifyReturns204_AndClearsVerificationFields()
     {
         var country = Country.Create("ZW", "Test Country ZW");
-        country.Verify("someone@example.com");
+        country.Verify("someone@example.com", VerificationSources.Manual);
         await SeedAsync(db => db.Countries.Add(country));
 
         var response = await factory.CreateAdminClient()
@@ -103,6 +105,7 @@ public class AdminVerifyEndpointTests(FlightAssistantWebApplicationFactory facto
         Assert.False(updated!.IsVerified);
         Assert.Null(updated.VerifiedBy);
         Assert.Null(updated.VerifiedAt);
+        Assert.Null(updated.VerificationSource);
     }
 
     // ══════════════ PATCH /admin/airports/{id}/verify (unchanged int route) ══════════════

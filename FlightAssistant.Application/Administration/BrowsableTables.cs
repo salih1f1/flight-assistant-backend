@@ -146,6 +146,8 @@ namespace FlightAssistant.Application.Administration
                 nameof(Lounge.IsVerified),
                 nameof(Lounge.VerifiedAt),
                 nameof(Lounge.VerifiedBy),
+                nameof(Lounge.VerificationSource),
+                nameof(Lounge.VerificationIssue),
             }),
 
             new("lounge-providers", typeof(LoungeProvider), "Lounge Providers", new[]
@@ -158,6 +160,8 @@ namespace FlightAssistant.Application.Administration
                 nameof(LoungeProvider.IsVerified),
                 nameof(LoungeProvider.VerifiedAt),
                 nameof(LoungeProvider.VerifiedBy),
+                nameof(LoungeProvider.VerificationSource),
+                nameof(LoungeProvider.VerificationIssue),
             }),
 
             new("lounge-provider-links", typeof(LoungeProviderLink), "Lounge Provider Links", new[]
@@ -181,6 +185,8 @@ namespace FlightAssistant.Application.Administration
                 nameof(LoyaltyProgram.IsVerified),
                 nameof(LoyaltyProgram.VerifiedAt),
                 nameof(LoyaltyProgram.VerifiedBy),
+                nameof(LoyaltyProgram.VerificationSource),
+                nameof(LoyaltyProgram.VerificationIssue),
             }),
 
             new("loyalty-program-kinds", typeof(LoyaltyProgramKind), "Loyalty Program Kinds", new[]
@@ -192,6 +198,8 @@ namespace FlightAssistant.Application.Administration
                 nameof(LoyaltyProgramKind.IsVerified),
                 nameof(LoyaltyProgramKind.VerifiedAt),
                 nameof(LoyaltyProgramKind.VerifiedBy),
+                nameof(LoyaltyProgramKind.VerificationSource),
+                nameof(LoyaltyProgramKind.VerificationIssue),
             }),
 
             new("loyalty-tiers", typeof(LoyaltyTier), "Loyalty Tiers", new[]
@@ -231,6 +239,8 @@ namespace FlightAssistant.Application.Administration
                 nameof(Airline.IsVerified),
                 nameof(Airline.VerifiedAt),
                 nameof(Airline.VerifiedBy),
+                nameof(Airline.VerificationSource),
+                nameof(Airline.VerificationIssue),
             }),
 
             new("airports", typeof(Airport), "Airports", new[]
@@ -249,6 +259,8 @@ namespace FlightAssistant.Application.Administration
                 nameof(Airport.IsVerified),
                 nameof(Airport.VerifiedAt),
                 nameof(Airport.VerifiedBy),
+                nameof(Airport.VerificationSource),
+                nameof(Airport.VerificationIssue),
             }),
 
             new("alliances", typeof(Alliance), "Alliances", new[]
@@ -261,6 +273,8 @@ namespace FlightAssistant.Application.Administration
                 nameof(Alliance.IsVerified),
                 nameof(Alliance.VerifiedAt),
                 nameof(Alliance.VerifiedBy),
+                nameof(Alliance.VerificationSource),
+                nameof(Alliance.VerificationIssue),
             }),
 
             new("countries", typeof(Country), "Countries", new[]
@@ -279,6 +293,8 @@ namespace FlightAssistant.Application.Administration
                 nameof(Country.IsVerified),
                 nameof(Country.VerifiedAt),
                 nameof(Country.VerifiedBy),
+                nameof(Country.VerificationSource),
+                nameof(Country.VerificationIssue),
             }),
 
             new("seed-versions", typeof(SeedVersion), "Seed Versions", new[]

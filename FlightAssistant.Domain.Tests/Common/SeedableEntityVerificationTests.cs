@@ -1,56 +1,98 @@
+using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Common.Interfaces;
 using FlightAssistant.Domain.ReferenceData.Entities;
 
 namespace FlightAssistant.Domain.Tests.Common
 {
+    /// <summary>
+    /// <see cref="IVerifiable"/> behaviour (#355 Task 1) for the four <see cref="SeedableEntity"/>
+    /// subtypes — Airport, Airline, Alliance, Country — which all inherit the same implementation
+    /// from <see cref="SeedableEntity"/> itself. One theory over a factory per entity rather than
+    /// four near-identical copies of the same test.
+    /// </summary>
     public class SeedableEntityVerificationTests
     {
-        private static Airport CreateAirport() =>
-            Airport.Create("LHR", "EGLL", "Heathrow", "London", "GB");
-
-        [Fact]
-        public void DefaultState_IsNotVerified()
+        public static IEnumerable<object[]> Factories()
         {
-            var airport = CreateAirport();
-
-            Assert.False(airport.IsVerified);
-            Assert.Null(airport.VerifiedAt);
-            Assert.Null(airport.VerifiedBy);
+            yield return new object[] { "Airport", (Func<IVerifiable>)(() => Airport.Create("LHR", "EGLL", "Heathrow", "London", "GB")) };
+            yield return new object[] { "Airline", (Func<IVerifiable>)(() => Airline.Create("BA", "BAW", "British Airways", "GB")) };
+            yield return new object[] { "Alliance", (Func<IVerifiable>)(() => Alliance.Create("SA", "Test Alliance")) };
+            yield return new object[] { "Country", (Func<IVerifiable>)(() => Country.Create("GB", "United Kingdom")) };
         }
 
-        [Fact]
-        public void Verify_SetsVerifiedStateWithTimestampAndActor()
+        [Theory]
+        [MemberData(nameof(Factories))]
+        public void DefaultState_IsNotVerified(string name, Func<IVerifiable> create)
         {
-            var airport = CreateAirport();
+            Assert.NotEmpty(name); // theory label, asserted so the parameter isn't flagged unused
+            var entity = create();
+
+            Assert.False(entity.IsVerified);
+            Assert.Null(entity.VerifiedAt);
+            Assert.Null(entity.VerifiedBy);
+            Assert.Null(entity.VerificationSource);
+            Assert.Null(entity.VerificationIssue);
+        }
+
+        [Theory]
+        [MemberData(nameof(Factories))]
+        public void Verify_SetsVerifiedStateSourceAndClearsIssue(string name, Func<IVerifiable> create)
+        {
+            Assert.NotEmpty(name); // theory label, asserted so the parameter isn't flagged unused
+            var entity = create();
+            entity.MarkVerificationFailed("stale seed data"); // start from Needs attention
             var before = DateTime.UtcNow;
 
-            airport.Verify("admin@example.com");
+            entity.Verify("admin@example.com", VerificationSources.Manual);
 
-            Assert.True(airport.IsVerified);
-            Assert.NotNull(airport.VerifiedAt);
-            Assert.True(airport.VerifiedAt >= before);
-            Assert.Equal("admin@example.com", airport.VerifiedBy);
+            Assert.True(entity.IsVerified);
+            Assert.NotNull(entity.VerifiedAt);
+            Assert.True(entity.VerifiedAt >= before);
+            Assert.Equal("admin@example.com", entity.VerifiedBy);
+            Assert.Equal(VerificationSources.Manual, entity.VerificationSource);
+            Assert.Null(entity.VerificationIssue);
         }
 
-        [Fact]
-        public void Unverify_ResetsVerifiedState()
+        [Theory]
+        [MemberData(nameof(Factories))]
+        public void Unverify_ClearsAllFiveVerificationProperties(string name, Func<IVerifiable> create)
         {
-            var airport = CreateAirport();
-            airport.Verify("admin@example.com");
+            Assert.NotEmpty(name); // theory label, asserted so the parameter isn't flagged unused
+            var entity = create();
+            entity.Verify("admin@example.com", VerificationSources.Manual);
 
-            airport.Unverify();
+            entity.Unverify();
 
-            Assert.False(airport.IsVerified);
-            Assert.Null(airport.VerifiedAt);
-            Assert.Null(airport.VerifiedBy);
+            Assert.False(entity.IsVerified);
+            Assert.Null(entity.VerifiedAt);
+            Assert.Null(entity.VerifiedBy);
+            Assert.Null(entity.VerificationSource);
+            Assert.Null(entity.VerificationIssue);
         }
 
-        [Fact]
-        public void Airport_SatisfiesIVerifiableInterface()
+        [Theory]
+        [MemberData(nameof(Factories))]
+        public void MarkVerificationFailed_OnVerifiedEntity_ClearsVerifiedStateAndSetsIssue(string name, Func<IVerifiable> create)
         {
-            var airport = CreateAirport();
+            Assert.NotEmpty(name); // theory label, asserted so the parameter isn't flagged unused
+            var entity = create();
+            entity.Verify("admin@example.com", VerificationSources.Manual);
 
-            Assert.IsAssignableFrom<IVerifiable>(airport);
+            entity.MarkVerificationFailed("Name, City differ (ourairports)");
+
+            Assert.False(entity.IsVerified);
+            Assert.Null(entity.VerifiedAt);
+            Assert.Null(entity.VerifiedBy);
+            Assert.Null(entity.VerificationSource);
+            Assert.Equal("Name, City differ (ourairports)", entity.VerificationIssue);
+        }
+
+        [Theory]
+        [MemberData(nameof(Factories))]
+        public void SatisfiesIVerifiableInterface(string name, Func<IVerifiable> create)
+        {
+            Assert.NotEmpty(name); // theory label, asserted so the parameter isn't flagged unused
+            Assert.IsAssignableFrom<IVerifiable>(create());
         }
     }
 }

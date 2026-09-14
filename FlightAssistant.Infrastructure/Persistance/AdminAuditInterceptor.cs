@@ -193,15 +193,27 @@ namespace FlightAssistant.Infrastructure.Persistance
         {
             EntityState.Added => AdminAuditAction.Create,
             EntityState.Deleted => AdminAuditAction.Delete,
-            // A Modified entry whose set of modified properties is exactly the IVerifiable trio is
-            // a Verify; verifying *and* changing another property in the same save is correctly an
-            // Update, since the modified-property set is then a superset, not an exact match.
+            // A Modified entry whose modified-property set is non-empty and entirely contained in
+            // the IVerifiable set is a Verify; verifying *and* changing another property in the
+            // same save is correctly an Update, since the modified-property set then contains a
+            // property outside IVerifiable.
             EntityState.Modified => IsVerifyOnly(entry) ? AdminAuditAction.Verify : AdminAuditAction.Update,
             _ => throw new InvalidOperationException(
                 $"AdminAuditInterceptor cannot derive an action for entity state {entry.State}; " +
                 "callers must filter to Added/Modified/Deleted before reaching this.")
         };
 
+        // Non-empty and a subset of the IVerifiable property set — not an exact-match SetEquals.
+        // VerificationIssue stays null->null on an ordinary Verify()/Unverify() call (it was
+        // already null and Verify/Unverify leave it null), so EF never marks it modified; an
+        // exact-match rule would then miss the IVerifiable set on every such save and log it as
+        // an Update instead of a Verify. MarkVerificationFailed's own save is still correctly
+        // detected: it touches IsVerified/VerifiedAt/VerifiedBy/VerificationSource/VerificationIssue,
+        // still a (now full) subset. The empty-set guard matters because an empty modified set is
+        // vacuously a subset of anything — without it, a save that has actually modified nothing
+        // on this entry (Unchanged filtered out already, but a Modified entry can still carry zero
+        // changed *properties* in edge cases) would wrongly report Verify rather than falling
+        // through as it should.
         private static bool IsVerifyOnly(EntityEntry entry)
         {
             var modified = entry.Properties
@@ -209,7 +221,7 @@ namespace FlightAssistant.Infrastructure.Persistance
                 .Select(p => p.Metadata.Name)
                 .ToHashSet(StringComparer.Ordinal);
 
-            return modified.SetEquals(VerifiablePropertyNames);
+            return modified.Count > 0 && modified.IsSubsetOf(VerifiablePropertyNames);
         }
 
         /// <summary>

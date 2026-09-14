@@ -25,6 +25,8 @@ namespace FlightAssistant.Domain.Loyalty.Entities
         public bool IsVerified { get; private set; }
         public DateTime? VerifiedAt { get; private set; }
         public string? VerifiedBy { get; private set; }
+        public string? VerificationSource { get; private set; }
+        public string? VerificationIssue { get; private set; }
 
         private readonly List<LoyaltyTier> _tiers = new();
         public IReadOnlyCollection<LoyaltyTier> Tiers => _tiers;
@@ -62,11 +64,13 @@ namespace FlightAssistant.Domain.Loyalty.Entities
             AllianceCode = allianceCode;
         }
 
-        public void Verify(string verifiedBy)
+        public void Verify(string verifiedBy, string source)
         {
             IsVerified = true;
             VerifiedAt = DateTime.UtcNow;
             VerifiedBy = verifiedBy;
+            VerificationSource = source;
+            VerificationIssue = null;
         }
 
         public void Unverify()
@@ -74,6 +78,17 @@ namespace FlightAssistant.Domain.Loyalty.Entities
             IsVerified = false;
             VerifiedAt = null;
             VerifiedBy = null;
+            VerificationSource = null;
+            VerificationIssue = null;
+        }
+
+        public void MarkVerificationFailed(string issue)
+        {
+            IsVerified = false;
+            VerifiedAt = null;
+            VerifiedBy = null;
+            VerificationSource = null;
+            VerificationIssue = issue;
         }
 
         public void AddTier(LoyaltyTier tier) => _tiers.Add(tier);

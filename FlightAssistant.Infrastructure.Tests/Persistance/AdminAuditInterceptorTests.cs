@@ -3,6 +3,7 @@ using System.Text.Json;
 using FlightAssistant.Application.Administration;
 using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.Administration.Enums;
+using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
@@ -167,7 +168,10 @@ public class AdminAuditInterceptorTests
         using (var db = CreateContext(dbName, AdminActor()))
         {
             var country = await db.Countries.SingleAsync(c => c.Code == "PT");
-            country.Verify("admin-oid-1"); // touches only IsVerified/VerifiedAt/VerifiedBy
+            // Touches IsVerified/VerifiedAt/VerifiedBy/VerificationSource; VerificationIssue stays
+            // null -> null (already null on an unverified row) so EF never marks it modified — the
+            // modified set is a proper (non-empty) subset of IVerifiable, not an exact match.
+            country.Verify("admin-oid-1", VerificationSources.Manual);
             await db.SaveChangesAsync();
         }
 
@@ -189,8 +193,85 @@ public class AdminAuditInterceptorTests
         using (var db = CreateContext(dbName, AdminActor()))
         {
             var country = await db.Countries.SingleAsync(c => c.Code == "NL");
-            country.Verify("admin-oid-1");
+            country.Verify("admin-oid-1", VerificationSources.Manual);
             country.Update("The Netherlands", null, null, null, null, null, null, null); // renaming too
+            await db.SaveChangesAsync();
+        }
+
+        using var verify = CreateContext(dbName, AdminActor());
+        var row = await verify.AdminAuditLogs.SingleAsync(r => r.EntityType == nameof(Country) && r.Action != AdminAuditAction.Create);
+        Assert.Equal(AdminAuditAction.Update, row.Action);
+    }
+
+    [Fact]
+    public async Task SaveChangesAsync_UnverifyOnVerifiedRow_DerivesVerifyAction()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        using (var seed = CreateContext(dbName, AdminActor()))
+        {
+            var country = Country.Create("UY", "Test Country UY");
+            country.Verify("admin-oid-1", VerificationSources.Manual);
+            seed.Countries.Add(country);
+            await seed.SaveChangesAsync();
+        }
+
+        using (var db = CreateContext(dbName, AdminActor()))
+        {
+            var country = await db.Countries.SingleAsync(c => c.Code == "UY");
+            country.Unverify(); // IsVerified/VerifiedAt/VerifiedBy/VerificationSource all change
+            await db.SaveChangesAsync();
+        }
+
+        using var verify = CreateContext(dbName, AdminActor());
+        var row = await verify.AdminAuditLogs.SingleAsync(r => r.EntityType == nameof(Country) && r.Action != AdminAuditAction.Create);
+        Assert.Equal(AdminAuditAction.Verify, row.Action);
+    }
+
+    [Fact]
+    public async Task SaveChangesAsync_MarkVerificationFailedOnVerifiedRow_DerivesVerifyAction()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        using (var seed = CreateContext(dbName, AdminActor()))
+        {
+            var country = Country.Create("UZ", "Test Country UZ");
+            country.Verify("admin-oid-1", VerificationSources.Manual);
+            seed.Countries.Add(country);
+            await seed.SaveChangesAsync();
+        }
+
+        using (var db = CreateContext(dbName, AdminActor()))
+        {
+            var country = await db.Countries.SingleAsync(c => c.Code == "UZ");
+            // Touches all five IVerifiable properties, including VerificationIssue this time
+            // (null -> "mismatch"), still a subset of the IVerifiable set.
+            country.MarkVerificationFailed("Name differs (ourairports)");
+            await db.SaveChangesAsync();
+        }
+
+        using var verify = CreateContext(dbName, AdminActor());
+        var row = await verify.AdminAuditLogs.SingleAsync(r => r.EntityType == nameof(Country) && r.Action != AdminAuditAction.Create);
+        Assert.Equal(AdminAuditAction.Verify, row.Action);
+    }
+
+    // ── Guard: the subset rule must not turn an ordinary update into a Verify ─
+
+    [Fact]
+    public async Task SaveChangesAsync_ModifiedOnlyNonVerificationProperty_DerivesUpdateAction()
+    {
+        // Distinguishes the subset rule from a buggy "non-empty implies Verify" rule: this save's
+        // modified-property set (just Name) is disjoint from IVerifiable, not a subset of it, and
+        // must still resolve to Update.
+        var dbName = Guid.NewGuid().ToString();
+        using (var seed = CreateContext(dbName, AdminActor()))
+        {
+            seed.Countries.Add(Country.Create("VA", "Test Country VA"));
+            await seed.SaveChangesAsync();
+        }
+
+        using (var db = CreateContext(dbName, AdminActor()))
+        {
+            var country = await db.Countries.SingleAsync(c => c.Code == "VA");
+            country.Update("Renamed Country VA", null, null, null, null, null, null, null);
             await db.SaveChangesAsync();
         }
 
