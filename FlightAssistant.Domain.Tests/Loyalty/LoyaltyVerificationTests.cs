@@ -68,6 +68,30 @@ namespace FlightAssistant.Domain.Tests.Loyalty
             Assert.Null(entity.VerificationIssue);
         }
 
+        /// <summary>
+        /// The counterpart to <see cref="Unverify_ClearsAllFiveVerificationProperties"/>: that test
+        /// seeds via <c>Verify</c>, which already leaves <c>VerificationIssue</c> null, so it could
+        /// never catch <c>Unverify</c> failing to clear that one property. This seeds from Needs
+        /// attention (<c>VerificationIssue</c> set, <c>VerificationSource</c> already null) instead,
+        /// so clearing the issue is the thing actually being exercised.
+        /// </summary>
+        [Theory]
+        [MemberData(nameof(Factories))]
+        public void Unverify_FromNeedsAttention_ClearsVerificationIssue(string name, Func<IVerifiable> create)
+        {
+            Assert.NotEmpty(name); // theory label, asserted so the parameter isn't flagged unused
+            var entity = create();
+            entity.MarkVerificationFailed("stale seed data");
+
+            entity.Unverify();
+
+            Assert.False(entity.IsVerified);
+            Assert.Null(entity.VerifiedAt);
+            Assert.Null(entity.VerifiedBy);
+            Assert.Null(entity.VerificationSource);
+            Assert.Null(entity.VerificationIssue);
+        }
+
         [Theory]
         [MemberData(nameof(Factories))]
         public void MarkVerificationFailed_OnVerifiedEntity_ClearsVerifiedStateAndSetsIssue(string name, Func<IVerifiable> create)
