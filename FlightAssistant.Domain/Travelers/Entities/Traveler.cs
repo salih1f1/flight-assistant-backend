@@ -10,7 +10,7 @@ namespace FlightAssistant.Domain.Travelers.Entities
         private readonly List<DeviceToken> _deviceTokens = new();
         public IReadOnlyCollection<DeviceToken> DeviceTokens => _deviceTokens.AsReadOnly();
 
-        public string Email { get; private set; }
+        public string Email { get; private set; } = default!;
         public string? DisplayName { get; private set; }
 
         private Traveler() { } // EF
