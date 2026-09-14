@@ -1,8 +1,10 @@
 using FlightAssistant.Application.Commands.Admin.Flights;
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Queries.Admin.Flights;
+using FlightAssistant.Application.Queries.Flights;
 using FlightAssistant.Contracts.Paging;
 using FlightAssistant.Contracts.Responses.Admin;
+using FlightAssistant.Contracts.Responses.Flights;
 using MediatR;
 
 namespace FlightAssistant.API.Endpoints.Admin
@@ -13,6 +15,28 @@ namespace FlightAssistant.API.Endpoints.Admin
         {
             var group = admin.MapGroup("flights")
                 .WithTags("Admin - Flights");
+
+            // GET /admin/flights/search — GET /flights/search for the admin panel (#340), which
+            // can't call the public route: it has no AdminPanel CORS policy.
+            group.MapGet("search", async (DateOnly date, IMediator mediator, CancellationToken ct, string? from = null, string? to = null, string? flightNumber = null, bool includeCodeshares = false) =>
+            {
+                var results = await mediator.Send(new SearchFlightsQuery(from, to, date, flightNumber, includeCodeshares), ct);
+                return Results.Ok(results.Select(r => new FlightSearchResultDto(
+                    r.FlightNumber, r.ServiceDate, r.DepartureAirportIata, r.ArrivalAirportIata,
+                    r.ScheduledDepartureUtc, r.ScheduledArrivalUtc)).ToList());
+            })
+            .WithName("AdminSearchFlights")
+            .WithSummary("Search flights by route or flight number on a date")
+            .WithDescription(
+                "The same search, inputs and responses as GET /flights/search, for the admin panel. " +
+                "Each row can be posted unmodified to POST /admin/travelers/{id}/flights. Every distinct " +
+                "search that misses the cache is a paid AeroAPI call, so it shares the flight-search rate limit.")
+            .Produces<List<FlightSearchResultDto>>(200)
+            .ProducesValidationProblem()
+            .ProducesProblem(500)
+            .ProducesProblem(502)
+            .ProducesProblem(503)
+            .RequireRateLimiting("flight-search");
 
             // GET /admin/flights/{id}/detail — the flight with its current status and recent
             // status-event history, newest first.

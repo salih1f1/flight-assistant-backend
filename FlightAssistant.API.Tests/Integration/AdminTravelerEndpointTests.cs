@@ -2,11 +2,14 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FlightAssistant.Contracts.Paging;
+using FlightAssistant.Contracts.Requests.Flights;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
+using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
 using FlightAssistant.Infrastructure.Persistance;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace FlightAssistant.API.Tests.Integration;
@@ -354,5 +357,143 @@ public class AdminTravelerEndpointTests(FlightAssistantWebApplicationFactory fac
         var dto = await detail.Content.ReadFromJsonAsync<AdminTravelerDetailDto>();
         var remaining = Assert.Single(dto!.DeviceTokens);
         Assert.Equal(untouched.Id, remaining.Id);
+    }
+
+    // ══════════════ POST /admin/travelers/{id}/flights (#340) ══════════════
+    // Its audit rows aren't tested here either, for the reason in the class summary.
+
+    // Unique within the run, so no test reuses a flight another test created.
+    private static int _nextFlightNumber = 1000;
+
+    /// <summary>
+    /// Seeds the airline and airports <c>TrackFlightCommand</c> looks up by IATA code — reference
+    /// rows seeded with <c>HasData</c> never reach this InMemory database — and returns a body for
+    /// a flight between them with a flight number no other test uses.
+    /// </summary>
+    private async Task<TrackFlightRequest> SeedTrackableFlightAsync()
+    {
+        await SeedAsync(db =>
+        {
+            if (!db.Airlines.Any(a => a.Iata == "ZQ"))
+                db.Airlines.Add(Airline.Create("ZQ", null, "Track Test Air", "GB"));
+            if (!db.Airports.Any(a => a.Iata == "ZQA"))
+                db.Airports.Add(Airport.Create("ZQA", null, "Track Test Origin", "Origin", "GB"));
+            if (!db.Airports.Any(a => a.Iata == "ZQB"))
+                db.Airports.Add(Airport.Create("ZQB", null, "Track Test Destination", "Destination", "US"));
+        });
+
+        var serviceDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30));
+        return new TrackFlightRequest(
+            $"ZQ{Interlocked.Increment(ref _nextFlightNumber)}", serviceDate, "ZQA", "ZQB",
+            serviceDate.ToDateTime(new TimeOnly(9, 0), DateTimeKind.Utc),
+            serviceDate.ToDateTime(new TimeOnly(12, 0), DateTimeKind.Utc));
+    }
+
+    private async Task<Traveler> SeedTravelerAsync()
+    {
+        var traveler = Traveler.Register($"{Marker()}@example.com");
+        await SeedAsync(db => db.Travelers.Add(traveler));
+        return traveler;
+    }
+
+    private async Task<List<TravelerFlight>> TrackingRowsForAsync(Guid travelerId)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        return await db.TravelerFlights.Where(tf => tf.TravelerId == travelerId).ToListAsync();
+    }
+
+    private static async Task<int> FlightIdFromAsync(HttpResponseMessage response)
+    {
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        return body.GetProperty("flightId").GetInt32();
+    }
+
+    [Fact]
+    public async Task Track_Anonymous_Returns401()
+    {
+        var response = await factory.CreateClient()
+            .PostAsJsonAsync($"admin/travelers/{Guid.NewGuid()}/flights", new { });
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Track_AuthenticatedWithoutTheAdminRole_Returns403()
+    {
+        var response = await factory.CreateUserClient()
+            .PostAsJsonAsync($"admin/travelers/{Guid.NewGuid()}/flights", new { });
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    /// <summary>
+    /// The point of the route: the flight goes to the traveler in the URL. The admin's own id is
+    /// checked too, since <c>POST /flights</c> tracks for whoever is signed in, and a copy of it
+    /// would still return 201.
+    /// </summary>
+    [Fact]
+    public async Task Track_Admin_TracksTheFlightForTheTravelerInTheUrl_NotForTheCaller()
+    {
+        var traveler = await SeedTravelerAsync();
+        var request = await SeedTrackableFlightAsync();
+        var adminId = Guid.NewGuid();
+
+        var response = await factory.CreateAdminClient(adminId.ToString())
+            .PostAsJsonAsync($"admin/travelers/{traveler.Id}/flights", request);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var flightId = await FlightIdFromAsync(response);
+        var tracking = Assert.Single(await TrackingRowsForAsync(traveler.Id));
+        Assert.Equal(flightId, tracking.FlightId);
+        Assert.Empty(await TrackingRowsForAsync(adminId));
+
+        var flight = await factory.CreateAdminClient().GetFromJsonAsync<AdminFlightDetailDto>($"admin/flights/{flightId}/detail");
+        Assert.Equal(request.FlightNumber, flight!.FlightNumber);
+        Assert.Equal(request.ServiceDate, flight.ServiceDate);
+    }
+
+    [Fact]
+    public async Task Track_Admin_SameFlightTwice_Returns201BothTimes_AndTracksItOnce()
+    {
+        var traveler = await SeedTravelerAsync();
+        var request = await SeedTrackableFlightAsync();
+        var client = factory.CreateAdminClient();
+
+        var first = await client.PostAsJsonAsync($"admin/travelers/{traveler.Id}/flights", request);
+        var second = await client.PostAsJsonAsync($"admin/travelers/{traveler.Id}/flights", request);
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+        Assert.Equal(await FlightIdFromAsync(first), await FlightIdFromAsync(second));
+        Assert.Single(await TrackingRowsForAsync(traveler.Id));
+    }
+
+    [Fact]
+    public async Task Track_Admin_UnknownTraveler_Returns404_AndWritesNothing()
+    {
+        var request = await SeedTrackableFlightAsync();
+        var travelerId = Guid.NewGuid();
+
+        var response = await factory.CreateAdminClient()
+            .PostAsJsonAsync($"admin/travelers/{travelerId}/flights", request);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Empty(await TrackingRowsForAsync(travelerId));
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        Assert.False(await db.Flights.AnyAsync(f => f.FlightNumber == request.FlightNumber));
+    }
+
+    [Fact]
+    public async Task Track_Admin_InvalidFlightNumber_Returns400()
+    {
+        var traveler = await SeedTravelerAsync();
+        var request = await SeedTrackableFlightAsync() with { FlightNumber = "INVALID99999" };
+
+        var response = await factory.CreateAdminClient()
+            .PostAsJsonAsync($"admin/travelers/{traveler.Id}/flights", request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty(await TrackingRowsForAsync(traveler.Id));
     }
 }
