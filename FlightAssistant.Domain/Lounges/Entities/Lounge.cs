@@ -16,6 +16,13 @@ namespace FlightAssistant.Domain.Lounges.Entities
         public bool IsInternationalOnly { get; private set; }
         public string? Amenities { get; private set; }
 
+        /// <summary>
+        /// When an admin or an import added the lounge. Null when unknown: rows from before this
+        /// column existed, and rows from the seed files, which nobody added (#334). The dashboard
+        /// counts only a known date as new.
+        /// </summary>
+        public DateTime? CreatedUtc { get; private set; }
+
         public bool IsVerified { get; private set; }
         public DateTime? VerifiedAt { get; private set; }
         public string? VerifiedBy { get; private set; }
@@ -52,8 +59,19 @@ namespace FlightAssistant.Domain.Lounges.Entities
                 IsAirside = isAirside,
                 IsDomesticOnly = isDomesticOnly,
                 IsInternationalOnly = isInternationalOnly,
-                Amenities = amenities
+                Amenities = amenities,
+                CreatedUtc = DateTime.UtcNow
             };
+
+        /// <summary>A lounge from the seed files: as <see cref="Create"/>, but with no creation time.</summary>
+        public static Lounge CreateSeeded(int airportId, string name, string? terminal = null,
+            string? locationHint = null, string? hours = null, bool isAirside = true,
+            bool isDomesticOnly = false, bool isInternationalOnly = false, string? amenities = null)
+        {
+            var lounge = Create(airportId, name, terminal, locationHint, hours, isAirside, isDomesticOnly, isInternationalOnly, amenities);
+            lounge.CreatedUtc = null;
+            return lounge;
+        }
 
         public void Update(string name, string? terminal, string? locationHint, string? hours,
             bool isAirside, bool isDomesticOnly, bool isInternationalOnly, string? amenities)

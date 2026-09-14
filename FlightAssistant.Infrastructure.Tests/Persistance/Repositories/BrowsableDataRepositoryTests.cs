@@ -4,6 +4,8 @@ using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Domain.Lounges.Entities;
+using FlightAssistant.Domain.Lounges.Enums;
+using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
 using FlightAssistant.Infrastructure.Persistance;
@@ -159,6 +161,108 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
 
         Assert.Null(exception);
         Assert.Equal(1, result.Total);
+    }
+
+    // ── "On or after" date filter (#334) ────────────────────────────────────────
+
+    private static readonly BrowsableTable LoungeProvidersTable = BrowsableTables.TryGetBySlug("lounge-providers")!;
+    private static readonly BrowsableTable LoyaltyProgramsTable = BrowsableTables.TryGetBySlug("loyalty-programs")!;
+
+    /// <summary>
+    /// <c>Column:&gt;=value</c> on a date column means "on or after": the boundary instant itself
+    /// matches, a row a millisecond earlier does not, and a null date (an unverified provider here)
+    /// never does. The dashboard's "new in period" link relies on that last part to never count an
+    /// unknown creation date as new. A bare date with no offset works too, read as UTC midnight.
+    /// </summary>
+    [Theory]
+    [InlineData(">=2026-09-07T00:00:00Z")]
+    [InlineData(">=2026-09-07")]
+    public async Task QueryAsync_OnOrAfterFilter_OnADateColumn_IncludesTheBoundary_ExcludesEarlierAndNull(string filterValue)
+    {
+        await using var db = CreateDbContext();
+        var boundary = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+        void AddProvider(string code, DateTime? verifiedAt)
+        {
+            var provider = LoungeProvider.Create(code, code, LoungeProviderKind.Contract);
+            db.LoungeProviders.Add(provider);
+            db.Entry(provider).Property(p => p.VerifiedAt).CurrentValue = verifiedAt;
+        }
+        AddProvider("NEVER", null);
+        AddProvider("EARLIER", boundary.AddMilliseconds(-1));
+        AddProvider("BOUNDARY", boundary);
+        AddProvider("LATER", boundary.AddDays(3));
+        await db.SaveChangesAsync();
+
+        var (items, total) = await Repository(db).QueryAsync(
+            LoungeProvidersTable, 1, 50, nameof(LoungeProvider.Code), false,
+            nameof(LoungeProvider.VerifiedAt), filterValue);
+
+        Assert.Equal(2, total);
+        Assert.Equal(new[] { "BOUNDARY", "LATER" }, items.Select(i => (string?)i[nameof(LoungeProvider.Code)]));
+    }
+
+    /// <summary>
+    /// Only date columns read a leading <c>&gt;=</c> as an operator. On a string column it stays
+    /// part of the text to find, exactly as before #334, so no existing string filter changes meaning.
+    /// </summary>
+    [Fact]
+    public async Task QueryAsync_OnOrAfterPrefix_OnAStringColumn_IsStillALiteralContains()
+    {
+        await using var db = CreateDbContext();
+        // Both names contain "2026", so only a filter that keeps ">=" as text finds just the first.
+        db.Travelers.AddRange(NewTraveler("VIP >=2026"), NewTraveler("VIP 2026"));
+        await db.SaveChangesAsync();
+
+        var (items, total) = await Repository(db).QueryAsync(
+            TravelersTable, 1, 50, null, false, nameof(Traveler.DisplayName), ">=2026");
+
+        Assert.Equal(1, total);
+        Assert.Equal("VIP >=2026", Assert.Single(items)[nameof(Traveler.DisplayName)]);
+    }
+
+    /// <summary>
+    /// A non-date, non-string column still takes only an exact value: <c>&gt;=</c> there is a 400. An int
+    /// column, since ">=1" would otherwise parse as a number and quietly become a comparison.
+    /// </summary>
+    [Fact]
+    public async Task QueryAsync_OnOrAfterPrefix_OnANonDateColumn_ThrowsDomainException400()
+    {
+        await using var db = CreateDbContext();
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => Repository(db).QueryAsync(
+            LoungeProvidersTable, 1, 50, null, false, nameof(LoungeProvider.Id), ">=1"));
+
+        Assert.Equal(400, ex.StatusCode);
+    }
+
+    /// <summary>
+    /// End to end on a real #334 column: a program an admin creates is stored with its creation
+    /// time and found by the "on or after" filter; a seeded one is stored with none and never is.
+    /// Runs against the migrated schema, so a missing or wrong migration fails here.
+    /// </summary>
+    [Fact]
+    public async Task QueryAsync_LoyaltyProgramCreatedUtc_IsStoredAndFilterable_AndASeededProgramHasNone()
+    {
+        await using var db = CreateDbContext();
+        var kind = LoyaltyProgramKind.Create("AIRLINE", "Airline");
+        db.LoyaltyProgramKinds.Add(kind);
+        await db.SaveChangesAsync();
+        var since = DateTime.UtcNow.AddMinutes(-1);
+        db.LoyaltyPrograms.AddRange(
+            LoyaltyProgram.Create("NEW", "Added by an admin", kind.Id),
+            LoyaltyProgram.CreateSeeded("SEED", "From the seed files", kind.Id));
+        await db.SaveChangesAsync();
+
+        var (all, _) = await Repository(db).QueryAsync(
+            LoyaltyProgramsTable, 1, 50, nameof(LoyaltyProgram.Code), false, null, null);
+        Assert.IsType<DateTime>(all.Single(r => (string?)r[nameof(LoyaltyProgram.Code)] == "NEW")[nameof(LoyaltyProgram.CreatedUtc)]);
+        Assert.Null(all.Single(r => (string?)r[nameof(LoyaltyProgram.Code)] == "SEED")[nameof(LoyaltyProgram.CreatedUtc)]);
+
+        var (recent, total) = await Repository(db).QueryAsync(
+            LoyaltyProgramsTable, 1, 50, null, false, nameof(LoyaltyProgram.CreatedUtc), ">=" + since.ToString("O"));
+
+        Assert.Equal(1, total);
+        Assert.Equal("NEW", Assert.Single(recent)[nameof(LoyaltyProgram.Code)]);
     }
 
     // ── Unparseable filter values are a 400, never a 500 (C1) ──────────────────

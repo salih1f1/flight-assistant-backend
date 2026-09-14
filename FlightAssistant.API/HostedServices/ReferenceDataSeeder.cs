@@ -167,7 +167,8 @@ namespace FlightAssistant.API.HostedServices
                         log.LogWarning("Loyalty program {Code}: airline IATA '{Iata}' not found; seeding without airline link", dto.Code, dto.AirlineIata);
                 }
 
-                var program = LoyaltyProgram.Create(dto.Code, dto.Name, kindId.Value, airlineId, dto.AllianceCode);
+                // Seeded, not added by anyone: no creation time, so a fresh environment's seed never reads as new (#334).
+                var program = LoyaltyProgram.CreateSeeded(dto.Code, dto.Name, kindId.Value, airlineId, dto.AllianceCode);
                 await d.LoyaltyPrograms.AddAsync(program, c);
                 await d.SaveChangesAsync(c);
 
@@ -233,7 +234,8 @@ namespace FlightAssistant.API.HostedServices
                 int loungeId;
                 if (existingLounge is null)
                 {
-                    var lounge = Lounge.Create(
+                    // Seeded, not added by anyone: no creation time (#334).
+                    var lounge = Lounge.CreateSeeded(
                         airportId.Value, dto.Name, dto.Terminal, dto.LocationHint,
                         dto.Hours, dto.IsAirside, dto.IsDomesticOnly, dto.IsInternationalOnly, dto.Amenities);
                     await d.Lounges.AddAsync(lounge, c);

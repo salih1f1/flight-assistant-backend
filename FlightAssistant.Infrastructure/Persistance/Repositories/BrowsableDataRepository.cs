@@ -290,7 +290,8 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
 
         /// <summary>
         /// Exact match for a non-string column; case-insensitive <c>contains</c> for a string
-        /// column. Unlike <see cref="PropertyKeySelector{TEntity}"/>, this resolves the column's
+        /// column; "on or after" for a date column whose value starts with <c>&gt;=</c> (#334), where a
+        /// null date never matches. On a string column a leading <c>&gt;=</c> is just text to find. Unlike <see cref="PropertyKeySelector{TEntity}"/>, this resolves the column's
         /// real CLR type via reflection and calls <c>EF.Property&lt;TProperty&gt;</c> with that
         /// exact type — needed so <c>.ToLower().Contains(...)</c> is available on a string column,
         /// and so an exact-match comparison on a non-string column compares against a
@@ -328,16 +329,27 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             else
             {
                 var underlyingType = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
-                var typedValue = ConvertFilterValue(rawValue, underlyingType);
+                // "On or after" (#334): a leading ">=" is an operator on a date column only. Any other
+                // non-string column still takes an exact value, so a ">=" there fails to parse: a 400.
+                var onOrAfter = IsDateType(underlyingType) && rawValue.StartsWith(">=", StringComparison.Ordinal);
+                var typedValue = ConvertFilterValue(onOrAfter ? rawValue[2..] : rawValue, underlyingType);
                 Expression valueExpression = Expression.Constant(typedValue, underlyingType);
                 if (underlyingType != propertyType)
                     valueExpression = Expression.Convert(valueExpression, propertyType);
-                body = Expression.Equal(propertyAccess, valueExpression);
+                // On a nullable column this is a lifted comparison, so a null date never matches: the
+                // dashboard relies on that to never count an unknown creation date as new.
+                body = onOrAfter
+                    ? Expression.GreaterThanOrEqual(propertyAccess, valueExpression)
+                    : Expression.Equal(propertyAccess, valueExpression);
             }
 
             var predicate = Expression.Lambda<Func<TEntity, bool>>(body, parameter);
             return query.Where(predicate);
         }
+
+        /// <summary>The column types a <c>&gt;=</c> filter compares as dates rather than rejecting.</summary>
+        private static bool IsDateType(Type type) =>
+            type == typeof(DateTime) || type == typeof(DateTimeOffset) || type == typeof(DateOnly);
 
         /// <summary>
         /// Converts the raw filter value string to <paramref name="targetType"/> for an exact-match
