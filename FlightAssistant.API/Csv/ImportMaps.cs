@@ -7,14 +7,22 @@ namespace FlightAssistant.API.Csv;
 //
 // Every import DTO below is a positional record with no parameterless constructor, so CsvHelper
 // always builds it through the constructor. AutoMap over such a type registers one
-// ClassMap.Parameter(name) per constructor parameter — and re-mapping just the three optional
-// verification parameters (#362) on top of an AutoMap call does not replace AutoMap's own
-// registration for that same name the way Map() does for a property; it *adds* a second,
-// still-required Parameter entry, which both fails header validation on an older CSV (the
-// AutoMap copy is still mandatory) and, once a CSV does carry the column, feeds CsvHelper's
-// generated constructor call more arguments than the constructor actually takes. So these maps
-// are explicit — every constructor parameter, verification columns included — rather than
-// AutoMap-plus-override.
+// ClassMap.Parameter(name) per constructor parameter, non-optional by default — and #362 fix
+// round 1 tried finding and mutating those three AutoMap-registered entries in place
+// (Optional()/DateTimeStyles, even .Name(...) too) rather than adding fresh ones. That mutation is
+// provably inert: CsvHelper 33.1.0's AutoMap leaves each auto-registered ParameterMap's
+// Data.Names empty (confirmed by inspection — printing it after AutoMap shows `[]` for every
+// parameter, including the ones that resolve to "Code"/"Name" as their header names without any
+// override), and header validation for a constructor parameter — CsvReader.ValidateHeader(ClassMap,
+// List<InvalidHeader>) — evaluates GetFieldIndex(Data.Names, ...), which cannot resolve a header
+// from an empty Names collection regardless of Data.IsOptional. A minimal repro outside this
+// codebase (AutoMap a record, then `ParameterMaps.Single(p => ...).Name(n).Optional()` on the
+// found entry) reproduces the exact same HeaderValidationException even with IsOptional
+// confirmed true and Name explicitly set on the same object right before parsing — so this is a
+// CsvHelper limitation for constructor-parameter mapping, not a mistake in how it was called here.
+// The fully explicit Parameter(...) registration below — proven correct by the same repro — is
+// the working alternative: registering fresh Parameter(name) entries (rather than reusing
+// AutoMap's) for every constructor parameter, verification columns included.
 
 public sealed class AllianceImportDtoMap : ClassMap<AllianceImportDto>
 {

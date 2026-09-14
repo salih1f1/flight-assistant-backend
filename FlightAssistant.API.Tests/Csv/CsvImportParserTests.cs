@@ -210,4 +210,186 @@ public class CsvImportParserTests
         Assert.Equal("admin@example.com", result[0].VerifiedBy);
         Assert.Equal("manual", result[0].VerificationSource);
     }
+
+    // ── #362 fix round 1: one-row smoke test per import map, old and new format ────
+    //
+    // Alliances (above) and Lounges (above) already cover one flat AutoMap-style map and one
+    // nested, fully-explicit map. These six cover the rest — every remaining import ClassMap —
+    // so a future header rename or a dropped Optional() on any one of the 8 fails exactly its own
+    // pair of tests here, not just the two maps already exercised elsewhere.
+
+    [Fact]
+    public async Task ParseCountries_OldFormatCsv_ParsesWithNullVerificationValues()
+    {
+        const string csv = """
+            Code,Name,Alpha3,NumericCode,Region,Subregion,IsEU,IsSchengen,IsEEA
+            GB,United Kingdom,GBR,826,Europe,Northern Europe,true,true,true
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<CountryImportDto, CountryImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.Equal("GB", result[0].Code);
+        Assert.Null(result[0].VerifiedAt);
+        Assert.Null(result[0].VerifiedBy);
+        Assert.Null(result[0].VerificationSource);
+    }
+
+    [Fact]
+    public async Task ParseCountries_NewFormatCsv_ParsesVerificationValues()
+    {
+        const string csv = """
+            Code,Name,Alpha3,NumericCode,Region,Subregion,IsEU,IsSchengen,IsEEA,VerifiedAt,VerifiedBy,VerificationSource
+            GB,United Kingdom,GBR,826,Europe,Northern Europe,true,true,true,2026-09-14T20:31:12.1234567Z,admin@example.com,manual
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<CountryImportDto, CountryImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.Equal(DateTimeKind.Utc, result[0].VerifiedAt!.Value.Kind);
+        Assert.Equal("admin@example.com", result[0].VerifiedBy);
+        Assert.Equal("manual", result[0].VerificationSource);
+    }
+
+    [Fact]
+    public async Task ParseAirlines_OldFormatCsv_ParsesWithNullVerificationValues()
+    {
+        const string csv = """
+            Iata,Icao,Name,CountryCode,AllianceCode
+            BA,BAW,British Airways,GB,OW
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<AirlineImportDto, AirlineImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.Equal("BA", result[0].Iata);
+        Assert.Null(result[0].VerifiedAt);
+        Assert.Null(result[0].VerifiedBy);
+        Assert.Null(result[0].VerificationSource);
+    }
+
+    [Fact]
+    public async Task ParseAirlines_NewFormatCsv_ParsesVerificationValues()
+    {
+        const string csv = """
+            Iata,Icao,Name,CountryCode,AllianceCode,VerifiedAt,VerifiedBy,VerificationSource
+            BA,BAW,British Airways,GB,OW,2026-09-14T20:31:12.1234567Z,admin@example.com,manual
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<AirlineImportDto, AirlineImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.Equal(DateTimeKind.Utc, result[0].VerifiedAt!.Value.Kind);
+        Assert.Equal("admin@example.com", result[0].VerifiedBy);
+        Assert.Equal("manual", result[0].VerificationSource);
+    }
+
+    [Fact]
+    public async Task ParseLoungeProviders_OldFormatCsv_ParsesWithNullVerificationValues()
+    {
+        const string csv = """
+            Code,Name,Kind,Description
+            AMEX,American Express,Card,Premium card lounge access
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<LoungeProviderImportDto, LoungeProviderImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.Equal("AMEX", result[0].Code);
+        Assert.Null(result[0].VerifiedAt);
+        Assert.Null(result[0].VerifiedBy);
+        Assert.Null(result[0].VerificationSource);
+    }
+
+    [Fact]
+    public async Task ParseLoungeProviders_NewFormatCsv_ParsesVerificationValues()
+    {
+        const string csv = """
+            Code,Name,Kind,Description,VerifiedAt,VerifiedBy,VerificationSource
+            AMEX,American Express,Card,Premium card lounge access,2026-09-14T20:31:12.1234567Z,admin@example.com,manual
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<LoungeProviderImportDto, LoungeProviderImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.Equal(DateTimeKind.Utc, result[0].VerifiedAt!.Value.Kind);
+        Assert.Equal("admin@example.com", result[0].VerifiedBy);
+        Assert.Equal("manual", result[0].VerificationSource);
+    }
+
+    [Fact]
+    public async Task ParseLoyaltyProgramKinds_OldFormatCsv_ParsesWithNullVerificationValues()
+    {
+        const string csv = """
+            Code,Name,Description
+            AIRLINE,Airline Programs,Frequent flyer programs
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<LoyaltyProgramKindImportDto, LoyaltyProgramKindImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.Equal("AIRLINE", result[0].Code);
+        Assert.Null(result[0].VerifiedAt);
+        Assert.Null(result[0].VerifiedBy);
+        Assert.Null(result[0].VerificationSource);
+    }
+
+    [Fact]
+    public async Task ParseLoyaltyProgramKinds_NewFormatCsv_ParsesVerificationValues()
+    {
+        const string csv = """
+            Code,Name,Description,VerifiedAt,VerifiedBy,VerificationSource
+            AIRLINE,Airline Programs,Frequent flyer programs,2026-09-14T20:31:12.1234567Z,admin@example.com,manual
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<LoyaltyProgramKindImportDto, LoyaltyProgramKindImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.Equal(DateTimeKind.Utc, result[0].VerifiedAt!.Value.Kind);
+        Assert.Equal("admin@example.com", result[0].VerifiedBy);
+        Assert.Equal("manual", result[0].VerificationSource);
+    }
+
+    [Fact]
+    public async Task ParseLoyaltyPrograms_OldFormatCsv_ParsesWithNullVerificationValues()
+    {
+        const string csv = """
+            Code,Name,KindCode,AirlineIata,AllianceCode,Tiers
+            BAEC,Executive Club,AIRLINE,BA,OW,[]
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<LoyaltyProgramImportDto, LoyaltyProgramImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.Equal("BAEC", result[0].Code);
+        Assert.Null(result[0].VerifiedAt);
+        Assert.Null(result[0].VerifiedBy);
+        Assert.Null(result[0].VerificationSource);
+    }
+
+    [Fact]
+    public async Task ParseLoyaltyPrograms_NewFormatCsv_ParsesVerificationValues()
+    {
+        const string csv = """
+            Code,Name,KindCode,AirlineIata,AllianceCode,Tiers,VerifiedAt,VerifiedBy,VerificationSource
+            BAEC,Executive Club,AIRLINE,BA,OW,[],2026-09-14T20:31:12.1234567Z,admin@example.com,manual
+            """;
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        var result = await CsvImportParser.ParseAsync<LoyaltyProgramImportDto, LoyaltyProgramImportDtoMap>(stream);
+
+        Assert.Single(result);
+        Assert.Equal(DateTimeKind.Utc, result[0].VerifiedAt!.Value.Kind);
+        Assert.Equal("admin@example.com", result[0].VerifiedBy);
+        Assert.Equal("manual", result[0].VerificationSource);
+    }
 }

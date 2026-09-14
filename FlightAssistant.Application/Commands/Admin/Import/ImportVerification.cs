@@ -9,7 +9,10 @@ namespace FlightAssistant.Application.Commands.Admin.Import;
 /// values as-is, stamp <see cref="VerificationSources.Import"/>, or reject the row — the #362 rule
 /// from the auto-verification design (spec §6):
 /// <list type="bullet">
-/// <item>all three present → kept exactly as the CSV carried them.</item>
+/// <item>all three present → kept, with <c>VerifiedAt</c> normalised to UTC (see below) — the CSV
+/// parser (<c>CsvImportParser</c>) already produces <see cref="DateTimeKind.Utc"/>, but this
+/// helper is called by all 8 handlers directly, not only from behind that parser, so it owns the
+/// guarantee itself rather than trusting every caller to have parsed correctly upstream.</item>
 /// <item>none present (older export, or the columns absent entirely) → stamped with the importing
 /// admin (<paramref name="actorId"/>, falling back to <c>"admin"</c> when unset — the same fallback
 /// <c>AdminVerifyEndpoints</c> uses), <see cref="VerificationSources.Import"/>, and now (UTC).</item>
@@ -29,7 +32,7 @@ public static class ImportVerification
         if (verificationSource is null) missing.Add("VerificationSource");
 
         if (missing.Count == 0)
-            return ImportVerificationOutcome.Keep(verifiedAt!.Value, verifiedBy!, verificationSource!);
+            return ImportVerificationOutcome.Keep(NormalizeToUtc(verifiedAt!.Value), verifiedBy!, verificationSource!);
 
         if (missing.Count == 3)
             return ImportVerificationOutcome.Stamp(actorId ?? "admin");
@@ -37,6 +40,25 @@ public static class ImportVerification
         return ImportVerificationOutcome.Reject(
             $"partial verification data — missing {string.Join(", ", missing)}");
     }
+
+    /// <summary>
+    /// Guarantees a UTC <see cref="DateTime"/> reaches <see cref="IVerifiable.Verify(string, string, DateTime)"/>
+    /// regardless of the <see cref="DateTime.Kind"/> a caller handed <see cref="Resolve"/> — Npgsql
+    /// refuses <see cref="DateTimeKind.Unspecified"/> against a <c>timestamptz</c> column outright
+    /// (the bug class CLAUDE.md documents for date query parameters), and that failure would
+    /// otherwise surface at <c>SaveChangesAsync</c>, outside every handler's per-row <c>try</c>,
+    /// turning one bad row into a 500 for the whole file. <see cref="DateTimeKind.Local"/> is
+    /// converted (a real instant, just expressed in the wrong zone); <see cref="DateTimeKind.Unspecified"/>
+    /// is reinterpreted as UTC rather than converted — there is no zone to convert *from* — matching
+    /// exactly what <c>CsvImportParser</c>'s own <c>DateTimeStyles.AssumeUniversal</c> does for the
+    /// CSV path. A row is never rejected for this; the value is coerced, not refused.
+    /// </summary>
+    private static DateTime NormalizeToUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+    };
 }
 
 /// <summary>The result of <see cref="ImportVerification.Resolve"/>: either a rejection reason, or
