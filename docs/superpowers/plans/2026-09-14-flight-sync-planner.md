@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-14-flight-sync-schedule-design.md` — delivery step 1 only (§6). Issue #356.
 
+**Amended 2026-09-15 (#364, Phase 1 item 1):** Tasks 1–5 were done before the amendment. Execution order from here: **Task 10** (rebase onto `development` now, not only in Task 9), **Task 11** (Fast and Live defaults lengthened to 5 and 30 min), then Tasks 6, 7, 8, 9. Task 7's #344 test and Task 8's CLAUDE.md row carry the new values.
+
 ## Global Constraints
 
 - Work only in the worktree `/Users/salihalishov/Repositories/flight-assistant-backend-356`, branch `feature/356-flight-sync-planner`. Never touch the main checkout or other worktrees.
@@ -1995,7 +1997,8 @@ public class FlightStatusSyncBackgroundServiceTests
     [Fact]
     public async Task OverTenMinutes_AFlightNearDeparture_DoesNotSpeedUpTheOthers()
     {
-        var options = new FlightSyncOptions(); // Fast 2 min, Live 10 min, Fast window 4 h
+        // Non-default intervals (#308): Fast every 3 min, Live every 20 min; Fast window stays 4 h.
+        var options = new FlightSyncOptions { NearDepartureInterval = TimeSpan.FromMinutes(3), Interval = TimeSpan.FromMinutes(20) };
         var fast = WithId(Flight.Create(1, "TK1", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(3), Now.AddHours(6)), 1);
         var live = WithId(Flight.Create(1, "TK2", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(30), Now.AddHours(33)), 2);
         var schedule = WithId(Flight.Create(1, "TK3", 10, 20, DateOnly.FromDateTime(Now.AddDays(20)), Now.AddDays(20), Now.AddDays(20).AddHours(3)), 3);
@@ -2027,7 +2030,7 @@ public class FlightStatusSyncBackgroundServiceTests
             _clock.Advance(TimeSpan.FromMinutes(1));
         }
 
-        await provider.Received(5).GetStatusAsync("TK1", Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()); // minutes 0, 2, 4, 6, 8
+        await provider.Received(4).GetStatusAsync("TK1", Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()); // minutes 0, 3, 6, 9
         await provider.Received(1).GetStatusAsync("TK2", Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()); // minute 0 only
         await provider.DidNotReceive().GetStatusAsync("TK3", Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
         Assert.Single(Sent(), c => c.FlightId == 3); // planned once, next due when Live starts
@@ -2185,7 +2188,7 @@ The grep must show no `AeroApiOptions` argument left. In `FlightRepositoryTests`
 
 - [ ] **Step 5: Prove**
   1. Hoist `using var scope = _scopeFactory.CreateScope();` above the `foreach` and reuse it: `RunOnce_EachFlightSyncsInItsOwnScope` fails.
-  2. In `SyncFlightStatusCommand.cs`, store `now + options.FastInterval` as the next due for every mode after a call (the #344 behaviour): `OverTenMinutes_AFlightNearDeparture_DoesNotSpeedUpTheOthers` fails (TK2 called 5 times).
+  2. In `SyncFlightStatusCommand.cs`, store `now + options.FastInterval` as the next due for every mode after a call (the #344 behaviour): `OverTenMinutes_AFlightNearDeparture_DoesNotSpeedUpTheOthers` fails (TK2 called 4 times).
   3. Replace `_options.LoopInterval` in the `PeriodicTimer` with `TimeSpan.FromMinutes(1)`: `Enabled_RunsAtOnce_ThenOnEveryLoopInterval` fails.
   4. Remove the `if (!_options.Enabled)` block: `Disabled_…` fails.
   Restore each (`mv … .bak`, `touch`).
@@ -2316,7 +2319,7 @@ In the Required Configuration table, after `AeroApi:MonthlyBudgetUsd`, add:
 
 ```markdown
 | `FlightSync:Enabled` | Optional; default `true`. Set `false` for a local run, or it polls AeroAPI alongside the deployed app (#347) |
-| `FlightSync:LoopInterval`, `NearDepartureInterval`, `Interval`, `ScheduleCheckInterval`, `FastWindowBeforeDeparture`, `StopAfterArrival`, `StopWithoutArrivalAfter` | Optional; defaults 1 min, 2 min (Fast), 10 min (Live), 1 day, 4 h, 30 min, 1 day. Validated on start |
+| `FlightSync:LoopInterval`, `NearDepartureInterval`, `Interval`, `ScheduleCheckInterval`, `FastWindowBeforeDeparture`, `StopAfterArrival`, `StopWithoutArrivalAfter` | Optional; defaults 1 min, 5 min (Fast), 30 min (Live), 1 day, 4 h, 30 min, 1 day; Fast and Live lengthened for cost in #364. Validated on start |
 ```
 
 - [ ] **Step 7: Commit**
@@ -2534,15 +2537,173 @@ git commit -m "feat: AddFlightSyncSchedule migration, tracked flights due at onc
 
 ```bash
 git push -u origin feature/356-flight-sync-planner
-gh pr create --base development --title "feat: per-flight sync schedule, step 1 — planner, due-only loop (#356)" --body-file /private/tmp/claude-501/-Users-salihalishov-Repositories-flight-assistant-backend/4d49acb6-a9b2-4e9f-b0ed-e25415d2ff44/scratchpad/pr-356.md
+gh pr create --base development --title "feat: per-flight sync schedule, step 1 — planner, due-only loop (#356)" --body-file /private/tmp/claude-501/-Users-salihalishov-Repositories-flight-assistant-backend/4f981baf-ef1b-4b22-b065-df40c3650ae3/scratchpad/pr-356.md
 ```
 
 PR body sections:
-- **Summary**: what changed, `Closes #356, closes #343, closes #344, closes #345`.
-- **Decisions**: PascalCase columns (repo convention, spec wrote snake_case); `SyncMode` stored as text; Schedule mode makes no call and is next due at Live start; one DI scope per flight; `ApplyStatusUpdate` now takes `nowUtc`; `FlightRepository` no longer takes `AeroApiOptions`.
+- **Summary**: what changed, `Closes #356, closes #343, closes #344, closes #345, closes #350` (#350's validator half merged in #363; its sync half is the 24 h no-arrival Stopped rule here). Say this is Phase 1 item 1 of #364.
+- **Decisions**: PascalCase columns (repo convention, spec wrote snake_case); `SyncMode` stored as text; Schedule mode makes no call and is next due at Live start; one DI scope per flight; `ApplyStatusUpdate` now takes `nowUtc`; `FlightRepository` no longer takes `AeroApiOptions`; Fast and Live defaults lengthened to 5 and 30 min for cost (#364, Task 11), spec updated to match; branch rebased onto `development` before Task 6 (Task 10).
 - **Tests that were seen failing**: a table of each deliberate break and the test that caught it, from every task's Prove step.
-- **Not in this PR / known gaps**: `/schedules` check and `ScheduleMissingSinceUtc` writes (step 2); admin DTOs (step 3); traveler deletion leaves a stale `SyncMode` (no calls); #350's validator half; #353's heartbeat duration; the Task 8 Step 4 finding on how `SyncMode` shows in the data grid.
+- **Not in this PR / known gaps**: `/schedules` check and `ScheduleMissingSinceUtc` writes (step 2, which #364 reshapes: weekly until 7 days before departure, then daily, with the known `DepartureIata` in the criteria); admin DTOs (step 3); traveler deletion leaves a stale `SyncMode` (no calls); #353's heartbeat duration; the Task 8 Step 4 finding on how `SyncMode` shows in the data grid.
 - **Deploy note**: the migration backfill makes every tracked flight due at once; with the 12 s throttle, N tracked flights take about 12 s × N (Fast/Live only; Schedule and Stopped make no call) on the first loop.
 - End with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 
 - [ ] **Step 12: Stop.** Don't merge. Report to the user in short bullets: done, left, needed from them.
+
+---
+### Task 10: Rebase onto `development` before Task 6 (amendment, #364)
+
+**Why now:** `development` gained 16 commits since this branch started, and several touch files Tasks 7–8 edit: `FlightRepository.cs` and `PagedRepositoryArgumentOrderTests.cs` (#328, deterministic paged order), `FlightEndpointTests.cs` and `ValidatorEdgeCaseTests.cs` (#350), `AeroApiDependencyInjectionTests.cs` (#308, #350), `BrowsableTables.cs` (#355), `CLAUDE.md`, plus a newer migration `20260914204216_AddVerificationSourceAndIssue`. Rebasing only in Task 9 would mean resolving those conflicts against code written on stale files.
+
+**Files:** none new. Rewrites the local, unpushed branch history. The working migration is backed up, dropped, and regenerated (still uncommitted).
+
+**Interfaces:** none change. Produces: the same commits, rebased; a working migration that sits after `AddVerificationSourceAndIssue`.
+
+- [ ] **Step 1: Check the state**
+
+```bash
+cd /Users/salihalishov/Repositories/flight-assistant-backend-356
+git status --short     # expect only: ?? the AddFlightSyncSchedule migration pair,  M the model snapshot
+git fetch origin
+git log --oneline HEAD..origin/development
+gh pr list --state open --json number,title,headRefName
+git rev-parse HEAD     # OLD_HEAD — write it in the report
+```
+
+If an open PR changes a file this branch changes, stop and report BLOCKED.
+
+- [ ] **Step 2: Back up and drop the working migration**
+
+```bash
+B=.superpowers/sdd/2026-09-14-flight-sync-planner/migration-backup-pre-rebase
+mkdir -p "$B"
+cp FlightAssistant.Infrastructure/Persistance/Migrations/*_AddFlightSyncSchedule*.cs "$B"/
+git diff FlightAssistant.Infrastructure/Persistance/Migrations/FlightAssistantDbContextModelSnapshot.cs > "$B"/snapshot.diff
+rm FlightAssistant.Infrastructure/Persistance/Migrations/*_AddFlightSyncSchedule.cs \
+   FlightAssistant.Infrastructure/Persistance/Migrations/*_AddFlightSyncSchedule.Designer.cs
+git checkout HEAD -- FlightAssistant.Infrastructure/Persistance/Migrations/FlightAssistantDbContextModelSnapshot.cs
+git status --short     # expect clean (.superpowers is ignored)
+```
+
+- [ ] **Step 3: Rebase**
+
+```bash
+git rebase origin/development
+```
+
+Conflict rules:
+- `BrowsableTables.cs`, `appsettings.json`, `CLAUDE.md`: keep both sides.
+- `FlightRepository.cs`: keep `development`'s ordering changes (#328) **and** the branch's `GetDueTrackedFlightIdsAsync` / `IsFlightTrackedAsync`.
+- `ValidatorEdgeCaseTests.cs`, `AeroApiDependencyInjectionTests.cs`, `FlightEndpointTests.cs`: keep every test from both sides. Where the branch changed a line that `development` also changed, apply the branch's intent (for example a new constructor argument) to `development`'s version.
+- Model snapshot or `spec/openapi.json`: take `development`'s version (`git checkout origin/development -- <file>`); both are regenerated later.
+- Anything else, or a conflict whose right resolution you can't state in one sentence: `git rebase --abort` and report BLOCKED, naming the file and both sides.
+
+Before each `git rebase --continue`, `dotnet build` must report 0 errors, so every rewritten commit still builds. Record each conflict and its resolution in the report.
+
+- [ ] **Step 4: Regenerate the working migration (uncommitted)**
+
+```bash
+git diff --quiet origin/development -- FlightAssistant.Infrastructure/Persistance/Migrations/FlightAssistantDbContextModelSnapshot.cs \
+  && echo "snapshot matches development" || echo "SNAPSHOT DIFFERS — stop and report"
+CONNECTION_STRING="Host=localhost;Port=5432;Database=flightassistant;Username=fa;Password=fa" \
+  dotnet ef migrations add AddFlightSyncSchedule --project FlightAssistant.Infrastructure --startup-project FlightAssistant.API
+```
+
+`Up` must contain only the five nullable `AddColumn`s on `flights` and `CreateIndex ix_flight_next_sync_due`: compare it with the backup. Do not commit it. Task 9 regenerates it again and adds the backfill.
+
+- [ ] **Step 5: Verify**
+
+```bash
+dotnet build 2>&1 | tail -3                              # 0 errors
+dotnet test 2>&1 | grep -E "^(Passed|Failed)!|error"     # all four projects; Infrastructure needs Docker
+git status --short                                        # only the working migration pair (??) and the snapshot ( M)
+git log --oneline origin/development..HEAD                # same commit subjects as before, in the same order
+git range-diff $(git merge-base OLD_HEAD origin/development)..OLD_HEAD origin/development..HEAD \
+  > .superpowers/sdd/2026-09-14-flight-sync-planner/rebase-range-diff.txt
+```
+
+(Substitute the literal OLD_HEAD SHA from Step 1.) If any test fails, report it with its output; don't change code to fix it in this task.
+
+- [ ] **Step 6: No commit, no push.** Report: OLD_HEAD, the old → new SHA of each commit, every conflict and its resolution, build result, per-project test counts, and the range-diff path.
+
+---
+### Task 11: Cheaper Fast and Live defaults (amendment, #364)
+
+**Why:** the cost plan (`docs/superpowers/plans/2026-09-15-flight-data-cost-reduction.md`, Phase 1 item 1) lengthens the Fast interval from 2 to 5 minutes and the Live interval from 10 to 30 minutes. That takes a typical tracked flight from ~740 status calls to ~180 (≈ $0.90 at $0.005 a call). The key events (departed, landed, cancelled, diverted, gate changes, delays over 30 min) still land within one interval.
+
+**Files:**
+- Modify: `FlightAssistant.API/HostedServices/FlightSyncOptions.cs` (two defaults)
+- Modify: `FlightAssistant.API/appsettings.json` (the same two values)
+- Test: `FlightAssistant.API.Tests/HostedServices/FlightSyncOptionsTests.cs`
+- Modify: `docs/superpowers/specs/2026-09-14-flight-sync-schedule-design.md` (§1, §1.1, §2.7 and §4 tables)
+
+**Interfaces:** none change. Only the `FlightSyncOptions` defaults and the shipped `appsettings.json` values.
+
+**Values:** `NearDepartureInterval` (Fast) `00:05:00`; `Interval` (Live) `00:30:00`. Everything else unchanged. Both are inside the existing `[Range]`s.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `Defaults_MatchTheSpec`, change the two asserts to `TimeSpan.FromMinutes(5)` (`NearDepartureInterval`) and `TimeSpan.FromMinutes(30)` (`Interval`).
+
+Add a test that the shipped `appsettings.json` can't drift from the class defaults (the deployed app binds the file, which overrides the class):
+
+```csharp
+    [Fact]
+    public void AppSettingsJson_FlightSyncSection_MatchesTheCodeDefaults()
+    {
+        // The deployed app binds appsettings.json, which overrides the class defaults. If the two
+        // disagree, the defaults that tests and docs describe aren't the ones that run.
+        var config = new ConfigurationBuilder().AddJsonFile(ApiAppSettingsPath(), optional: false).Build();
+        var shipped = new FlightSyncOptions();
+        config.GetSection(FlightSyncOptions.SectionName).Bind(shipped);
+        var defaults = new FlightSyncOptions();
+
+        Assert.Equal(defaults.Enabled, shipped.Enabled);
+        Assert.Equal(defaults.LoopInterval, shipped.LoopInterval);
+        Assert.Equal(defaults.NearDepartureInterval, shipped.NearDepartureInterval);
+        Assert.Equal(defaults.Interval, shipped.Interval);
+        Assert.Equal(defaults.ScheduleCheckInterval, shipped.ScheduleCheckInterval);
+        Assert.Equal(defaults.FastWindowBeforeDeparture, shipped.FastWindowBeforeDeparture);
+        Assert.Equal(defaults.StopAfterArrival, shipped.StopAfterArrival);
+        Assert.Equal(defaults.StopWithoutArrivalAfter, shipped.StopWithoutArrivalAfter);
+    }
+
+    /// <summary>The API project's own appsettings.json, found by walking up from the test output directory.</summary>
+    private static string ApiAppSettingsPath()
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, "FlightAssistant.API", "appsettings.json");
+            if (File.Exists(candidate)) return candidate;
+        }
+        throw new FileNotFoundException("FlightAssistant.API/appsettings.json not found above " + AppContext.BaseDirectory);
+    }
+```
+
+Before adding the helper, grep `FlightAssistant.API.Tests` for an existing way of locating the repository root or the API project directory; reuse it if there is one.
+
+- [ ] **Step 2: Run, expect `Defaults_MatchTheSpec` to FAIL** (2 min ≠ 5 min). The new test passes at this point: file and class still agree at 2 / 10.
+
+Run: `dotnet test FlightAssistant.API.Tests/FlightAssistant.API.Tests.csproj --filter "FullyQualifiedName~FlightSyncOptionsTests"`
+
+- [ ] **Step 3: Change the class defaults** to `TimeSpan.FromMinutes(5)` and `TimeSpan.FromMinutes(30)`. Run again: `Defaults_MatchTheSpec` PASSES and `AppSettingsJson_FlightSyncSection_MatchesTheCodeDefaults` FAILS, because the file still says `00:02:00` / `00:10:00`. Record that failure; it is the new test's proof.
+
+- [ ] **Step 4: Change `appsettings.json`**: `"Interval": "00:30:00"`, `"NearDepartureInterval": "00:05:00"`. Run: all `FlightSyncOptionsTests` PASS. Then check that no other `appsettings*.json` sets these keys (`grep -rn --include='appsettings*.json' -e NearDepartureInterval -e '"Interval"' . | grep -v -e /bin/ -e /obj/`); if one does, report it rather than changing it.
+
+- [ ] **Step 5: Prove** — set only `appsettings.json`'s `"Interval"` back to `"00:10:00"`: the new test fails on `Interval`. Restore.
+
+- [ ] **Step 6: Update the spec** (`docs/superpowers/specs/2026-09-14-flight-sync-schedule-design.md`), numbers only:
+  - §1 table, "Synced every": Fast `2 min` → `5 min`; Live `10 min` → `30 min`.
+  - §1.1 table: Fast `now + 2 min` → `now + 5 min`; Live `min(now + 10 min, start of Fast)` → `min(now + 30 min, start of Fast)`.
+  - §2.7 table: `NearDepartureInterval` row → default `00:05:00`, status `existing, now the Fast interval; lengthened from 00:02:00 for cost (#364)`. `Interval` row → default `00:30:00`, status `existing, now the Live interval; lengthened from 00:10:00 for cost (#364)`.
+  - §4 table: Fast `720` → `288`; Live `144` → `48`.
+  - Leave the Overview alone: its "10 minutes, or 2 minutes" describes the code before this spec.
+
+- [ ] **Step 7: Run the whole `FlightAssistant.API.Tests` project**, then commit:
+
+```bash
+git add FlightAssistant.API/HostedServices/FlightSyncOptions.cs FlightAssistant.API/appsettings.json \
+  FlightAssistant.API.Tests/HostedServices/FlightSyncOptionsTests.cs \
+  docs/superpowers/specs/2026-09-14-flight-sync-schedule-design.md
+git commit -m "feat: cheaper sync defaults, Fast every 5 min and Live every 30 min (#364)"
+```
