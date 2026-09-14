@@ -16,7 +16,7 @@ public class VerifyEntityCommandHandlerTests
     public async Task Handle_ExistingEntity_VerifiesAndSavesAndReturnsTrue()
     {
         var airport = Airport.Create("LHR", null, "Heathrow", "London", "GB", null, null, null);
-        _repo.FindByIdAsync(1, Arg.Any<CancellationToken>()).Returns(airport);
+        _repo.FindByKeyAsync(1, Arg.Any<CancellationToken>()).Returns(airport);
         var handler = new VerifyEntityCommandHandler<Airport>(_repo);
 
         var result = await handler.Handle(
@@ -34,7 +34,7 @@ public class VerifyEntityCommandHandlerTests
     {
         var airport = Airport.Create("LHR", null, "Heathrow", "London", "GB", null, null, null);
         airport.Verify("admin@example.com");
-        _repo.FindByIdAsync(1, Arg.Any<CancellationToken>()).Returns(airport);
+        _repo.FindByKeyAsync(1, Arg.Any<CancellationToken>()).Returns(airport);
         var handler = new VerifyEntityCommandHandler<Airport>(_repo);
 
         var result = await handler.Handle(
@@ -50,7 +50,7 @@ public class VerifyEntityCommandHandlerTests
     [Fact]
     public async Task Handle_NotFound_ReturnsFalseWithoutSaving()
     {
-        _repo.FindByIdAsync(99, Arg.Any<CancellationToken>()).ReturnsNull();
+        _repo.FindByKeyAsync(99, Arg.Any<CancellationToken>()).ReturnsNull();
         var handler = new VerifyEntityCommandHandler<Airport>(_repo);
 
         var result = await handler.Handle(
@@ -59,5 +59,59 @@ public class VerifyEntityCommandHandlerTests
 
         Assert.False(result);
         await _repo.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    // ── Country, keyed by code (#331) ────────────────────────────────────────
+
+    private readonly IVerifiableRepository<Country> _countryRepo = Substitute.For<IVerifiableRepository<Country>>();
+
+    [Fact]
+    public async Task Handle_CountryFoundByCode_VerifiesAndSavesAndReturnsTrue()
+    {
+        var country = Country.Create("TR", "Turkey");
+        _countryRepo.FindByKeyAsync("TR", Arg.Any<CancellationToken>()).Returns(country);
+        var handler = new VerifyEntityCommandHandler<Country>(_countryRepo);
+
+        var result = await handler.Handle(
+            new VerifyEntityCommand<Country>("TR", true, "admin@example.com"),
+            CancellationToken.None);
+
+        Assert.True(result);
+        Assert.True(country.IsVerified);
+        Assert.Equal("admin@example.com", country.VerifiedBy);
+        await _countryRepo.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Handle_VerifiedCountry_UnverifiesAndSavesAndReturnsTrue()
+    {
+        var country = Country.Create("TR", "Turkey");
+        country.Verify("admin@example.com");
+        _countryRepo.FindByKeyAsync("TR", Arg.Any<CancellationToken>()).Returns(country);
+        var handler = new VerifyEntityCommandHandler<Country>(_countryRepo);
+
+        var result = await handler.Handle(
+            new VerifyEntityCommand<Country>("TR", false, "admin@example.com"),
+            CancellationToken.None);
+
+        Assert.True(result);
+        Assert.False(country.IsVerified);
+        Assert.Null(country.VerifiedBy);
+        Assert.Null(country.VerifiedAt);
+        await _countryRepo.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Handle_UnknownCountryCode_ReturnsFalseWithoutSaving()
+    {
+        _countryRepo.FindByKeyAsync("ZZ", Arg.Any<CancellationToken>()).ReturnsNull();
+        var handler = new VerifyEntityCommandHandler<Country>(_countryRepo);
+
+        var result = await handler.Handle(
+            new VerifyEntityCommand<Country>("ZZ", true, "admin@example.com"),
+            CancellationToken.None);
+
+        Assert.False(result);
+        await _countryRepo.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 }

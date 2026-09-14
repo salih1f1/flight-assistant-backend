@@ -10,8 +10,8 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         private readonly FlightAssistantDbContext _db;
         public EfVerifiableRepository(FlightAssistantDbContext db) => _db = db;
 
-        public async Task<TEntity?> FindByIdAsync(int id, CancellationToken ct = default) =>
-            await _db.Set<TEntity>().FindAsync(new object[] { id }, ct);
+        public async Task<TEntity?> FindByKeyAsync(object key, CancellationToken ct = default) =>
+            await _db.Set<TEntity>().FindAsync(new object[] { key }, ct);
 
         public async Task<IReadOnlyList<TEntity>> GetAllVerifiedAsync(CancellationToken ct = default) =>
             await _db.Set<TEntity>().Where(e => e.IsVerified).ToListAsync(ct);

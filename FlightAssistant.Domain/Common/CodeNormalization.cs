@@ -1,3 +1,8 @@
+// AdminVerifyEndpoints (#331) canonicalises the country-code route parameter with
+// ToCanonicalCode() before lookup, the same helper Country.Create uses — hence API needing
+// InternalsVisibleTo here.
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("FlightAssistant.API")]
+
 namespace FlightAssistant.Domain.Common
 {
     /// <summary>

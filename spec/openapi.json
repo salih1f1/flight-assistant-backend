@@ -787,7 +787,7 @@
         }
       }
     },
-    "/admin/countries/{id}/verify": {
+    "/admin/countries/{code}/verify": {
       "patch": {
         "tags": [
           "Admin - countries"
@@ -796,12 +796,11 @@
         "operationId": "AdminVerifyCountry",
         "parameters": [
           {
-            "name": "id",
+            "name": "code",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "int32"
+              "type": "string"
             }
           }
         ],
