@@ -1,0 +1,60 @@
+[
+  {
+    "name": {
+      "common": "Turkey",
+      "official": "Republic of Türkiye",
+      "nativeName": {
+        "tur": {
+          "official": "Türkiye Cumhuriyeti",
+          "common": "Türkiye"
+        }
+      }
+    },
+    "cca2": "TR",
+    "cca3": "TUR",
+    "ccn3": "792",
+    "region": "Asia",
+    "subregion": "Western Asia",
+    "capital": ["Ankara"],
+    "area": 783562,
+    "independent": true,
+    "unMember": true
+  },
+  {
+    "name": {
+      "common": "Ivory Coast",
+      "official": "Republic of Côte d'Ivoire",
+      "nativeName": {
+        "fra": {
+          "official": "République de Côte d'Ivoire",
+          "common": "Côte d'Ivoire"
+        }
+      }
+    },
+    "cca2": "CI",
+    "cca3": "CIV",
+    "ccn3": "384",
+    "region": "Africa",
+    "subregion": "Western Africa",
+    "capital": ["Yamoussoukro"],
+    "area": 322463,
+    "independent": true,
+    "unMember": true
+  },
+  {
+    "name": {
+      "common": "Antarctica",
+      "official": "Antarctica",
+      "nativeName": {}
+    },
+    "cca2": "AQ",
+    "cca3": "ATA",
+    "ccn3": "010",
+    "region": "Antarctic",
+    "subregion": "",
+    "capital": [],
+    "area": 14000000,
+    "independent": false,
+    "unMember": false
+  }
+]
