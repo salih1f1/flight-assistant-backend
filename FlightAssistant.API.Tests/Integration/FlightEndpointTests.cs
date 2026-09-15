@@ -7,6 +7,7 @@ using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Flights.Enums;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 
@@ -136,24 +137,32 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
         Assert.Equal(fakeResult.ScheduledArrivalUtc, row.ScheduledArrivalUtc);
     }
 
-    [Fact]
-    public async Task PostSync_TrackingTraveler_FlightDaysAway_Returns200WithUpdatedFalse_AndPlansTheFlight()
+    private int FlightSyncPermitLimit() =>
+        factory.Services.GetRequiredService<IConfiguration>().GetValue("RateLimiting:FlightSync:PermitLimit", 6);
+
+    /// <summary>A registered traveler tracking a flight 30 days out: Schedule mode, so a sync makes
+    /// no provider call. A fresh traveler id each time, so tests never share a rate-limit bucket.</summary>
+    private async Task<(HttpClient Client, Flight Flight)> TravelerTrackingAFlightDaysAwayAsync()
     {
         var userId = Guid.NewGuid();
         var client = factory.CreateUserClient(userId.ToString());
         await client.PostAsJsonAsync("travelers", new { email = $"{userId}@example.com", displayName = "Test", countryCode = (string?)null });
 
-        // 30 days out: Schedule mode, so no provider call in this step.
         var departure = DateTime.UtcNow.Date.AddDays(30).AddHours(9);
         var flight = Flight.Create(1, $"TK{Random.Shared.Next(1000, 9999)}", 10, 20, DateOnly.FromDateTime(departure), departure, departure.AddHours(3));
-        using (var scope = factory.Services.CreateScope())
-        {
-            var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
-            db.Flights.Add(flight);
-            await db.SaveChangesAsync();
-            db.TravelerFlights.Add(TravelerFlight.Create(userId, flight.Id));
-            await db.SaveChangesAsync();
-        }
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        db.Flights.Add(flight);
+        await db.SaveChangesAsync();
+        db.TravelerFlights.Add(TravelerFlight.Create(userId, flight.Id));
+        await db.SaveChangesAsync();
+        return (client, flight);
+    }
+
+    [Fact]
+    public async Task PostSync_TrackingTraveler_FlightDaysAway_Returns200WithUpdatedFalse_AndPlansTheFlight()
+    {
+        var (client, flight) = await TravelerTrackingAFlightDaysAwayAsync();
 
         var response = await client.PostAsync($"flights/{flight.Id}/sync", content: null);
 
@@ -168,7 +177,35 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
             var saved = await db.Flights.AsNoTracking().SingleAsync(f => f.Id == flight.Id);
             Assert.Equal(FlightSyncMode.Schedule, saved.SyncMode);
             // AeroApi:StatusWindowFutureDays defaults to 2: proves the host's IFlightStatusWindowOptions reaches the handler.
-            Assert.Equal(departure.AddDays(-2), saved.NextSyncDueUtc);
+            Assert.Equal(flight.ScheduledDepartureUtc.AddDays(-2), saved.NextSyncDueUtc);
         }
+    }
+
+    [Fact]
+    public async Task PostSync_RateLimit_Returns429WithRetryAfter_AfterTheConfiguredPermitCount()
+    {
+        var (client, flight) = await TravelerTrackingAFlightDaysAwayAsync();
+
+        for (var i = 0; i < FlightSyncPermitLimit(); i++)
+            Assert.Equal(HttpStatusCode.OK, (await client.PostAsync($"flights/{flight.Id}/sync", content: null)).StatusCode);
+
+        var rejected = await client.PostAsync($"flights/{flight.Id}/sync", content: null);
+        Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
+        Assert.NotNull(rejected.Headers.RetryAfter);
+    }
+
+    /// <summary>Partitioned by traveler (oid), not by IP: every test client shares one IP, so a second
+    /// traveler getting 200 proves one traveler using up their permits doesn't throttle another.</summary>
+    [Fact]
+    public async Task PostSync_RateLimit_TwoTravelers_DoNotShareABucket()
+    {
+        var (clientA, flightA) = await TravelerTrackingAFlightDaysAwayAsync();
+        var (clientB, flightB) = await TravelerTrackingAFlightDaysAwayAsync();
+
+        for (var i = 0; i < FlightSyncPermitLimit(); i++)
+            await clientA.PostAsync($"flights/{flightA.Id}/sync", content: null);
+        Assert.Equal(HttpStatusCode.TooManyRequests, (await clientA.PostAsync($"flights/{flightA.Id}/sync", content: null)).StatusCode);
+
+        Assert.Equal(HttpStatusCode.OK, (await clientB.PostAsync($"flights/{flightB.Id}/sync", content: null)).StatusCode);
     }
 }

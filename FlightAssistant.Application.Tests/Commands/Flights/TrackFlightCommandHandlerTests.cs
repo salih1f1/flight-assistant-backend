@@ -37,6 +37,7 @@ public class TrackFlightCommandHandlerTests
         public TimeSpan FastWindowBeforeDeparture => TimeSpan.FromHours(3);
         public TimeSpan StopAfterArrival => TimeSpan.FromMinutes(20);
         public TimeSpan StopWithoutArrivalAfter => TimeSpan.FromHours(12);
+        public TimeSpan ManualSyncCooldown => TimeSpan.FromMinutes(4);
     }
 
     private sealed class WindowOptions : IFlightStatusWindowOptions

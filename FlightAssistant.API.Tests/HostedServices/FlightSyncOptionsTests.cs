@@ -32,6 +32,7 @@ public class FlightSyncOptionsTests
         Assert.Equal(TimeSpan.FromHours(4), options.FastWindowBeforeDeparture);
         Assert.Equal(TimeSpan.FromMinutes(30), options.StopAfterArrival);
         Assert.Equal(TimeSpan.FromDays(1), options.StopWithoutArrivalAfter);
+        Assert.Equal(TimeSpan.FromMinutes(5), options.ManualSyncCooldown);
     }
 
     [Fact]
@@ -45,6 +46,7 @@ public class FlightSyncOptionsTests
             ["FlightSync:FastWindowBeforeDeparture"] = "03:00:00",
             ["FlightSync:StopAfterArrival"] = "00:20:00",
             ["FlightSync:StopWithoutArrivalAfter"] = "12:00:00",
+            ["FlightSync:ManualSyncCooldown"] = "00:02:00",
         });
         var options = provider.GetRequiredService<IFlightSyncOptions>();
 
@@ -54,6 +56,7 @@ public class FlightSyncOptionsTests
         Assert.Equal(TimeSpan.FromHours(3), options.FastWindowBeforeDeparture);
         Assert.Equal(TimeSpan.FromMinutes(20), options.StopAfterArrival);
         Assert.Equal(TimeSpan.FromHours(12), options.StopWithoutArrivalAfter);
+        Assert.Equal(TimeSpan.FromMinutes(2), options.ManualSyncCooldown);
     }
 
     [Fact]
@@ -74,6 +77,7 @@ public class FlightSyncOptionsTests
         Assert.Equal(defaults.FastWindowBeforeDeparture, shipped.FastWindowBeforeDeparture);
         Assert.Equal(defaults.StopAfterArrival, shipped.StopAfterArrival);
         Assert.Equal(defaults.StopWithoutArrivalAfter, shipped.StopWithoutArrivalAfter);
+        Assert.Equal(defaults.ManualSyncCooldown, shipped.ManualSyncCooldown);
     }
 
     /// <summary>The API project's own appsettings.json, found by walking up from the test output directory.</summary>
@@ -95,6 +99,8 @@ public class FlightSyncOptionsTests
     [InlineData("FastWindowBeforeDeparture", "00:00:00")]
     [InlineData("StopAfterArrival", "-00:01:00")]
     [InlineData("StopWithoutArrivalAfter", "00:00:00")]
+    [InlineData("ManualSyncCooldown", "-00:01:00")]
+    [InlineData("ManualSyncCooldown", "01:00:01")]
     public void AnOutOfRangeValue_FailsOnStart(string key, string value)
     {
         using var provider = Build(new() { [$"FlightSync:{key}"] = value });
