@@ -207,7 +207,7 @@ public class ProviderBudgetGuardTests
     }
 
     [Fact]
-    public async Task GetStateAsync_PastTheSoftLimit_WarnsOncePerFreshReport()
+    public async Task GetStateAsync_PastTheSoftLimit_WarnsOncePerReport()
     {
         SpendIs(12m);
         var guard = Guard();
@@ -216,6 +216,32 @@ public class ProviderBudgetGuardTests
         await guard.GetStateAsync();
 
         Assert.Single(_logger.Entries, e => e.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task GetStateAsync_PastTheSoftLimit_Warns_WhenTheAdminUsagePageFetchedTheReport()
+    {
+        SpendIs(12m);
+        var handler = new GetAeroApiUsageQueryHandler(
+            _provider, _cache, new FakeBudget(), Substitute.For<IAeroApiThrottleObserver>(), _clock);
+        await handler.Handle(new GetAeroApiUsageQuery(), CancellationToken.None);
+
+        await Guard().GetStateAsync();
+
+        Assert.Single(_logger.Entries, e => e.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task GetStateAsync_PastTheSoftLimit_WarnsAgainForTheNextReport()
+    {
+        SpendIs(12m);
+        var guard = Guard();
+
+        await guard.GetStateAsync();
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        await guard.GetStateAsync();
+
+        Assert.Equal(2, _logger.Entries.Count(e => e.Level == LogLevel.Warning));
     }
 
     [Fact]

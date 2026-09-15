@@ -122,7 +122,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "Syncs the flight's status now. A flight not yet inside the provider's live-status window makes no provider call, " +
                 "and a flight no traveler tracks makes no call and has its sync plan cleared; both return { updated: false }. " +
                 "Otherwise returns { updated: true } if a new status was recorded. " +
-                "Once this month's flight data budget is used up, only a flight in its near-departure window makes a call; any other returns 503.")
+                "Once this month's flight data budget is used up, only a flight in its near-departure window (by default, from 4 hours before departure until 30 minutes after it lands) makes a call; any other returns 503.")
             .Produces(200)
             .ProducesProblem(503);
         }

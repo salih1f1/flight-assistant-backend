@@ -32,6 +32,7 @@ namespace FlightAssistant.Application.ProviderBudget
     public sealed class ProviderBudgetGuard : IProviderBudgetGuard
     {
         private const string ReadFailedKey = "aeroapi:budget-guard:read-failed";
+        private const string WarnedKeyPrefix = "aeroapi:budget-guard:warned:";
 
         private readonly IAeroApiAccountUsageProvider _usage;
         private readonly ICacheService _cache;
@@ -65,14 +66,11 @@ namespace FlightAssistant.Application.ProviderBudget
                 if (await _cache.GetAsync<string>(ReadFailedKey, ct) is not null)
                     return ProviderBudgetState.Normal;
 
-                var (usage, fetched) = await AeroApiUsageCache.GetOrFetchAsync(_usage, _cache, startUtc, endUtc, ct);
+                var (usage, _) = await AeroApiUsageCache.GetOrFetchAsync(_usage, _cache, startUtc, endUtc, ct);
                 var state = Classify(usage.TotalCostUsd);
 
-                // Once per fresh report, not on every check.
-                if (fetched && state != ProviderBudgetState.Normal)
-                    _logger.LogWarning(
-                        "AeroAPI spend this month is ${SpentUsd} of the ${BudgetUsd} budget ({State}): holding back calls",
-                        usage.TotalCostUsd, _budget.MonthlyBudgetUsd, state);
+                if (state != ProviderBudgetState.Normal)
+                    await WarnOncePerReportAsync(usage.TotalCostUsd, state, endUtc, ct);
 
                 return state;
             }
@@ -93,6 +91,30 @@ namespace FlightAssistant.Application.ProviderBudget
             return spentUsd >= _budget.MonthlyBudgetUsd * _budget.SoftLimitRatio
                 ? ProviderBudgetState.SoftLimit
                 : ProviderBudgetState.Normal;
+        }
+
+        /// <summary>
+        /// Logs the hold-back warning once per usage report (one per 10-minute range), whether the guard or
+        /// the admin usage page fetched it. If the marker can't be read or written, it warns anyway.
+        /// </summary>
+        private async Task WarnOncePerReportAsync(decimal spentUsd, ProviderBudgetState state, DateTimeOffset endUtc, CancellationToken ct)
+        {
+            var key = WarnedKeyPrefix + endUtc.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+            try
+            {
+                if (await _cache.GetAsync<string>(key, ct) is not null)
+                    return;
+
+                await _cache.SetAsync(key, state.ToString(), AeroApiUsageCache.Duration, ct);
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
+            {
+                _logger.LogDebug(ex, "Couldn't track the budget warning for the report ending {RangeEndUtc}; warning anyway", endUtc);
+            }
+
+            _logger.LogWarning(
+                "AeroAPI spend this month is ${SpentUsd} of the ${BudgetUsd} budget ({State}): holding back calls",
+                spentUsd, _budget.MonthlyBudgetUsd, state);
         }
 
         /// <summary>A cache failure here is only logged: the caller still gets Normal.</summary>
