@@ -5,6 +5,7 @@ using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.Common.Interfaces;
+using FlightAssistant.Domain.Verification.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -53,6 +54,18 @@ namespace FlightAssistant.Infrastructure.Persistance
             .GetProperties()
             .Select(p => p.Name)
             .ToHashSet(StringComparer.Ordinal);
+
+        // Entity types this interceptor never writes a row for.
+        // - AdminAuditLog: auditing an audit row is how this recurses.
+        // - VerificationRequest (#367): the queue table is its own history (spec §4.5). Auditing it
+        //   under the verification job's system actor would add an Update row per status change of
+        //   every request. The job's writes to the entities it checks are still audited.
+        // The append-only guard below is separate and still covers AdminAuditLog only.
+        private static readonly HashSet<Type> NotAuditedTypes = new()
+        {
+            typeof(AdminAuditLog),
+            typeof(VerificationRequest)
+        };
 
         private readonly IAdminContext _adminContext;
 
@@ -127,8 +140,8 @@ namespace FlightAssistant.Infrastructure.Persistance
 
             foreach (var entry in entries)
             {
-                // Skip the audit log's own type — auditing an audit row is how this recurses.
-                if (entry.Metadata.ClrType == typeof(AdminAuditLog)) continue;
+                // Skip the types this log never records (see NotAuditedTypes).
+                if (NotAuditedTypes.Contains(entry.Metadata.ClrType)) continue;
 
                 // Ignore Unchanged and Detached entirely.
                 if (entry.State is not (EntityState.Added or EntityState.Modified or EntityState.Deleted)) continue;

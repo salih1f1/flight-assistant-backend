@@ -1,3 +1,4 @@
+using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Common.Interfaces;
 
@@ -68,6 +69,8 @@ namespace FlightAssistant.Domain.Loyalty.Entities
 
         public void Verify(string verifiedBy, string source, DateTime verifiedAtUtc)
         {
+            VerificationGuard.EnsureValidVerify(verifiedBy, source, verifiedAtUtc);
+
             IsVerified = true;
             VerifiedAt = verifiedAtUtc;
             VerifiedBy = verifiedBy;
@@ -86,6 +89,8 @@ namespace FlightAssistant.Domain.Loyalty.Entities
 
         public void MarkVerificationFailed(string issue)
         {
+            VerificationGuard.EnsureValidIssue(issue);
+
             IsVerified = false;
             VerifiedAt = null;
             VerifiedBy = null;

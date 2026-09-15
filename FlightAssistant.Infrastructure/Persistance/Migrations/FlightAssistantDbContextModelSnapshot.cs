@@ -1105,6 +1105,102 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.ToTable("travelers", (string)null);
                 });
 
+            modelBuilder.Entity("FlightAssistant.Domain.Verification.Entities.VerificationRequest", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTime?>("CompletedUtc")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("completed_utc");
+
+                    b.Property<string>("DifferencesJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("differences");
+
+                    b.Property<string>("EntityKey")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("entity_key");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("entity_type");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("error");
+
+                    b.Property<decimal>("EstimatedCostUsd")
+                        .HasPrecision(10, 4)
+                        .HasColumnType("numeric(10,4)")
+                        .HasColumnName("estimated_cost_usd");
+
+                    b.Property<DateTime?>("NextAttemptUtc")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("next_attempt_utc");
+
+                    b.Property<string>("RequestedBy")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("requested_by");
+
+                    b.Property<DateTime>("RequestedUtc")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("requested_utc");
+
+                    b.Property<string>("SourceValuesJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("source_values");
+
+                    b.Property<string>("Sources")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("sources");
+
+                    b.Property<DateTime?>("StartedUtc")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("started_utc");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Trigger")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("trigger");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EntityType", "EntityKey")
+                        .IsUnique()
+                        .HasDatabaseName("ux_verification_requests_open_entity")
+                        .HasFilter("\"status\" IN ('Pending', 'Running')");
+
+                    b.HasIndex("Status", "NextAttemptUtc")
+                        .HasDatabaseName("ix_verification_requests_claim");
+
+                    b.ToTable("verification_requests", (string)null);
+                });
+
             modelBuilder.Entity("FlightAssistant.Domain.Flights.Entities.Flight", b =>
                 {
                     b.HasOne("FlightAssistant.Domain.ReferenceData.Entities.Airline", "Airline")

@@ -4,6 +4,7 @@ using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
 using FlightAssistant.Infrastructure.ExternalServices.GitHub;
@@ -45,6 +46,10 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<ICountryRepository, CountryRepository>();
             services.AddScoped<IAllianceRepository, AllianceRepository>();
             services.AddScoped(typeof(IVerifiableRepository<>), typeof(EfVerifiableRepository<>));
+
+            // Verification queue (#367): one repository behind the queue and the job's interface.
+            services.AddScoped<IVerificationQueue, VerificationRequestRepository>();
+            services.AddScoped<IVerificationRequestRepository, VerificationRequestRepository>();
 
             // AeroAPI — the sole flight data provider (issue #280). This wires the HTTP
             // foundation: options, error mapping (AeroApiResponse), and the shared outbound
