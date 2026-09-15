@@ -859,4 +859,21 @@ public class SyncFlightStatusCommandHandlerTests
 
         await _budget.DidNotReceive().GetStateAsync(Arg.Any<CancellationToken>());
     }
+
+    [Fact]
+    public async Task TravelerSync_WhileTheFirstWaitsOnTheBudgetRead_MakesNoSecondCall()
+    {
+        // The budget read can wait on the AeroAPI throttle, so the attempt marker must already be set (#369).
+        Given(Departing(Now.AddHours(10)));
+        var budgetRead = new TaskCompletionSource<ProviderBudgetState>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _budget.GetStateAsync(Arg.Any<CancellationToken>()).Returns(budgetRead.Task);
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var first = Sync(SyncTrigger.Traveler);
+        var second = Sync(SyncTrigger.Traveler);
+        budgetRead.SetResult(ProviderBudgetState.Normal);
+        await Task.WhenAll(first, second);
+
+        await _provider.Received(1).GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
+    }
 }

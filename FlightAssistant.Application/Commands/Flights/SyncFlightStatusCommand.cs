@@ -122,6 +122,11 @@ namespace FlightAssistant.Application.Commands.Flights
                     return false;
             }
 
+            // Before the budget read, which can wait on the AeroAPI throttle, so a second traveler request
+            // during that wait finds the marker (#369).
+            if (travelerCooldown)
+                await MarkTravelerAttemptAsync(flight.Id, now, ct);
+
             // #303: a flight in Fast mode always gets its call and never reads the budget. Past the soft
             // limit, a Live flight's polls run at twice the interval. Once the budget is used up, the loop
             // makes no call for it, and a person's sync is told why rather than handed stored status.
@@ -137,17 +142,20 @@ namespace FlightAssistant.Application.Commands.Flights
             if (budget == ProviderBudgetState.Exhausted)
             {
                 if (cmd.Trigger != SyncTrigger.Scheduled)
+                {
+                    // No call was made, so the traveler's cooldown doesn't start.
+                    if (travelerCooldown)
+                        await ClearTravelerAttemptAsync(flight.Id, ct);
+
                     throw new DomainException(
                         "Flight status can't be refreshed right now: this month's flight data budget is used up. Please try again later.",
                         503);
+                }
 
                 flight.ApplySyncPlan(plan.Mode, plan.NextSyncDueUtc);
                 await _flights.SaveChangesAsync(ct);
                 return false;
             }
-
-            if (travelerCooldown)
-                await MarkTravelerAttemptAsync(flight.Id, now, ct);
 
             var kind = cmd.Trigger == SyncTrigger.Scheduled ? StatusCallKind.ScheduledPoll : StatusCallKind.Interactive;
 
@@ -222,6 +230,20 @@ namespace FlightAssistant.Application.Commands.Flights
             catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
             {
                 _logger.LogWarning(ex, "Couldn't set the manual-sync marker of flight {FlightId}; syncing without it", flightId);
+            }
+        }
+
+        /// <summary>Removes the traveler's attempt marker when no call was made. A cache failure is only
+        /// logged: the traveler then waits out the cooldown without a call.</summary>
+        private async Task ClearTravelerAttemptAsync(int flightId, CancellationToken ct)
+        {
+            try
+            {
+                await _cache.RemoveAsync($"{TravelerAttemptKeyPrefix}{flightId}", ct);
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
+            {
+                _logger.LogWarning(ex, "Couldn't clear the manual-sync marker of flight {FlightId} after the budget refused the sync", flightId);
             }
         }
 
