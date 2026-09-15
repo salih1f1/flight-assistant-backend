@@ -15,8 +15,8 @@ namespace FlightAssistant.Application.FlightSync
         TimeSpan StopAfterArrival { get; }
         TimeSpan StopWithoutArrivalAfter { get; }
 
-        /// <summary>A traveler's manual sync within this long of the flight's last sync makes no
-        /// provider call (#369).</summary>
+        /// <summary>A traveler's manual sync within this long of the flight's last sync, or of a
+        /// traveler's attempted sync, makes no provider call (#369).</summary>
         TimeSpan ManualSyncCooldown { get; }
     }
 }

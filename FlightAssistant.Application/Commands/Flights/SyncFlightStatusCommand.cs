@@ -1,4 +1,6 @@
+using System.Globalization;
 using FlightAssistant.Application.FlightSync;
+using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
@@ -32,8 +34,12 @@ namespace FlightAssistant.Application.Commands.Flights
         // it degrades to the same fallback rather than aborting the sync.
         private const string UnknownStatusCode = "UNK";
 
+        // Set just before a traveler's sync calls the provider; see the cooldown guard in Handle.
+        private const string TravelerAttemptKeyPrefix = "flight-sync:traveler-attempt:";
+
         private readonly IFlightRepository _flights;
         private readonly IFlightStatusProvider _provider;
+        private readonly ICacheService _cache;
         private readonly IFlightSyncOptions _syncOptions;
         private readonly IFlightStatusWindowOptions _windowOptions;
         private readonly TimeProvider _timeProvider;
@@ -42,6 +48,7 @@ namespace FlightAssistant.Application.Commands.Flights
         public SyncFlightStatusCommandHandler(
             IFlightRepository flights,
             IFlightStatusProvider provider,
+            ICacheService cache,
             IFlightSyncOptions syncOptions,
             IFlightStatusWindowOptions windowOptions,
             TimeProvider timeProvider,
@@ -49,6 +56,7 @@ namespace FlightAssistant.Application.Commands.Flights
         {
             _flights = flights;
             _provider = provider;
+            _cache = cache;
             _syncOptions = syncOptions;
             _windowOptions = windowOptions;
             _timeProvider = timeProvider;
@@ -77,7 +85,11 @@ namespace FlightAssistant.Application.Commands.Flights
             // A traveler pulling to refresh gets what the last sync stored: every call is billed, and
             // the loop already syncs a flight near departure every few minutes (#369). It reads the
             // flight's own LastSyncedUtc, so every traveler tracking the flight shares the cooldown.
-            if (cmd.Trigger == SyncTrigger.Traveler && flight.LastSyncedUtc > now - _syncOptions.ManualSyncCooldown)
+            // A traveler's call starts the cooldown when it's attempted, not when it returns, so a failed
+            // call or a second request during the throttle wait doesn't make another billed call.
+            var travelerCooldown = cmd.Trigger == SyncTrigger.Traveler && _syncOptions.ManualSyncCooldown > TimeSpan.Zero;
+            if (travelerCooldown &&
+                (flight.LastSyncedUtc > now - _syncOptions.ManualSyncCooldown || await TravelerAttemptMarkedAsync(flight.Id, ct)))
                 return false;
 
             var options = FlightSyncPlanOptions.From(_syncOptions, _windowOptions);
@@ -104,6 +116,9 @@ namespace FlightAssistant.Application.Commands.Flights
                     await _flights.SaveChangesAsync(ct);
                     return false;
             }
+
+            if (travelerCooldown)
+                await MarkTravelerAttemptAsync(flight.Id, now, ct);
 
             bool recorded;
             try
@@ -143,6 +158,39 @@ namespace FlightAssistant.Application.Commands.Flights
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Couldn't defer the next sync of flight {FlightId} after a failed sync", flight.Id);
+            }
+        }
+
+        /// <summary>
+        /// Whether a traveler's sync of this flight was attempted within the cooldown. A cache failure
+        /// reads as no marker, so the LastSyncedUtc cooldown and the rate limit still apply.
+        /// </summary>
+        private async Task<bool> TravelerAttemptMarkedAsync(int flightId, CancellationToken ct)
+        {
+            try
+            {
+                // A string, because GetAsync returns default for a missing value type.
+                return await _cache.GetAsync<string>($"{TravelerAttemptKeyPrefix}{flightId}", ct) is not null;
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
+            {
+                _logger.LogWarning(ex, "Couldn't read the manual-sync marker of flight {FlightId}; syncing without it", flightId);
+                return false;
+            }
+        }
+
+        /// <summary>Marks a traveler's call as attempted until the cooldown ends. A cache failure is
+        /// only logged, so it never blocks the sync.</summary>
+        private async Task MarkTravelerAttemptAsync(int flightId, DateTime now, CancellationToken ct)
+        {
+            try
+            {
+                await _cache.SetAsync($"{TravelerAttemptKeyPrefix}{flightId}", now.ToString("O", CultureInfo.InvariantCulture),
+                    _syncOptions.ManualSyncCooldown, ct);
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
+            {
+                _logger.LogWarning(ex, "Couldn't set the manual-sync marker of flight {FlightId}; syncing without it", flightId);
             }
         }
 

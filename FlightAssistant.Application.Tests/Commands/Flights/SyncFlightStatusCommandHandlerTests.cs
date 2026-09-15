@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.FlightSync;
+using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
@@ -61,6 +62,45 @@ public class SyncFlightStatusCommandHandlerTests
         }
     }
 
+    /// <summary>A dictionary cache that ignores expiry but records the last one set per key, and
+    /// can be made to fail, counting every access either way.</summary>
+    private sealed class FakeCache : ICacheService
+    {
+        public Dictionary<string, object?> Entries { get; } = [];
+        public Dictionary<string, TimeSpan?> Expiries { get; } = []; // written only by SetAsync
+        public bool FailReads { get; init; }
+        public bool FailWrites { get; init; }
+        public int Accesses { get; private set; }
+
+        public Task<T?> GetAsync<T>(string key, CancellationToken ct = default)
+        {
+            Accesses++;
+            if (FailReads) return Task.FromException<T?>(new InvalidOperationException("cache down"));
+            return Task.FromResult(Entries.TryGetValue(key, out var value) ? (T?)value : default);
+        }
+
+        public Task SetAsync<T>(string key, T value, TimeSpan? absoluteExpire = null, CancellationToken ct = default)
+        {
+            Accesses++;
+            if (FailWrites) return Task.FromException(new InvalidOperationException("cache down"));
+            Entries[key] = value;
+            Expiries[key] = absoluteExpire;
+            return Task.CompletedTask;
+        }
+
+        public Task RemoveAsync(string key, CancellationToken ct = default)
+        {
+            Accesses++;
+            if (FailWrites) return Task.FromException(new InvalidOperationException("cache down"));
+            Entries.Remove(key);
+            return Task.CompletedTask;
+        }
+    }
+
+    private readonly FakeCache _cache = new();
+
+    private static string MarkerKey(Flight flight) => $"flight-sync:traveler-attempt:{flight.Id}";
+
     private static Flight Departing(DateTime departureUtc) =>
         Flight.Create(1, "BA123", 10, 20, DateOnly.FromDateTime(departureUtc), departureUtc, departureUtc.AddHours(8));
 
@@ -79,8 +119,9 @@ public class SyncFlightStatusCommandHandlerTests
         RawPayloadJson: null);
 
     private SyncFlightStatusCommandHandler Handler(
-        ILogger<SyncFlightStatusCommandHandler>? logger = null, IFlightSyncOptions? syncOptions = null) =>
-        new(_flights, _provider, syncOptions ?? new SyncOptions(), new WindowOptions(), _clock,
+        ILogger<SyncFlightStatusCommandHandler>? logger = null, IFlightSyncOptions? syncOptions = null,
+        ICacheService? cache = null) =>
+        new(_flights, _provider, cache ?? _cache, syncOptions ?? new SyncOptions(), new WindowOptions(), _clock,
             logger ?? NullLogger<SyncFlightStatusCommandHandler>.Instance);
 
     public SyncFlightStatusCommandHandlerTests()
@@ -363,6 +404,122 @@ public class SyncFlightStatusCommandHandlerTests
         await handler.Handle(new SyncFlightStatusCommand(null, 1, SyncTrigger.Traveler), CancellationToken.None);
 
         await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+    }
+
+    // ── Traveler-attempt marker (#369): the cooldown starts when the call is attempted ──
+
+    [Fact]
+    public async Task TravelerSync_ProviderThrows_ARetryMakesNoCall()
+    {
+        Given(Departing(Now.AddHours(1)));
+        // Fails once, then answers, so a retry that got through shows as a second call.
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns<FlightStatusResult?>(_ => throw new DomainException("AeroAPI unavailable", 502), _ => null);
+
+        await Assert.ThrowsAsync<DomainException>(() => Sync(SyncTrigger.Traveler));
+        Assert.False(await Sync(SyncTrigger.Traveler));
+
+        await _provider.Received(1).GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TravelerSync_WhileAnotherAttemptIsInFlight_MakesNoCallAndSavesNothing()
+    {
+        var flight = Given(Departing(Now.AddHours(1)));
+        _cache.Entries[MarkerKey(flight)] = Now.AddSeconds(-5).ToString("O");
+
+        Assert.False(await Sync(SyncTrigger.Traveler));
+
+        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+        Assert.Null(flight.LastSyncedUtc);
+    }
+
+    [Fact]
+    public async Task TravelerSync_SetsTheMarkerBeforeTheCall_ExpiringAfterTheCooldown()
+    {
+        var flight = Given(Departing(Now.AddHours(1)));
+        var markedBeforeTheCall = false;
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns<FlightStatusResult?>(_ =>
+            {
+                markedBeforeTheCall = _cache.Entries.ContainsKey(MarkerKey(flight));
+                return null;
+            });
+
+        await Sync(SyncTrigger.Traveler);
+
+        Assert.True(markedBeforeTheCall);
+        Assert.Equal(Now.ToString("O"), _cache.Entries[MarkerKey(flight)]);
+        Assert.Equal(TimeSpan.FromMinutes(4), _cache.Expiries[MarkerKey(flight)]);
+    }
+
+    [Theory]
+    [InlineData(SyncTrigger.Admin)]
+    [InlineData(SyncTrigger.Scheduled)]
+    public async Task AdminAndScheduledSyncs_IgnoreTheMarker_AndSetNone(SyncTrigger trigger)
+    {
+        var flight = Given(Departing(Now.AddHours(1))); // never planned, so due for the loop
+        _cache.Entries[MarkerKey(flight)] = Now.ToString("O");
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        await Sync(trigger);
+
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+        Assert.Empty(_cache.Expiries);
+    }
+
+    [Fact]
+    public async Task TravelerSync_CooldownZero_NeverTouchesTheCache()
+    {
+        var cache = new FakeCache { FailReads = true, FailWrites = true };
+        var handler = Handler(syncOptions: new SyncOptions { ManualSyncCooldown = TimeSpan.Zero }, cache: cache);
+        var flight = Given(Departing(Now.AddHours(1)));
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        await handler.Handle(new SyncFlightStatusCommand(null, 1, SyncTrigger.Traveler), CancellationToken.None);
+
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+        Assert.Equal(0, cache.Accesses);
+    }
+
+    [Fact]
+    public async Task TravelerSync_MarkerReadFails_StillCallsTheProvider_AndLogsAWarning()
+    {
+        var logger = new CapturingLogger<SyncFlightStatusCommandHandler>();
+        var handler = Handler(logger, cache: new FakeCache { FailReads = true });
+        var flight = Given(Departing(Now.AddHours(1)));
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        await handler.Handle(new SyncFlightStatusCommand(null, 1, SyncTrigger.Traveler), CancellationToken.None);
+
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task TravelerSync_MarkerWriteFails_StillCallsTheProvider_AndLogsAWarning()
+    {
+        var logger = new CapturingLogger<SyncFlightStatusCommandHandler>();
+        var handler = Handler(logger, cache: new FakeCache { FailWrites = true });
+        var flight = Given(Departing(Now.AddHours(1)));
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        await handler.Handle(new SyncFlightStatusCommand(null, 1, SyncTrigger.Traveler), CancellationToken.None);
+
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task TravelerSync_ScheduleMode_MakesNoCall_AndSetsNoMarker()
+    {
+        Given(Departing(Now.AddDays(30)));
+
+        Assert.False(await Sync(SyncTrigger.Traveler));
+
+        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        Assert.Empty(_cache.Expiries);
     }
 
     [Theory]
