@@ -73,21 +73,26 @@ public class AeroApiFlightSearchProviderTests
         }
     }
 
-    private static AeroApiAirportTimezoneLookup TimezoneLookup(params (string Iata, string? Tz)[] zones)
+    /// <summary>A lookup over <see cref="TimezoneStub"/>, returned with the stub so a test can count
+    /// <c>/airports</c> calls. Its cache always misses, so every count is a real lookup.</summary>
+    private static (AeroApiAirportTimezoneLookup Lookup, TimezoneStub Stub) CountingTimezoneLookup(
+        params (string Iata, string? Tz)[] zones)
     {
         var cache = Substitute.For<ICacheService>();
         cache.GetAsync<string>(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>(null));
 
-        var http = new HttpClient(new TimezoneStub(zones.ToDictionary(z => z.Iata, z => z.Tz)))
-        {
-            BaseAddress = new Uri("http://stub/aeroapi/")
-        };
+        var stub = new TimezoneStub(zones.ToDictionary(z => z.Iata, z => z.Tz));
+        var http = new HttpClient(stub) { BaseAddress = new Uri("http://stub/aeroapi/") };
 
-        return new AeroApiAirportTimezoneLookup(
+        var lookup = new AeroApiAirportTimezoneLookup(
             http, cache, Options.Create(new AeroApiOptions { ApiKey = "dummy" }),
             NullLogger<AeroApiAirportTimezoneLookup>.Instance);
+        return (lookup, stub);
     }
+
+    private static AeroApiAirportTimezoneLookup TimezoneLookup(params (string Iata, string? Tz)[] zones) =>
+        CountingTimezoneLookup(zones).Lookup;
 
     private static AeroApiFlightSearchProvider Provider(
         ScriptedHttpMessageHandler handler,
@@ -338,6 +343,71 @@ public class AeroApiFlightSearchProviderTests
 
         var kept = Assert.Single(results);
         Assert.Equal("XX100", kept.FlightNumber);
+    }
+
+    [Fact]
+    public async Task SearchAsync_LooksUpAFailingOriginOnce_NotOncePerRow()
+    {
+        // A widened search (no origin in the criteria) whose rows all depart an airport the provider
+        // knows no zone for. Each row used to trigger its own billed /airports lookup (#373).
+        const string body = """
+        {
+          "scheduled": [
+            { "ident_iata": "XX100", "actual_ident_iata": null, "origin_iata": "ZZZ", "destination_iata": "JFK",
+              "scheduled_out": "2026-09-28T06:00:00Z", "scheduled_in": "2026-09-28T12:00:00Z" },
+            { "ident_iata": "XX100", "actual_ident_iata": null, "origin_iata": "ZZZ", "destination_iata": "JFK",
+              "scheduled_out": "2026-09-29T06:00:00Z", "scheduled_in": "2026-09-29T12:00:00Z" },
+            { "ident_iata": "XX100", "actual_ident_iata": null, "origin_iata": "ZZZ", "destination_iata": "JFK",
+              "scheduled_out": "2026-09-30T06:00:00Z", "scheduled_in": "2026-09-30T12:00:00Z" }
+          ],
+          "links": null,
+          "num_pages": 1
+        }
+        """;
+        var handler = new ScriptedHttpMessageHandler((HttpStatusCode.OK, body));
+        var (timezones, stub) = CountingTimezoneLookup();
+
+        var results = await Provider(handler, timezones).SearchAsync(
+            new FlightSearchCriteria(null, null, new DateOnly(2026, 9, 29), "XX100"));
+
+        // The UTC-date fallback still keeps only the 29th's row.
+        var kept = Assert.Single(results);
+        Assert.Equal(new DateTime(2026, 9, 29, 6, 0, 0, DateTimeKind.Utc), kept.ScheduledDepartureUtc);
+        Assert.Equal(1, stub.Calls);
+    }
+
+    [Fact]
+    public async Task SearchAsync_LooksUpEachOriginOnce_AndStillFiltersEachRowByItsOwnZone()
+    {
+        // Two origins, two rows each. SOF resolves (Europe/Sofia, UTC+3 in September): its 06:35Z
+        // departure on the 29th is kept, the 28th's isn't. ZZZ never resolves: the UTC-date fallback
+        // keeps its 29th row and drops the 30th's.
+        const string body = """
+        {
+          "scheduled": [
+            { "ident_iata": "TK1028", "actual_ident_iata": null, "origin_iata": "SOF", "destination_iata": "IST",
+              "scheduled_out": "2026-09-29T06:35:00Z", "scheduled_in": "2026-09-29T08:05:00Z" },
+            { "ident_iata": "XX100", "actual_ident_iata": null, "origin_iata": "ZZZ", "destination_iata": "JFK",
+              "scheduled_out": "2026-09-29T06:00:00Z", "scheduled_in": "2026-09-29T12:00:00Z" },
+            { "ident_iata": "TK1028", "actual_ident_iata": null, "origin_iata": "SOF", "destination_iata": "IST",
+              "scheduled_out": "2026-09-28T06:35:00Z", "scheduled_in": "2026-09-28T08:05:00Z" },
+            { "ident_iata": "XX100", "actual_ident_iata": null, "origin_iata": "ZZZ", "destination_iata": "JFK",
+              "scheduled_out": "2026-09-30T06:00:00Z", "scheduled_in": "2026-09-30T12:00:00Z" }
+          ],
+          "links": null,
+          "num_pages": 1
+        }
+        """;
+        var handler = new ScriptedHttpMessageHandler((HttpStatusCode.OK, body));
+        var (timezones, stub) = CountingTimezoneLookup(("SOF", "Europe/Sofia"));
+
+        var results = await Provider(handler, timezones).SearchAsync(
+            new FlightSearchCriteria(null, null, new DateOnly(2026, 9, 29), "TK1028"));
+
+        Assert.Equal(
+            new[] { new DateTime(2026, 9, 29, 6, 0, 0, DateTimeKind.Utc), new DateTime(2026, 9, 29, 6, 35, 0, DateTimeKind.Utc) },
+            results.Select(r => r.ScheduledDepartureUtc));
+        Assert.Equal(2, stub.Calls);
     }
 
     // ------------------------------------------------------------------

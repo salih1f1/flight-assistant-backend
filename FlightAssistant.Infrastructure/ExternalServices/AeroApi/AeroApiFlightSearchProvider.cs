@@ -255,13 +255,24 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         /// </summary>
         private async Task<List<Row>> FilterToIntendedLocalDateAsync(List<Row> rows, DateOnly date, CancellationToken ct)
         {
+            // One lookup per distinct origin, not per row: otherwise an origin whose lookup fails costs a
+            // billed /airports call for every one of its rows (#373). A miss is remembered too.
+            var zones = new Dictionary<string, TimeZoneInfo?>(StringComparer.OrdinalIgnoreCase);
+
             var kept = new List<Row>();
             foreach (var row in rows)
             {
-                var localDate = await TryGetLocalDateAsync(row.OriginIata, row.ScheduledOutUtc, ct);
-                if (localDate is { } resolved)
+                if (!zones.TryGetValue(row.OriginIata, out var zone))
                 {
-                    if (resolved == date) kept.Add(row);
+                    zone = await TryResolveZoneAsync(row.OriginIata, ct);
+                    zones[row.OriginIata] = zone;
+                }
+
+                if (zone is not null)
+                {
+                    var local = TimeZoneInfo.ConvertTimeFromUtc(
+                        DateTime.SpecifyKind(row.ScheduledOutUtc, DateTimeKind.Utc), zone);
+                    if (DateOnly.FromDateTime(local) == date) kept.Add(row);
                     continue;
                 }
 
@@ -274,17 +285,14 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
             return kept;
         }
 
-        private async Task<DateOnly?> TryGetLocalDateAsync(string originIata, DateTime scheduledOutUtc, CancellationToken ct)
+        private async Task<TimeZoneInfo?> TryResolveZoneAsync(string originIata, CancellationToken ct)
         {
             var timezoneId = await _timezones.TryGetTimezoneAsync(originIata, ct);
             if (string.IsNullOrWhiteSpace(timezoneId)) return null;
 
             try
             {
-                var zone = TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
-                var local = TimeZoneInfo.ConvertTimeFromUtc(
-                    DateTime.SpecifyKind(scheduledOutUtc, DateTimeKind.Utc), zone);
-                return DateOnly.FromDateTime(local);
+                return TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
             }
             catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
             {
