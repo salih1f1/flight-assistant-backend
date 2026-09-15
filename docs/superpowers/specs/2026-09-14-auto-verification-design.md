@@ -144,12 +144,18 @@ Tolerances are constants in the comparer, not configuration.
 
 ```
 GET  /admin/verification-sources?entityType=Airport
-     → [{ "name": "ourairports", "costPerRowUsd": 0 }, { "name": "aeroapi", "costPerRowUsd": 0.015 }]
+     → 200 [{ "name": "ourairports", "costPerRowUsd": 0 }, { "name": "aeroapi", "costPerRowUsd": 0.015 }]
+     → 400 when entityType is missing, or not exactly Airport, Airline or Country
+     // Only registered sources that support the type, ordered by name; Airline returns [] until step 9.
 
 POST /admin/verification-requests
      { "entityType": "Airport", "keys": ["123", "456"], "sources": ["ourairports"] }
-     → 202 { "queued": 1, "skipped": 1 }       // skipped = already Pending/Running
-     → 400 when a source does not apply to the entity type, or keys is empty
+     → 202 { "queued": 1, "skipped": 1 }       // skipped = a duplicate key, or an entity with an open request
+     → 400 when entityType is invalid; keys or sources is empty; keys has more than 1000 entries (a panel
+       selection is at most one page of 200); a key is malformed for the entity type (named, e.g.
+       "Keys[1]"); or a source is unregistered or does not support the entity type
+     // estimatedCostUsd is the sum of the selected sources' costPerRowUsd. Keys are not checked for
+     // existence: a missing entity completes as Error ("Entity no longer exists") when the job claims it.
 ```
 
 **Flight-started**
@@ -205,7 +211,7 @@ The job's scope sets `IAdminContext` to a `system` actor, so its writes to the e
 **Shared lifecycle (both free sources).** `ourairports` and `mledoze` share one dataset-cache helper (download-once, reuse, release) and one download/parse pipeline, so this bookkeeping exists once rather than twice:
 - A dataset loads only when a claimed request uses that source.
 - It is reused for at most **24 hours** from when it was downloaded.
-- It is dropped (released) as soon as no open (`Pending`/`Running`) request uses that source; the job checks after every cycle (§4.2).
+- It is dropped (released) once no open (`Pending`/`Running`) request uses that source **and** it has gone unused — no lookup answered from it — for `Verification:IdleRelease` (default 30 min; `0` releases immediately, today's pre-#378 behaviour): a one-row check soon after another then reuses the download instead of repeating it. The idle period never extends the 24-hour maximum age above, and a cached failure is unaffected — it keeps only its own 60-second cooldown, never held for being recent. A load that finishes with no caller left waiting on it is stamped as last-used right then, so it still starts its idle clock even though nothing has asked for it since. The job checks after every cycle (§4.2).
 - Concurrent callers needing the same stale-or-absent dataset share **one** download rather than each starting their own; a caller's own cancellation only cancels its own wait on the shared result, never the download itself or any other caller still waiting on it.
 - A failed load is kept for a **60-second failure cooldown** (no longer than the first retry backoff), counted from when it failed: every lookup inside it gets the same source error with no new download, so a batch against a stalled or reshaped upstream downloads once, not once per request. The first lookup after the cooldown downloads again, and a release drops the failure. A load that ends cancelled is never kept.
 - A dataset that parses but yields **zero** usable rows — an empty body, or every record failing to parse — is a source error, never "not found for everything": `NotFound` means the dataset loaded and has rows, just not this one, and a silently empty dataset must never look like that for every single lookup.
@@ -221,19 +227,39 @@ The job's scope sets `IAdminContext` to a `system` actor, so its writes to the e
 ```
 POST /admin/verification-requests/{id}/accept-source
      { "source": "ourairports" }
-     → writes that source's stored values for the checked columns to the entity, Verify(adminId, source); 204
-     → 409 if the request is not Mismatch, or any differing column's current value no longer equals the `ours` value stored in `differences`
+     → 204: writes only that source's differing columns (the `differences` entries whose sourceName is
+       `source`) — parsed into the column's own type — to the entity, then Verify(adminId, source), one
+       save. A column that already matched keeps our own formatting. The request itself is unchanged:
+       it stays Mismatch, as history.
+     → 400 if `source` is blank, is not one of the request's sources, or has no stored values
+     → 404 if the request, or the entity, no longer exists
+     → 409 if the request is not Mismatch; a differing column's current value no longer equals the `ours`
+       value stored in `differences`, by the checked-column comparer's own rule, not raw string equality
+       (`İstanbul` still equals `Istanbul`); a value can't be parsed, or would leave a required column
+       empty; a new unique code (Airport/Airline Iata/Icao, Country Alpha3/NumericCode) already belongs
+       to another row — checked before saving, so a genuinely concurrent write can still land between
+       that check and the save and hit the database's own unique index as a 500, an accepted race; or
+       the merged row fails the entity's own admin-edit validator — the whole row, so a pre-existing
+       invalid value in a column the source never touched also blocks the accept, naming that column.
+       Country has no edit validator, so its formats and lengths go unchecked here.
 
 POST /admin/verification-requests/{id}/retry
-     → a new Pending request with the same sources; 202
+     → 202 { "queued": 1, "skipped": 0 }: a new Pending request, same entity type, key and sources,
+       trigger admin, the caller as requested_by, cost from the registry. The retried request is unchanged.
+     → 400 if one of its sources is no longer registered, or no longer supports the entity type
+     → 404 if the request doesn't exist
      → 409 if the entity already has an open request
 
 PATCH /admin/countries/{code}/verify          (#331)
 ```
 
+Enqueue and retry each insert a `verification_requests` row, which is not audited (`NotAuditedTypes`);
+`requested_by` is the only record of which admin asked. `accept-source`'s entity write is audited as an
+admin `Update`.
+
 "Keep ours and verify" uses the existing verify route, which now records `manual` and clears `VerificationIssue`. "Check again" after an edit is `POST /admin/verification-requests` for that one row.
 
-`verification_requests` is added to `BrowsableTables` so it is visible and filterable in the panel's raw grid.
+`verification_requests` is browsable as `verification-requests`, exposing every mapped column except the `xmin` row-version shadow property; nothing is masked (`error` holds fixed categories, `requested_by` is an admin id).
 
 ### 4.5 Why a database queue and not Service Bus
 
@@ -254,6 +280,7 @@ Queuing goes through one interface (`IVerificationQueue`), so a message signal c
 | `PollInterval` | 30 s (range 1 s–1 h) |
 | `BatchSize` | 10 (range 1–100) |
 | `MaxAttempts` | 3 (range 1–10) |
+| `IdleRelease` | 30 min (range 0–24 h); `0` releases a source's dataset as soon as no open request uses it |
 | `StaleAfterDays` | 180 (range 1–3650) |
 | `DefaultSources` | Airport `ourairports`, Airline `aeroapi`, Country `mledoze` |
 
@@ -326,7 +353,6 @@ Steps 1–4 stand alone: countries become verifiable and imports work for moving
 
 **Carried into later steps**, noted during step 5's implementation and review:
 
-- **Step 6:** register `verification_requests` in `BrowsableTables` (it is `NotBrowsable` today, with a reason string naming this step, so `BrowsableTablesModelCompletenessTests` passes in the meantime).
 - **Step 8:** show the health report's `StuckAbandoned` and `FailuresUnrecorded` counts (§4.2) alongside the heartbeat's processed/pending counts, which already ship. Also: verifying a row through the queue doesn't refresh `/admin/stats` counts.
 - **Step 9:** add a `ForAirline` lookup-key factory alongside `ForAirport`/`ForCountry`. Also: `started_utc` is stamped once per claimed *batch*, not per request; with several job instances and a throttled source (`aeroapi`, this step's own addition), a slow batch could push a claim past the 10-minute stuck cutoff before it finishes — revisit per-request stamping, or the cutoff length, once a throttled source exists to actually trigger it.
 - **Step 10:** the flight-tracking trigger must handle an imported row's future `VerifiedAt` in its staleness check, treat `import` as weaker evidence than an automated check when deciding whether to re-queue, and enqueue only *after* its own `TrackFlightCommand` save completes (§2.3's `EnqueueAsync` note).
