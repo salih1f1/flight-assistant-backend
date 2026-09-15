@@ -62,30 +62,64 @@ public class VerificationDatasetCacheTests
     }
 
     [Fact]
-    public async Task GetAsync_ConcurrentCallsThatBothMissTheCache_LoadOnlyOnce()
+    public async Task GetAsync_TwoCallsThatBothMissTheCache_ShareOneLoad()
     {
+        // Deterministic (fix round 1, item 10c): waits for proof `load` was actually entered,
+        // rather than an arbitrary sleep, before issuing the second call and releasing the gate.
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var cache = NewCache(clock);
         var loadCount = 0;
-        var gate = new SemaphoreSlim(0);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         async Task<string> Load(CancellationToken ct)
         {
             Interlocked.Increment(ref loadCount);
-            await gate.WaitAsync(ct);
+            entered.TrySetResult();
+            await release.Task;
             return "value";
         }
 
         var first = cache.GetAsync(Load, default);
+        await entered.Task;
         var second = cache.GetAsync(Load, default);
-        await Task.Delay(50);
-        gate.Release(2);
 
+        release.SetResult();
         var results = await Task.WhenAll(first, second);
 
         Assert.Equal(1, loadCount);
         Assert.Equal("value", results[0]);
         Assert.Equal("value", results[1]);
+    }
+
+    [Fact]
+    public async Task GetAsync_OneCallersCancellation_DoesNotAbortTheSharedLoadForAnother()
+    {
+        // Fix round 1, item 7: `load` runs on a token this cache owns, not any individual caller's
+        // -- cancelling the first caller's own `ct` must not tear down the shared download that a
+        // second, still-interested caller is awaiting.
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async Task<string> Load(CancellationToken ct)
+        {
+            entered.TrySetResult();
+            await release.Task; // deliberately ignores `ct` -- it is always CancellationToken.None anyway
+            return "value";
+        }
+
+        using var firstCts = new CancellationTokenSource();
+        var first = cache.GetAsync(Load, firstCts.Token);
+        await entered.Task;
+        var second = cache.GetAsync(Load, default);
+
+        firstCts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+
+        release.SetResult();
+        Assert.Equal("value", await second);
     }
 
     [Fact]

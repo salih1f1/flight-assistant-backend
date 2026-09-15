@@ -7,7 +7,7 @@ namespace FlightAssistant.Application.Interfaces.Verification
     /// The identifying fields a source lookup needs for one entity, independent of which source
     /// answers it (#367 task 3, spec §4.3). The processor (Task 4) has the loaded entity and builds
     /// one of these from it; a source reads only the fields its own entity type needs and ignores
-    /// the rest -- e.g. <see cref="MledozeCountriesVerificationSource"/>. never looks at
+    /// the rest -- e.g. <c>MledozeCountriesVerificationSource</c> never looks at
     /// <see cref="Iata"/>/<see cref="Icao"/>. A plain key rather than the entity itself, because a
     /// source has no business seeing -- or depending on the shape of -- <c>Airport</c>/<c>Country</c>
     /// beyond the few fields it actually matches rows by; the checked-column comparison itself
@@ -19,7 +19,7 @@ namespace FlightAssistant.Application.Interfaces.Verification
     /// <param name="Icao">The entity's ICAO code. Read by the same sources as a fallback when
     /// <see cref="Iata"/> has no match, or is itself empty.</param>
     /// <param name="CountryCode">The country's two-letter code. Read by
-    /// <see cref="MledozeCountriesVerificationSource"/>.</param>
+    /// <c>MledozeCountriesVerificationSource</c>.</param>
     public sealed record VerificationSourceLookupKey(string? Iata, string? Icao, string? CountryCode)
     {
         /// <summary>A key for an airport (or airline) lookup by IATA/ICAO code.</summary>

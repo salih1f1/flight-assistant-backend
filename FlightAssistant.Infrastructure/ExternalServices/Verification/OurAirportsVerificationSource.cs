@@ -26,8 +26,18 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
     /// <para>
     /// <b>Memory.</b> Only the 8 checked columns plus <c>type</c> (filter) and <c>score</c>
     /// (dedup) are kept per row, and the CSV is stream-parsed one record at a time
-    /// (<see cref="CsvReader.GetRecordsAsync{T}(CancellationToken)"/>) rather than buffered whole --
-    /// the full response body is the only thing held besides the two resulting index dictionaries.
+    /// (<see cref="CsvReader.GetRecordsAsync{T}(CancellationToken)"/>) rather than buffered whole:
+    /// only the two resulting index dictionaries are held once parsing finishes -- the response
+    /// body itself is read incrementally, never buffered in full.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Empty or reshaped dataset (fix round 1, item 6).</b> A response that parses successfully
+    /// but yields zero indexed rows -- an empty body, a header-only CSV, or a real header whose
+    /// <c>iata_code</c>/<c>icao_code</c> columns were renamed -- is a source error, not "no data
+    /// found for anything". <c>NotFound</c> means the dataset loaded *and* has rows, just not this
+    /// one; Task 4 treats <c>NotFound</c> as terminal (it flags the entity for attention), so a
+    /// silently empty dataset must never be allowed to look like that for every single lookup.
     /// </para>
     /// </summary>
     public sealed class OurAirportsVerificationSource : IVerificationSource
@@ -43,17 +53,28 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
         /// <summary>The dataset URL (spec §4.3). No API key, no query string.</summary>
         public const string DatasetUrl = "https://ourairports.com/airports.csv";
 
+        /// <summary>Bounds the whole download -- send and body/parse alike (fix round 1, item 1).
+        /// The CSV is ~16 MB, hence minutes rather than seconds.</summary>
+        public static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(3);
+
         private static readonly TimeSpan MaxCacheAge = TimeSpan.FromHours(24);
         private const string ClosedType = "closed";
 
-        private readonly HttpClient _http;
+        private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<OurAirportsVerificationSource> _logger;
         private readonly VerificationDatasetCache<Dataset> _cache;
+        private readonly TimeSpan _downloadTimeout;
 
-        public OurAirportsVerificationSource(HttpClient http, TimeProvider timeProvider, ILogger<OurAirportsVerificationSource> logger)
+        /// <param name="downloadTimeout">Overrides <see cref="DownloadTimeout"/> -- for tests only,
+        /// so a timeout/stalled-download test does not have to wait out the real 3-minute budget.
+        /// DI never passes this; production always uses the named <see cref="DownloadTimeout"/>.</param>
+        public OurAirportsVerificationSource(
+            IHttpClientFactory httpClientFactory, TimeProvider timeProvider, ILogger<OurAirportsVerificationSource> logger,
+            TimeSpan? downloadTimeout = null)
         {
-            _http = http;
+            _httpClientFactory = httpClientFactory;
             _logger = logger;
+            _downloadTimeout = downloadTimeout ?? DownloadTimeout;
             _cache = new VerificationDatasetCache<Dataset>(timeProvider, MaxCacheAge);
         }
 
@@ -93,48 +114,12 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
 
         public void ReleaseCache() => _cache.Release();
 
-        private async Task<Dataset> DownloadAsync(CancellationToken ct)
+        private Task<Dataset> DownloadAsync(CancellationToken ct) =>
+            VerificationSourceDownloader.DownloadAsync(
+                _httpClientFactory, HttpClientName, DatasetUrl, SourceName, _downloadTimeout, ParseAsync, ct);
+
+        private static async Task<Dataset> ParseAsync(Stream stream, CancellationToken ct)
         {
-            HttpResponseMessage response;
-            try
-            {
-                response = await _http.GetAsync(DatasetUrl, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                // HttpClient.Timeout elapsed rather than the caller cancelling -- a source error,
-                // not a cancelled operation (which is left to propagate below).
-                throw new VerificationSourceFetchException($"Timed out downloading the {SourceName} dataset.");
-            }
-            catch (HttpRequestException ex)
-            {
-                throw new VerificationSourceFetchException($"Could not reach {SourceName}: {ex.Message}", ex);
-            }
-
-            using (response)
-            {
-                if (!response.IsSuccessStatusCode)
-                {
-                    // Any non-success -- including 429 and a 404 on the dataset URL itself -- is a
-                    // source error, never treated as "no data" (that is what an empty index means).
-                    throw new VerificationSourceFetchException(
-                        $"{SourceName} returned {(int)response.StatusCode} {response.ReasonPhrase}.");
-                }
-
-                try
-                {
-                    return await ParseAsync(response, ct).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    throw new VerificationSourceFetchException($"Could not parse the {SourceName} dataset: {ex.Message}", ex);
-                }
-            }
-        }
-
-        private static async Task<Dataset> ParseAsync(HttpResponseMessage response, CancellationToken ct)
-        {
-            await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
             using var reader = new StreamReader(stream);
             var config = new CsvConfiguration(CultureInfo.InvariantCulture);
             using var csv = new CsvReader(reader, config);
@@ -158,6 +143,11 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                 if (!string.IsNullOrWhiteSpace(row.Icao))
                     KeepHighestScore(byIcao, row.Icao, row);
             }
+
+            // Fix round 1, item 6: an empty body, a header-only CSV, or a renamed iata_code/icao_code
+            // column all land here as zero indexed rows -- a source error, not "nothing matches".
+            if (byIata.Count == 0 && byIcao.Count == 0)
+                throw new VerificationSourceFetchException($"The {SourceName} dataset had no usable rows.");
 
             return new Dataset(byIata, byIcao);
         }

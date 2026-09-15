@@ -10,8 +10,20 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
     /// <b>Thread-safety.</b> The job processes requests sequentially today, but this cache is still
     /// safe against two lookups racing to be the first to need the dataset: only the first caller to
     /// find the cache empty (or stale) actually invokes <c>load</c>; a caller that arrives while that
-    /// download is still in flight awaits the very same <see cref="Task{T}"/> rather than starting a
+    /// download is still in flight joins the very same <see cref="Task{T}"/> rather than starting a
     /// second one.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Per-caller cancellation (fix round 1, item 7).</b> The shared load runs on a token this
+    /// cache owns -- <see cref="CancellationToken.None"/>, not any individual caller's -- because a
+    /// caller's own cancellation must never abort the download out from under every other caller
+    /// still joined on it. <see cref="VerificationSourceDownloader.DownloadAsync{T}"/>'s own linked
+    /// timeout (started with that owned token) is what actually bounds the shared download. Each
+    /// caller of <see cref="GetAsync"/> instead wraps its own wait in
+    /// <see cref="Task.WaitAsync(CancellationToken)"/>: cancelling one caller's <c>ct</c> throws
+    /// <see cref="OperationCanceledException"/> for that caller alone and leaves the shared download,
+    /// and every other caller awaiting it, untouched.
     /// </para>
     ///
     /// <para>
@@ -37,9 +49,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
         /// <summary>
         /// Returns the cached dataset, calling <paramref name="load"/> to (re)download and parse it
         /// only when nothing is cached, the cached copy is at least <c>maxAge</c> old, or a prior
-        /// load failed. <paramref name="ct"/> is passed through to <paramref name="load"/> only when
-        /// this call is the one that actually starts a new load -- a caller that instead joins an
-        /// already in-flight download is bound by that download's own cancellation, not its own.
+        /// load failed. <paramref name="load"/> is always invoked with <see cref="CancellationToken.None"/>
+        /// -- see the "Per-caller cancellation" remark on this type -- while <paramref name="ct"/> is
+        /// used only to bound <b>this</b> call's own wait for the (possibly shared) result.
         /// </summary>
         public Task<T> GetAsync(Func<CancellationToken, Task<T>> load, CancellationToken ct)
         {
@@ -50,13 +62,23 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                 if (_loadTask is null || now - _loadedAtUtc >= _maxAge)
                 {
                     _loadedAtUtc = now;
-                    _loadTask = load(ct);
+                    // Captured into the local `task` *before* attaching the eviction continuation:
+                    // when `load` fails synchronously (a pre-faulted Task, common with a fake
+                    // HttpMessageHandler in tests), ExecuteSynchronously below runs the eviction
+                    // immediately and nulls `_loadTask` right here, inside this lock -- re-reading
+                    // the field afterwards would hand this caller a null Task instead of the very
+                    // one it just started.
+                    task = load(CancellationToken.None);
+                    _loadTask = task;
+                    AttachEvictOnFailure(task);
                 }
-
-                task = _loadTask;
+                else
+                {
+                    task = _loadTask;
+                }
             }
 
-            return AwaitAndEvictOnFailureAsync(task);
+            return task.WaitAsync(ct);
         }
 
         /// <summary>Drops the cached dataset, if any, so the next <see cref="GetAsync"/> call
@@ -69,23 +91,29 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             }
         }
 
-        private async Task<T> AwaitAndEvictOnFailureAsync(Task<T> task)
+        /// <summary>
+        /// Fires once, independently of how many callers are awaiting <paramref name="task"/> or how
+        /// many of them cancel their own wait: evicts <paramref name="task"/> from the cache if it
+        /// completes as faulted or cancelled, so the very next <see cref="GetAsync"/> call retries
+        /// rather than replaying the same failure for up to 24h. Only evicts if <paramref name="task"/>
+        /// is still the current entry -- a concurrent successful reload (after a <see cref="Release"/>)
+        /// must not be clobbered by a straggling failure from an older, abandoned load.
+        /// </summary>
+        private void AttachEvictOnFailure(Task<T> task)
         {
-            try
-            {
-                return await task.ConfigureAwait(false);
-            }
-            catch
-            {
-                // Only evict if this failed task is still the current one -- a concurrent successful
-                // reload (after a Release()) must not be clobbered by a straggling failure.
-                lock (_gate)
+            _ = task.ContinueWith(
+                completed =>
                 {
-                    if (ReferenceEquals(_loadTask, task)) _loadTask = null;
-                }
+                    if (!completed.IsFaulted && !completed.IsCanceled) return;
 
-                throw;
-            }
+                    lock (_gate)
+                    {
+                        if (ReferenceEquals(_loadTask, task)) _loadTask = null;
+                    }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
         }
     }
 }

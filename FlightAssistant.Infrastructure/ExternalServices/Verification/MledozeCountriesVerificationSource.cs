@@ -25,6 +25,16 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
     /// string that a plain-common-name checked column would flag as a mismatch on every well-formed
     /// row (e.g. common <c>"Turkey"</c> vs. official <c>"Republic of Türkiye"</c>).
     /// </para>
+    ///
+    /// <para>
+    /// <b>Empty or reshaped dataset (fix round 1, item 6).</b> Zero indexed rows -- an empty body,
+    /// <c>[]</c>, or a renamed <c>cca2</c> field -- is a source error, never "not found" for every
+    /// country. A record missing <c>cca2</c> or <c>name.common</c> is treated the same way rather
+    /// than silently skipped: a field rename would otherwise make every single record on that field
+    /// "silently missing" and this source would quietly look like it just has no data for anyone,
+    /// which is exactly the false-NotFound Task 4 must never see (it flags the entity for
+    /// attention, and "attention" is not the right response to "our own parsing broke").
+    /// </para>
     /// </summary>
     public sealed class MledozeCountriesVerificationSource : IVerificationSource
     {
@@ -39,18 +49,28 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
         /// <summary>The dataset URL (spec §4.3). No API key, no query string.</summary>
         public const string DatasetUrl = "https://raw.githubusercontent.com/mledoze/countries/master/countries.json";
 
+        /// <summary>Bounds the whole download -- send and body/parse alike (fix round 1, item 1).</summary>
+        public static readonly TimeSpan DownloadTimeout = TimeSpan.FromSeconds(30);
+
         private static readonly TimeSpan MaxCacheAge = TimeSpan.FromHours(24);
 
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-        private readonly HttpClient _http;
+        private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<MledozeCountriesVerificationSource> _logger;
         private readonly VerificationDatasetCache<IReadOnlyDictionary<string, Row>> _cache;
+        private readonly TimeSpan _downloadTimeout;
 
-        public MledozeCountriesVerificationSource(HttpClient http, TimeProvider timeProvider, ILogger<MledozeCountriesVerificationSource> logger)
+        /// <param name="downloadTimeout">Overrides <see cref="DownloadTimeout"/> -- for tests only,
+        /// so a timeout/stalled-download test does not have to wait out the real 30-second budget.
+        /// DI never passes this; production always uses the named <see cref="DownloadTimeout"/>.</param>
+        public MledozeCountriesVerificationSource(
+            IHttpClientFactory httpClientFactory, TimeProvider timeProvider, ILogger<MledozeCountriesVerificationSource> logger,
+            TimeSpan? downloadTimeout = null)
         {
-            _http = http;
+            _httpClientFactory = httpClientFactory;
             _logger = logger;
+            _downloadTimeout = downloadTimeout ?? DownloadTimeout;
             _cache = new VerificationDatasetCache<IReadOnlyDictionary<string, Row>>(timeProvider, MaxCacheAge);
         }
 
@@ -87,60 +107,33 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
 
         public void ReleaseCache() => _cache.Release();
 
-        private async Task<IReadOnlyDictionary<string, Row>> DownloadAsync(CancellationToken ct)
+        private Task<IReadOnlyDictionary<string, Row>> DownloadAsync(CancellationToken ct) =>
+            VerificationSourceDownloader.DownloadAsync(
+                _httpClientFactory, HttpClientName, DatasetUrl, SourceName, _downloadTimeout, ParseAsync, ct);
+
+        private static async Task<IReadOnlyDictionary<string, Row>> ParseAsync(Stream stream, CancellationToken ct)
         {
-            HttpResponseMessage response;
-            try
-            {
-                response = await _http.GetAsync(DatasetUrl, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                // HttpClient.Timeout elapsed rather than the caller cancelling -- a source error,
-                // not a cancelled operation (which is left to propagate below).
-                throw new VerificationSourceFetchException($"Timed out downloading the {SourceName} dataset.");
-            }
-            catch (HttpRequestException ex)
-            {
-                throw new VerificationSourceFetchException($"Could not reach {SourceName}: {ex.Message}", ex);
-            }
-
-            using (response)
-            {
-                if (!response.IsSuccessStatusCode)
-                {
-                    // Any non-success -- including 429 and a 404 on the dataset URL itself -- is a
-                    // source error, never treated as "no data" (that is what an empty index means).
-                    throw new VerificationSourceFetchException(
-                        $"{SourceName} returned {(int)response.StatusCode} {response.ReasonPhrase}.");
-                }
-
-                try
-                {
-                    return await ParseAsync(response, ct).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    throw new VerificationSourceFetchException($"Could not parse the {SourceName} dataset: {ex.Message}", ex);
-                }
-            }
-        }
-
-        private static async Task<IReadOnlyDictionary<string, Row>> ParseAsync(HttpResponseMessage response, CancellationToken ct)
-        {
-            await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
             var records = await JsonSerializer.DeserializeAsync<List<JsonRow>>(stream, JsonOptions, ct).ConfigureAwait(false)
                 ?? throw new JsonException("The mledoze dataset deserialized to null.");
 
             var byCode = new Dictionary<string, Row>(StringComparer.OrdinalIgnoreCase);
             foreach (var record in records)
             {
-                if (string.IsNullOrWhiteSpace(record.Cca2)) continue;
+                // Fix round 1, item 6: a record missing either field is a parse/source error, not a
+                // silent skip -- see the type's "Empty or reshaped dataset" remark.
+                if (string.IsNullOrWhiteSpace(record.Cca2) || string.IsNullOrWhiteSpace(record.Name?.Common))
+                {
+                    throw new VerificationSourceFetchException(
+                        $"A {SourceName} record is missing cca2 or name.common.");
+                }
 
                 // Last one wins on a duplicate cca2 -- the real dataset does not contain any; this
                 // is simply the natural behaviour of a dictionary assignment, not a chosen rule.
-                byCode[record.Cca2] = new Row(record.Cca2, record.Name?.Common, record.Cca3, record.Ccn3, record.Region, record.Subregion);
+                byCode[record.Cca2] = new Row(record.Cca2, record.Name.Common, record.Cca3, record.Ccn3, record.Region, record.Subregion);
             }
+
+            if (byCode.Count == 0)
+                throw new VerificationSourceFetchException($"The {SourceName} dataset had no usable rows.");
 
             return byCode;
         }
@@ -185,6 +178,6 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
         }
 
         /// <summary>One country's checked-column values, kept in memory after parsing.</summary>
-        private sealed record Row(string Cca2, string? Name, string? Cca3, string? Ccn3, string? Region, string? Subregion);
+        private sealed record Row(string Cca2, string Name, string? Cca3, string? Ccn3, string? Region, string? Subregion);
     }
 }

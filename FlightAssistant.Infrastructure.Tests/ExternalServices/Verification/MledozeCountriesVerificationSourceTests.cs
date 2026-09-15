@@ -20,6 +20,10 @@ public class MledozeCountriesVerificationSourceTests
     private static readonly string FixtureJson =
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Verification", "countries-slice.json"));
 
+    /// <summary>A short, test-only download timeout -- <see cref="MledozeCountriesVerificationSource.DownloadTimeout"/>
+    /// (30 seconds) would make a timeout test noticeably slow.</summary>
+    private static readonly TimeSpan TestTimeout = TimeSpan.FromMilliseconds(100);
+
     private sealed class StaticHandler(HttpStatusCode status, string body) : HttpMessageHandler
     {
         public int CallCount { get; private set; }
@@ -43,11 +47,56 @@ public class MledozeCountriesVerificationSourceTests
         }
     }
 
-    private static MledozeCountriesVerificationSource Source(HttpMessageHandler handler, TimeProvider? timeProvider = null, TimeSpan? timeout = null)
+    /// <summary>Answers with headers immediately (200 OK) but a body stream whose reads never
+    /// complete -- fix round 1, item 1's "stalled body" scenario.</summary>
+    private sealed class StalledBodyHandler : HttpMessageHandler
     {
-        var http = new HttpClient(handler) { Timeout = timeout ?? TimeSpan.FromSeconds(30) };
-        return new MledozeCountriesVerificationSource(http, timeProvider ?? TimeProvider.System, NullLogger<MledozeCountriesVerificationSource>.Instance);
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new NeverCompletingStream()) });
     }
+
+    private sealed class NeverCompletingStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return 0; // unreachable
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class ThrowingHandler(Exception exception) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            throw exception;
+    }
+
+    private sealed class FakeHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public int ClientsCreated { get; private set; }
+
+        public HttpClient CreateClient(string name)
+        {
+            ClientsCreated++;
+            return new HttpClient(handler, disposeHandler: false);
+        }
+    }
+
+    private static MledozeCountriesVerificationSource Source(
+        HttpMessageHandler handler, TimeProvider? timeProvider = null, TimeSpan? downloadTimeout = null) =>
+        new(new FakeHttpClientFactory(handler), timeProvider ?? TimeProvider.System,
+            NullLogger<MledozeCountriesVerificationSource>.Instance, downloadTimeout ?? TestTimeout);
 
     // ── Mapping ─────────────────────────────────────────────────────────────
 
@@ -104,11 +153,25 @@ public class MledozeCountriesVerificationSourceTests
     // ── Source errors ───────────────────────────────────────────────────────
 
     [Fact]
-    public async Task LookupAsync_ReturnsASourceError_OnTimeout()
+    public async Task LookupAsync_ReturnsASourceError_WhenNothingAnswers()
     {
-        var source = Source(new NeverRespondingHandler(), timeout: TimeSpan.FromMilliseconds(20));
+        var source = Source(new NeverRespondingHandler());
 
-        var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
+        var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(result.IsError);
+        Assert.Null(result.Lookup);
+    }
+
+    [Fact]
+    public async Task LookupAsync_ReturnsASourceError_WhenTheBodyStalls()
+    {
+        // Fix round 1, item 1: see the OurAirports equivalent for the full rationale.
+        var source = Source(new StalledBodyHandler());
+
+        var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"))
+            .WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.True(result.IsError);
         Assert.Null(result.Lookup);
@@ -143,6 +206,75 @@ public class MledozeCountriesVerificationSourceTests
         var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
 
         Assert.True(result.IsError);
+    }
+
+    [Fact]
+    public async Task LookupAsync_ReturnsASourceError_OnAnEmptyBody()
+    {
+        var source = Source(new StaticHandler(HttpStatusCode.OK, string.Empty));
+
+        var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
+
+        Assert.True(result.IsError);
+    }
+
+    [Fact]
+    public async Task LookupAsync_ReturnsASourceError_OnAnEmptyArray()
+    {
+        // Fix round 1, item 6: syntactically valid, zero usable rows -- e.g. cca2 renamed upstream.
+        // Without the zero-rows check this would succeed with an empty "loaded" dataset, and every
+        // lookup would come back a false NotFound instead of flagging the real problem.
+        var source = Source(new StaticHandler(HttpStatusCode.OK, "[]"));
+
+        var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
+
+        Assert.True(result.IsError);
+        Assert.Null(result.Lookup);
+    }
+
+    [Fact]
+    public async Task LookupAsync_ReturnsASourceError_WhenARecordIsMissingCca2OrNameCommon()
+    {
+        // A second, well-formed record (GB) alongside the malformed one (TR, no name.common) is
+        // what makes this distinguishing: a "silently skip the bad record" implementation would
+        // still leave a non-empty, successfully "loaded" dataset (GB alone), so the zero-rows check
+        // (a separate rule) would never fire and a TR lookup would quietly come back NotFound
+        // instead of the required source error.
+        const string json = """
+            [
+              {"cca2":"TR","cca3":"TUR","ccn3":"792","region":"Asia","subregion":"Western Asia","name":{"official":"Republic of Türkiye"}},
+              {"cca2":"GB","cca3":"GBR","ccn3":"826","region":"Europe","subregion":"Northern Europe","name":{"common":"United Kingdom","official":"United Kingdom of Great Britain and Northern Ireland"}}
+            ]
+            """;
+        var source = Source(new StaticHandler(HttpStatusCode.OK, json));
+
+        var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
+
+        Assert.True(result.IsError);
+        Assert.Null(result.Lookup);
+    }
+
+    [Fact]
+    public async Task LookupAsync_ReturnsASourceError_OnAHandlerLevelNetworkFailure()
+    {
+        var source = Source(new ThrowingHandler(new HttpRequestException("connection reset")));
+
+        var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
+
+        Assert.True(result.IsError);
+        Assert.Null(result.Lookup);
+    }
+
+    [Fact]
+    public async Task LookupAsync_PropagatesCancellation_RatherThanReturningASourceError()
+    {
+        var source = Source(new NeverRespondingHandler(), downloadTimeout: TimeSpan.FromSeconds(30));
+        using var cts = new CancellationTokenSource();
+
+        var lookup = source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"), cts.Token);
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => lookup);
     }
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
@@ -197,6 +329,21 @@ public class MledozeCountriesVerificationSourceTests
         await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
 
         Assert.Equal(2, handler.CallCount);
+    }
+
+    // ── DI wiring ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task LookupAsync_CreatesTheHttpClientFreshFromTheFactory_NotOnceAtConstruction()
+    {
+        var factory = new FakeHttpClientFactory(new StaticHandler(HttpStatusCode.OK, FixtureJson));
+        var source = new MledozeCountriesVerificationSource(
+            factory, TimeProvider.System, NullLogger<MledozeCountriesVerificationSource>.Instance, TestTimeout);
+        Assert.Equal(0, factory.ClientsCreated);
+
+        await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
+
+        Assert.Equal(1, factory.ClientsCreated);
     }
 
     // ── Isolation ───────────────────────────────────────────────────────────
