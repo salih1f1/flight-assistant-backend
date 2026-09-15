@@ -142,6 +142,7 @@ if (!string.IsNullOrWhiteSpace(redisConnStr))
 // Hosted services
 
 builder.Services.AddFlightSync();
+builder.Services.AddVerificationJob();
 
 // ------------------------------------------------------------
 // 3. Authentication & Authorization

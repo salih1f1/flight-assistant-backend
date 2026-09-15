@@ -23,7 +23,8 @@ namespace FlightAssistant.Contracts.Responses.Admin
         IReadOnlyList<AdminHealthCheckDto> Checks,
         AdminHealthSystemDto System,
         AdminHealthMigrationsDto Migrations,
-        AdminHealthFlightSyncDto FlightSync
+        AdminHealthFlightSyncDto FlightSync,
+        AdminHealthVerificationDto Verification
     );
 
     /// <summary>One registered <see cref="Microsoft.Extensions.Diagnostics.HealthChecks.IHealthCheck"/>'s
@@ -117,5 +118,34 @@ namespace FlightAssistant.Contracts.Responses.Admin
         int FlightsFailed,
         DateTime? NextRunDueUtc,
         string? LastError
+    );
+
+    /// <summary>The reference-data verification job's last-cycle heartbeat
+    /// (<c>VerificationJobHeartbeat</c>), shaped from one snapshot like
+    /// <see cref="AdminHealthFlightSyncDto"/>, plus how many verification requests are waiting.</summary>
+    /// <param name="Enabled">Mirrors <c>Verification:Enabled</c> (default <c>true</c>). When
+    /// <c>false</c>, the timestamps below stay <c>null</c> by design: "disabled", not "broken".</param>
+    /// <param name="LastOutcome">One of <c>"NeverRun"</c>, <c>"Running"</c>, <c>"Success"</c> or
+    /// <c>"Failed"</c>. <c>"Failed"</c> means the cycle itself failed, not a request in it.</param>
+    /// <param name="RequestsProcessed">How many requests the most recently completed cycle claimed and
+    /// worked through.</param>
+    /// <param name="RequestsFailed">The subset of <see cref="RequestsProcessed"/> that hit a source
+    /// error (retrying, or out of attempts) or completed as an error without a retry (deleted entity,
+    /// unusable source). A mismatch or not-found result is a completed check, not a failure.</param>
+    /// <param name="LastError">Rendered outside Production only; always <c>null</c> in
+    /// Production.</param>
+    /// <param name="PendingCount">Requests in <c>Pending</c>, due now or waiting to retry. <c>null</c>
+    /// when the count could not be read (e.g. the database is unreachable): "cannot tell", not
+    /// zero.</param>
+    public sealed record AdminHealthVerificationDto(
+        bool Enabled,
+        DateTime? LastRunStartedUtc,
+        DateTime? LastRunCompletedUtc,
+        string LastOutcome,
+        int RequestsProcessed,
+        int RequestsFailed,
+        DateTime? NextRunDueUtc,
+        string? LastError,
+        int? PendingCount
     );
 }

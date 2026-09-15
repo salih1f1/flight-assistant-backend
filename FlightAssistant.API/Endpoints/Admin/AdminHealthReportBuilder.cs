@@ -2,10 +2,12 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using FlightAssistant.API.HostedServices;
+using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 
 namespace FlightAssistant.API.Endpoints.Admin
 {
@@ -37,6 +39,9 @@ namespace FlightAssistant.API.Endpoints.Admin
             HealthCheckService healthCheckService,
             FlightAssistantDbContext db,
             FlightSyncHeartbeat heartbeat,
+            VerificationJobHeartbeat verificationHeartbeat,
+            IOptions<VerificationOptions> verificationOptions,
+            IVerificationRequestRepository verificationRequests,
             IHostEnvironment env,
             IConfiguration configuration,
             ILogger logger,
@@ -59,7 +64,9 @@ namespace FlightAssistant.API.Endpoints.Admin
                 checks,
                 BuildSystem(env, configuration),
                 await BuildMigrationsAsync(db, includeDiagnostics, logger, ct),
-                BuildFlightSync(heartbeat, configuration, includeDiagnostics));
+                BuildFlightSync(heartbeat, configuration, includeDiagnostics),
+                await BuildVerificationAsync(
+                    verificationHeartbeat, verificationOptions.Value.Enabled, verificationRequests, includeDiagnostics, logger, ct));
         }
 
         private static AdminHealthCheckDto BuildCheck(string name, HealthReportEntry entry, bool includeDiagnostics)
@@ -210,6 +217,46 @@ namespace FlightAssistant.API.Endpoints.Admin
                 snapshot.FlightsFailed,
                 snapshot.NextRunDueUtc,
                 includeDiagnostics ? snapshot.LastError : null);
+        }
+
+        /// <summary>
+        /// The verification job's section (#367): its heartbeat, read once, and the pending count.
+        /// Counting needs the database, so, like <see cref="BuildMigrationsAsync"/>, a count that
+        /// throws degrades to a <c>null</c> <c>PendingCount</c> ("cannot tell") instead of taking the
+        /// whole report down. Public and static so it is unit-testable without a host.
+        /// </summary>
+        public static async Task<AdminHealthVerificationDto> BuildVerificationAsync(
+            VerificationJobHeartbeat heartbeat,
+            bool enabled,
+            IVerificationRequestRepository requests,
+            bool includeDiagnostics,
+            ILogger logger,
+            CancellationToken ct)
+        {
+            // Read once, so the response never straddles two cycles.
+            var snapshot = heartbeat.Current;
+
+            int? pendingCount;
+            try
+            {
+                pendingCount = await requests.CountPendingAsync(ct);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                logger.LogWarning(ex, "Failed to count pending verification requests for /admin/health.");
+                pendingCount = null;
+            }
+
+            return new AdminHealthVerificationDto(
+                enabled,
+                snapshot.LastRunStartedUtc,
+                snapshot.LastRunCompletedUtc,
+                snapshot.LastOutcome.ToString(),
+                snapshot.RequestsProcessed,
+                snapshot.RequestsFailed,
+                snapshot.NextRunDueUtc,
+                includeDiagnostics ? snapshot.LastError : null,
+                pendingCount);
         }
     }
 }
