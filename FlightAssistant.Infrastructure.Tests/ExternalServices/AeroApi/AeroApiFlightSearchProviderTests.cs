@@ -105,6 +105,14 @@ public class AeroApiFlightSearchProviderTests
         cache.GetAsync<string>(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>(null));
 
+        return CountingTimezoneLookup(cache, zones);
+    }
+
+    /// <summary>A lookup over <see cref="TimezoneStub"/> and the given cache, returned with the stub
+    /// so a test can count the <c>/airports</c> calls the cache doesn't absorb.</summary>
+    private static (AeroApiAirportTimezoneLookup Lookup, TimezoneStub Stub) CountingTimezoneLookup(
+        ICacheService cache, params (string Iata, string? Tz)[] zones)
+    {
         var stub = new TimezoneStub(zones.ToDictionary(z => z.Iata, z => z.Tz));
         var http = new HttpClient(stub) { BaseAddress = new Uri("http://stub/aeroapi/") };
 
@@ -431,6 +439,36 @@ public class AeroApiFlightSearchProviderTests
             new[] { new DateTime(2026, 9, 29, 6, 0, 0, DateTimeKind.Utc), new DateTime(2026, 9, 29, 6, 35, 0, DateTimeKind.Utc) },
             results.Select(r => r.ScheduledDepartureUtc));
         Assert.Equal(2, stub.Calls);
+    }
+
+    [Fact]
+    public async Task SearchAsync_RouteSearchFromAnUnknownOrigin_LooksItUpOnce()
+    {
+        // The rows and criteria of SearchAsync_KeepsTheRow_WhenTheOriginZoneNeverResolves, over a
+        // real cache: the window lookup's 404 is cached as a miss, so the filter's lookup for ZZZ is
+        // served from the cache rather than making a second billed call.
+        const string body = """
+        {
+          "scheduled": [
+            { "ident_iata": "XX100", "actual_ident_iata": null, "origin_iata": "ZZZ", "destination_iata": "JFK",
+              "scheduled_out": "2026-09-29T06:00:00Z", "scheduled_in": "2026-09-29T12:00:00Z" },
+            { "ident_iata": "XX200", "actual_ident_iata": null, "origin_iata": "ZZZ", "destination_iata": "JFK",
+              "scheduled_out": "2026-09-30T06:00:00Z", "scheduled_in": "2026-09-30T12:00:00Z" }
+          ],
+          "links": null,
+          "num_pages": 1
+        }
+        """;
+        var handler = new ScriptedHttpMessageHandler((HttpStatusCode.OK, body));
+        var (timezones, stub) = CountingTimezoneLookup(
+            cache: new MemoryCacheService(new MemoryCache(new MemoryCacheOptions())));
+
+        var results = await Provider(handler, timezones).SearchAsync(
+            new FlightSearchCriteria("ZZZ", "JFK", new DateOnly(2026, 9, 29), null));
+
+        var kept = Assert.Single(results);
+        Assert.Equal("XX100", kept.FlightNumber);
+        Assert.Equal(1, stub.Calls);
     }
 
     [Fact]

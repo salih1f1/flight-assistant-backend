@@ -3,6 +3,7 @@ using System.Text;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -210,6 +211,22 @@ public class AeroApiAirportTimezoneLookupTests
     }
 
     [Fact]
+    public async Task TryGetTimezoneAsync_CachedMiss_SurvivesARealRedisCacheService()
+    {
+        // The same marker through RedisCacheService's JSON round trip, with MemoryDistributedCache
+        // standing in for Redis: "" must come back as a cached miss, not as an absent key.
+        var handler = new StubHttpMessageHandler(HttpStatusCode.NotFound, """{ "title": "not found" }""");
+        var cache = new RedisCacheService(
+            new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions())));
+        var lookup = Lookup(handler, cache);
+
+        Assert.Null(await lookup.TryGetTimezoneAsync("ZZZ"));
+        Assert.Null(await lookup.TryGetTimezoneAsync("ZZZ"));
+
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
     public async Task TryGetTimezoneAsync_CachesNothing_WhenTheCallIsCancelled()
     {
         var handler = new InFlightHttpMessageHandler();
@@ -220,7 +237,9 @@ public class AeroApiAirportTimezoneLookupTests
         await handler.Started.WaitAsync(TimeSpan.FromSeconds(5));
         cts.Cancel();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        // Bounded: a lookup that stopped passing the token would otherwise still pass, after
+        // HttpClient's 100 s timeout. A WaitAsync timeout is a TimeoutException, so it fails fast.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
         await cache.DidNotReceiveWithAnyArgs().SetAsync<string>(default!, default!, default, default);
     }
 
