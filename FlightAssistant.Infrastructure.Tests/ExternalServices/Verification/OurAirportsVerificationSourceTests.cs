@@ -462,6 +462,54 @@ public class OurAirportsVerificationSourceTests
         Assert.Equal(2, handler.CallCount);
     }
 
+    // ── Failure cooldown (final fix wave, A) ─────────────────────────────────
+
+    [Fact]
+    public async Task LookupAsync_WithinTheFailureCooldown_ReturnsASourceError_WithoutAnotherDownload()
+    {
+        var handler = new StaticHandler(HttpStatusCode.ServiceUnavailable, "down");
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var source = Source(handler, clock);
+
+        var first = await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("LHR", null));
+        clock.Advance(VerificationDatasetCache.FailureCooldown - TimeSpan.FromSeconds(1));
+        var second = await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("DUP", null));
+
+        Assert.True(first.IsError);
+        Assert.True(second.IsError);
+        Assert.Equal(first.Error, second.Error);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task LookupAsync_AfterTheFailureCooldown_DownloadsAgain()
+    {
+        var handler = new StaticHandler(HttpStatusCode.ServiceUnavailable, "down");
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var source = Source(handler, clock);
+
+        await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("LHR", null));
+        clock.Advance(VerificationDatasetCache.FailureCooldown);
+        var second = await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("LHR", null));
+
+        Assert.True(second.IsError);
+        Assert.Equal(2, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task ReleaseCache_DuringTheFailureCooldown_LetsTheNextLookupDownload()
+    {
+        var handler = new StaticHandler(HttpStatusCode.ServiceUnavailable, "down");
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var source = Source(handler, clock);
+
+        await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("LHR", null));
+        source.ReleaseCache();
+        await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("LHR", null));
+
+        Assert.Equal(2, handler.CallCount);
+    }
+
     [Fact]
     public async Task LookupAsync_TwoCallsThatBothMissTheCache_ShareOneDownload()
     {

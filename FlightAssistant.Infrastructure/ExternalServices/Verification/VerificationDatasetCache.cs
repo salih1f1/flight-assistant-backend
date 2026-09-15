@@ -1,5 +1,21 @@
+using FlightAssistant.Application.Verification;
+
 namespace FlightAssistant.Infrastructure.ExternalServices.Verification
 {
+    /// <summary>Settings shared by every <see cref="VerificationDatasetCache{T}"/>.</summary>
+    internal static class VerificationDatasetCache
+    {
+        /// <summary>
+        /// How long a failed load's error is handed to later lookups before one of them downloads
+        /// again. It keeps a batch from repeating a failing download once per request: a stalled
+        /// upstream would otherwise cost the full download deadline per request, and a reshaped one
+        /// a full download and parse per request. No longer than
+        /// <see cref="VerificationRetryBackoff.AfterFirstAttempt"/>, so a request's first retry never
+        /// lands inside the cooldown of the failure that scheduled it.
+        /// </summary>
+        public static readonly TimeSpan FailureCooldown = TimeSpan.FromSeconds(60);
+    }
+
     /// <summary>
     /// Download-once, reuse-for-at-most-24h, release-on-demand cache for one verification source's
     /// parsed dataset (#367 task 3, spec §4.3). Shared by <see cref="OurAirportsVerificationSource"/>
@@ -27,31 +43,47 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
     /// </para>
     ///
     /// <para>
-    /// A failed load is never cached "sticky" -- it is evicted the moment it fails, so the very next
-    /// call retries immediately rather than waiting out the rest of a 24h window on one transient
-    /// failure.
+    /// <b>Failures (final fix wave, A).</b> A load that faults is kept for the failure cooldown
+    /// (<see cref="VerificationDatasetCache.FailureCooldown"/>, counted from when it failed): every
+    /// lookup inside it gets the same error straight away, with no new download, and the first
+    /// lookup after it downloads again. <see cref="Release"/> drops a cached failure like a cached
+    /// dataset. A load that ends <b>cancelled</b> is not a source failure (the load runs on this
+    /// cache's own token, so no caller cancelled it) and is dropped at once, never replayed.
     /// </para>
     /// </summary>
     internal sealed class VerificationDatasetCache<T> where T : class
     {
         private readonly TimeProvider _timeProvider;
         private readonly TimeSpan _maxAge;
+        private readonly TimeSpan _failureCooldown;
         private readonly object _gate = new();
         private Task<T>? _loadTask;
         private DateTimeOffset _loadedAtUtc;
 
-        public VerificationDatasetCache(TimeProvider timeProvider, TimeSpan maxAge)
+        /// <summary>When <see cref="_loadTask"/> faulted; null while it has not, and until the
+        /// continuation that records the failure has run.</summary>
+        private DateTimeOffset? _failedAtUtc;
+
+        /// <param name="failureCooldown">Defaults to <see cref="VerificationDatasetCache.FailureCooldown"/>;
+        /// at most <see cref="VerificationRetryBackoff.AfterFirstAttempt"/>.</param>
+        public VerificationDatasetCache(TimeProvider timeProvider, TimeSpan maxAge, TimeSpan? failureCooldown = null)
         {
             _timeProvider = timeProvider;
             _maxAge = maxAge;
+            _failureCooldown = failureCooldown ?? VerificationDatasetCache.FailureCooldown;
+            ArgumentOutOfRangeException.ThrowIfLessThan(_failureCooldown, TimeSpan.Zero, nameof(failureCooldown));
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(
+                _failureCooldown, VerificationRetryBackoff.AfterFirstAttempt, nameof(failureCooldown));
         }
 
         /// <summary>
         /// Returns the cached dataset, calling <paramref name="load"/> to (re)download and parse it
         /// only when nothing is cached, the cached copy is at least <c>maxAge</c> old, or a prior
-        /// load failed. <paramref name="load"/> is always invoked with <see cref="CancellationToken.None"/>
-        /// -- see the "Per-caller cancellation" remark on this type -- while <paramref name="ct"/> is
-        /// used only to bound <b>this</b> call's own wait for the (possibly shared) result.
+        /// load failed more than the failure cooldown ago. Inside that cooldown the prior load's
+        /// error is thrown again without calling <paramref name="load"/>. <paramref name="load"/> is
+        /// always invoked with <see cref="CancellationToken.None"/> -- see the "Per-caller
+        /// cancellation" remark on this type -- while <paramref name="ct"/> is used only to bound
+        /// <b>this</b> call's own wait for the (possibly shared) result.
         /// </summary>
         /// <exception cref="OperationCanceledException"><paramref name="ct"/> is already cancelled
         /// -- checked up front (fix round 2, item 4) so an already-given-up caller can never be the
@@ -64,47 +96,66 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             lock (_gate)
             {
                 var now = _timeProvider.GetUtcNow();
-                if (_loadTask is null || now - _loadedAtUtc >= _maxAge)
+                if (_loadTask is { } current && CanReuse(current, now))
                 {
-                    _loadedAtUtc = now;
-                    // Captured into the local `task` *before* attaching the eviction continuation:
-                    // when `load` fails synchronously (a pre-faulted Task, common with a fake
-                    // HttpMessageHandler in tests), ExecuteSynchronously below runs the eviction
-                    // immediately and nulls `_loadTask` right here, inside this lock -- re-reading
-                    // the field afterwards would hand this caller a null Task instead of the very
-                    // one it just started.
-                    task = load(CancellationToken.None);
-                    _loadTask = task;
-                    AttachEvictOnFailure(task);
+                    task = current;
                 }
                 else
                 {
-                    task = _loadTask;
+                    _loadedAtUtc = now;
+                    _failedAtUtc = null;
+                    // Captured into the local `task` *before* attaching the bookkeeping continuation:
+                    // when `load` fails synchronously (a pre-faulted Task, common with a fake
+                    // HttpMessageHandler in tests), ExecuteSynchronously below runs that continuation
+                    // immediately, right here inside this (re-entrant) lock -- and for a cancelled
+                    // load it nulls `_loadTask`, so re-reading the field afterwards could hand this
+                    // caller a null Task instead of the very one it just started.
+                    task = load(CancellationToken.None);
+                    _loadTask = task;
+                    AttachFailureBookkeeping(task);
                 }
             }
 
             return task.WaitAsync(ct);
         }
 
-        /// <summary>Drops the cached dataset, if any, so the next <see cref="GetAsync"/> call
-        /// downloads again. Safe to call when nothing is cached.</summary>
+        /// <summary>Drops the cached dataset or cached failure, if any, so the next
+        /// <see cref="GetAsync"/> call downloads again. Safe to call when nothing is cached.</summary>
         public void Release()
         {
             lock (_gate)
             {
                 _loadTask = null;
+                _failedAtUtc = null;
             }
+        }
+
+        /// <summary>Whether <paramref name="current"/> can answer a call made at
+        /// <paramref name="now"/>. Called under <see cref="_gate"/>.</summary>
+        private bool CanReuse(Task<T> current, DateTimeOffset now)
+        {
+            if (current.IsFaulted)
+            {
+                // Until the continuation has recorded the failure, the load has only just failed.
+                return now - (_failedAtUtc ?? now) < _failureCooldown;
+            }
+
+            if (current.IsCanceled)
+                return false;
+
+            // In flight, or loaded successfully.
+            return now - _loadedAtUtc < _maxAge;
         }
 
         /// <summary>
         /// Fires once, independently of how many callers are awaiting <paramref name="task"/> or how
-        /// many of them cancel their own wait: evicts <paramref name="task"/> from the cache if it
-        /// completes as faulted or cancelled, so the very next <see cref="GetAsync"/> call retries
-        /// rather than replaying the same failure for up to 24h. Only evicts if <paramref name="task"/>
-        /// is still the current entry -- a concurrent successful reload (after a <see cref="Release"/>)
-        /// must not be clobbered by a straggling failure from an older, abandoned load.
+        /// many of them cancel their own wait. A faulted <paramref name="task"/> stays cached with its
+        /// failure time, which starts the failure cooldown; a cancelled one is evicted at once. Either
+        /// way only while <paramref name="task"/> is still the current entry -- a newer load (after a
+        /// <see cref="Release"/>, or after a cooldown) must not be clobbered by a straggling failure
+        /// from an older, abandoned load.
         /// </summary>
-        private void AttachEvictOnFailure(Task<T> task)
+        private void AttachFailureBookkeeping(Task<T> task)
         {
             _ = task.ContinueWith(
                 completed =>
@@ -119,7 +170,12 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
 
                     lock (_gate)
                     {
-                        if (ReferenceEquals(_loadTask, task)) _loadTask = null;
+                        if (!ReferenceEquals(_loadTask, task)) return;
+
+                        if (completed.IsFaulted)
+                            _failedAtUtc = _timeProvider.GetUtcNow();
+                        else
+                            _loadTask = null;
                     }
                 },
                 CancellationToken.None,

@@ -34,7 +34,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
     /// this one, and Task 4 treats <c>NotFound</c> as terminal (it flags the entity for attention),
     /// so this source must not look like that for every single lookup just because parsing broke.
     /// A <i>single</i> record missing <c>cca2</c> or <c>name.common</c>, by contrast, is
-    /// <b>skipped</b> (logged as a warning naming its index and <c>cca3</c>, if present) rather than
+    /// <b>skipped</b> (one warning per parse gives the count and the first few indexes and <c>cca3</c>s) rather than
     /// failing the whole dataset -- round 1 originally failed the whole dataset on one bad record,
     /// which meant one malformed upstream record turned every country's verification into a source
     /// error that keeps retrying (spec §4.2's backoff) and never clears. The skipped country instead
@@ -117,7 +117,10 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             VerificationSourceDownloader.DownloadAsync(
                 _httpClientFactory, HttpClientName, DatasetUrl, SourceName, _downloadTimeout, ParseAsync, ct);
 
-        /// <summary>Instance method (not static) so it can log a warning per skipped record via
+        /// <summary>How many skipped records one parse's warning names, as <c>index/cca3</c>.</summary>
+        internal const int SkippedSampleSize = 3;
+
+        /// <summary>Instance method (not static) so it can log the skipped records via
         /// <see cref="_logger"/> -- fix round 2, item 8.</summary>
         private async Task<IReadOnlyDictionary<string, Row>> ParseAsync(Stream stream, CancellationToken ct)
         {
@@ -125,19 +128,21 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                 ?? throw new JsonException("The mledoze dataset deserialized to null.");
 
             var byCode = new Dictionary<string, Row>(StringComparer.OrdinalIgnoreCase);
+            var skipped = 0;
+            var skippedSample = new List<string>(SkippedSampleSize);
             for (var index = 0; index < records.Count; index++)
             {
                 var record = records[index];
 
                 // Fix round 2, item 8 (controller ruling): a record missing either field is
                 // skipped, not a whole-dataset failure -- see the type's "Empty dataset vs. one bad
-                // record" remark. Logged so the bad upstream record is visible, but the country
-                // just looks up as NotFound rather than blocking every other country.
+                // record" remark. The country just looks up as NotFound rather than blocking every
+                // other country.
                 if (string.IsNullOrWhiteSpace(record.Cca2) || string.IsNullOrWhiteSpace(record.Name?.Common))
                 {
-                    _logger.LogWarning(
-                        "Skipping a {SourceName} record missing cca2 or name.common (index {Index}, cca3 {Cca3}).",
-                        SourceName, index, record.Cca3 ?? "<none>");
+                    skipped++;
+                    if (skippedSample.Count < SkippedSampleSize)
+                        skippedSample.Add($"{index}/{record.Cca3 ?? "<none>"}");
                     continue;
                 }
 
@@ -145,6 +150,13 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                 // is simply the natural behaviour of a dictionary assignment, not a chosen rule.
                 byCode[record.Cca2] = new Row(record.Cca2, record.Name.Common, record.Cca3, record.Ccn3, record.Region, record.Subregion);
             }
+
+            // One warning per parse, not one per record (final fix wave, A): a reshaped file would
+            // otherwise log ~250 warnings on every retry.
+            if (skipped > 0)
+                _logger.LogWarning(
+                    "Skipped {SkippedCount} {SourceName} record(s) missing cca2 or name.common; first (index/cca3): {SkippedSample}.",
+                    skipped, SourceName, string.Join(", ", skippedSample));
 
             // Zero *surviving* records -- an empty body, [], or every record being bad -- is the
             // one case that is still a source error (see the type's class doc remark).

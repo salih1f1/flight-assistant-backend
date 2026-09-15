@@ -1,3 +1,4 @@
+using FlightAssistant.Application.Verification;
 using FlightAssistant.Infrastructure.ExternalServices.Verification;
 using Microsoft.Extensions.Time.Testing;
 
@@ -168,26 +169,129 @@ public class VerificationDatasetCacheTests
     // one-line production fix itself is kept regardless -- it is cheap, correct by inspection, and
     // does not depend on the test working to be worth having.
 
+    // ── Failure cooldown (final fix wave, A) ─────────────────────────────────
+
     [Fact]
-    public async Task GetAsync_AFailedLoad_IsNotCached_TheNextCallRetriesImmediately()
+    public async Task GetAsync_WithinTheFailureCooldown_ThrowsTheSameFailure_WithoutLoadingAgain()
     {
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var cache = NewCache(clock);
         var loadCount = 0;
+        Task<string> Load(CancellationToken ct) => ++loadCount == 1
+            ? Task.FromException<string>(new InvalidOperationException("boom"))
+            : Task.FromResult("recovered");
 
-        Task<string> Load(CancellationToken ct)
-        {
-            loadCount++;
-            return loadCount == 1
-                ? Task.FromException<string>(new InvalidOperationException("boom"))
-                : Task.FromResult("recovered");
-        }
+        var first = await Assert.ThrowsAsync<InvalidOperationException>(() => cache.GetAsync(Load, default));
+        clock.Advance(VerificationDatasetCache.FailureCooldown - TimeSpan.FromTicks(1));
+        var second = await Assert.ThrowsAsync<InvalidOperationException>(() => cache.GetAsync(Load, default));
+
+        Assert.Equal(1, loadCount);
+        Assert.Same(first, second);
+    }
+
+    [Fact]
+    public async Task GetAsync_OnceTheFailureCooldownHasPassed_LoadsAgain()
+    {
+        // The failure arrives after GetAsync returned, so the continuation (not the synchronous
+        // pre-faulted path) records when it failed: the cooldown counts from then, not from the load's start.
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+        var failing = new TaskCompletionSource<string>();
+        var loadCount = 0;
+        Task<string> Load(CancellationToken ct) => ++loadCount == 1 ? failing.Task : Task.FromResult("recovered");
+
+        var first = cache.GetAsync(Load, default);
+        clock.Advance(TimeSpan.FromSeconds(30));
+        failing.SetException(new InvalidOperationException("boom"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => first);
+
+        clock.Advance(VerificationDatasetCache.FailureCooldown - TimeSpan.FromTicks(1));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => cache.GetAsync(Load, default));
+        Assert.Equal(1, loadCount);
+
+        clock.Advance(TimeSpan.FromTicks(1));
+        Assert.Equal("recovered", await cache.GetAsync(Load, default));
+        Assert.Equal(2, loadCount);
+    }
+
+    [Fact]
+    public async Task Release_DuringTheFailureCooldown_LetsTheNextCallLoadAgain()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+        var loadCount = 0;
+        Task<string> Load(CancellationToken ct) => ++loadCount == 1
+            ? Task.FromException<string>(new InvalidOperationException("boom"))
+            : Task.FromResult("recovered");
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => cache.GetAsync(Load, default));
-        // No time advance -- a failure must not "poison" the cache for the rest of the 24h window.
-        var second = await cache.GetAsync(Load, default);
+        cache.Release();
 
+        Assert.Equal("recovered", await cache.GetAsync(Load, default));
         Assert.Equal(2, loadCount);
-        Assert.Equal("recovered", second);
+    }
+
+    [Fact]
+    public async Task GetAsync_ALoadThatEndsCancelled_IsNotCachedAsAFailure_TheNextCallLoadsAgain()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+        var loadCount = 0;
+        Task<string> Load(CancellationToken ct) => ++loadCount == 1
+            ? Task.FromCanceled<string>(new CancellationToken(canceled: true))
+            : Task.FromResult("recovered");
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cache.GetAsync(Load, default));
+
+        Assert.Equal("recovered", await cache.GetAsync(Load, default));
+        Assert.Equal(2, loadCount);
+    }
+
+    [Fact]
+    public async Task GetAsync_TheOnlyCallerCancellingItsWait_CachesNoFailure_AndTheLoadStillServesTheNextCall()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+        var loading = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var loadCount = 0;
+        Task<string> Load(CancellationToken ct) { loadCount++; return loading.Task; }
+
+        using var cts = new CancellationTokenSource();
+        var waiting = cache.GetAsync(Load, cts.Token);
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+
+        loading.SetResult("value");
+        Assert.Equal("value", await cache.GetAsync(Load, default).WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(1, loadCount);
+    }
+
+    [Fact]
+    public async Task GetAsync_AnOlderLoadFailingAfterANewerOneSucceeded_DoesNotCacheItsFailure()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+        var older = new TaskCompletionSource<string>();
+        var loadCount = 0;
+        Task<string> Load(CancellationToken ct) => ++loadCount == 1 ? older.Task : Task.FromResult("newer");
+
+        var olderWait = cache.GetAsync(Load, default);
+        cache.Release();
+        Assert.Equal("newer", await cache.GetAsync(Load, default));
+
+        older.SetException(new InvalidOperationException("late"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => olderWait);
+
+        Assert.Equal("newer", await cache.GetAsync(Load, default));
+        Assert.Equal(2, loadCount);
+    }
+
+    [Fact]
+    public void FailureCooldown_IsNoLongerThanTheFirstRetryBackoff_AndALongerOneIsRejected()
+    {
+        Assert.True(VerificationDatasetCache.FailureCooldown <= VerificationRetryBackoff.AfterFirstAttempt);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => new VerificationDatasetCache<string>(
+            TimeProvider.System, TimeSpan.FromHours(24), VerificationRetryBackoff.AfterFirstAttempt + TimeSpan.FromTicks(1)));
     }
 }

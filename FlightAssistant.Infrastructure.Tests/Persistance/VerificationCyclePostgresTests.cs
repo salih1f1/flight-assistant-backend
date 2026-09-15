@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Text.Json.Nodes;
 using FlightAssistant.Application;
 using FlightAssistant.Application.Interfaces.Repositories;
@@ -16,6 +17,7 @@ using FlightAssistant.Infrastructure.Persistance.Repositories;
 using FlightAssistant.Infrastructure.Tests.TestSupport;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
 namespace FlightAssistant.Infrastructure.Tests.Persistance;
@@ -299,6 +301,47 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         Assert.Empty(await verify.AdminAuditLogs.ToListAsync());
     }
 
+    /// <summary>
+    /// Final fix wave, A: a failed dataset load is kept for the failure cooldown, so a batch of
+    /// requests against a failing upstream downloads once, not once per request. Uses the real
+    /// <see cref="OurAirportsVerificationSource"/> over a counting 503 handler.
+    /// </summary>
+    [Fact]
+    public async Task RunCycle_ABatchAgainstAFailingSource_DownloadsItsDatasetOnce_AndEveryRequestGetsTheSourceError()
+    {
+        await SeedAsync(UnitedKingdom(), France());
+        var airports = new[]
+        {
+            Heathrow(),
+            CharlesDeGaulle(),
+            Airport.Create("LGW", "EGKK", "London Gatwick", "London", "GB", 51.1481, -0.1903, 202)
+        };
+        await SeedAsync(airports);
+        foreach (var airport in airports)
+            await EnqueueAsync(VerificationEntityType.Airport, Key(airport.Id), OurAirportsVerificationSource.SourceName);
+
+        var handler = new CountingHandler(HttpStatusCode.ServiceUnavailable);
+        var ourAirports = new OurAirportsVerificationSource(
+            new SingleClientFactory(handler), _time, NullLogger<OurAirportsVerificationSource>.Instance, TimeSpan.FromSeconds(5));
+        await using var job = BuildJob(new IVerificationSource[] { ourAirports });
+
+        var result = await RunCycleAsync(job);
+
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 3, RequestsFailed: 3, ClaimsLost: 0, FailuresUnrecorded: 0), result);
+        Assert.Equal(1, handler.CallCount);
+
+        await using var verify = CreateDbContext();
+        var rows = await verify.VerificationRequests.AsNoTracking().ToListAsync();
+        Assert.Equal(3, rows.Count);
+        Assert.All(rows, r =>
+        {
+            Assert.Equal(VerificationRequestStatus.Pending, r.Status);
+            Assert.Equal(1, r.Attempts);
+            Assert.StartsWith("ourairports: ", r.Error);
+        });
+        Assert.Single(rows.Select(r => r.Error).Distinct());
+    }
+
     // ── Lost claims ─────────────────────────────────────────────────────────
 
     /// <summary>
@@ -481,6 +524,24 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         VerificationSourceFetchResult.Found(values);
 
     private sealed record JobOptions(int BatchSize, int MaxAttempts) : IVerificationJobOptions;
+
+    private sealed class CountingHandler(HttpStatusCode status) : HttpMessageHandler
+    {
+        private int _callCount;
+
+        public int CallCount => Volatile.Read(ref _callCount);
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _callCount);
+            return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent("unavailable") });
+        }
+    }
+
+    private sealed class SingleClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
 
     private sealed class FakeSource : IVerificationSource
     {

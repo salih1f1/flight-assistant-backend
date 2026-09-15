@@ -3,6 +3,7 @@ using System.Text;
 using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Domain.Verification.Enums;
 using FlightAssistant.Infrastructure.ExternalServices.Verification;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
@@ -288,6 +289,64 @@ public class MledozeCountriesVerificationSourceTests
 
         Assert.False(trResult.IsError);
         Assert.False(trResult.Lookup!.IsFound); // skipped, not a source error
+    }
+
+    [Fact]
+    public async Task LookupAsync_SkippedRecords_AreLoggedOnceWithTheirCountAndTheFirstFew()
+    {
+        // Final fix wave, A: one warning per parse, not one per record.
+        const string json = """
+            [
+              {"cca3":"AAA","name":{"common":"No Code A"}},
+              {"cca2":"GB","cca3":"GBR","ccn3":"826","region":"Europe","subregion":"Northern Europe","name":{"common":"United Kingdom"}},
+              {"cca2":"BB","cca3":"BBB","name":{"official":"No Common B"}},
+              {"cca3":"CCC","name":{"common":"No Code C"}},
+              {"cca3":"DDD","name":{"common":"No Code D"}}
+            ]
+            """;
+        var logger = new CapturingLogger<MledozeCountriesVerificationSource>();
+        var source = new MledozeCountriesVerificationSource(
+            new FakeHttpClientFactory(new StaticHandler(HttpStatusCode.OK, json)), TimeProvider.System, logger, TestTimeout);
+
+        var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("GB"));
+
+        Assert.True(result.Lookup!.IsFound);
+        var warning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning);
+        Assert.Contains("Skipped 4 mledoze record(s)", warning.Message);
+        Assert.Contains("0/AAA, 2/BBB, 3/CCC", warning.Message);
+        Assert.DoesNotContain("DDD", warning.Message);
+    }
+
+    [Fact]
+    public async Task LookupAsync_WithinTheFailureCooldown_ReturnsASourceError_WithoutAnotherDownload()
+    {
+        // Final fix wave, A; the full cooldown behaviour is covered on VerificationDatasetCacheTests
+        // and OurAirportsVerificationSourceTests -- this proves mledoze goes through the same cache.
+        var handler = new StaticHandler(HttpStatusCode.ServiceUnavailable, "down");
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var source = Source(handler, clock);
+
+        var first = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
+        clock.Advance(VerificationDatasetCache.FailureCooldown - TimeSpan.FromSeconds(1));
+        var second = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("GB"));
+
+        Assert.True(first.IsError);
+        Assert.True(second.IsError);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    /// <summary>Records every log call made through it.</summary>
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Entries.Add((logLevel, formatter(state, exception)));
     }
 
     [Fact]
