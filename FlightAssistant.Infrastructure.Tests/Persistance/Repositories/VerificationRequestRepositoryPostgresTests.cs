@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using FlightAssistant.Application.Administration;
+using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Application.Verification;
 using FlightAssistant.Domain.Administration.Enums;
@@ -173,7 +174,7 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
 
         await using var second = CreateDbContext();
         var secondRepository = Repository(second);
-        Assert.Equal(1, await secondRepository.ResetStuckRunningAsync(secondClaimAt - TimeSpan.FromMinutes(10)));
+        Assert.Equal(new VerificationStuckResetResult(1, 0), await secondRepository.ResetStuckRunningAsync(secondClaimAt - TimeSpan.FromMinutes(10), maxAttempts: 3, secondClaimAt));
         var current = Assert.Single(await secondRepository.ClaimBatchAsync(1, secondClaimAt));
 
         stale.MarkVerified(firstClaimAt.AddMinutes(15));
@@ -222,7 +223,7 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         await using (var second = CreateDbContext())
         {
             var secondRepository = Repository(second);
-            Assert.Equal(1, await secondRepository.ResetStuckRunningAsync(secondClaimAt - TimeSpan.FromMinutes(10)));
+            Assert.Equal(new VerificationStuckResetResult(1, 0), await secondRepository.ResetStuckRunningAsync(secondClaimAt - TimeSpan.FromMinutes(10), maxAttempts: 3, secondClaimAt));
             Assert.Single(await secondRepository.ClaimBatchAsync(1, secondClaimAt))
                 .MarkMismatch(Differences, SourceValues, secondClaimAt.AddMinutes(1));
             await secondRepository.SaveChangesAsync();
@@ -257,7 +258,7 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
             Request(young, requestedUtc: T0.AddSeconds(1)),
             Request(waiting, requestedUtc: T0.AddSeconds(2)));
 
-        // "stuck" fails once first, so the reset can be seen to keep Attempts.
+        // "stuck" fails once first, so the reset can be seen to add to Attempts, not restart them.
         await using (var db = CreateDbContext())
         {
             var repository = Repository(db);
@@ -270,17 +271,19 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         await using (var db = CreateDbContext())
             Assert.Equal(ids[1], Assert.Single(await Repository(db).ClaimBatchAsync(1, now.AddMinutes(-9))).Id);
 
-        int reset;
+        VerificationStuckResetResult reset;
         await using (var db = CreateDbContext())
-            reset = await Repository(db).ResetStuckRunningAsync(now - TimeSpan.FromMinutes(10));
+            reset = await Repository(db).ResetStuckRunningAsync(now - TimeSpan.FromMinutes(10), maxAttempts: 5, now);
 
-        Assert.Equal(1, reset);
+        Assert.Equal(new VerificationStuckResetResult(ReturnedToPending: 1, Abandoned: 0), reset);
         await using var verify = CreateDbContext();
         var rows = await verify.VerificationRequests.ToDictionaryAsync(r => r.EntityKey);
 
         Assert.Equal(VerificationRequestStatus.Pending, rows[stuck].Status);
         Assert.Null(rows[stuck].StartedUtc);
-        Assert.Equal(1, rows[stuck].Attempts);
+        Assert.Equal(2, rows[stuck].Attempts); // the earlier source error, plus the abandoned claim
+        Assert.Equal("timeout", rows[stuck].Error);
+        Assert.Null(rows[stuck].CompletedUtc);
 
         Assert.Equal(VerificationRequestStatus.Running, rows[young].Status);
         Assert.Equal(now.AddMinutes(-9), rows[young].StartedUtc);
@@ -305,16 +308,90 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         await using (var db = CreateDbContext())
             Assert.Equal(exactlyAt, Assert.Single(await Repository(db).ClaimBatchAsync(1, cutoff)).EntityKey);
 
-        int reset;
+        VerificationStuckResetResult reset;
         await using (var db = CreateDbContext())
-            reset = await Repository(db).ResetStuckRunningAsync(cutoff);
+            reset = await Repository(db).ResetStuckRunningAsync(cutoff, maxAttempts: 3, cutoff + TimeSpan.FromMinutes(10));
 
-        Assert.Equal(1, reset);
+        Assert.Equal(new VerificationStuckResetResult(ReturnedToPending: 1, Abandoned: 0), reset);
         await using var verify = CreateDbContext();
         var rows = await verify.VerificationRequests.ToDictionaryAsync(r => r.EntityKey);
         Assert.Equal(VerificationRequestStatus.Pending, rows[justBefore].Status);
         Assert.Equal(VerificationRequestStatus.Running, rows[exactlyAt].Status);
         Assert.Equal(cutoff, rows[exactlyAt].StartedUtc);
+    }
+
+    /// <summary>A stuck claim below <c>MaxAttempts</c> goes back to Pending with the abandoned claim
+    /// counted as an attempt (fix round 1 ruling), rather than coming back for free.</summary>
+    [Fact]
+    public async Task ResetStuckRunningAsync_BelowMaxAttempts_ReturnsToPendingWithOneMoreAttempt()
+    {
+        var now = T0.AddHours(1);
+        await SeedEachAsync(Request("1"));
+        await using (var db = CreateDbContext())
+            Assert.Single(await Repository(db).ClaimBatchAsync(1, now.AddMinutes(-11)));
+
+        VerificationStuckResetResult reset;
+        await using (var db = CreateDbContext())
+            reset = await Repository(db).ResetStuckRunningAsync(now - TimeSpan.FromMinutes(10), maxAttempts: 3, now);
+
+        Assert.Equal(new VerificationStuckResetResult(ReturnedToPending: 1, Abandoned: 0), reset);
+        await using var verify = CreateDbContext();
+        var row = await verify.VerificationRequests.AsNoTracking().SingleAsync();
+        Assert.Equal(VerificationRequestStatus.Pending, row.Status);
+        Assert.Equal(1, row.Attempts);
+        Assert.Null(row.StartedUtc);
+        Assert.Null(row.CompletedUtc);
+        Assert.Null(row.Error);
+        Assert.Null(row.NextAttemptUtc);
+    }
+
+    /// <summary>
+    /// The reset whose added attempt reaches <c>MaxAttempts</c> completes the request as Error with
+    /// the abandoned-claim message instead of returning it to Pending, so a request that never
+    /// records a result stops coming back. An Error request is no longer open: never claimed again,
+    /// not pending, and no longer holding its source.
+    /// </summary>
+    [Fact]
+    public async Task ResetStuckRunningAsync_ReachingMaxAttempts_CompletesAsError_AndTheRequestIsNotReclaimable()
+    {
+        var now = T0.AddHours(1);
+        await SeedEachAsync(Request("1"));
+
+        // Two claims ended in recorded source errors, each due again at once...
+        for (var i = 0; i < 2; i++)
+        {
+            var at = now.AddMinutes(-40 + i);
+            await using var db = CreateDbContext();
+            var repository = Repository(db);
+            Assert.Single(await repository.ClaimBatchAsync(1, at))
+                .RecordSourceError("HTTP 503", at, maxAttempts: 3, backoff: TimeSpan.Zero);
+            await repository.SaveChangesAsync();
+        }
+        // ...and a third claim recorded nothing.
+        await using (var db = CreateDbContext())
+            Assert.Single(await Repository(db).ClaimBatchAsync(1, now.AddMinutes(-11)));
+
+        VerificationStuckResetResult reset;
+        await using (var db = CreateDbContext())
+            reset = await Repository(db).ResetStuckRunningAsync(now - TimeSpan.FromMinutes(10), maxAttempts: 3, now);
+
+        Assert.Equal(new VerificationStuckResetResult(ReturnedToPending: 0, Abandoned: 1), reset);
+        await using (var verify = CreateDbContext())
+        {
+            var row = await verify.VerificationRequests.AsNoTracking().SingleAsync();
+            Assert.Equal(VerificationRequestStatus.Error, row.Status);
+            Assert.Equal(3, row.Attempts);
+            Assert.Equal("Claim abandoned: no result recorded after 3 claims", row.Error);
+            Assert.Equal(now, row.CompletedUtc);
+            Assert.Null(row.StartedUtc);
+            Assert.Null(row.NextAttemptUtc);
+        }
+
+        await using var later = CreateDbContext();
+        var laterRepository = Repository(later);
+        Assert.Empty(await laterRepository.ClaimBatchAsync(10, now.AddDays(1)));
+        Assert.Equal(0, await laterRepository.CountPendingAsync());
+        Assert.False(await laterRepository.AnyOpenRequestUsesSourceAsync("ourairports"));
     }
 
     /// <summary>Starts from a claimed request, whose <c>StartedUtc</c> is set, so clearing it is

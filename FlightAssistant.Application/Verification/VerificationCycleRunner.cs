@@ -13,13 +13,19 @@ namespace FlightAssistant.Application.Verification
         Task<VerificationCycleResult> RunCycleAsync(CancellationToken ct = default);
     }
 
-    /// <param name="StuckReset">Running requests the reset returned to Pending.</param>
+    /// <param name="StuckReset">Stuck Running requests the reset returned to Pending, one attempt added.</param>
+    /// <param name="StuckAbandoned">Stuck Running requests the reset completed as Error because they ran
+    /// out of attempts. Not part of <see cref="RequestsProcessed"/>: this cycle did not claim them.</param>
     /// <param name="RequestsProcessed">Requests claimed and worked through this cycle.</param>
     /// <param name="RequestsFailed">The subset that ended in a source error (retry scheduled or
-    /// <c>Error</c>), an unusable source, a deleted entity or an unexpected exception. A mismatch or
-    /// not-found is a completed check, not a failure; a lost claim is neither.</param>
+    /// <c>Error</c>), an unusable source, a deleted entity or an unexpected exception, whether or not
+    /// that exception could be recorded. A mismatch or not-found is a completed check, not a failure;
+    /// a lost claim is neither.</param>
     /// <param name="ClaimsLost">The subset another claim took over; nothing was written for them.</param>
-    public sealed record VerificationCycleResult(int StuckReset, int RequestsProcessed, int RequestsFailed, int ClaimsLost);
+    /// <param name="FailuresUnrecorded">The subset of <see cref="RequestsFailed"/> whose failure could not
+    /// be recorded either: still Running, with no attempt counted until the stuck-request reset.</param>
+    public sealed record VerificationCycleResult(
+        int StuckReset, int StuckAbandoned, int RequestsProcessed, int RequestsFailed, int ClaimsLost, int FailuresUnrecorded);
 
     /// <summary>
     /// Runs one verification cycle. Resolved from the job's cycle scope (which carries the system
@@ -78,14 +84,21 @@ namespace FlightAssistant.Application.Verification
 
             var now = _timeProvider.GetUtcNow().UtcDateTime;
 
-            var reset = await _requests.ResetStuckRunningAsync(now - StuckAfter, ct);
-            if (reset > 0)
-                _logger.LogWarning("Reset {Count} verification request(s) stuck in Running for over {StuckAfter}.", reset, StuckAfter);
+            var reset = await _requests.ResetStuckRunningAsync(now - StuckAfter, _options.MaxAttempts, now, ct);
+            if (reset.ReturnedToPending > 0)
+                _logger.LogWarning(
+                    "Returned {Count} verification request(s) stuck in Running for over {StuckAfter} to Pending, counting an attempt each.",
+                    reset.ReturnedToPending, StuckAfter);
+            if (reset.Abandoned > 0)
+                _logger.LogError(
+                    "Completed {Count} verification request(s) as Error: stuck in Running for over {StuckAfter} with no attempts left.",
+                    reset.Abandoned, StuckAfter);
 
             var claims = await ClaimAsync(now, cycleId, ct);
 
             var failed = 0;
             var lost = 0;
+            var unrecorded = 0;
             foreach (var claim in claims)
             {
                 ct.ThrowIfCancellationRequested();
@@ -99,6 +112,10 @@ namespace FlightAssistant.Application.Verification
                     case VerificationProcessOutcome.ClaimLost:
                         lost++;
                         break;
+                    case VerificationProcessOutcome.FailureUnrecorded:
+                        failed++;
+                        unrecorded++;
+                        break;
                 }
             }
 
@@ -109,7 +126,7 @@ namespace FlightAssistant.Application.Verification
                     "Verification cycle processed {Processed} request(s): {Failed} failed, {Lost} claim(s) lost.",
                     claims.Count, failed, lost);
 
-            return new VerificationCycleResult(reset, claims.Count, failed, lost);
+            return new VerificationCycleResult(reset.ReturnedToPending, reset.Abandoned, claims.Count, failed, lost, unrecorded);
         }
 
         private async Task<IReadOnlyList<VerificationClaim>> ClaimAsync(DateTime now, string cycleId, CancellationToken ct)
@@ -159,9 +176,9 @@ namespace FlightAssistant.Application.Verification
             catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "Could not record the failure of verification request {RequestId}; it stays Running until the stuck-request reset.",
+                    "Could not record the failure of verification request {RequestId}; it stays Running until the stuck-request reset counts the attempt.",
                     claim.RequestId);
-                return VerificationProcessOutcome.Error;
+                return VerificationProcessOutcome.FailureUnrecorded;
             }
         }
 

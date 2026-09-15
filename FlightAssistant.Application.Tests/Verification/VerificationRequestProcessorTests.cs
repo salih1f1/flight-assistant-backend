@@ -394,7 +394,7 @@ public class VerificationRequestProcessorTests
     // ── Unexpected failures ─────────────────────────────────────────────────
 
     [Fact]
-    public async Task RecordUnexpectedFailureAsync_RecordsASourceErrorNamingTheException()
+    public async Task RecordUnexpectedFailureAsync_RecordsASourceErrorNamingTheExceptionType()
     {
         var request = ClaimedAirportRequest(new[] { "ourairports" });
 
@@ -405,8 +405,30 @@ public class VerificationRequestProcessorTests
         Assert.Equal(VerificationRequestStatus.Pending, request.Status);
         Assert.Equal(1, request.Attempts);
         Assert.Equal(Now.AddMinutes(1), request.NextAttemptUtc);
-        Assert.Equal("Unexpected error: InvalidOperationException: boom", request.Error);
+        Assert.Equal("Unexpected error (InvalidOperationException); see logs", request.Error);
         await _requests.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// An EF or Npgsql message can carry a host and port, a constraint name or key values, and the
+    /// <c>error</c> column is shown to admins in every environment. Only the exception's type may
+    /// reach it, never any part of its message or of an inner exception's.
+    /// </summary>
+    [Fact]
+    public async Task RecordUnexpectedFailureAsync_StoresOnlyTheExceptionType_NothingFromItsMessage()
+    {
+        var request = ClaimedAirportRequest(new[] { "ourairports" });
+        var exception = new InvalidOperationException(
+            "Failed to connect to db-prod.internal:5432; duplicate key value violates unique constraint " +
+            "\"ux_verification_requests_open_entity\"; Key (entity_key)=(4242)",
+            new TimeoutException("inner detail from 10.1.2.3"));
+
+        await Processor(new FakeVerificationSourceRegistry()).RecordUnexpectedFailureAsync(Claim, exception);
+
+        Assert.Equal("Unexpected error (InvalidOperationException); see logs", request.Error);
+        foreach (var fragment in new[]
+                 { "Failed to connect", "db-prod.internal", "5432", "ux_verification_requests_open_entity", "entity_key", "4242", "inner detail", "10.1.2.3", "TimeoutException" })
+            Assert.DoesNotContain(fragment, request.Error);
     }
 
     private static void AssertStillManuallyVerified(Airport airport, DateTime verifiedAt)

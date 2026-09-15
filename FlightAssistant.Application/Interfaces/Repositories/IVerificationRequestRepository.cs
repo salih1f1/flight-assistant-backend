@@ -25,17 +25,34 @@ namespace FlightAssistant.Application.Interfaces.Repositories
     /// The newer claim owns the request.
     /// </para>
     /// </summary>
+    /// <summary>What <see cref="IVerificationRequestRepository.ResetStuckRunningAsync"/> did.</summary>
+    /// <param name="ReturnedToPending">Stuck requests returned to Pending, one attempt added.</param>
+    /// <param name="Abandoned">Stuck requests that ran out of attempts and completed as Error.</param>
+    public sealed record VerificationStuckResetResult(int ReturnedToPending, int Abandoned);
+
     public interface IVerificationRequestRepository
     {
         /// <summary>
-        /// Sets every <c>Running</c> request whose <c>StartedUtc</c> is earlier than
-        /// <paramref name="startedBeforeUtc"/> back to <c>Pending</c> and clears its
-        /// <c>StartedUtc</c>. <c>Attempts</c> and <c>NextAttemptUtc</c> are unchanged. A request
-        /// started exactly at the cutoff is left alone. The job passes now − 10 minutes.
+        /// Finds every <c>Running</c> request whose <c>StartedUtc</c> is earlier than
+        /// <paramref name="startedBeforeUtc"/> (a request started exactly at the cutoff is left alone;
+        /// the job passes now − 10 minutes), counts its abandoned claim as an attempt, and clears its
+        /// <c>StartedUtc</c>, in one statement:
+        /// <list type="bullet">
+        /// <item>below <paramref name="maxAttempts"/> it goes back to <c>Pending</c>, with its
+        /// <c>NextAttemptUtc</c> and <c>Error</c> unchanged;</item>
+        /// <item>once the incremented <c>Attempts</c> reaches <paramref name="maxAttempts"/> it completes
+        /// as <c>Error</c> with <c>VerificationRequest.ClaimAbandonedError(attempts)</c>,
+        /// <c>CompletedUtc = nowUtc</c> and no <c>NextAttemptUtc</c>, so a request that never records a
+        /// result cannot come back forever.</item>
+        /// </list>
+        /// Not audited: the statement bypasses the change tracker, and queue rows are not audited anyway.
         /// </summary>
         /// <param name="startedBeforeUtc">Must have <see cref="DateTimeKind.Utc"/>.</param>
-        /// <returns>How many requests were reset.</returns>
-        Task<int> ResetStuckRunningAsync(DateTime startedBeforeUtc, CancellationToken ct = default);
+        /// <param name="maxAttempts">The job's <c>MaxAttempts</c>; at least 1.</param>
+        /// <param name="nowUtc">Stamped as <c>CompletedUtc</c> on abandoned requests; must have
+        /// <see cref="DateTimeKind.Utc"/>.</param>
+        Task<VerificationStuckResetResult> ResetStuckRunningAsync(
+            DateTime startedBeforeUtc, int maxAttempts, DateTime nowUtc, CancellationToken ct = default);
 
         /// <summary>
         /// Claims up to <paramref name="batchSize"/> <c>Pending</c> requests that are due

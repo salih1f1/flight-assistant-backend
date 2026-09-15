@@ -29,6 +29,13 @@ public class VerificationCycleRunnerTests
     private readonly ICountryRepository _countries = Substitute.For<ICountryRepository>();
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(Now));
 
+    public VerificationCycleRunnerTests()
+    {
+        // A sealed record gets no auto-value from NSubstitute; nothing is stuck unless a test says so.
+        _requests.ResetStuckRunningAsync(default, default, default, default)
+            .ReturnsForAnyArgs(new VerificationStuckResetResult(ReturnedToPending: 0, Abandoned: 0));
+    }
+
     private static Airport Airport(string iata) => Domain.ReferenceData.Entities.Airport.Create(iata, null, $"{iata} Airport", "City", "GB");
 
     private async Task<VerificationCycleResult> RunCycleAsync(
@@ -80,19 +87,19 @@ public class VerificationCycleRunnerTests
 
         var result = await RunCycleAsync(new FakeVerificationSourceRegistry(MatchingOurAirports()));
 
-        Assert.Equal(new VerificationCycleResult(StuckReset: 0, RequestsProcessed: 2, RequestsFailed: 1, ClaimsLost: 0), result);
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 2, RequestsFailed: 1, ClaimsLost: 0, FailuresUnrecorded: 0), result);
 
         Assert.Equal(VerificationRequestStatus.Pending, throwing.Status);
         Assert.Equal(1, throwing.Attempts);
         Assert.Equal(Now.AddMinutes(1), throwing.NextAttemptUtc);
-        Assert.Equal("Unexpected error: InvalidOperationException: database hiccup", throwing.Error);
+        Assert.Equal("Unexpected error (InvalidOperationException); see logs", throwing.Error);
 
         Assert.Equal(VerificationRequestStatus.Verified, healthy.Status);
         Assert.True(airport.IsVerified);
     }
 
     [Fact]
-    public async Task RunCycleAsync_RecordingTheFailureAlsoThrows_TheBatchStillFinishes_AndCountsItFailed()
+    public async Task RunCycleAsync_RecordingTheFailureAlsoThrows_TheBatchStillFinishes_AndCountsItFailedAndUnrecorded()
     {
         var claimed = ClaimAirports((1, "11"), (2, "22"));
         _requests.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(
@@ -104,24 +111,27 @@ public class VerificationCycleRunnerTests
 
         var result = await RunCycleAsync(new FakeVerificationSourceRegistry(MatchingOurAirports()));
 
-        Assert.Equal(new VerificationCycleResult(0, 2, 1, 0), result);
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 2, RequestsFailed: 1, ClaimsLost: 0, FailuresUnrecorded: 1), result);
+        // Nothing was saved for the first request: it is still Running, with no attempt counted.
         Assert.Equal(VerificationRequestStatus.Running, claimed[0].Status);
+        Assert.Equal(0, claimed[0].Attempts);
         Assert.Equal(VerificationRequestStatus.Verified, claimed[1].Status);
     }
 
     [Fact]
-    public async Task RunCycleAsync_ResetsStuckRequestsOlderThanTenMinutes_ThenClaimsBatchSize()
+    public async Task RunCycleAsync_ResetsStuckRequestsOlderThanTenMinutesWithMaxAttempts_ThenClaimsBatchSize()
     {
-        _requests.ResetStuckRunningAsync(Arg.Any<DateTime>(), Arg.Any<CancellationToken>()).Returns(2);
+        _requests.ResetStuckRunningAsync(Arg.Any<DateTime>(), Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>())
+            .Returns(new VerificationStuckResetResult(ReturnedToPending: 2, Abandoned: 1));
         _requests.ClaimBatchAsync(Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>())
             .Returns(Array.Empty<VerificationRequest>());
 
-        var result = await RunCycleAsync(new FakeVerificationSourceRegistry(), new FakeJobOptions(BatchSize: 7));
+        var result = await RunCycleAsync(new FakeVerificationSourceRegistry(), new FakeJobOptions(BatchSize: 7, MaxAttempts: 4));
 
-        Assert.Equal(new VerificationCycleResult(StuckReset: 2, RequestsProcessed: 0, RequestsFailed: 0, ClaimsLost: 0), result);
+        Assert.Equal(new VerificationCycleResult(StuckReset: 2, StuckAbandoned: 1, RequestsProcessed: 0, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0), result);
         Received.InOrder(() =>
         {
-            _requests.ResetStuckRunningAsync(Now.AddMinutes(-10), Arg.Any<CancellationToken>());
+            _requests.ResetStuckRunningAsync(Now.AddMinutes(-10), 4, Now, Arg.Any<CancellationToken>());
             _requests.ClaimBatchAsync(7, Now, Arg.Any<CancellationToken>());
         });
     }
@@ -152,7 +162,7 @@ public class VerificationCycleRunnerTests
 
         var result = await RunCycleAsync(new FakeVerificationSourceRegistry(MatchingOurAirports()));
 
-        Assert.Equal(new VerificationCycleResult(0, 1, RequestsFailed: 0, ClaimsLost: 1), result);
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 1, RequestsFailed: 0, ClaimsLost: 1, FailuresUnrecorded: 0), result);
         await _requests.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 

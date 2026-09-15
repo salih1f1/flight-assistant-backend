@@ -45,7 +45,7 @@ public class ReferenceVerificationBackgroundServiceTests
     public async Task ACycle_MarksTheHeartbeatSuccessWithItsCounts_AndRunsInAScopeCarryingTheSystemActor()
     {
         var script = new CycleScript();
-        script.Then(() => new VerificationCycleResult(StuckReset: 1, RequestsProcessed: 4, RequestsFailed: 1, ClaimsLost: 1));
+        script.Then(() => new VerificationCycleResult(StuckReset: 1, StuckAbandoned: 0, RequestsProcessed: 4, RequestsFailed: 1, ClaimsLost: 1, FailuresUnrecorded: 0));
         await using var job = Job.Create(script, _time);
 
         await job.Service.StartAsync(CancellationToken.None);
@@ -64,7 +64,7 @@ public class ReferenceVerificationBackgroundServiceTests
     {
         var script = new CycleScript();
         script.Then(() => throw new InvalidOperationException("cycle boom"));
-        script.Then(() => new VerificationCycleResult(0, RequestsProcessed: 2, RequestsFailed: 0, 0));
+        script.Then(() => new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 2, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0));
         await using var job = Job.Create(script, _time);
 
         await job.Service.StartAsync(CancellationToken.None);
@@ -138,7 +138,7 @@ public class ReferenceVerificationBackgroundServiceTests
         {
             Actors.Enqueue((adminContext.ActorId, adminContext.ActorName));
             Interlocked.Increment(ref _calls);
-            return _cycles.TryDequeue(out var cycle) ? cycle() : new VerificationCycleResult(0, 0, 0, 0);
+            return _cycles.TryDequeue(out var cycle) ? cycle() : new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 0, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0);
         }
     }
 

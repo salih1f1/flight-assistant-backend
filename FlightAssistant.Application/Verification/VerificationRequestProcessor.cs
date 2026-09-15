@@ -47,7 +47,14 @@ namespace FlightAssistant.Application.Verification
         Error,
 
         /// <summary>The claim was lost to another claim; nothing was written.</summary>
-        ClaimLost
+        ClaimLost,
+
+        /// <summary>
+        /// Processing threw, and recording that as a source error threw too, so nothing was saved: the
+        /// request is still Running with no attempt counted. The stuck-request reset returns it to
+        /// Pending after 10 minutes and counts the attempt then. Only the cycle runner reports this.
+        /// </summary>
+        FailureUnrecorded
     }
 
     /// <summary>
@@ -186,6 +193,14 @@ namespace FlightAssistant.Application.Verification
         /// Records an exception that escaped <see cref="ProcessAsync"/> as a source error on the
         /// request (attempts + 1, backoff, <c>Error</c> at <c>MaxAttempts</c>). Call it from a fresh
         /// scope: the one that threw may still track the failed changes.
+        ///
+        /// <para>
+        /// Only the exception's type is stored (<see cref="UnexpectedErrorMessage"/>). An EF, Npgsql
+        /// or argument exception's message can carry a host and port, table and constraint names or
+        /// key values, and <c>verification_requests.error</c> is shown to admins in every environment,
+        /// Production included. The caller logs the full exception with the request id and the
+        /// cycle's correlation id.
+        /// </para>
         /// </summary>
         public async Task<VerificationProcessOutcome> RecordUnexpectedFailureAsync(
             VerificationClaim claim, Exception exception, CancellationToken ct = default)
@@ -197,7 +212,14 @@ namespace FlightAssistant.Application.Verification
             if (request is null) return VerificationProcessOutcome.ClaimLost;
 
             return await RecordSourceErrorAsync(
-                request, $"Unexpected error: {exception.GetType().Name}: {exception.Message}", ct);
+                request, UnexpectedErrorMessage(exception), ct);
+        }
+
+        /// <summary>The stored error for an unexpected exception: its type, never its message.</summary>
+        public static string UnexpectedErrorMessage(Exception exception)
+        {
+            ArgumentNullException.ThrowIfNull(exception);
+            return $"Unexpected error ({exception.GetType().Name}); see logs";
         }
 
         private async Task<VerificationRequest?> LoadOwnedRequestAsync(VerificationClaim claim, CancellationToken ct)

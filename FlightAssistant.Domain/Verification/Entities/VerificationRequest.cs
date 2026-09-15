@@ -15,7 +15,9 @@ namespace FlightAssistant.Domain.Verification.Entities
     /// there is no domain method for that step. One outcome method then completes it
     /// (<see cref="MarkVerified"/>, <see cref="MarkMismatch"/>, <see cref="MarkNotFound"/>,
     /// <see cref="MarkError"/>), or <see cref="RecordSourceError"/> sends it back to Pending for a
-    /// retry. A request is <see cref="IsOpen">open</see> while Pending or Running, and a partial
+    /// retry. A claim that records nothing for over 10 minutes is returned to Pending by the job's
+    /// stuck-request reset, also one SQL statement, which counts an attempt and completes the request
+    /// as Error (<see cref="ClaimAbandonedError"/>) once attempts reach the job's maximum. A request is <see cref="IsOpen">open</see> while Pending or Running, and a partial
     /// unique index allows at most one open request per entity.
     /// </para>
     /// </summary>
@@ -36,6 +38,23 @@ namespace FlightAssistant.Domain.Verification.Entities
         /// <summary>Joins source names in <see cref="Sources"/>.</summary>
         public const char SourceSeparator = ',';
 
+        /// <summary>The text before the claim count in <see cref="ClaimAbandonedError"/>.</summary>
+        public const string ClaimAbandonedErrorPrefix = "Claim abandoned: no result recorded after ";
+
+        /// <summary>The text after the claim count in <see cref="ClaimAbandonedError"/>.</summary>
+        public const string ClaimAbandonedErrorSuffix = " claims";
+
+        /// <summary>
+        /// The <see cref="Error"/> of a request the job's stuck-request reset completed as
+        /// <see cref="VerificationRequestStatus.Error"/>: its claims kept ending without a recorded
+        /// result (a crash, or a failure that could not itself be recorded) until
+        /// <see cref="Attempts"/> reached the job's maximum. The reset is one SQL statement, like the
+        /// claim, so it builds this text from <see cref="ClaimAbandonedErrorPrefix"/> and
+        /// <see cref="ClaimAbandonedErrorSuffix"/>; this method is the same text for C# callers.
+        /// </summary>
+        public static string ClaimAbandonedError(int claims) =>
+            ClaimAbandonedErrorPrefix + claims.ToString(CultureInfo.InvariantCulture) + ClaimAbandonedErrorSuffix;
+
         public long Id { get; private set; }
 
         public VerificationEntityType EntityType { get; private set; }
@@ -52,7 +71,8 @@ namespace FlightAssistant.Domain.Verification.Entities
 
         public VerificationRequestStatus Status { get; private set; }
 
-        /// <summary>Source-error attempts so far. The job's stuck-request reset does not change it.</summary>
+        /// <summary>Attempts so far: one per source error, and one per claim the job's stuck-request
+        /// reset found abandoned (so a request that never records a result still runs out of attempts).</summary>
         public int Attempts { get; private set; }
 
         /// <summary>When a retried request may be claimed again. Null when it can be claimed now, and on every completed request.</summary>

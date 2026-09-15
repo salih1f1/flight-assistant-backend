@@ -95,15 +95,43 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             return new VerificationEnqueueResult(queued, skipped);
         }
 
-        public Task<int> ResetStuckRunningAsync(DateTime startedBeforeUtc, CancellationToken ct = default)
+        public async Task<VerificationStuckResetResult> ResetStuckRunningAsync(
+            DateTime startedBeforeUtc, int maxAttempts, DateTime nowUtc, CancellationToken ct = default)
         {
             EnsureUtc(startedBeforeUtc, nameof(startedBeforeUtc));
+            ArgumentOutOfRangeException.ThrowIfLessThan(maxAttempts, 1);
+            EnsureUtc(nowUtc, nameof(nowUtc));
 
-            return _db.VerificationRequests
-                .Where(r => r.Status == VerificationRequestStatus.Running && r.StartedUtc < startedBeforeUtc)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(r => r.Status, VerificationRequestStatus.Pending)
-                    .SetProperty(r => r.StartedUtc, (DateTime?)null), ct);
+            var running = nameof(VerificationRequestStatus.Running);
+            var pending = nameof(VerificationRequestStatus.Pending);
+            var error = nameof(VerificationRequestStatus.Error);
+            var abandonedPrefix = VerificationRequest.ClaimAbandonedErrorPrefix;
+            var abandonedSuffix = VerificationRequest.ClaimAbandonedErrorSuffix;
+
+            // One statement: every SET expression reads the row's old values, so each CASE sees the
+            // same pre-increment attempts. RETURNING reports what each row became; AsNoTracking keeps
+            // the rows out of this context (it composes no SQL). xmin is returned explicitly because
+            // RETURNING v.* never includes system columns. Every value is a parameter.
+            var reset = await _db.VerificationRequests
+                .FromSql($"""
+                    UPDATE "verification_requests" AS v
+                    SET "attempts" = v."attempts" + 1,
+                        "status" = CASE WHEN v."attempts" + 1 >= {maxAttempts} THEN {error} ELSE {pending} END,
+                        "error" = CASE WHEN v."attempts" + 1 >= {maxAttempts}
+                            THEN {abandonedPrefix} || (v."attempts" + 1) || {abandonedSuffix}
+                            ELSE v."error" END,
+                        "completed_utc" = CASE WHEN v."attempts" + 1 >= {maxAttempts} THEN {nowUtc} ELSE v."completed_utc" END,
+                        "next_attempt_utc" = CASE WHEN v."attempts" + 1 >= {maxAttempts} THEN NULL ELSE v."next_attempt_utc" END,
+                        "started_utc" = NULL
+                    WHERE v."status" = {running} AND v."started_utc" < {startedBeforeUtc}
+                    RETURNING v.*, v."xmin"
+                    """)
+                .AsNoTracking()
+                .ToListAsync(ct);
+
+            return new VerificationStuckResetResult(
+                ReturnedToPending: reset.Count(r => r.Status == VerificationRequestStatus.Pending),
+                Abandoned: reset.Count(r => r.Status == VerificationRequestStatus.Error));
         }
 
         public async Task<IReadOnlyList<VerificationRequest>> ClaimBatchAsync(int batchSize, DateTime nowUtc, CancellationToken ct = default)

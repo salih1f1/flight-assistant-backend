@@ -81,7 +81,7 @@ public class VerificationCyclePostgresTests : PostgresTestBase
 
         var result = await RunCycleAsync(job);
 
-        Assert.Equal(new VerificationCycleResult(StuckReset: 0, RequestsProcessed: 6, RequestsFailed: 2, ClaimsLost: 0), result);
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 6, RequestsFailed: 2, ClaimsLost: 0, FailuresUnrecorded: 0), result);
 
         await using var verify = CreateDbContext();
         var airports = await verify.Airports.AsNoTracking().ToDictionaryAsync(a => a.Iata);
@@ -154,14 +154,14 @@ public class VerificationCyclePostgresTests : PostgresTestBase
 
         var result = await RunCycleAsync(job);
 
-        Assert.Equal(new VerificationCycleResult(StuckReset: 1, RequestsProcessed: 1, RequestsFailed: 0, ClaimsLost: 0), result);
+        Assert.Equal(new VerificationCycleResult(StuckReset: 1, StuckAbandoned: 0, RequestsProcessed: 1, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0), result);
         Assert.Equal(VerificationSourceLookupKey.ForCountry("GB"), Assert.Single(mledoze.Lookups));
 
         await using var verify = CreateDbContext();
         var rows = await verify.VerificationRequests.AsNoTracking().ToDictionaryAsync(r => r.Id);
         Assert.Equal(VerificationRequestStatus.Verified, rows[stuck].Status);
         Assert.Equal(T0, rows[stuck].StartedUtc);
-        Assert.Equal(0, rows[stuck].Attempts);
+        Assert.Equal(1, rows[stuck].Attempts); // the dead worker's abandoned claim, counted by the reset
 
         Assert.Equal(VerificationRequestStatus.Running, rows[young].Status);
         Assert.Equal(T0.AddMinutes(-9), rows[young].StartedUtc);
@@ -187,28 +187,28 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         await using var job = BuildJob(new IVerificationSource[] { mledoze }, maxAttempts: 3);
 
         // Attempt 1 fails: retry after one minute. A request waiting to retry still uses its source.
-        Assert.Equal(new VerificationCycleResult(0, RequestsProcessed: 1, RequestsFailed: 1, 0), await RunCycleAsync(job));
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 1, RequestsFailed: 1, ClaimsLost: 0, FailuresUnrecorded: 0), await RunCycleAsync(job));
         await AssertPendingAsync(requestId, attempts: 1, nextAttemptUtc: T0.AddMinutes(1));
         Assert.Equal(0, mledoze.ReleaseCount);
 
         // Not due yet: not claimed and not looked up again.
         _time.SetUtcNow(T0.AddSeconds(59));
-        Assert.Equal(new VerificationCycleResult(0, 0, 0, 0), await RunCycleAsync(job));
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 0, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0), await RunCycleAsync(job));
         Assert.Single(mledoze.Lookups);
         await AssertPendingAsync(requestId, attempts: 1, nextAttemptUtc: T0.AddMinutes(1));
 
         // Attempt 2 once due: retry after five minutes.
         _time.SetUtcNow(T0.AddMinutes(1));
-        Assert.Equal(new VerificationCycleResult(0, 1, 1, 0), await RunCycleAsync(job));
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 1, RequestsFailed: 1, ClaimsLost: 0, FailuresUnrecorded: 0), await RunCycleAsync(job));
         await AssertPendingAsync(requestId, attempts: 2, nextAttemptUtc: T0.AddMinutes(6));
 
         _time.SetUtcNow(T0.AddMinutes(5));
-        Assert.Equal(new VerificationCycleResult(0, 0, 0, 0), await RunCycleAsync(job));
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 0, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0), await RunCycleAsync(job));
         Assert.Equal(2, mledoze.Lookups.Count);
 
         // Attempt 3 reaches MaxAttempts: Error, and nothing open uses the source any more.
         _time.SetUtcNow(T0.AddMinutes(6));
-        Assert.Equal(new VerificationCycleResult(0, 1, 1, 0), await RunCycleAsync(job));
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 1, RequestsFailed: 1, ClaimsLost: 0, FailuresUnrecorded: 0), await RunCycleAsync(job));
         Assert.Equal(3, mledoze.Lookups.Count);
         Assert.Equal(1, mledoze.ReleaseCount);
 
@@ -228,12 +228,56 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         Assert.Empty(await verify.AdminAuditLogs.ToListAsync());
     }
 
+    /// <summary>
+    /// A request whose claims keep ending with no recorded result (a crash, or a failure that could
+    /// not itself be recorded) used to come back every 10 minutes forever. On its last attempt the
+    /// cycle's reset completes it as Error: it is not claimed or looked up, and its source is released.
+    /// </summary>
+    [Fact]
+    public async Task RunCycle_AStuckRequestOnItsLastAttempt_IsAbandonedAsError_NotReclaimed_AndItsSourceReleased()
+    {
+        await SeedAsync(UnitedKingdom());
+        await EnqueueAsync(VerificationEntityType.Country, "GB", "mledoze", requestedUtc: T0.AddHours(-2));
+
+        // Two earlier claims ended in recorded source errors; a third, 11 minutes ago, recorded nothing.
+        for (var i = 0; i < 2; i++)
+        {
+            var at = T0.AddMinutes(-40 + i);
+            await using var db = CreateDbContext();
+            var worker = AnotherWorker(db, at);
+            Assert.Single(await worker.ClaimBatchAsync(1, at))
+                .RecordSourceError("HTTP 503", at, maxAttempts: 3, backoff: TimeSpan.Zero);
+            await worker.SaveChangesAsync();
+        }
+        Assert.Single(await ClaimOnAnotherWorkerAsync(T0.AddMinutes(-11), batchSize: 1));
+
+        var mledoze = new FakeSource("mledoze", VerificationEntityType.Country, _ => Found(VerificationCheckedColumns.Project(UnitedKingdom())));
+        await using var job = BuildJob(new IVerificationSource[] { mledoze }, maxAttempts: 3);
+
+        var result = await RunCycleAsync(job);
+
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 1, RequestsProcessed: 0, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0), result);
+        Assert.Empty(mledoze.Lookups);
+        Assert.Equal(1, mledoze.ReleaseCount);
+
+        await using var verify = CreateDbContext();
+        var row = await verify.VerificationRequests.AsNoTracking().SingleAsync();
+        Assert.Equal(VerificationRequestStatus.Error, row.Status);
+        Assert.Equal(3, row.Attempts);
+        Assert.Equal(VerificationRequest.ClaimAbandonedError(3), row.Error);
+        Assert.Equal(T0, row.CompletedUtc);
+        Assert.Null(row.StartedUtc);
+        Assert.False((await verify.Countries.AsNoTracking().SingleAsync()).IsVerified);
+        Assert.Empty(await verify.AdminAuditLogs.ToListAsync());
+    }
+
     // ── Lost claims ─────────────────────────────────────────────────────────
 
     /// <summary>
     /// Mid-lookup, another worker resets this cycle's claim as stuck and claims the request again.
     /// The verified outcome's save then fails on the <c>xmin</c> token: nothing is written -- no
-    /// entity <c>Verify</c>, no audit row, no attempt -- and the other worker's claim stands.
+    /// entity <c>Verify</c>, no audit row, no attempt of this cycle's own (the other worker's reset
+    /// counts the abandoned claim) -- and the other worker's claim stands.
     /// </summary>
     [Fact]
     public async Task RunCycle_ClaimLostBeforeTheSave_DiscardsTheOutcome_WithoutAnAttempt_AndTheNewClaimStands()
@@ -244,7 +288,7 @@ public class VerificationCyclePostgresTests : PostgresTestBase
 
         var mledoze = new FakeSource("mledoze", VerificationEntityType.Country, async _ =>
         {
-            Assert.Equal(1, await ResetOnAnotherWorkerAsync(reclaimedAt));
+            Assert.Equal(1, (await ResetOnAnotherWorkerAsync(reclaimedAt)).ReturnedToPending);
             Assert.Single(await ClaimOnAnotherWorkerAsync(reclaimedAt, batchSize: 1));
             return Found(VerificationCheckedColumns.Project(UnitedKingdom()));
         });
@@ -252,13 +296,14 @@ public class VerificationCyclePostgresTests : PostgresTestBase
 
         var result = await RunCycleAsync(job);
 
-        Assert.Equal(new VerificationCycleResult(StuckReset: 0, RequestsProcessed: 1, RequestsFailed: 0, ClaimsLost: 1), result);
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 1, RequestsFailed: 0, ClaimsLost: 1, FailuresUnrecorded: 0), result);
 
         await using var verify = CreateDbContext();
         var row = await verify.VerificationRequests.AsNoTracking().SingleAsync();
         Assert.Equal(VerificationRequestStatus.Running, row.Status);
         Assert.Equal(reclaimedAt, row.StartedUtc);
-        Assert.Equal(0, row.Attempts);
+        // One attempt, counted by the other worker's reset of this cycle's claim; this cycle recorded none.
+        Assert.Equal(1, row.Attempts);
         Assert.Null(row.Error);
         Assert.Null(row.CompletedUtc);
 
@@ -284,7 +329,7 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         {
             if (key.CountryCode == "GB")
             {
-                Assert.Equal(2, await ResetOnAnotherWorkerAsync(reclaimedAt));
+                Assert.Equal(2, (await ResetOnAnotherWorkerAsync(reclaimedAt)).ReturnedToPending);
                 Assert.Equal(2, (await ClaimOnAnotherWorkerAsync(reclaimedAt, batchSize: 2)).Count);
             }
             return Found(VerificationCheckedColumns.Project(key.CountryCode == "GB" ? UnitedKingdom() : France()));
@@ -293,7 +338,7 @@ public class VerificationCyclePostgresTests : PostgresTestBase
 
         var result = await RunCycleAsync(job);
 
-        Assert.Equal(new VerificationCycleResult(StuckReset: 0, RequestsProcessed: 2, RequestsFailed: 0, ClaimsLost: 2), result);
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 2, RequestsFailed: 0, ClaimsLost: 2, FailuresUnrecorded: 0), result);
         Assert.Equal(VerificationSourceLookupKey.ForCountry("GB"), Assert.Single(mledoze.Lookups));
 
         await using var verify = CreateDbContext();
@@ -302,7 +347,7 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         {
             Assert.Equal(VerificationRequestStatus.Running, rows[id].Status);
             Assert.Equal(reclaimedAt, rows[id].StartedUtc);
-            Assert.Equal(0, rows[id].Attempts);
+            Assert.Equal(1, rows[id].Attempts); // counted by the other worker's reset; this cycle recorded none
         }
 
         Assert.DoesNotContain(await verify.Countries.AsNoTracking().ToListAsync(), c => c.IsVerified);
@@ -368,10 +413,10 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         return await AnotherWorker(db, at).ClaimBatchAsync(batchSize, at);
     }
 
-    private async Task<int> ResetOnAnotherWorkerAsync(DateTime at)
+    private async Task<VerificationStuckResetResult> ResetOnAnotherWorkerAsync(DateTime at)
     {
         await using var db = CreateDbContext();
-        return await AnotherWorker(db, at).ResetStuckRunningAsync(at - VerificationCycleRunner.StuckAfter);
+        return await AnotherWorker(db, at).ResetStuckRunningAsync(at - VerificationCycleRunner.StuckAfter, maxAttempts: 3, at);
     }
 
     private async Task AssertPendingAsync(long requestId, int attempts, DateTime nextAttemptUtc)
