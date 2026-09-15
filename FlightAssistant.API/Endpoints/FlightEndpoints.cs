@@ -181,11 +181,13 @@ namespace FlightAssistant.API.Endpoints
             .WithSummary("Manually sync flight status")
             .WithDescription(
                 "Triggers an on-demand status refresh for the specified flight. Whether the external flight data provider is queried depends on the flight's sync mode: " +
-                "a flight not yet inside the provider's live-status window makes no provider call. " +
+                "a flight not yet inside the provider's live-status window makes no provider call, and neither does a flight synced within the last 5 minutes. " +
                 "Returns { updated: true } if a new status was recorded, or { updated: false } if nothing new was found or no call was made. " +
+                "Rate-limited per traveler: too many sync requests return 429 with a Retry-After header. " +
                 "Route parameter: flightId — the numeric flight ID.")
             .Produces(200)
-            .ProducesProblem(404);
+            .ProducesProblem(404)
+            .RequireRateLimiting("flight-sync");
         }
 
     }

@@ -220,14 +220,19 @@ builder.Services.AddRateLimiter(rl =>
             QueueLimit = 0
         }));
 
+    // Authenticated policies partition by caller: oid, then sub, then IP (#318's reasoning — IP alone
+    // would throttle everyone behind one NAT together and let a caller who rotates addresses dodge it).
+    static string CallerPartitionKey(HttpContext ctx) =>
+        ctx.User.FindFirst("oid")?.Value
+        ?? ctx.User.FindFirst("sub")?.Value
+        ?? ctx.Connection.RemoteIpAddress?.ToString()
+        ?? "unknown";
+
     // Loyalty programs — authenticated, partition by user ID
     var loyaltyLimit = builder.Configuration.GetValue("RateLimiting:LoyaltyPrograms:PermitLimit", 60);
     var loyaltyWindow = builder.Configuration.GetValue("RateLimiting:LoyaltyPrograms:WindowSeconds", 60);
     rl.AddPolicy("loyalty-programs", ctx => RateLimitPartition.GetFixedWindowLimiter(
-        partitionKey: ctx.User.FindFirst("oid")?.Value
-                      ?? ctx.User.FindFirst("sub")?.Value
-                      ?? ctx.Connection.RemoteIpAddress?.ToString()
-                      ?? "unknown",
+        partitionKey: CallerPartitionKey(ctx),
         factory: _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = loyaltyLimit,
@@ -236,10 +241,8 @@ builder.Services.AddRateLimiter(rl =>
             QueueLimit = 0
         }));
 
-    // Admin reveal (#318) — authenticated, partition by actor, same oid/sub/IP fallback as
-    // loyalty-programs above (partitioning by IP alone would throttle every admin behind one
-    // office NAT together while letting a caller who simply rotates addresses dodge the limit
-    // entirely). Deliberately far tighter than loyalty-programs' 60/60s: that endpoint is an
+    // Admin reveal (#318) — authenticated, partition by actor.
+    // Deliberately far tighter than loyalty-programs' 60/60s: that endpoint is an
     // ordinary authenticated read; this one unmasks a value the data browser deliberately hides,
     // and exists to be reached for occasionally — a handful of support tickets in a row — not
     // browsed through. 10/60s comfortably covers that burst while making systematic enumeration
@@ -248,14 +251,26 @@ builder.Services.AddRateLimiter(rl =>
     var revealLimit = builder.Configuration.GetValue("RateLimiting:AdminReveal:PermitLimit", 10);
     var revealWindow = builder.Configuration.GetValue("RateLimiting:AdminReveal:WindowSeconds", 60);
     rl.AddPolicy("admin-reveal", ctx => RateLimitPartition.GetFixedWindowLimiter(
-        partitionKey: ctx.User.FindFirst("oid")?.Value
-                      ?? ctx.User.FindFirst("sub")?.Value
-                      ?? ctx.Connection.RemoteIpAddress?.ToString()
-                      ?? "unknown",
+        partitionKey: CallerPartitionKey(ctx),
         factory: _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = revealLimit,
             Window = TimeSpan.FromSeconds(revealWindow),
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 0
+        }));
+
+    // Traveler manual sync (#369). The per-flight cooldown (FlightSync:ManualSyncCooldown) already stops
+    // repeat syncs of one flight reaching AeroAPI; this bounds how many requests one traveler can send
+    // across all their flights. 6 per minute covers a few pulls to refresh.
+    var syncLimit = builder.Configuration.GetValue("RateLimiting:FlightSync:PermitLimit", 6);
+    var syncWindow = builder.Configuration.GetValue("RateLimiting:FlightSync:WindowSeconds", 60);
+    rl.AddPolicy("flight-sync", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        partitionKey: CallerPartitionKey(ctx),
+        factory: _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = syncLimit,
+            Window = TimeSpan.FromSeconds(syncWindow),
             QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
             QueueLimit = 0
         }));
