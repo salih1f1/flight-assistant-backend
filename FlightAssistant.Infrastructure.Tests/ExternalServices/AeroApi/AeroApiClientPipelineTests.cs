@@ -34,8 +34,9 @@ namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroApi;
 /// </summary>
 public class AeroApiClientPipelineTests
 {
-    /// <summary>Counts what actually made it past every handler to the wire.</summary>
-    private sealed class CountingTransport : HttpMessageHandler
+    /// <summary>Counts what actually made it past every handler to the wire. Answers with
+    /// <paramref name="status"/>, or throws a network error when <paramref name="networkError"/> is set.</summary>
+    private sealed class CountingTransport(HttpStatusCode status = HttpStatusCode.OK, bool networkError = false) : HttpMessageHandler
     {
         private int _calls;
         public int Calls => Volatile.Read(ref _calls);
@@ -44,7 +45,10 @@ public class AeroApiClientPipelineTests
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _calls);
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            if (networkError)
+                return Task.FromException<HttpResponseMessage>(new HttpRequestException("connection reset"));
+
+            return Task.FromResult(new HttpResponseMessage(status)
             {
                 Content = new StringContent("{}", Encoding.UTF8, "application/json")
             });
@@ -52,11 +56,14 @@ public class AeroApiClientPipelineTests
     }
 
     private static ServiceProvider BuildContainer(
-        FakeTimeProvider clock, CountingTransport transport, TimeSpan? minRequestInterval = null)
+        FakeTimeProvider clock, CountingTransport transport, TimeSpan? minRequestInterval = null,
+        int? maxRetryAttempts = null)
     {
         var settings = new Dictionary<string, string?> { ["AeroApi:ApiKey"] = "dummy-test-key" };
         if (minRequestInterval is { } interval)
             settings["AeroApi:MinRequestInterval"] = interval.ToString();
+        if (maxRetryAttempts is { } retries)
+            settings["AeroApi:MaxRetryAttempts"] = retries.ToString();
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
 
@@ -136,5 +143,73 @@ public class AeroApiClientPipelineTests
 
         Assert.Equal(HttpStatusCode.OK, (await second).StatusCode);
         Assert.Equal(2, transport.Calls);
+    }
+
+    // ── Opting a request out of retries (#375) ──
+
+    [Fact]
+    public async Task ATransientStatus_IsRetried_UpToMaxRetryAttempts()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var transport = new CountingTransport(HttpStatusCode.ServiceUnavailable);
+        using var provider = BuildContainer(clock, transport, maxRetryAttempts: 1);
+        var client = provider.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi");
+
+        var pending = client.GetAsync("flights/TK1028");
+        await AdvanceUntilSettled(clock, pending, TimeSpan.FromMinutes(5));
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await pending).StatusCode);
+        Assert.Equal(2, transport.Calls);
+    }
+
+    [Fact]
+    public async Task ATransientStatus_IsNotRetried_WhenTheRequestSkipsRetries()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var transport = new CountingTransport(HttpStatusCode.ServiceUnavailable);
+        using var provider = BuildContainer(clock, transport, maxRetryAttempts: 1);
+        var client = provider.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi");
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "flights/TK1028");
+        AeroApiRetry.Skip(request);
+        var pending = client.SendAsync(request);
+        await AdvanceUntilSettled(clock, pending, TimeSpan.FromMinutes(5));
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await pending).StatusCode);
+        Assert.Equal(1, transport.Calls);
+    }
+
+    [Fact]
+    public async Task ANetworkError_IsRetried_UpToMaxRetryAttempts()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var transport = new CountingTransport(networkError: true);
+        using var provider = BuildContainer(clock, transport, maxRetryAttempts: 1);
+        var client = provider.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi");
+
+        var pending = client.GetAsync("flights/TK1028");
+        await AdvanceUntilSettled(clock, pending, TimeSpan.FromMinutes(5));
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => pending);
+        Assert.Equal(2, transport.Calls);
+    }
+
+    [Fact]
+    public async Task ANetworkError_IsNotRetried_WhenTheRequestSkipsRetries()
+    {
+        // A network error has no response, so the predicate can't find the request through
+        // args.Outcome.Result — it must read it from the resilience context.
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var transport = new CountingTransport(networkError: true);
+        using var provider = BuildContainer(clock, transport, maxRetryAttempts: 1);
+        var client = provider.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi");
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "flights/TK1028");
+        AeroApiRetry.Skip(request);
+        var pending = client.SendAsync(request);
+        await AdvanceUntilSettled(clock, pending, TimeSpan.FromMinutes(5));
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => pending);
+        Assert.Equal(1, transport.Calls);
     }
 }
