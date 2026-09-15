@@ -43,8 +43,9 @@ namespace FlightAssistant.API.HostedServices
         [Range(typeof(TimeSpan), "00:00:00", "01:00:00")]
         public TimeSpan ManualSyncCooldown { get; set; } = TimeSpan.FromMinutes(5);
 
-        /// <summary>How many flights that haven't finished a traveler can track at once (#380). Each
-        /// becomes a Live and then Fast poll, so this bounds one account's AeroAPI spend.</summary>
+        /// <summary>How many tracked flights the status sync still polls a traveler can have at once
+        /// (#380). A flight holds its slot until the planner stops it, so this bounds how many flights
+        /// one account keeps polled.</summary>
         [Range(1, 1000)]
         public int MaxActiveTrackedFlightsPerTraveler { get; set; } = 20;
     }

@@ -1,4 +1,5 @@
 using FlightAssistant.API.Authentication;
+using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Queries.Flights;
 using FlightAssistant.Application.Validators;
@@ -115,7 +116,8 @@ namespace FlightAssistant.API.Endpoints
                 "there is no separate airline field. " +
                 "Body fields: FlightNumber (e.g. 'BA123' or '6E4120'), ServiceDate (YYYY-MM-DD), " +
                 "DepartureAirportIata, ArrivalAirportIata, ScheduledDepartureUtc, ScheduledArrivalUtc. " +
-                "A traveler can track up to 20 flights at a time by default; a flight stops counting once it lands, is cancelled, or its arrival time passes. " +
+                $"A traveler can track up to {new FlightSyncOptions().MaxActiveTrackedFlightsPerTraveler} flights at a time by default. " +
+                "A flight counts until its status sync stops: by default 30 minutes after it lands or is cancelled, or a day after its arrival time if no landing is reported. " +
                 "Tracking another returns 409 and adds nothing; tracking a flight the traveler already tracks still returns 201.")
             .Produces(201)
             .ProducesValidationProblem()

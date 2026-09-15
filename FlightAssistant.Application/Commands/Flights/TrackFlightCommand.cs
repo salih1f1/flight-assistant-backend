@@ -59,11 +59,14 @@ namespace FlightAssistant.Application.Commands.Flights
             var flightNumber = cmd.FlightNumber.Trim().ToUpperInvariant();
             var now = _timeProvider.GetUtcNow().UtcDateTime;
 
-            // A cap on flights the traveler tracks that haven't finished (#380), since each becomes a Live
-            // and then Fast poll. Checked before the flight row exists, so a refused request writes nothing.
-            // A flight the traveler already tracks still succeeds, so tracking stays idempotent.
+            // A cap on flights the traveler tracks that the status sync still polls (#380). A flight holds
+            // its slot until the planner would stop it, so this bounds how many flights one account keeps
+            // polled; it isn't a rate limit. Checked after the airline and airport lookups (an unknown one
+            // is still a 404) and before the flight row exists, so a refused request writes nothing. A
+            // flight the traveler already tracks still succeeds, so tracking stays idempotent.
             var cap = _syncOptions.MaxActiveTrackedFlightsPerTraveler;
-            if (await _flights.CountActiveTrackedFlightsAsync(cmd.TravelerId, now, ct) >= cap
+            if (await _flights.CountActiveTrackedFlightsAsync(
+                    cmd.TravelerId, now, _syncOptions.StopAfterArrival, _syncOptions.StopWithoutArrivalAfter, ct) >= cap
                 && !await AlreadyTracksAsync(cmd.TravelerId, airlineId, flightNumber, cmd.ServiceDate, ct))
             {
                 throw new DomainException(
