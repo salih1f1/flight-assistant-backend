@@ -87,8 +87,9 @@ namespace FlightAssistant.API.HostedServices
         }
 
         /// <summary>
-        /// Marks the whole cycle (not one request) as failed. Records only the exception's type and
-        /// message, never a stack trace, since the value is shown to an operator outside Production.
+        /// Marks the whole cycle (not one request) as failed before it finished its batch, keeping the
+        /// previous cycle's counts. Records only the exception's type and message, never a stack trace,
+        /// since the value is shown to an operator outside Production.
         /// </summary>
         public void MarkRunFailed(Exception ex, DateTime nextRunDueUtc)
         {
@@ -98,6 +99,27 @@ namespace FlightAssistant.API.HostedServices
                 {
                     LastRunCompletedUtc = UtcNow(),
                     LastOutcome = VerificationJobOutcome.Failed,
+                    NextRunDueUtc = nextRunDueUtc,
+                    LastError = $"{ex.GetType().Name}: {ex.Message}",
+                };
+            }
+        }
+
+        /// <summary>
+        /// As <see cref="MarkRunFailed(Exception, DateTime)"/>, for a cycle that failed only after
+        /// working through its batch (releasing source caches threw): the batch's counts replace the
+        /// previous cycle's, since they describe work this cycle really did.
+        /// </summary>
+        public void MarkRunFailed(Exception ex, DateTime nextRunDueUtc, int processed, int failed)
+        {
+            lock (_lock)
+            {
+                _snapshot = _snapshot with
+                {
+                    LastRunCompletedUtc = UtcNow(),
+                    LastOutcome = VerificationJobOutcome.Failed,
+                    RequestsProcessed = processed,
+                    RequestsFailed = failed,
                     NextRunDueUtc = nextRunDueUtc,
                     LastError = $"{ex.GetType().Name}: {ex.Message}",
                 };

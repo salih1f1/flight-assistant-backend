@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Administration;
 using FlightAssistant.Application.Interfaces.Administration;
@@ -23,6 +22,9 @@ public class ReferenceVerificationBackgroundServiceTests
 
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(T0));
 
+    private static VerificationCycleResult Processed(int processed, int failed = 0) =>
+        new(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: processed, RequestsFailed: failed, ClaimsLost: 0, FailuresUnrecorded: 0);
+
     [Fact]
     public async Task Disabled_NeverRunsACycle_AndTheHeartbeatStaysNeverRun()
     {
@@ -45,7 +47,8 @@ public class ReferenceVerificationBackgroundServiceTests
     public async Task ACycle_MarksTheHeartbeatSuccessWithItsCounts_AndRunsInAScopeCarryingTheSystemActor()
     {
         var script = new CycleScript();
-        script.Then(() => new VerificationCycleResult(StuckReset: 1, StuckAbandoned: 0, RequestsProcessed: 4, RequestsFailed: 1, ClaimsLost: 1, FailuresUnrecorded: 0));
+        script.Then(() => new VerificationCycleResult(
+            StuckReset: 1, StuckAbandoned: 0, RequestsProcessed: 4, RequestsFailed: 1, ClaimsLost: 1, FailuresUnrecorded: 0));
         await using var job = Job.Create(script, _time);
 
         await job.Service.StartAsync(CancellationToken.None);
@@ -64,7 +67,7 @@ public class ReferenceVerificationBackgroundServiceTests
     {
         var script = new CycleScript();
         script.Then(() => throw new InvalidOperationException("cycle boom"));
-        script.Then(() => new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 2, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0));
+        script.Then(() => Processed(2));
         await using var job = Job.Create(script, _time);
 
         await job.Service.StartAsync(CancellationToken.None);
@@ -75,18 +78,47 @@ public class ReferenceVerificationBackgroundServiceTests
         Assert.Equal(T0 + PollInterval, failed.NextRunDueUtc);
         Assert.Equal(1, script.Calls);
 
-        await AdvanceUntilAsync(() => job.Heartbeat.Current.LastOutcome == VerificationJobOutcome.Success);
+        await AdvanceUntilAsync(() => script.Calls >= 2);
+        await WaitUntilAsync(() => job.Heartbeat.Current.LastOutcome == VerificationJobOutcome.Success);
 
         var recovered = job.Heartbeat.Current;
         Assert.Equal(2, recovered.RequestsProcessed);
         Assert.Null(recovered.LastError);
-        Assert.True(script.Calls >= 2);
+
+        await job.Service.StopAsync(CancellationToken.None);
+    }
+
+    /// <summary>
+    /// A cycle that fails only after processing its batch (the runner's
+    /// <see cref="VerificationCycleFailedException"/>) is Failed with that batch's counts. The
+    /// previous cycle reported different counts, so keeping those would fail this test.
+    /// </summary>
+    [Fact]
+    public async Task ACycleFailingAfterItsBatch_MarksTheHeartbeatFailed_WithThatBatchsCounts()
+    {
+        var script = new CycleScript();
+        script.Then(() => Processed(9, failed: 4));
+        script.Then(() => throw new VerificationCycleFailedException(
+            Processed(5, failed: 2), new InvalidOperationException("release boom")));
+        await using var job = Job.Create(script, _time);
+
+        await job.Service.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => job.Heartbeat.Current.LastOutcome == VerificationJobOutcome.Success);
+        Assert.Equal(9, job.Heartbeat.Current.RequestsProcessed);
+
+        await AdvanceUntilAsync(() => script.Calls >= 2);
+        await WaitUntilAsync(() => job.Heartbeat.Current.LastOutcome == VerificationJobOutcome.Failed);
+
+        var snapshot = job.Heartbeat.Current;
+        Assert.Equal(5, snapshot.RequestsProcessed);
+        Assert.Equal(2, snapshot.RequestsFailed);
+        Assert.Equal("InvalidOperationException: release boom", snapshot.LastError);
 
         await job.Service.StopAsync(CancellationToken.None);
     }
 
     [Fact]
-    public async Task Stopping_EndsTheLoopCleanly_WithoutMarkingTheCycleFailed()
+    public async Task StoppingDuringThePollDelay_EndsTheLoopCleanly_WithoutMarkingTheCycleFailed()
     {
         var script = new CycleScript();
         await using var job = Job.Create(script, _time);
@@ -100,6 +132,37 @@ public class ReferenceVerificationBackgroundServiceTests
         Assert.Equal(VerificationJobOutcome.Success, job.Heartbeat.Current.LastOutcome);
     }
 
+    /// <summary>
+    /// Stopping while a cycle is still running: the runner observes the stopping token and throws. That
+    /// is a clean shutdown, not a failed cycle, so the heartbeat is left Running, never marked Failed.
+    /// A runner that finishes synchronously only reaches the poll delay's cancellation (the test above).
+    /// </summary>
+    [Fact]
+    public async Task StoppingDuringACycle_EndsTheLoopCleanly_WithoutMarkingTheCycleFailed()
+    {
+        var script = new CycleScript();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        script.ThenAsync(async ct =>
+        {
+            entered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return Processed(0);
+        });
+        await using var job = Job.Create(script, _time);
+
+        await job.Service.StartAsync(CancellationToken.None);
+        await entered.Task.WaitAsync(WaitLimit);
+        await job.Service.StopAsync(CancellationToken.None);
+
+        await job.Service.ExecuteTask!.WaitAsync(WaitLimit);
+        Assert.True(job.Service.ExecuteTask.IsCompletedSuccessfully);
+        var snapshot = job.Heartbeat.Current;
+        Assert.Equal(VerificationJobOutcome.Running, snapshot.LastOutcome);
+        Assert.Null(snapshot.LastError);
+        Assert.Null(snapshot.LastRunCompletedUtc);
+        Assert.Equal(1, script.Calls);
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow + WaitLimit;
@@ -110,42 +173,64 @@ public class ReferenceVerificationBackgroundServiceTests
         }
     }
 
-    /// <summary>Advances fake time by the poll interval until <paramref name="condition"/> holds. The
-    /// loop may not have started its delay yet when a test first advances, so this keeps advancing.</summary>
-    private async Task AdvanceUntilAsync(Func<bool> condition)
+    /// <summary>
+    /// Advances fake time by the poll interval until <paramref name="cycleStarted"/> holds, and not once
+    /// more. The loop may not have started its delay when a test first advances, so this keeps
+    /// advancing until the next cycle has <i>started</i> (the script's call count). Waiting for a
+    /// cycle's <i>outcome</i> instead would let a late advance start a further cycle that overwrites
+    /// the counts under test; the caller waits for the outcome with <see cref="WaitUntilAsync"/>, which
+    /// never advances.
+    /// </summary>
+    private async Task AdvanceUntilAsync(Func<bool> cycleStarted)
     {
         var deadline = DateTime.UtcNow + WaitLimit;
-        while (!condition())
+        while (!cycleStarted())
         {
-            if (DateTime.UtcNow > deadline) Assert.Fail("The background service did not run another cycle in time.");
+            if (DateTime.UtcNow > deadline) Assert.Fail("The background service did not start another cycle in time.");
             _time.Advance(PollInterval);
             await Task.Delay(10);
         }
     }
 
-    /// <summary>What each successive cycle returns or throws; later cycles return an empty result.</summary>
+    /// <summary>
+    /// What successive cycles return or throw. Once the script is used up, every later cycle repeats the
+    /// last one, so a stray extra cycle cannot change what the heartbeat reports; an empty script
+    /// returns an empty result.
+    /// </summary>
     private sealed class CycleScript
     {
-        private readonly ConcurrentQueue<Func<VerificationCycleResult>> _cycles = new();
+        private readonly object _lock = new();
+        private readonly Queue<Func<CancellationToken, Task<VerificationCycleResult>>> _cycles = new();
+        private Func<CancellationToken, Task<VerificationCycleResult>>? _last;
         private int _calls;
 
-        public int Calls => _calls;
-        public ConcurrentQueue<(string? ActorId, string? ActorName)> Actors { get; } = new();
+        public int Calls => Volatile.Read(ref _calls);
+        public List<(string? ActorId, string? ActorName)> Actors { get; } = new();
 
-        public void Then(Func<VerificationCycleResult> cycle) => _cycles.Enqueue(cycle);
+        public void Then(Func<VerificationCycleResult> cycle) => ThenAsync(_ => Task.FromResult(cycle()));
 
-        public VerificationCycleResult Next(IAdminContext adminContext)
+        public void ThenAsync(Func<CancellationToken, Task<VerificationCycleResult>> cycle)
         {
-            Actors.Enqueue((adminContext.ActorId, adminContext.ActorName));
+            lock (_lock) _cycles.Enqueue(cycle);
+        }
+
+        public Task<VerificationCycleResult> NextAsync(IAdminContext adminContext, CancellationToken ct)
+        {
+            Func<CancellationToken, Task<VerificationCycleResult>>? cycle;
+            lock (_lock)
+            {
+                Actors.Add((adminContext.ActorId, adminContext.ActorName));
+                if (_cycles.Count > 0) _last = _cycles.Dequeue();
+                cycle = _last;
+            }
             Interlocked.Increment(ref _calls);
-            return _cycles.TryDequeue(out var cycle) ? cycle() : new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 0, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0);
+            return cycle is null ? Task.FromResult(Processed(0)) : cycle(ct);
         }
     }
 
     private sealed class ScriptedRunner(CycleScript script, IAdminContext adminContext) : IVerificationCycleRunner
     {
-        public Task<VerificationCycleResult> RunCycleAsync(CancellationToken ct = default) =>
-            Task.FromResult(script.Next(adminContext));
+        public Task<VerificationCycleResult> RunCycleAsync(CancellationToken ct = default) => script.NextAsync(adminContext, ct);
     }
 
     private sealed class Job : IAsyncDisposable

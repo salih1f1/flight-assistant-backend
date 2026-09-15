@@ -9,10 +9,11 @@ using NSubstitute;
 namespace FlightAssistant.API.Tests.Endpoints.Admin;
 
 /// <summary>
-/// Direct unit tests of <see cref="AdminHealthReportBuilder.ParseVersion"/> — the only piece of the
-/// builder's logic that needs no host, no <c>DbContext</c> and no <c>HealthCheckService</c> to
-/// exercise. Everything else in <see cref="AdminHealthReportBuilder"/> is covered by
-/// <c>AdminHealthEndpointTests</c> through the full <c>WebApplicationFactory</c> pipeline.
+/// Direct unit tests of the builder's pieces that need no host, no <c>DbContext</c> and no
+/// <c>HealthCheckService</c>: <see cref="AdminHealthReportBuilder.ParseVersion"/>, and
+/// <see cref="AdminHealthReportBuilder.BuildVerificationAsync"/> with a substitute queue. The rest of
+/// <see cref="AdminHealthReportBuilder"/> is covered by <c>AdminHealthEndpointTests</c> through the
+/// full <c>WebApplicationFactory</c> pipeline.
 /// </summary>
 public class AdminHealthReportBuilderTests
 {

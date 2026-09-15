@@ -112,6 +112,24 @@ public class VerificationOptionsTests
         ValidateOnStart(provider);
     }
 
+    /// <summary>Default sources are checked by <c>VerificationRequest.TryJoinSources</c>, the rule a
+    /// request's own sources follow, so a name a request accepts is accepted here too
+    /// (<c>VerificationRequestTests</c> creates a request with the same name).</summary>
+    [Fact]
+    public void DefaultSources_AcceptTheSameNamesARequestAccepts()
+    {
+        using var provider = Build(new Dictionary<string, string?>
+        {
+            ["Verification:DefaultSources:Airline"] = "aero-api_2,ourairports"
+        });
+
+        ValidateOnStart(provider);
+
+        Assert.Equal(
+            new[] { "aero-api_2", "ourairports" },
+            provider.GetRequiredService<IOptions<VerificationOptions>>().Value.DefaultSources.For(VerificationEntityType.Airline));
+    }
+
     [Fact]
     public void AddVerificationJob_RegistersTheBackgroundService_AndOneHeartbeatForTheProcess()
     {

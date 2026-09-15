@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using FlightAssistant.Domain.Verification.Enums;
 
@@ -292,28 +293,64 @@ namespace FlightAssistant.Domain.Verification.Entities
             }
         }
 
-        private static string JoinSources(IEnumerable<string> sources)
+        /// <summary>
+        /// The one rule for a list of source names, used by <see cref="Create"/> and by the verification
+        /// job's configured default sources, so a configured default can always be queued: at least one
+        /// name; each not blank and free of whitespace, <see cref="SourceSeparator"/> and <c>+</c> (the
+        /// separators of <see cref="Sources"/> and of <c>IVerifiable.VerificationSource</c>); duplicates
+        /// dropped, first occurrence kept; at most <see cref="MaxSourcesLength"/> characters joined.
+        /// </summary>
+        /// <param name="joined">The <see cref="Sources"/> value, when the list is valid.</param>
+        /// <param name="error">Why the list is invalid, otherwise.</param>
+        public static bool TryJoinSources(
+            IEnumerable<string?> sources,
+            [NotNullWhen(true)] out string? joined,
+            [NotNullWhen(false)] out string? error)
         {
             ArgumentNullException.ThrowIfNull(sources);
+            joined = null;
 
             var names = new List<string>();
             foreach (var name in sources)
             {
                 if (string.IsNullOrWhiteSpace(name))
-                    throw new ArgumentException("A source name cannot be blank.", nameof(sources));
+                {
+                    error = "A source name cannot be blank.";
+                    return false;
+                }
                 if (name.Any(c => c == SourceSeparator || c == '+' || char.IsWhiteSpace(c)))
-                    throw new ArgumentException(
-                        $"Source name '{name}' cannot contain whitespace, '{SourceSeparator}' or '+'.", nameof(sources));
+                {
+                    error = $"Source name '{name}' cannot contain whitespace, '{SourceSeparator}' or '+'.";
+                    return false;
+                }
                 if (!names.Contains(name, StringComparer.Ordinal))
                     names.Add(name);
             }
 
             if (names.Count == 0)
-                throw new ArgumentException("At least one source is required.", nameof(sources));
+            {
+                error = "At least one source is required.";
+                return false;
+            }
 
-            var joined = string.Join(SourceSeparator, names);
-            EnsureMaxLength(joined, MaxSourcesLength, nameof(sources));
-            return joined;
+            var candidate = string.Join(SourceSeparator, names);
+            if (candidate.Length > MaxSourcesLength)
+            {
+                error = $"The sources are {candidate.Length} characters joined; the limit is {MaxSourcesLength}.";
+                return false;
+            }
+
+            joined = candidate;
+            error = null;
+            return true;
+        }
+
+        private static string JoinSources(IEnumerable<string> sources)
+        {
+            ArgumentNullException.ThrowIfNull(sources);
+            return TryJoinSources(sources, out var joined, out var error)
+                ? joined
+                : throw new ArgumentException(error, nameof(sources));
         }
 
         private static string Truncate(string error)

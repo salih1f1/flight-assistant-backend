@@ -50,6 +50,16 @@ namespace FlightAssistant.Domain.Tests.Verification
             Assert.Null(request.Error);
         }
 
+        /// <summary>Goes through <see cref="VerificationRequest.TryJoinSources"/>, the rule the job's
+        /// configured default sources also use (<c>VerificationOptionsTests</c> accepts the same name).</summary>
+        [Fact]
+        public void Create_SourceNamesWithDigitsHyphensAndUnderscores_AreAccepted()
+        {
+            var request = NewRequest("aero-api_2", "ourairports");
+
+            Assert.Equal("aero-api_2,ourairports", request.Sources);
+        }
+
         [Fact]
         public void Create_RepeatedSourceName_IsStoredOnce()
         {

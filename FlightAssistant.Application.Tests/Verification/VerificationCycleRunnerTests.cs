@@ -187,4 +187,27 @@ public class VerificationCycleRunnerTests
         await _requests.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
         Assert.Empty(registry.ReleaseCalls);
     }
+
+    /// <summary>Releasing caches is the last step. If it throws, the batch's outcomes are already saved,
+    /// so the cycle fails carrying that batch's counts (for the heartbeat) and the original cause.</summary>
+    [Fact]
+    public async Task RunCycleAsync_ReleaseThrowsAfterTheBatch_FailsTheCycle_CarryingTheBatchsCountsAndCause()
+    {
+        var claimed = ClaimAirports((1, "11"));
+        var airport = Airport("AAA");
+        _airports.GetByIdAsync(11, Arg.Any<CancellationToken>()).Returns(airport);
+        var cause = new InvalidOperationException("database gone");
+        _requests.AnyOpenRequestUsesSourceAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromException<bool>(cause));
+
+        var ex = await Assert.ThrowsAsync<VerificationCycleFailedException>(
+            () => RunCycleAsync(new FakeVerificationSourceRegistry(MatchingOurAirports())));
+
+        Assert.Equal(
+            new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 1, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0),
+            ex.CompletedWork);
+        Assert.Same(cause, ex.InnerException);
+        Assert.Equal(VerificationRequestStatus.Verified, claimed[0].Status);
+        Assert.True(airport.IsVerified);
+    }
 }

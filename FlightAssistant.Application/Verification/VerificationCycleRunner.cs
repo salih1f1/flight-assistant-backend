@@ -10,6 +10,8 @@ namespace FlightAssistant.Application.Verification
     {
         /// <summary>Resets stuck requests, claims a batch, processes each claimed request and
         /// releases source caches no open request uses.</summary>
+        /// <exception cref="VerificationCycleFailedException">The batch was processed, then releasing
+        /// source caches failed; carries the batch's counts.</exception>
         Task<VerificationCycleResult> RunCycleAsync(CancellationToken ct = default);
     }
 
@@ -119,14 +121,27 @@ namespace FlightAssistant.Application.Verification
                 }
             }
 
-            await ReleaseUnusedSourcesAsync(ct);
-
+            var result = new VerificationCycleResult(reset.ReturnedToPending, reset.Abandoned, claims.Count, failed, lost, unrecorded);
             if (claims.Count > 0)
                 _logger.LogInformation(
                     "Verification cycle processed {Processed} request(s): {Failed} failed, {Lost} claim(s) lost.",
                     claims.Count, failed, lost);
 
-            return new VerificationCycleResult(reset.ReturnedToPending, reset.Abandoned, claims.Count, failed, lost, unrecorded);
+            try
+            {
+                await ReleaseUnusedSourcesAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // The batch is done and its outcomes are saved; the cycle still failed, but with real counts.
+                throw new VerificationCycleFailedException(result, ex);
+            }
+
+            return result;
         }
 
         private async Task<IReadOnlyList<VerificationClaim>> ClaimAsync(DateTime now, string cycleId, CancellationToken ct)

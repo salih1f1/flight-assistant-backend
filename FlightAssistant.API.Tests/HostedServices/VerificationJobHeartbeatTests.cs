@@ -79,4 +79,28 @@ public class VerificationJobHeartbeatTests
         Assert.Equal(T0.AddSeconds(30), snapshot.NextRunDueUtc);
         Assert.Equal(T0, snapshot.LastRunCompletedUtc);
     }
+
+    [Fact]
+    public void MarkRunFailed_BeforeTheBatchFinished_KeepsThePreviousCyclesCounts()
+    {
+        var heartbeat = new VerificationJobHeartbeat(_time);
+        heartbeat.MarkRunSucceeded(processed: 9, failed: 4, nextRunDueUtc: T0.AddSeconds(30));
+
+        heartbeat.MarkRunFailed(new TimeoutException("claim timed out"), T0.AddSeconds(60));
+
+        Assert.Equal((9, 4), (heartbeat.Current.RequestsProcessed, heartbeat.Current.RequestsFailed));
+    }
+
+    [Fact]
+    public void MarkRunFailed_AfterTheBatchWasProcessed_ReplacesTheCountsWithThatBatchs()
+    {
+        var heartbeat = new VerificationJobHeartbeat(_time);
+        heartbeat.MarkRunSucceeded(processed: 9, failed: 4, nextRunDueUtc: T0.AddSeconds(30));
+
+        heartbeat.MarkRunFailed(new InvalidOperationException("release boom"), T0.AddSeconds(60), processed: 5, failed: 2);
+
+        Assert.Equal(
+            new VerificationJobSnapshot(null, T0, VerificationJobOutcome.Failed, 5, 2, T0.AddSeconds(60), "InvalidOperationException: release boom"),
+            heartbeat.Current);
+    }
 }

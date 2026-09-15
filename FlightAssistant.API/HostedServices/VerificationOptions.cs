@@ -50,8 +50,8 @@ namespace FlightAssistant.API.HostedServices
     /// <summary>
     /// The default sources per entity type (spec §4.6): one source name, or several joined with a
     /// comma in the order they are asked, e.g. <c>ourairports,aeroapi</c>. A name need not be
-    /// registered yet (<c>aeroapi</c> arrives in step 9); it must be one <c>VerificationRequest</c>
-    /// accepts.
+    /// registered yet (<c>aeroapi</c> arrives in step 9); the list must pass
+    /// <see cref="VerificationRequest.TryJoinSources"/>, the same rule a request's sources do.
     /// </summary>
     public sealed class VerificationDefaultSources
     {
@@ -63,19 +63,15 @@ namespace FlightAssistant.API.HostedServices
         public IReadOnlyList<string> For(VerificationEntityType entityType) =>
             Raw(entityType).Split(VerificationRequest.SourceSeparator);
 
+        // The rule VerificationRequest.Create applies to a request's sources, so a default always queues.
         internal IEnumerable<ValidationResult> Validate(string prefix)
         {
             foreach (var entityType in Enum.GetValues<VerificationEntityType>())
             {
                 var raw = Raw(entityType);
-                var names = raw.Split(VerificationRequest.SourceSeparator);
-                var valid = raw.Length <= VerificationRequest.MaxSourcesLength
-                    && names.All(name => name.Length > 0 && !name.Any(c => c == '+' || char.IsWhiteSpace(c)));
-
-                if (!valid)
+                if (!VerificationRequest.TryJoinSources(raw.Split(VerificationRequest.SourceSeparator), out _, out var error))
                     yield return new ValidationResult(
-                        $"{prefix}:{entityType} must be one or more source names joined with '{VerificationRequest.SourceSeparator}', " +
-                        $"each without whitespace or '+', at most {VerificationRequest.MaxSourcesLength} characters in all; got '{raw}'.",
+                        $"{prefix}:{entityType} is not a valid source list ('{raw}'): {error}",
                         new[] { $"{prefix}.{entityType}" });
             }
         }

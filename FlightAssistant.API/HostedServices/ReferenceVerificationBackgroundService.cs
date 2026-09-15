@@ -58,6 +58,15 @@ namespace FlightAssistant.API.HostedServices
                     // Clean shutdown, not a failed cycle.
                     break;
                 }
+                catch (VerificationCycleFailedException ex)
+                {
+                    // The batch was processed before the failure: report its counts, and its cause.
+                    var cause = ex.InnerException ?? ex;
+                    _log.LogError(cause,
+                        "Reference verification cycle failed after processing {Processed} request(s). Retrying in {PollInterval}.",
+                        ex.CompletedWork.RequestsProcessed, _options.PollInterval);
+                    _heartbeat.MarkRunFailed(cause, NextRunDueUtc(), ex.CompletedWork.RequestsProcessed, ex.CompletedWork.RequestsFailed);
+                }
                 catch (Exception ex)
                 {
                     _log.LogError(ex, "Reference verification cycle failed. Retrying in {PollInterval}.", _options.PollInterval);

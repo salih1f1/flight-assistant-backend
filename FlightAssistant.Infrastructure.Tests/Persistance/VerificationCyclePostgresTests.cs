@@ -135,6 +135,34 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         Assert.Equal(1, mledoze.ReleaseCount);
     }
 
+    /// <summary>
+    /// The processor recognises its claim by the <c>StartedUtc</c> read back from PostgreSQL, whose
+    /// <c>timestamptz</c> keeps microseconds. Every other test here uses whole seconds; a real clock
+    /// reading has 100-ns ticks, and a claim built from that in-memory reading would never equal the
+    /// stored value, so every production request would be skipped as a lost claim.
+    /// </summary>
+    [Fact]
+    public async Task RunCycle_AtAClockReadingFinerThanAMicrosecond_ProcessesItsClaim_NotClaimLost()
+    {
+        var now = T0.AddTicks(1_234_567); // .1234567 s: the last tick digit is below timestamptz's resolution
+        _time.SetUtcNow(new DateTimeOffset(now));
+        await SeedAsync(UnitedKingdom());
+        await EnqueueAsync(VerificationEntityType.Country, "GB", "mledoze");
+        var mledoze = new FakeSource("mledoze", VerificationEntityType.Country, _ => Found(VerificationCheckedColumns.Project(UnitedKingdom())));
+        await using var job = BuildJob(new IVerificationSource[] { mledoze });
+
+        var result = await RunCycleAsync(job);
+
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 1, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0), result);
+
+        await using var verify = CreateDbContext();
+        var row = await verify.VerificationRequests.AsNoTracking().SingleAsync();
+        Assert.Equal(VerificationRequestStatus.Verified, row.Status);
+        // The premise: the stored claim time is not the in-memory clock reading.
+        Assert.NotEqual((DateTime?)now, row.StartedUtc);
+        Assert.True((await verify.Countries.AsNoTracking().SingleAsync()).IsVerified);
+    }
+
     // ── Stuck requests ──────────────────────────────────────────────────────
 
     [Fact]
