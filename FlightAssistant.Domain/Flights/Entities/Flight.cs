@@ -28,6 +28,12 @@ namespace FlightAssistant.Domain.Flights.Entities
 
         public const string CancelledStatusCode = "CAN";
 
+        /// <summary>
+        /// How late an estimated departure must be before a flight counts as delayed, and how much later a
+        /// delay must grow before a traveler hears about it again (#352).
+        /// </summary>
+        public static readonly TimeSpan DelayThreshold = TimeSpan.FromMinutes(15);
+
         // --- Status sync schedule (#356). Written only by the sync, tracking and untracking.
         public DateTime? LastSyncedUtc { get; private set; }
         public DateTime? NextSyncDueUtc { get; private set; }

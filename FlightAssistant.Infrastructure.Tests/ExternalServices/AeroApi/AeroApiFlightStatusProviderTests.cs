@@ -389,13 +389,46 @@ public class AeroApiFlightStatusProviderTests
     [InlineData("En Route", "DEP")]
     [InlineData("En Route / On Time", "DEP")]
     [InlineData("Departed", "DEP")]
+    [InlineData("Taxiing / Left Gate", "DEP")]
     [InlineData("Landed", "ARR")]
-    [InlineData("Delayed", "DLY")]
     [InlineData("Diverted", "DIV")]
     [InlineData("Cancelled", "CAN")]
     public async Task GetStatusAsync_MapsKnownStatusProse_ToTheDocumentedCode(string statusText, string expectedCode)
     {
         var handler = new StubHttpMessageHandler(SingleFlightBody(status: statusText));
+
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
+
+        Assert.Equal(expectedCode, result!.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("Scheduled / Delayed", "2026-08-30T07:15:00Z", "DLY")] // 40 min late
+    [InlineData("Scheduled", "2026-08-30T06:55:00Z", "DLY")]           // 20 min late: the times say delayed
+    [InlineData("Delayed", "2026-08-30T06:50:00Z", "DLY")]             // exactly the 15 min threshold
+    [InlineData("Scheduled", "2026-08-30T06:49:00Z", "SCH")]           // 14 min: under the threshold
+    [InlineData("Scheduled / Delayed", "2026-08-30T06:45:00Z", "SCH")] // 10 min: the times win over the text
+    [InlineData("Delayed", "2026-08-30T06:35:00Z", "SCH")]             // on time
+    [InlineData("En Route / Delayed", "2026-08-30T07:15:00Z", "DEP")]  // departed: the times don't apply
+    [InlineData("Taxiing / Left Gate", "2026-08-30T07:15:00Z", "DEP")]
+    public async Task GetStatusAsync_BeforeDeparture_ADelayComesFromTheTimes(
+        string statusText, string estimatedOut, string expectedCode)
+    {
+        // Scheduled out 06:35 (#352).
+        var handler = new StubHttpMessageHandler(SingleFlightBody(status: statusText, estimatedOut: estimatedOut));
+
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
+
+        Assert.Equal(expectedCode, result!.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("Scheduled / Delayed", "DLY")]
+    [InlineData("Delayed", "DLY")]
+    [InlineData("Scheduled", "SCH")]
+    public async Task GetStatusAsync_WithoutAnEstimatedDeparture_TheTextDecides(string statusText, string expectedCode)
+    {
+        var handler = new StubHttpMessageHandler(SingleFlightBody(status: statusText, estimatedOut: null));
 
         var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
 
@@ -493,7 +526,8 @@ public class AeroApiFlightStatusProviderTests
         Assert.False(handler.LastRequestSkippedRetries);
     }
 
-    private static string SingleFlightBody(string? status, bool cancelled = false, bool diverted = false)
+    private static string SingleFlightBody(string? status, bool cancelled = false, bool diverted = false,
+        string? estimatedOut = "2026-08-30T06:35:00Z")
     {
         var statusJson = status is null ? "null" : $"\"{status}\"";
         return $$"""
@@ -505,7 +539,7 @@ public class AeroApiFlightStatusProviderTests
               "cancelled": {{(cancelled ? "true" : "false")}},
               "diverted": {{(diverted ? "true" : "false")}},
               "scheduled_out": "2026-08-30T06:35:00Z",
-              "estimated_out": "2026-08-30T06:35:00Z",
+              "estimated_out": {{(estimatedOut is null ? "null" : $"\"{estimatedOut}\"")}},
               "actual_out": null,
               "scheduled_in": "2026-08-30T08:05:00Z",
               "estimated_in": "2026-08-30T08:05:00Z",
