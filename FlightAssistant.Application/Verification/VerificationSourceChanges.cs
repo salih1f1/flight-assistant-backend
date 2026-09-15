@@ -90,10 +90,54 @@ namespace FlightAssistant.Application.Verification
         /// Null means the column is cleared.</summary>
         public bool TryGetValue(string column, out object? value) => _values.TryGetValue(column, out value);
 
+        /// <summary>
+        /// Runs every check <see cref="ApplyTo(Airport)"/> runs, without writing, so a caller can refuse
+        /// on these before its own database lookups (a malformed code is then named as invalid, never
+        /// looked up).
+        /// </summary>
+        /// <exception cref="DomainException">As <see cref="ApplyTo(Airport)"/>.</exception>
+        public void EnsureCanApplyTo(Airport airport) => _ = Merge(airport);
+
         /// <summary>Writes these changes to <paramref name="airport"/>; nothing is written if any is refused.</summary>
         /// <exception cref="DomainException">409: <c>Iata</c>, <c>Name</c>, <c>City</c> or <c>CountryCode</c>
         /// would become empty, or the merged row breaks <see cref="UpdateAirportCommandValidator"/>.</exception>
         public void ApplyTo(Airport airport)
+        {
+            var merged = Merge(airport);
+            airport.Update(merged.Iata, merged.Icao, merged.Name, merged.City, merged.CountryCode,
+                merged.Latitude, merged.Longitude, merged.ElevationFt);
+        }
+
+        /// <summary>Runs every check <see cref="ApplyTo(Airline)"/> runs, without writing.</summary>
+        /// <exception cref="DomainException">As <see cref="ApplyTo(Airline)"/>.</exception>
+        public void EnsureCanApplyTo(Airline airline) => _ = Merge(airline);
+
+        /// <summary>Writes these changes to <paramref name="airline"/>, keeping its <c>AllianceCode</c>
+        /// (not a checked column); nothing is written if any is refused.</summary>
+        /// <exception cref="DomainException">409: <c>Name</c> or <c>CountryCode</c> would become empty,
+        /// or the merged row breaks <see cref="UpdateAirlineCommandValidator"/>.</exception>
+        public void ApplyTo(Airline airline)
+        {
+            var merged = Merge(airline);
+            airline.Update(merged.Iata, merged.Icao, merged.Name, merged.CountryCode, merged.AllianceCode);
+        }
+
+        /// <summary>Runs every check <see cref="ApplyTo(Country)"/> runs, without writing.</summary>
+        /// <exception cref="DomainException">As <see cref="ApplyTo(Country)"/>.</exception>
+        public void EnsureCanApplyTo(Country country) => _ = Merge(country);
+
+        /// <summary>Writes these changes to <paramref name="country"/>, keeping <c>IsEU</c>,
+        /// <c>IsSchengen</c> and <c>IsEEA</c> (not checked columns); nothing is written if any is refused.</summary>
+        /// <exception cref="DomainException">409: <c>Name</c> would become empty, or the change includes
+        /// <c>Code</c>, the country's key, which <c>Update</c> cannot change.</exception>
+        public void ApplyTo(Country country)
+        {
+            var merged = Merge(country);
+            country.Update(merged.Name, merged.Alpha3, merged.NumericCode, merged.Region, merged.Subregion,
+                country.IsEU, country.IsSchengen, country.IsEEA);
+        }
+
+        private UpdateAirportCommand Merge(Airport airport)
         {
             ArgumentNullException.ThrowIfNull(airport);
             EnsureEntityType(VerificationEntityType.Airport);
@@ -110,16 +154,10 @@ namespace FlightAssistant.Application.Verification
                 ElevationFt: OptionalNumber(nameof(Airport.ElevationFt), airport.ElevationFt));
             EnsureEveryColumnApplied();
             EnsureEditRulesPass(AirportEditRules, merged);
-
-            airport.Update(merged.Iata, merged.Icao, merged.Name, merged.City, merged.CountryCode,
-                merged.Latitude, merged.Longitude, merged.ElevationFt);
+            return merged;
         }
 
-        /// <summary>Writes these changes to <paramref name="airline"/>, keeping its <c>AllianceCode</c>
-        /// (not a checked column); nothing is written if any is refused.</summary>
-        /// <exception cref="DomainException">409: <c>Name</c> or <c>CountryCode</c> would become empty,
-        /// or the merged row breaks <see cref="UpdateAirlineCommandValidator"/>.</exception>
-        public void ApplyTo(Airline airline)
+        private UpdateAirlineCommand Merge(Airline airline)
         {
             ArgumentNullException.ThrowIfNull(airline);
             EnsureEntityType(VerificationEntityType.Airline);
@@ -133,15 +171,10 @@ namespace FlightAssistant.Application.Verification
                 AllianceCode: airline.AllianceCode);
             EnsureEveryColumnApplied();
             EnsureEditRulesPass(AirlineEditRules, merged);
-
-            airline.Update(merged.Iata, merged.Icao, merged.Name, merged.CountryCode, merged.AllianceCode);
+            return merged;
         }
 
-        /// <summary>Writes these changes to <paramref name="country"/>, keeping <c>IsEU</c>,
-        /// <c>IsSchengen</c> and <c>IsEEA</c> (not checked columns); nothing is written if any is refused.</summary>
-        /// <exception cref="DomainException">409: <c>Name</c> would become empty, or the change includes
-        /// <c>Code</c>, the country's key, which <c>Update</c> cannot change.</exception>
-        public void ApplyTo(Country country)
+        private MergedCountry Merge(Country country)
         {
             ArgumentNullException.ThrowIfNull(country);
             EnsureEntityType(VerificationEntityType.Country);
@@ -155,9 +188,10 @@ namespace FlightAssistant.Application.Verification
             var region = OptionalString(nameof(Country.Region), country.Region);
             var subregion = OptionalString(nameof(Country.Subregion), country.Subregion);
             EnsureEveryColumnApplied();
-
-            country.Update(name, alpha3, numericCode, region, subregion, country.IsEU, country.IsSchengen, country.IsEEA);
+            return new MergedCountry(name, alpha3, numericCode, region, subregion);
         }
+
+        private sealed record MergedCountry(string Name, string? Alpha3, int? NumericCode, string? Region, string? Subregion);
 
         private static object? ParseValue(VerificationColumnDefinition column, string? raw)
         {

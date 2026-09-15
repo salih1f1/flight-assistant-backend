@@ -36,17 +36,23 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
     }
 
     /// <summary>
+    /// In the order they are checked:
     /// <list type="number">
     /// <item>404 when the request doesn't exist; 409 unless it is <c>Mismatch</c>; 400 when the source
     /// isn't one of its sources or has no stored values.</item>
+    /// <item>409 when the entity has an open (<c>Pending</c>/<c>Running</c>) request. Reference rows carry
+    /// no concurrency token, so that newer check could otherwise save its own outcome (a
+    /// <c>MarkVerificationFailed</c> from values read before this accept) over the accepted row.</item>
     /// <item>The source's differences only (user decision): columns it matched keep our own formatting,
     /// and columns only another source disagreed on are neither checked nor written.</item>
     /// <item>404 when the entity no longer exists.</item>
     /// <item>409 when a differing column's current value no longer matches the <c>ours</c> the check
     /// stored, by <see cref="VerificationComparer.ColumnsMatch"/>: the row changed since the check.</item>
-    /// <item>409 when a new value for a unique column already belongs to another row.</item>
     /// <item>409 when a value can't be parsed, would empty a required column, or breaks the admin edit's
     /// rules (<see cref="VerificationSourceChanges"/>).</item>
+    /// <item>409 when a new value for a unique column already belongs to another row.</item>
+    /// <item>409 when a new airport or airline <c>CountryCode</c> is not in <c>countries</c>, which both
+    /// reference by foreign key.</item>
     /// <item>The entity's <c>Update</c>, then <c>Verify(actor, source)</c>, then one save.</item>
     /// </list>
     /// The request itself is not changed: it stays <c>Mismatch</c> as history. Accepting the same source
@@ -95,6 +101,12 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
                 throw new DomainException(
                     $"Verification request {command.RequestId} has no stored values from '{command.Source}'.", 400);
 
+            // Check-then-save like the unique lookups below: a check queued after this lookup can still
+            // finish after the accept. This refuses the case an admin can see, a check already open.
+            if (await _requests.HasOpenRequestAsync(request.EntityType, request.EntityKey, ct))
+                throw new DomainException(
+                    $"{request.EntityType} {request.EntityKey} has an open verification request; accept once it has finished.", 409);
+
             // Empty when this source matched and only another source disagreed: accepting then only verifies.
             var differences = VerificationJson.DeserializeDifferences(request.DifferencesJson!)
                 .Where(d => string.Equals(d.SourceName, command.Source, StringComparison.Ordinal))
@@ -123,9 +135,11 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
                 ?? throw NoLongerExists(accepted.Request);
 
             var changes = ChangesSinceCheck(accepted, VerificationCheckedColumns.Project(airport));
+            changes.EnsureCanApplyTo(airport);
             await EnsureUniqueValuesAreFreeAsync<Airport>(changes, airport, a => a.Id,
                 (nameof(Airport.Iata), value => _airports.FindByIataAsync((string)value, ct)),
                 (nameof(Airport.Icao), value => _airports.FindByIcaoAsync((string)value, ct)));
+            await EnsureCountryExistsAsync(changes, VerificationEntityType.Airport, nameof(Airport.CountryCode), ct);
             changes.ApplyTo(airport);
             airport.Verify(accepted.Command.VerifiedBy, accepted.Command.Source, UtcNow());
 
@@ -138,9 +152,11 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
                 ?? throw NoLongerExists(accepted.Request);
 
             var changes = ChangesSinceCheck(accepted, VerificationCheckedColumns.Project(airline));
+            changes.EnsureCanApplyTo(airline);
             await EnsureUniqueValuesAreFreeAsync<Airline>(changes, airline, a => a.Id,
                 (nameof(Airline.Iata), value => _airlines.FindByIataAsync((string)value, ct)),
                 (nameof(Airline.Icao), value => _airlines.FindByIcaoAsync((string)value, ct)));
+            await EnsureCountryExistsAsync(changes, VerificationEntityType.Airline, nameof(Airline.CountryCode), ct);
             changes.ApplyTo(airline);
             airline.Verify(accepted.Command.VerifiedBy, accepted.Command.Source, UtcNow());
 
@@ -153,6 +169,7 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
                 ?? throw NoLongerExists(accepted.Request);
 
             var changes = ChangesSinceCheck(accepted, VerificationCheckedColumns.Project(country));
+            changes.EnsureCanApplyTo(country);
             await EnsureUniqueValuesAreFreeAsync<Country>(changes, country, c => c.Code,
                 (nameof(Country.Alpha3), value => _countries.FindByAlpha3Async((string)value, ct)),
                 (nameof(Country.NumericCode), value => _countries.FindByNumericCodeAsync((int)value, ct)));
@@ -229,6 +246,24 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
                     throw new DomainException(
                         $"{typeof(TEntity).Name} {column} {value} already belongs to {typeof(TEntity).Name} {keyOf(owner)}.", 409);
             }
+        }
+
+        /// <summary>
+        /// Refuses, with a 409 naming the column and code, a new <c>CountryCode</c> that is not in
+        /// <c>countries</c>: <c>airports</c> and <c>airlines</c> both reference it by foreign key, so the
+        /// save would otherwise fail on that constraint as a 500. A source can know a code we don't (e.g.
+        /// <c>XK</c>); the edit rules check only its format. Only a code this accept writes is looked up.
+        /// Check-then-save, with the same accepted race as <see cref="EnsureUniqueValuesAreFreeAsync"/>.
+        /// </summary>
+        private async Task EnsureCountryExistsAsync(
+            VerificationSourceChanges changes, VerificationEntityType entityType, string column, CancellationToken ct)
+        {
+            if (!changes.TryGetValue(column, out var value) || value is not string code)
+                return;
+
+            if (await _countries.FindByCodeAsync(code, ct) is null)
+                throw new DomainException(
+                    $"{entityType} {column} {code} is not a country we have; add the country first.", 409);
         }
 
         private static DomainException NoLongerExists(VerificationRequest request) =>

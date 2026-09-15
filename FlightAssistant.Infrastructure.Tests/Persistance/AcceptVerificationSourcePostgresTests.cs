@@ -112,6 +112,37 @@ public class AcceptVerificationSourcePostgresTests : PostgresTestBase
         Assert.Empty(await verify.AdminAuditLogs.AsNoTracking().ToListAsync());
     }
 
+    /// <summary>
+    /// A source's country code our <c>countries</c> table doesn't have (<c>XK</c>) is refused by the handler's
+    /// own lookup, as a 409, before anything is written. The edit rules only check the code's format, so without
+    /// that lookup the save reaches <c>airports</c>' foreign key to <c>countries</c> and fails as a
+    /// <see cref="DbUpdateException"/>: a 500.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ACountryCodeThatIsNotInCountries_Is409_AndWritesNothing()
+    {
+        await SeedAsync(Country.Create("GB", "United Kingdom"));
+        var heathrow = Heathrow();
+        await SeedAsync(heathrow);
+        var requestId = await SeedMismatchAsync(heathrow, nameof(Airport.CountryCode), "GB", "XK");
+
+        DomainException refused;
+        await using (var db = CreateAuditedDbContext())
+            refused = await Assert.ThrowsAsync<DomainException>(() =>
+                Handler(db).Handle(new AcceptVerificationSourceCommand(requestId, Source, AdminId), CancellationToken.None));
+
+        Assert.Equal(409, refused.StatusCode);
+        Assert.Equal("Airport CountryCode XK is not a country we have; add the country first.", refused.Message);
+
+        await using var verify = CreateDbContext();
+        var unchanged = await verify.Airports.AsNoTracking().SingleAsync(a => a.Id == heathrow.Id);
+        Assert.Equal("GB", unchanged.CountryCode);
+        Assert.False(unchanged.IsVerified);
+        Assert.Null(unchanged.VerifiedBy);
+        Assert.Null(unchanged.VerificationSource);
+        Assert.Empty(await verify.AdminAuditLogs.AsNoTracking().ToListAsync());
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private AcceptVerificationSourceCommandHandler Handler(FlightAssistantDbContext db) =>

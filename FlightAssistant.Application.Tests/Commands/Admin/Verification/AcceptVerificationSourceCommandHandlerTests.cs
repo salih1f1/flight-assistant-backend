@@ -349,6 +349,7 @@ public class AcceptVerificationSourceCommandHandlerTests
             (nameof(Airport.Longitude), " -0.190278 "),
             (nameof(Airport.ElevationFt), "202"));
         _airports.FindByIataAsync("LGW", Arg.Any<CancellationToken>()).ReturnsNull();
+        _countries.FindByCodeAsync("JE", Arg.Any<CancellationToken>()).Returns(Country.Create("JE", "Jersey"));
         var airport = LoadedAirport();
 
         await Accept();
@@ -362,6 +363,7 @@ public class AcceptVerificationSourceCommandHandlerTests
         Assert.Equal(-0.190278, airport.Longitude);
         Assert.Equal(202, airport.ElevationFt);
         await _airports.Received(1).FindByIataAsync("LGW", Arg.Any<CancellationToken>());
+        await _countries.Received(1).FindByCodeAsync("JE", Arg.Any<CancellationToken>());
     }
 
     [Theory]
@@ -509,6 +511,72 @@ public class AcceptVerificationSourceCommandHandlerTests
         Assert.Null(airport.Icao);
         await _airports.DidNotReceive().FindByIataAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
         await _airports.DidNotReceive().FindByIcaoAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _countries.DidNotReceive().FindByCodeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    // ── Country codes: a code our countries table doesn't have ─────────────
+
+    /// <summary><c>airports.CountryCode</c> references <c>countries</c> by foreign key, and the edit rules
+    /// only check the code's format: without the lookup this save fails on the constraint, a 500.</summary>
+    [Fact]
+    public async Task Handle_ANewAirportCountryCodeThatIsNotInCountries_Is409_NamingIt_AndWritesNothing()
+    {
+        AirportMismatch((nameof(Airport.CountryCode), "xk"), (nameof(Airport.City), "Pristina"));
+        var airport = LoadedAirport();
+        _countries.FindByCodeAsync("XK", Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var ex = await AcceptFails(409);
+
+        Assert.Equal("Airport CountryCode XK is not a country we have; add the country first.", ex.Message);
+        AssertUnchanged(airport);
+        await AssertNothingSaved();
+    }
+
+    [Fact]
+    public async Task Handle_ANewAirlineCountryCodeThatIsNotInCountries_Is409_NamingIt_AndWritesNothing()
+    {
+        AirlineMismatch((nameof(Airline.CountryCode), "XK"), (nameof(Airline.Name), "British Airways Plc"));
+        var airline = LoadedAirline();
+        _countries.FindByCodeAsync("XK", Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var ex = await AcceptFails(409, source: Airlines);
+
+        Assert.Equal("Airline CountryCode XK is not a country we have; add the country first.", ex.Message);
+        AssertUnchanged(airline);
+        await AssertNothingSaved();
+    }
+
+    /// <summary>A malformed code is named by the edit rules, not looked up.</summary>
+    [Fact]
+    public async Task Handle_AMalformedCountryCode_IsRefusedByTheEditRules_BeforeAnyCountryLookup()
+    {
+        AirportMismatch((nameof(Airport.CountryCode), "GBR"));
+        var airport = LoadedAirport();
+
+        var ex = await AcceptFails(409);
+
+        Assert.Contains("with an invalid CountryCode", ex.Message);
+        AssertUnchanged(airport);
+        await _countries.DidNotReceive().FindByCodeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    // ── An open request for the same entity ─────────────────────────────────
+
+    /// <summary>Reference rows carry no concurrency token: a newer check still open for this airport
+    /// could save its own <c>MarkVerificationFailed</c> over the accepted row, so accept waits for it.</summary>
+    [Fact]
+    public async Task Handle_TheEntityHasAnOpenVerificationRequest_Is409_AndWritesNothing()
+    {
+        var request = AirportMismatch((nameof(Airport.City), "Hounslow"));
+        var airport = LoadedAirport();
+        _requests.HasOpenRequestAsync(VerificationEntityType.Airport, "42", Arg.Any<CancellationToken>()).Returns(true);
+
+        var ex = await AcceptFails(409);
+
+        Assert.Equal("Airport 42 has an open verification request; accept once it has finished.", ex.Message);
+        AssertUnchanged(airport);
+        Assert.Equal(VerificationRequestStatus.Mismatch, request.Status);
+        await AssertNothingSaved();
     }
 
     [Fact]
