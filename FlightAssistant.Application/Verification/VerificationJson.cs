@@ -33,5 +33,26 @@ namespace FlightAssistant.Application.Verification
         /// <c>source_values</c> column's JSON object shape.</summary>
         public static string SerializeSourceValues(IReadOnlyDictionary<string, IReadOnlyDictionary<string, string?>> sourceValues) =>
             JsonSerializer.Serialize(sourceValues, Options);
+
+        /// <summary>Reads a stored <c>differences</c> value back (accept-source, #378): the inverse
+        /// of <see cref="SerializeDifferences"/>.</summary>
+        /// <exception cref="JsonException"><paramref name="json"/> is not that shape.</exception>
+        public static IReadOnlyList<VerificationDifference> DeserializeDifferences(string json) =>
+            JsonSerializer.Deserialize<List<VerificationDifference>>(json, Options)
+            ?? throw new JsonException("The differences value is JSON null, not an array.");
+
+        /// <summary>Reads a stored <c>source_values</c> value back (accept-source, #378): the inverse
+        /// of <see cref="SerializeSourceValues"/>. Column names are case-sensitive keys, as stored.</summary>
+        /// <exception cref="JsonException"><paramref name="json"/> is not that shape.</exception>
+        public static IReadOnlyDictionary<string, IReadOnlyDictionary<string, string?>> DeserializeSourceValues(string json)
+        {
+            var bySource = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string?>>>(json, Options)
+                ?? throw new JsonException("The source_values value is JSON null, not an object.");
+
+            return bySource.ToDictionary(
+                entry => entry.Key,
+                entry => (IReadOnlyDictionary<string, string?>)entry.Value,
+                StringComparer.Ordinal);
+        }
     }
 }

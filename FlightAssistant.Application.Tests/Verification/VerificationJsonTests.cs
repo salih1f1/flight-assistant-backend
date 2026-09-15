@@ -57,6 +57,47 @@ public class VerificationJsonTests
         Assert.Equal("{}", VerificationJson.SerializeSourceValues(sourceValues));
     }
 
+    [Fact]
+    public void DeserializeDifferences_ReadsBackWhatSerializeDifferencesWrote()
+    {
+        var differences = new[]
+        {
+            new VerificationDifference("Name", "İstanbul Airport", "Istanbul Airport", "ourairports"),
+            new VerificationDifference("Icao", null, "LTFM", "other")
+        };
+
+        var restored = VerificationJson.DeserializeDifferences(VerificationJson.SerializeDifferences(differences));
+
+        Assert.Equal(differences, restored);
+    }
+
+    [Fact]
+    public void DeserializeSourceValues_ReadsBackWhatSerializeSourceValuesWrote_KeepingColumnKeysAsStored()
+    {
+        var sourceValues = new Dictionary<string, IReadOnlyDictionary<string, string?>>(StringComparer.Ordinal)
+        {
+            ["ourairports"] = new Dictionary<string, string?>(StringComparer.Ordinal) { ["Iata"] = "LHR", ["Icao"] = null },
+            ["other"] = new Dictionary<string, string?>(StringComparer.Ordinal)
+        };
+
+        var restored = VerificationJson.DeserializeSourceValues(VerificationJson.SerializeSourceValues(sourceValues));
+
+        Assert.Equal(new[] { "ourairports", "other" }, restored.Keys);
+        Assert.Equal("LHR", restored["ourairports"]["Iata"]);
+        Assert.True(restored["ourairports"].ContainsKey("Icao"));
+        Assert.Null(restored["ourairports"]["Icao"]);
+        Assert.False(restored["ourairports"].ContainsKey("iata"));
+        Assert.Empty(restored["other"]);
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("{}")]
+    public void DeserializeDifferences_NotAnArray_Throws(string json)
+    {
+        Assert.ThrowsAny<System.Text.Json.JsonException>(() => VerificationJson.DeserializeDifferences(json));
+    }
+
     /// <summary>The comparer's output round-trips directly into these helpers with no extra
     /// mapping step -- the integration Task 4 will actually use.</summary>
     [Fact]
