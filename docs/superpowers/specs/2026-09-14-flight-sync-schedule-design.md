@@ -60,6 +60,7 @@ Notes:
 - **Live** starts from the scheduled departure time, not the service date. AeroAPI's `end` is an exact time (`now + StatusWindowFutureDays`), so this is the moment the flight becomes answerable (#343). The 2 days is `AeroApi:StatusWindowFutureDays`, read the same way as today.
 - **Fast** uses the estimated departure when there is one, so a delayed flight stays in fast polling until it actually leaves.
 - **Stopped** keeps syncing for 30 minutes after arrival or cancellation, so the final status, gate and baggage claim are still recorded (#345). The 24-hour rule covers a flight that never reports an arrival; it replaces today's "service date ≥ today" lower bound.
+- `ActualArrivalUtc` is AeroAPI's gate arrival (`actual_in`), falling back to runway arrival (`actual_on`) when gate arrival isn't reported. AeroAPI often reports only the runway arrival; without the fallback an arrived flight would stop only by the 24-hour rule.
 - A **Diverted** flight is treated like any other: it stops 30 minutes after its actual arrival.
 
 ### 1.1 Next sync time

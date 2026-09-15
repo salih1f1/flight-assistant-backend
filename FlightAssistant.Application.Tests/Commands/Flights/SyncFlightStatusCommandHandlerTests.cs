@@ -248,6 +248,29 @@ public class SyncFlightStatusCommandHandlerTests
         Assert.Null(flight.NextSyncDueUtc);
     }
 
+    [Fact]
+    public async Task ArrivalRecorded_StopsTheFlight_StopAfterArrivalLater()
+    {
+        // #345: the reported arrival stops the loop, not the no-arrival fallback (scheduled arrival
+        // is 6 h away here, so that fallback can't be what stops it).
+        var flight = Given(Departing(Now.AddHours(-2)));
+        var arrived = Now.AddMinutes(-5);
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(Status("ARR") with { ActualArrivalUtc = arrived });
+        _flights.GetFlightStatusIdByCodeAsync("ARR", Arg.Any<CancellationToken>()).Returns(3);
+
+        Assert.True(await Sync());
+        Assert.Equal(arrived, flight.ActualArrivalUtc);
+        Assert.Equal(FlightSyncMode.Fast, flight.SyncMode);
+
+        _clock.SetUtcNow(new DateTimeOffset(arrived + new SyncOptions().StopAfterArrival));
+        Assert.False(await Sync());
+
+        await _provider.Received(1).GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        Assert.Equal(FlightSyncMode.Stopped, flight.SyncMode);
+        Assert.Null(flight.NextSyncDueUtc);
+    }
+
     [Theory]
     [InlineData(SyncTrigger.Scheduled)]
     [InlineData(SyncTrigger.Admin)]

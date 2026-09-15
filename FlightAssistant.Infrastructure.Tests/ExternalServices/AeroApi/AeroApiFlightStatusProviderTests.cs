@@ -127,8 +127,8 @@ public class AeroApiFlightStatusProviderTests
     {
         var handler = new StubHttpMessageHandler(ReadFixture("flight-status.json"));
 
-        // 2026-08-30 row: status "Arrived / Gate Arrival", cancelled=false, actual_out set,
-        // actual_in null (arrival still finalising), gate/terminal/baggage all populated.
+        // 2026-08-30 row: status "Arrived / Gate Arrival", cancelled=false, actual_out and
+        // actual_on set, actual_in null, gate/terminal/baggage all populated.
         var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
 
         Assert.NotNull(result);
@@ -142,13 +142,40 @@ public class AeroApiFlightStatusProviderTests
         Assert.Equal(new DateTime(2026, 8, 30, 6, 35, 0, DateTimeKind.Utc), result.EstimatedDepartureUtc);
         Assert.Equal(new DateTime(2026, 8, 30, 7, 45, 0, DateTimeKind.Utc), result.EstimatedArrivalUtc);
         Assert.Equal(new DateTime(2026, 8, 30, 6, 43, 0, DateTimeKind.Utc), result.ActualDepartureUtc);
-        Assert.Null(result.ActualArrivalUtc);
+        Assert.Equal(new DateTime(2026, 8, 30, 7, 45, 0, DateTimeKind.Utc), result.ActualArrivalUtc); // actual_on
 
         // EffectiveAtUtc prefers actual_out over estimated/scheduled.
         Assert.Equal(result.ActualDepartureUtc, result.EffectiveAtUtc);
 
         Assert.NotNull(result.RawPayloadJson);
         Assert.Contains("\"ident_iata\":\"TK1028\"", result.RawPayloadJson);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_MapsActualArrival_ToTheRunwayArrival_WhenNoGateArrivalIsReported()
+    {
+        // Every arrived row in the recording has actual_on set and actual_in null. Without the
+        // fallback an arrived flight never gets an actual arrival, so it never stops syncing (#345).
+        var handler = new StubHttpMessageHandler(ReadFixture("flight-status.json"));
+
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 29));
+
+        Assert.Equal(new DateTime(2026, 8, 29, 8, 5, 35, DateTimeKind.Utc), result!.ActualArrivalUtc);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_MapsActualArrival_ToTheGateArrival_WhenBothAreReported()
+    {
+        // The recorded 2026-08-29 row (actual_on 08:05:35Z), with a gate arrival added.
+        var body = System.Text.Json.Nodes.JsonNode.Parse(ReadFixture("flight-status.json"))!;
+        var row = body["flights"]!.AsArray()
+            .Single(f => (string?)f!["scheduled_out"] == "2026-08-29T06:35:00Z")!;
+        row["actual_in"] = "2026-08-29T08:12:00Z";
+        var handler = new StubHttpMessageHandler(body.ToJsonString());
+
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 29));
+
+        Assert.Equal(new DateTime(2026, 8, 29, 8, 12, 0, DateTimeKind.Utc), result!.ActualArrivalUtc);
     }
 
     [Fact]
