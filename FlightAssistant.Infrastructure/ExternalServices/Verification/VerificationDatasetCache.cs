@@ -53,8 +53,13 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
         /// -- see the "Per-caller cancellation" remark on this type -- while <paramref name="ct"/> is
         /// used only to bound <b>this</b> call's own wait for the (possibly shared) result.
         /// </summary>
+        /// <exception cref="OperationCanceledException"><paramref name="ct"/> is already cancelled
+        /// -- checked up front (fix round 2, item 4) so an already-given-up caller can never be the
+        /// one that starts a brand new download for everyone else.</exception>
         public Task<T> GetAsync(Func<CancellationToken, Task<T>> load, CancellationToken ct)
         {
+            ct.ThrowIfCancellationRequested();
+
             Task<T> task;
             lock (_gate)
             {
@@ -104,6 +109,12 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             _ = task.ContinueWith(
                 completed =>
                 {
+                    // Touching .Exception marks a fault "observed" (fix round 2, item 3a). Every
+                    // caller reaches this task only through GetAsync's task.WaitAsync(ct) wrapper --
+                    // a *different* Task object -- so if every one of those waits was itself
+                    // cancelled before this one faults, nothing else would ever read .Exception, and
+                    // this Task would raise TaskScheduler.UnobservedTaskException once GC'd.
+                    if (completed.IsFaulted) _ = completed.Exception;
                     if (!completed.IsFaulted && !completed.IsCanceled) return;
 
                     lock (_gate)

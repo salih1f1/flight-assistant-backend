@@ -62,6 +62,37 @@ public class VerificationDatasetCacheTests
     }
 
     [Fact]
+    public void GetAsync_WithAnAlreadyCancelledToken_ThrowsWithoutCallingLoad()
+    {
+        // Fix round 2, item 4: an already-given-up caller must never be the one that starts a
+        // brand new download for everyone else.
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+        var loadCalled = false;
+        Task<string> Load(CancellationToken ct) { loadCalled = true; return Task.FromResult("v"); }
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Not Assert.Throws/ThrowsAsync: GetAsync returns Task<T>, so xUnit's analyzer insists on
+        // ThrowsAsync -- but the throw here is genuinely synchronous (GetAsync itself is not
+        // async), which ThrowsAsync cannot assert (it awaits the returned Task, which never gets
+        // the chance to exist). A plain try/catch proves the synchronous-throw contract directly.
+        var threw = false;
+        try
+        {
+            cache.GetAsync(Load, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            threw = true;
+        }
+
+        Assert.True(threw);
+        Assert.False(loadCalled);
+    }
+
+    [Fact]
     public async Task GetAsync_TwoCallsThatBothMissTheCache_ShareOneLoad()
     {
         // Deterministic (fix round 1, item 10c): waits for proof `load` was actually entered,
@@ -106,7 +137,12 @@ public class VerificationDatasetCacheTests
         async Task<string> Load(CancellationToken ct)
         {
             entered.TrySetResult();
-            await release.Task; // deliberately ignores `ct` -- it is always CancellationToken.None anyway
+            // Fix round 2, item 6: honours `ct` so this test can actually detect a regression to
+            // `load(ct)` (the caller's own token) instead of the cache-owned CancellationToken.None.
+            // In the correct implementation `ct` here is always None, so this never cancels; if the
+            // cache regressed to passing the first caller's real token, cancelling it below would
+            // tear down this shared load out from under the still-waiting second caller too.
+            await release.Task.WaitAsync(ct);
             return "value";
         }
 
@@ -121,6 +157,16 @@ public class VerificationDatasetCacheTests
         release.SetResult();
         Assert.Equal("value", await second);
     }
+
+    // Fix round 2, item 3a: a deterministic test for "the eviction continuation observes a fault so
+    // TaskScheduler.UnobservedTaskException never fires" was attempted here (cancel the only
+    // caller, fault the load, force GC.Collect()+WaitForPendingFinalizers() twice, assert the event
+    // did not fire) and found NOT reliably distinguishing in this test host: the event did not fire
+    // even with the `_ = completed.Exception;` fix in VerificationDatasetCache temporarily removed
+    // (tried 3x). Per the review's own "explain rather than add a flaky test" allowance, no test is
+    // committed for this; see task-3-report.md's fix round 2 section for the full account. The
+    // one-line production fix itself is kept regardless -- it is cheap, correct by inspection, and
+    // does not depend on the test working to be worth having.
 
     [Fact]
     public async Task GetAsync_AFailedLoad_IsNotCached_TheNextCallRetriesImmediately()

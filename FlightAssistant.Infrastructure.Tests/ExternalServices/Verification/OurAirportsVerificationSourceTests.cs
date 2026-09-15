@@ -103,12 +103,17 @@ public class OurAirportsVerificationSourceTests
         }
     }
 
+    /// <summary>Asserts every <see cref="CreateClient"/> call names
+    /// <see cref="OurAirportsVerificationSource.HttpClientName"/> (fix round 2, item 1) -- a source
+    /// that requested the wrong (or default/unnamed) client would fail every test in this file, not
+    /// just the DI-level ones.</summary>
     private sealed class FakeHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
     {
         public int ClientsCreated { get; private set; }
 
         public HttpClient CreateClient(string name)
         {
+            Assert.Equal(OurAirportsVerificationSource.HttpClientName, name);
             ClientsCreated++;
             return new HttpClient(handler, disposeHandler: false);
         }
@@ -284,10 +289,12 @@ public class OurAirportsVerificationSourceTests
     [Fact]
     public async Task LookupAsync_ReturnsASourceError_On429_NeverNotFound()
     {
-        // Distinguishing (not the timeout break-proof -- see item 4 in the fix-round-1 break-proof
-        // list): mapping 429 to NotFound instead of a source error would make a throttled response
-        // look exactly like "no data", and this test would pass either way if it only asserted
-        // IsError -- so it pins IsFound (via Lookup being null) as well.
+        // Pins that a 429 is a source error, never NotFound. IsError alone already distinguishes
+        // the two (IsError is defined as Error is not null, and NotFound carries a null Error), so
+        // Assert.True(result.IsError) on its own already fails for a NotFound result -- the
+        // Assert.Null(result.Lookup) below is not needed to *distinguish* NotFound from a source
+        // error; it simply pins the type's own invariant that a source-error result never also
+        // carries a Lookup value.
         var source = Source(new StaticHandler(HttpStatusCode.TooManyRequests, "too many requests"));
 
         var result = await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("LHR", null));
@@ -451,7 +458,9 @@ public class OurAirportsVerificationSourceTests
     public async Task LookupAsync_CancellingOneCallersRequest_DoesNotAffectAJoinedCaller()
     {
         // Fix round 1, item 7: the shared download must not be aborted just because one of the
-        // callers joined on it gave up.
+        // callers joined on it gave up. Fix round 2, item 6: test-level timeouts on the two key
+        // awaits, so a regression fails fast rather than potentially waiting out a much longer
+        // deadline.
         var handler = new GatedHandler();
         var source = Source(handler);
         using var firstCts = new CancellationTokenSource();
@@ -462,10 +471,10 @@ public class OurAirportsVerificationSourceTests
         var second = source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("DUP", null));
 
         firstCts.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first).WaitAsync(TimeSpan.FromSeconds(5));
 
         handler.Release();
-        var secondResult = await second;
+        var secondResult = await second.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.True(secondResult.Lookup!.IsFound);
         Assert.Equal(1, handler.CallCount);

@@ -76,18 +76,48 @@ public class MledozeCountriesVerificationSourceTests
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
+    /// <summary>Blocks every request until <see cref="Release"/> is called, and exposes a task that
+    /// completes the instant the <b>first</b> request actually reaches the transport -- lets a test
+    /// wait deterministically for "the shared download has started" instead of an arbitrary sleep.
+    /// Fix round 2, item 6: this file had no such handler in round 1, so the "two calls share one
+    /// download" and "cancelling one caller doesn't affect a joined caller" behaviours (fix round 1,
+    /// items 7 and 10c) had no mledoze-side proof, unlike OurAirports's file.</summary>
+    private sealed class GatedHandler : HttpMessageHandler
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _callCount;
+
+        public int CallCount => Volatile.Read(ref _callCount);
+        public Task WaitUntilEnteredAsync() => _entered.Task;
+        public void Release() => _release.TrySetResult();
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _callCount);
+            _entered.TrySetResult();
+            await _release.Task;
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(FixtureJson, Encoding.UTF8, "application/json") };
+        }
+    }
+
     private sealed class ThrowingHandler(Exception exception) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             throw exception;
     }
 
+    /// <summary>Asserts every <see cref="CreateClient"/> call names
+    /// <see cref="MledozeCountriesVerificationSource.HttpClientName"/> (fix round 2, item 1) -- a
+    /// source that requested the wrong (or default/unnamed) client would fail every test in this
+    /// file, not just the DI-level ones.</summary>
     private sealed class FakeHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
     {
         public int ClientsCreated { get; private set; }
 
         public HttpClient CreateClient(string name)
         {
+            Assert.Equal(MledozeCountriesVerificationSource.HttpClientName, name);
             ClientsCreated++;
             return new HttpClient(handler, disposeHandler: false);
         }
@@ -329,6 +359,52 @@ public class MledozeCountriesVerificationSourceTests
         await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
 
         Assert.Equal(2, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task LookupAsync_TwoCallsThatBothMissTheCache_ShareOneDownload()
+    {
+        // Fix round 2, item 6 (parity with OurAirportsVerificationSourceTests -- see GatedHandler's
+        // remark): deterministic via GatedHandler, waiting for proof the transport was actually
+        // reached rather than an arbitrary sleep.
+        var handler = new GatedHandler();
+        var source = Source(handler);
+
+        var first = source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
+        await handler.WaitUntilEnteredAsync();
+        var second = source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("CI"));
+
+        handler.Release();
+        var results = await Task.WhenAll(first, second);
+
+        Assert.Equal(1, handler.CallCount);
+        Assert.True(results[0].Lookup!.IsFound);
+        Assert.True(results[1].Lookup!.IsFound);
+    }
+
+    [Fact]
+    public async Task LookupAsync_CancellingOneCallersRequest_DoesNotAffectAJoinedCaller()
+    {
+        // Fix round 2, item 6 (parity with OurAirportsVerificationSourceTests): the shared download
+        // must not be aborted just because one of the callers joined on it gave up. Test-level
+        // timeouts on the two key awaits so a regression fails fast.
+        var handler = new GatedHandler();
+        var source = Source(handler);
+        using var firstCts = new CancellationTokenSource();
+
+        var first = source.LookupAsync(
+            VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"), firstCts.Token);
+        await handler.WaitUntilEnteredAsync();
+        var second = source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("CI"));
+
+        firstCts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first).WaitAsync(TimeSpan.FromSeconds(5));
+
+        handler.Release();
+        var secondResult = await second.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(secondResult.Lookup!.IsFound);
+        Assert.Equal(1, handler.CallCount);
     }
 
     // ── DI wiring ───────────────────────────────────────────────────────────

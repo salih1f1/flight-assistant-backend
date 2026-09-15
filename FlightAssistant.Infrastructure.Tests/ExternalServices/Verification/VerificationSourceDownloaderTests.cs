@@ -68,9 +68,39 @@ public class VerificationSourceDownloaderTests
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
+    /// <summary>Answers with headers immediately, but any read of the body throws
+    /// <see cref="IOException"/> -- simulates a connection reset mid-stream (fix round 2, item 9).</summary>
+    private sealed class ThrowingMidReadHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new ThrowingMidReadStream()) });
+    }
+
+    private sealed class ThrowingMidReadStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            throw new IOException("connection reset mid-body");
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     private sealed class FakeHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
     {
-        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+        public HttpClient CreateClient(string name)
+        {
+            Assert.Equal(ClientName, name);
+            return new HttpClient(handler, disposeHandler: false);
+        }
     }
 
     private static async Task<string> ReadAllTextAsync(Stream stream, CancellationToken ct)
@@ -151,6 +181,22 @@ public class VerificationSourceDownloaderTests
         cts.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task DownloadAsync_ThrowsASourceError_WithDownloadWording_WhenTheBodyThrowsIOExceptionMidRead()
+    {
+        // Fix round 2, item 9: an IOException reading the body (a connection reset mid-stream) is a
+        // download failure, not a parse failure -- distinguished by wording, since both surface as
+        // VerificationSourceFetchException.IsError either way and only the message tells them apart.
+        var factory = new FakeHttpClientFactory(new ThrowingMidReadHandler());
+
+        var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() =>
+            VerificationSourceDownloader.DownloadAsync(
+                factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), ReadAllTextAsync, default));
+
+        Assert.Contains("Failed to download", ex.Message);
+        Assert.DoesNotContain("Could not parse", ex.Message);
     }
 
     [Fact]
