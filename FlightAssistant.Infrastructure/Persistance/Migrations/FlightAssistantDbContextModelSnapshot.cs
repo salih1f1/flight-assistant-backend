@@ -125,6 +125,9 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime?>("DelayNotifiedDepartureUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("DepartureAirportId")
                         .HasColumnType("integer");
 

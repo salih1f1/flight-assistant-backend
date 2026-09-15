@@ -100,6 +100,7 @@ namespace FlightAssistant.Application.Administration
                 nameof(Flight.SyncMode),
                 nameof(Flight.ScheduleMissingSinceUtc),
                 nameof(Flight.CancelledAtUtc),
+                nameof(Flight.DelayNotifiedDepartureUtc),
             }),
 
             new("traveler-flights", typeof(TravelerFlight), "Traveler Flights", new[]

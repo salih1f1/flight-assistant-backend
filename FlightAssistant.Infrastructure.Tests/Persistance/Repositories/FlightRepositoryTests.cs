@@ -6,6 +6,7 @@ using FlightAssistant.Domain.Travelers.Entities;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using FlightAssistant.Infrastructure.Tests.TestSupport;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Time.Testing;
 
 namespace FlightAssistant.Infrastructure.Tests.Persistance.Repositories;
@@ -346,5 +347,21 @@ public class FlightRepositoryTests : PostgresTestBase
         var flight = FlightArriving(db, "TK31", SyncNow.AddHours(3));
 
         Assert.Null(await Repository(db, ClockAt(SyncNow)).GetLatestFlightStatusEventAsync(flight.Id));
+    }
+
+    [Fact]
+    public async Task DelayNotifiedDepartureUtc_IsStoredAndReadBack()
+    {
+        using (var db = CreateContext())
+        {
+            var flight = FlightArriving(db, "TK40", SyncNow.AddHours(8));
+            flight.ApplyStatusUpdate("DLY", flight.ScheduledDepartureUtc.AddMinutes(40), null, null, null, null, SyncNow, statusChanged: true);
+            db.SaveChanges();
+        }
+
+        using var readDb = CreateContext();
+        var stored = await readDb.Flights.AsNoTracking().SingleAsync(f => f.FlightNumber == "TK40");
+
+        Assert.Equal(stored.ScheduledDepartureUtc.AddMinutes(40), stored.DelayNotifiedDepartureUtc);
     }
 }

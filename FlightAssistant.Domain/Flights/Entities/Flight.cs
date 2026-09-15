@@ -27,6 +27,7 @@ namespace FlightAssistant.Domain.Flights.Entities
         public DateTime UpdatedUtc { get; private set; } = DateTime.UtcNow;
 
         public const string CancelledStatusCode = "CAN";
+        public const string DelayedStatusCode = "DLY";
 
         /// <summary>
         /// How late an estimated departure must be before a flight counts as delayed, and how much later a
@@ -43,6 +44,12 @@ namespace FlightAssistant.Domain.Flights.Entities
         /// <summary>When a status update first reported <c>CAN</c>; cleared by any later other code.
         /// <c>Flight</c> doesn't store its current status, and the Stopped rule needs this.</summary>
         public DateTime? CancelledAtUtc { get; private set; }
+
+        /// <summary>The estimated departure the last delay push went out for (#352). A flight that stays
+        /// delayed is pushed again only when its estimate moves at least <see cref="DelayThreshold"/> later
+        /// than this, so small slips add up. Never cleared: a return to delayed is a status change and pushes
+        /// anyway.</summary>
+        public DateTime? DelayNotifiedDepartureUtc { get; private set; }
 
         public Airline Airline { get; private set; } = default!;
 
@@ -76,6 +83,14 @@ namespace FlightAssistant.Domain.Flights.Entities
             };
         }
 
+        /// <summary>
+        /// Records a new status from the provider and raises <see cref="FlightStatusChanged"/>, which the
+        /// push handler acts on. The event says whether a push should go out (#352): when the status
+        /// changed (<paramref name="statusChanged"/>), or, for a flight that stays delayed, once its
+        /// estimated departure is at least <see cref="DelayThreshold"/> later than the last delay push's.
+        /// A correction to an existing status (a revised actual departure, a small slip) records the event
+        /// without a push. For a delay, the event carries how many minutes late the estimate is.
+        /// </summary>
         public void ApplyStatusUpdate(
             string statusCode,
             DateTime? estimatedDepartureUtc,
@@ -83,13 +98,29 @@ namespace FlightAssistant.Domain.Flights.Entities
             DateTime? actualDepartureUtc,
             DateTime? actualArrivalUtc,
             string? equipmentAircraftIcao,
-            DateTime nowUtc)
+            DateTime nowUtc,
+            bool statusChanged = true)
         {
             ApplyProviderTimes(estimatedDepartureUtc, estimatedArrivalUtc, actualDepartureUtc, actualArrivalUtc, equipmentAircraftIcao, nowUtc);
             CancelledAtUtc = statusCode == CancelledStatusCode ? CancelledAtUtc ?? nowUtc : null;
             UpdatedUtc = nowUtc;
 
-            Raise(new FlightStatusChanged(Id, FlightNumber, ServiceDateUtc, statusCode, nowUtc));
+            var shouldNotify = statusChanged;
+            int? delayMinutes = null;
+            if (statusCode == DelayedStatusCode && estimatedDepartureUtc is { } estimate)
+            {
+                if (estimate > ScheduledDepartureUtc)
+                    delayMinutes = (int)Math.Round((estimate - ScheduledDepartureUtc).TotalMinutes);
+
+                shouldNotify = shouldNotify
+                               || DelayNotifiedDepartureUtc is null
+                               || estimate >= DelayNotifiedDepartureUtc.Value + DelayThreshold;
+
+                if (shouldNotify)
+                    DelayNotifiedDepartureUtc = estimate;
+            }
+
+            Raise(new FlightStatusChanged(Id, FlightNumber, ServiceDateUtc, statusCode, nowUtc, shouldNotify, delayMinutes));
         }
 
         /// <summary>
