@@ -76,14 +76,16 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "audited as an Update; the request itself stays Mismatch. " +
                 "400 when 'source' is blank, is not one of the request's sources, or has no stored values. " +
                 "404 when the request or the entity no longer exists. " +
-                "409 when the request is not Mismatch; a differing column has changed since the check; a value " +
-                "cannot be parsed or would empty a required column; a new unique code already belongs to another " +
-                "row; or the row would break the admin edit's rules. That last check validates the whole row, as " +
-                "the admin edit does, so an existing invalid value in a column the source did not touch also " +
-                "returns 409, naming that column.")
+                "409 when the request is not Mismatch; the entity has an open verification request (accept once it " +
+                "has finished); a differing column has changed since the check; a value cannot be parsed or would " +
+                "empty a required column; the row would break the admin edit's rules; a new unique code already " +
+                "belongs to another row; or a new country code is not one of our countries. The edit-rules check " +
+                "validates the whole row, as the admin edit does, so an existing invalid value in a column the " +
+                "source did not touch also returns 409, naming that column.")
             .Produces(204)
+            // ValidationProblemDetails also describes the handler's plain ProblemDetails 400s; a separate
+            // ProducesProblem(400) would replace it in the spec.
             .ProducesValidationProblem()
-            .ProducesProblem(400)
             .ProducesProblem(404)
             .ProducesProblem(409);
 
@@ -101,8 +103,8 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "400 when one of its sources is no longer registered or no longer supports the entity type. " +
                 "404 when the request does not exist. 409 when the entity already has an open request.")
             .Produces<VerificationEnqueueDto>(202)
+            // As on accept-source: the one 400 entry must stay ValidationProblemDetails.
             .ProducesValidationProblem()
-            .ProducesProblem(400)
             .ProducesProblem(404)
             .ProducesProblem(409);
         }

@@ -3019,7 +3019,7 @@
           "Admin - Verification"
         ],
         "summary": "Accept one source's values for a mismatched check",
-        "description": "Writes the chosen source's values to the entity for only the columns that source reported as different, verifies the entity with that source as the caller, and saves once. The entity write is audited as an Update; the request itself stays Mismatch. 400 when 'source' is blank, is not one of the request's sources, or has no stored values. 404 when the request or the entity no longer exists. 409 when the request is not Mismatch; a differing column has changed since the check; a value cannot be parsed or would empty a required column; a new unique code already belongs to another row; or the row would break the admin edit's rules. That last check validates the whole row, as the admin edit does, so an existing invalid value in a column the source did not touch also returns 409, naming that column.",
+        "description": "Writes the chosen source's values to the entity for only the columns that source reported as different, verifies the entity with that source as the caller, and saves once. The entity write is audited as an Update; the request itself stays Mismatch. 400 when 'source' is blank, is not one of the request's sources, or has no stored values. 404 when the request or the entity no longer exists. 409 when the request is not Mismatch; the entity has an open verification request (accept once it has finished); a differing column has changed since the check; a value cannot be parsed or would empty a required column; the row would break the admin edit's rules; a new unique code already belongs to another row; or a new country code is not one of our countries. The edit-rules check validates the whole row, as the admin edit does, so an existing invalid value in a column the source did not touch also returns 409, naming that column.",
         "operationId": "AdminAcceptVerificationSource",
         "parameters": [
           {
@@ -3051,7 +3051,7 @@
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
                 }
               }
             }
@@ -3114,7 +3114,7 @@
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
                 }
               }
             }

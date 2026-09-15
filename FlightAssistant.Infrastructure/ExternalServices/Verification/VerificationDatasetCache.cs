@@ -139,8 +139,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             return task.WaitAsync(ct);
         }
 
-        /// <summary>Whether anything is held for <see cref="Release"/> to drop: a loaded dataset (even
-        /// one past its maximum age), a load in flight, or a failed load. No I/O.</summary>
+        /// <summary>Whether anything is held: a loaded dataset (even one past its maximum age), a load in
+        /// flight, or a failed load. Not whether <see cref="Release"/> would drop it now, which also
+        /// depends on the idle period. No I/O.</summary>
         public bool HasCachedData
         {
             get

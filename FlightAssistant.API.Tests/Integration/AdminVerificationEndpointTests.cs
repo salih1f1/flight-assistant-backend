@@ -373,18 +373,23 @@ public class AdminVerificationEndpointTests(FlightAssistantWebApplicationFactory
         var pending = await SeedRequestAsync(NewRequest(NextKey()));
         var client = factory.CreateAdminClient();
 
+        // Newest first, so this test's rows (the newest Mismatch rows) are on the first page however many
+        // the shared collection database holds.
         var mismatches = await BrowseAsync(client, "admin/data/verification-requests?filter=Status:Mismatch&sort=-Id&pageSize=200");
 
         var ids = mismatches.Items.Select(r => r[nameof(VerificationRequest.Id)].GetInt64()).ToList();
-        Assert.Contains(firstMismatch, ids);
-        Assert.Contains(secondMismatch, ids);
+        Assert.Equal(new[] { secondMismatch, firstMismatch }, ids.Where(id => id == firstMismatch || id == secondMismatch));
         Assert.DoesNotContain(pending, ids);
         Assert.All(mismatches.Items, r => Assert.Equal((int)VerificationRequestStatus.Mismatch, r[nameof(VerificationRequest.Status)].GetInt32()));
         Assert.Equal(ids.OrderDescending(), ids);
 
-        var ascending = await BrowseAsync(client, "admin/data/verification-requests?sort=Id&pageSize=200");
+        // Oldest first would put this test's rows past the first page once the shared database holds more
+        // than a page of requests, so it is narrowed to this airport's key (a contains match on a string
+        // column, so other keys containing it may also appear) and asserts the order of its own rows.
+        var ascending = await BrowseAsync(client,
+            $"admin/data/verification-requests?filter=EntityKey:{airport.Id.ToString(CultureInfo.InvariantCulture)}&sort=Id&pageSize=200");
         var ascendingIds = ascending.Items.Select(r => r[nameof(VerificationRequest.Id)].GetInt64()).ToList();
-        Assert.Contains(pending, ascendingIds);
+        Assert.Equal(new[] { firstMismatch, secondMismatch }, ascendingIds.Where(id => id == firstMismatch || id == secondMismatch));
         Assert.Equal(ascendingIds.Order(), ascendingIds);
     }
 
