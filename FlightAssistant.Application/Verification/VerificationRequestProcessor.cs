@@ -272,7 +272,8 @@ namespace FlightAssistant.Application.Verification
         }
 
         // VerificationRequest.Create stores airport and airline keys as canonical positive ints.
-        private static int ParseId(VerificationRequest request) =>
+        // Internal: accept-source (#378) loads the same entities by the same key.
+        internal static int ParseId(VerificationRequest request) =>
             int.Parse(request.EntityKey, NumberStyles.None, CultureInfo.InvariantCulture);
 
         private Task<VerificationProcessOutcome> CompleteAsErrorAsync(

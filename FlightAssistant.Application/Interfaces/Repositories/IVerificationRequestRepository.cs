@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Verification;
 using FlightAssistant.Domain.Verification.Entities;
+using FlightAssistant.Domain.Verification.Enums;
 
 namespace FlightAssistant.Application.Interfaces.Repositories
 {
@@ -101,6 +102,12 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// <param name="claims">Each claim's <c>StartedUtc</c> must have <see cref="DateTimeKind.Utc"/>.</param>
         /// <returns>How many requests went back to Pending.</returns>
         Task<int> ReturnClaimsToPendingAsync(IReadOnlyCollection<VerificationClaim> claims, CancellationToken ct = default);
+
+        /// <summary>
+        /// Whether the entity has an open (<c>Pending</c>/<c>Running</c>) request, in one query.
+        /// </summary>
+        /// <param name="entityKey">Canonical, as a stored request's <c>EntityKey</c> is.</param>
+        Task<bool> HasOpenRequestAsync(VerificationEntityType entityType, string entityKey, CancellationToken ct = default);
 
         /// <summary>The request with <paramref name="id"/>, tracked, or null.</summary>
         Task<VerificationRequest?> GetByIdAsync(long id, CancellationToken ct = default);

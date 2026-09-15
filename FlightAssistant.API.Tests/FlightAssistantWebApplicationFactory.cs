@@ -1,3 +1,4 @@
+using FlightAssistant.Infrastructure.ExternalServices.Verification;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
@@ -67,6 +68,12 @@ public class FlightAssistantWebApplicationFactory : WebApplicationFactory<Progra
             foreach (var d in hosted)
                 services.Remove(d);
 
+            // ── Verification source downloads throw ──────────────────────────
+            // The real source registry stays (the admin endpoints list its sources), but no test may
+            // download a dataset: anything reaching either source's named client fails loudly instead.
+            foreach (var clientName in new[] { OurAirportsVerificationSource.HttpClientName, MledozeCountriesVerificationSource.HttpClientName })
+                services.AddHttpClient(clientName).ConfigurePrimaryHttpMessageHandler(() => new VerificationDownloadRefusingHandler());
+
             // ── Remove health checks that require real DB / Redis / APNs ─────
             services.Configure<HealthCheckServiceOptions>(opts =>
                 opts.Registrations.Clear());
@@ -116,6 +123,15 @@ public class FlightAssistantWebApplicationFactory : WebApplicationFactory<Progra
                 services.Remove(d);
             services.TryAddSingleton<ILoggerFactory>(new LoggerFactory());
         });
+    }
+
+    /// <summary>The message a test gets when anything tries to download a verification dataset.</summary>
+    public const string VerificationDownloadRefused = "Tests must not download verification datasets";
+
+    private sealed class VerificationDownloadRefusingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException(VerificationDownloadRefused);
     }
 
     // Convenience: create a client pre-authenticated as a regular user

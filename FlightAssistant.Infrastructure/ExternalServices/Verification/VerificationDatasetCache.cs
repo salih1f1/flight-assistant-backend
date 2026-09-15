@@ -50,6 +50,19 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
     /// dataset. A load that ends <b>cancelled</b> is not a source failure (the load runs on this
     /// cache's own token, so no caller cancelled it) and is dropped at once, never replayed.
     /// </para>
+    ///
+    /// <para>
+    /// <b>Idle release (#378).</b> A loaded dataset is last used when a <see cref="GetAsync"/> call
+    /// is answered from it: a call that reuses it, or the load finishing, which answers every call
+    /// waiting on it. <see cref="Release"/> keeps a dataset used less than its idle period ago, so a
+    /// one-row check soon after another reuses the download instead of repeating it. The idle
+    /// period never extends the maximum age, which still counts from the download: a dataset at or
+    /// past it is dropped by the next release however recently it was used, since the next call
+    /// would download again anyway. A load in flight
+    /// counts as in use. A cached failure is never kept for being recent: it has only its cooldown.
+    /// The last-used time sits under the same lock as the release, so a call can't use a dataset
+    /// between the idle check and the drop.
+    /// </para>
     /// </summary>
     internal sealed class VerificationDatasetCache<T> where T : class
     {
@@ -63,6 +76,10 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
         /// <summary>When <see cref="_loadTask"/> faulted; null while it has not, and until the
         /// continuation that records the failure has run.</summary>
         private DateTimeOffset? _failedAtUtc;
+
+        /// <summary>When a call was last answered from <see cref="_loadTask"/>'s dataset; null while it
+        /// is in flight, has failed, and until the continuation that records its completion has run.</summary>
+        private DateTimeOffset? _lastUsedUtc;
 
         /// <param name="failureCooldown">Defaults to <see cref="VerificationDatasetCache.FailureCooldown"/>;
         /// at most <see cref="VerificationRetryBackoff.AfterFirstAttempt"/>.</param>
@@ -99,11 +116,16 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                 if (_loadTask is { } current && CanReuse(current, now))
                 {
                     task = current;
+                    // Answered from the loaded dataset. A call joining a load in flight is answered
+                    // when the load finishes, which the continuation records; a failure is not a use.
+                    if (current.IsCompletedSuccessfully)
+                        _lastUsedUtc = now;
                 }
                 else
                 {
                     _loadedAtUtc = now;
                     _failedAtUtc = null;
+                    _lastUsedUtc = null;
                     // Captured into the local `task` *before* attaching the bookkeeping continuation:
                     // when `load` fails synchronously (a pre-faulted Task, common with a fake
                     // HttpMessageHandler in tests), ExecuteSynchronously below runs that continuation
@@ -112,15 +134,16 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                     // caller a null Task instead of the very one it just started.
                     task = load(CancellationToken.None);
                     _loadTask = task;
-                    AttachFailureBookkeeping(task);
+                    AttachCompletionBookkeeping(task);
                 }
             }
 
             return task.WaitAsync(ct);
         }
 
-        /// <summary>Whether anything is held for <see cref="Release"/> to drop: a loaded dataset (even
-        /// one past its maximum age), a load in flight, or a failed load. No I/O.</summary>
+        /// <summary>Whether anything is held: a loaded dataset (even one past its maximum age), a load in
+        /// flight, or a failed load. Not whether <see cref="Release"/> would drop it now, which also
+        /// depends on the idle period. No I/O.</summary>
         public bool HasCachedData
         {
             get
@@ -132,15 +155,51 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             }
         }
 
-        /// <summary>Drops the cached dataset or cached failure, if any, so the next
-        /// <see cref="GetAsync"/> call downloads again. Safe to call when nothing is cached.</summary>
-        public void Release()
+        /// <summary>
+        /// Drops the cached dataset or cached failure, if any, so the next <see cref="GetAsync"/> call
+        /// downloads again -- unless it has been idle for less than <paramref name="idleRelease"/>: a
+        /// dataset last used less than that long ago, or a load in flight, is kept. A cached failure, and
+        /// a dataset at or past its maximum age, are always dropped. <see cref="TimeSpan.Zero"/> drops
+        /// whatever is held. Safe to call when nothing is cached.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException"><paramref name="idleRelease"/> is negative.</exception>
+        public void Release(TimeSpan idleRelease)
         {
+            ArgumentOutOfRangeException.ThrowIfLessThan(idleRelease, TimeSpan.Zero);
+
             lock (_gate)
             {
+                if (_loadTask is { } current && IdleFor(current, _timeProvider.GetUtcNow()) < idleRelease)
+                    return;
+
                 _loadTask = null;
                 _failedAtUtc = null;
+                _lastUsedUtc = null;
             }
+        }
+
+        /// <summary>How long <paramref name="current"/> has gone unused at <paramref name="now"/>, or
+        /// <see cref="TimeSpan.MaxValue"/> when the idle rule must not keep it (a failure, or a dataset at
+        /// or past its maximum age). Called under <see cref="_gate"/>.</summary>
+        private TimeSpan IdleFor(Task<T> current, DateTimeOffset now)
+        {
+            // A failed or cancelled load is not held by the idle rule: a failure keeps only its cooldown.
+            if (current.IsFaulted || current.IsCanceled)
+                return TimeSpan.MaxValue;
+
+            // In flight: a caller is waiting on it right now.
+            if (!current.IsCompleted)
+                return TimeSpan.Zero;
+
+            // Expired: CanReuse refuses it, so the next call downloads again however recently it was used,
+            // and holding it would keep a dataset nothing can be answered from.
+            if (now - _loadedAtUtc >= _maxAge)
+                return TimeSpan.MaxValue;
+
+            // Until the continuation has recorded the completion, the load has only just answered its
+            // callers. Never negative, so a wall clock stepping back can't keep a dataset past a zero period.
+            var idle = now - (_lastUsedUtc ?? now);
+            return idle > TimeSpan.Zero ? idle : TimeSpan.Zero;
         }
 
         /// <summary>Whether <paramref name="current"/> can answer a call made at
@@ -163,12 +222,13 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
         /// <summary>
         /// Fires once, independently of how many callers are awaiting <paramref name="task"/> or how
         /// many of them cancel their own wait. A faulted <paramref name="task"/> stays cached with its
-        /// failure time, which starts the failure cooldown; a cancelled one is evicted at once. Either
-        /// way only while <paramref name="task"/> is still the current entry -- a newer load (after a
-        /// <see cref="Release"/>, or after a cooldown) must not be clobbered by a straggling failure
-        /// from an older, abandoned load.
+        /// failure time, which starts the failure cooldown; a cancelled one is evicted at once; a
+        /// successful one records its completion as the dataset's last use, since it answers every
+        /// caller waiting on it. Each only while <paramref name="task"/> is still the current entry --
+        /// a newer load (after a <see cref="Release"/>, or after a cooldown) must not be clobbered by a
+        /// straggling completion from an older, abandoned load.
         /// </summary>
-        private void AttachFailureBookkeeping(Task<T> task)
+        private void AttachCompletionBookkeeping(Task<T> task)
         {
             _ = task.ContinueWith(
                 completed =>
@@ -179,7 +239,6 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                     // cancelled before this one faults, nothing else would ever read .Exception, and
                     // this Task would raise TaskScheduler.UnobservedTaskException once GC'd.
                     if (completed.IsFaulted) _ = completed.Exception;
-                    if (!completed.IsFaulted && !completed.IsCanceled) return;
 
                     lock (_gate)
                     {
@@ -187,8 +246,10 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
 
                         if (completed.IsFaulted)
                             _failedAtUtc = _timeProvider.GetUtcNow();
-                        else
+                        else if (completed.IsCanceled)
                             _loadTask = null;
+                        else
+                            _lastUsedUtc = _timeProvider.GetUtcNow();
                     }
                 },
                 CancellationToken.None,

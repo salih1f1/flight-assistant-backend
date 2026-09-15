@@ -100,7 +100,8 @@ namespace FlightAssistant.Application.Interfaces.Verification
     /// <b>Lifecycle (spec §4.3).</b> A source loads its dataset lazily, on the first
     /// <see cref="LookupAsync"/> call that needs it -- never at construction or DI-resolution time.
     /// The loaded dataset is reused for up to 24 hours, and dropped by <see cref="ReleaseCache"/>
-    /// once the registry determines no open request uses this source any more. Implementations
+    /// once the registry determines no open request uses this source any more and no lookup has used
+    /// the dataset for the job's idle period (<see cref="IVerificationJobOptions.IdleRelease"/>). Implementations
     /// share one dataset-cache helper (Infrastructure) for this download/age/release bookkeeping,
     /// so it exists in one place rather than once per source.
     /// </para>
@@ -134,16 +135,23 @@ namespace FlightAssistant.Application.Interfaces.Verification
 
         /// <summary>
         /// Drops this source's cached dataset, if any, so the next <see cref="LookupAsync"/> call
-        /// downloads again. Called by <see cref="IVerificationSourceRegistry.ReleaseUnused"/> once
-        /// no open request uses this source; safe to call when nothing is cached, and safe to call
-        /// even though this source was never used this process.
+        /// downloads again -- unless a lookup used it less than <paramref name="idleRelease"/> ago, or
+        /// a load is in flight. A cached failure is dropped regardless: it keeps only its cooldown. So is a
+        /// dataset at or past its 24-hour maximum age, however recently it was used.
+        /// <see cref="TimeSpan.Zero"/> drops whatever is held. Called by
+        /// <see cref="IVerificationSourceRegistry.ReleaseUnused"/> once no open request uses this
+        /// source; safe to call when nothing is cached, and safe to call even though this source was
+        /// never used this process.
         /// </summary>
-        void ReleaseCache();
+        /// <param name="idleRelease">How long the dataset must have gone unused to be dropped. Not negative.</param>
+        void ReleaseCache(TimeSpan idleRelease);
 
         /// <summary>
-        /// Whether this source holds anything <see cref="ReleaseCache"/> would drop: a loaded dataset,
-        /// a load in flight, or a failed load kept for its cooldown. No I/O, so the job reads it every
-        /// cycle to skip asking the queue which sources are in use when nothing is held.
+        /// Whether this source holds anything at all: a loaded dataset, a load in flight, or a failed
+        /// load kept for its cooldown. Not whether <see cref="ReleaseCache"/> would drop it now: a dataset
+        /// used within the idle period is held but kept, so this stays true through that period. No I/O,
+        /// so the job reads it every cycle and skips asking the queue which sources are in use only when
+        /// no source holds anything.
         /// </summary>
         bool HasCachedData { get; }
     }

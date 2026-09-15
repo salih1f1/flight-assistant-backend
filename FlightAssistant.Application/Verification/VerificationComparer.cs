@@ -131,9 +131,17 @@ namespace FlightAssistant.Application.Verification
                 VerificationComparisonOutcome.Verified, Array.Empty<VerificationDifference>(), sourceValues, null);
         }
 
-        /// <summary>The empty-values rule (spec §3.1) applies uniformly before any kind-specific
-        /// rule: both sides empty is a match, only one side empty is not, regardless of column kind.</summary>
-        private static bool ColumnsMatch(VerificationColumnKind kind, string? ours, string? source)
+        /// <summary>
+        /// Whether two values of one checked column are equal under that column's matching rule
+        /// (spec §3.1). The empty-values rule applies uniformly before any kind-specific rule: both
+        /// sides empty is a match, only one side empty is not, regardless of column kind.
+        ///
+        /// <para>
+        /// Public so accept-source (#378) decides "has this column changed since the check" by the
+        /// same rule the check itself used, rather than by raw string equality.
+        /// </para>
+        /// </summary>
+        public static bool ColumnsMatch(VerificationColumnKind kind, string? ours, string? source)
         {
             var oursEmpty = VerificationValueNormalizer.IsEmpty(ours);
             var sourceEmpty = VerificationValueNormalizer.IsEmpty(source);

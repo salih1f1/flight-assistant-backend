@@ -230,6 +230,11 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 """, ct);
         }
 
+        public Task<bool> HasOpenRequestAsync(VerificationEntityType entityType, string entityKey, CancellationToken ct = default) =>
+            _db.VerificationRequests.AnyAsync(r => r.EntityType == entityType
+                && r.EntityKey == entityKey
+                && (r.Status == VerificationRequestStatus.Pending || r.Status == VerificationRequestStatus.Running), ct);
+
         public Task<VerificationRequest?> GetByIdAsync(long id, CancellationToken ct = default) =>
             _db.VerificationRequests.FirstOrDefaultAsync(r => r.Id == id, ct);
 

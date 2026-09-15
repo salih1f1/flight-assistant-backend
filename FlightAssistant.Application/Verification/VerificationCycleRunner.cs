@@ -57,8 +57,10 @@ namespace FlightAssistant.Application.Verification
     ///
     /// <para>
     /// <b>Releasing datasets.</b> After the batch, the cycle drops the cached dataset of every source no
-    /// open request uses. When no source holds anything, that step is skipped, so an idle queue costs
-    /// no query for it.
+    /// open request uses once no lookup has used it for <see cref="IVerificationJobOptions.IdleRelease"/>.
+    /// When no source holds anything, that step is skipped, so an idle queue costs no query for it; a
+    /// dataset kept for its idle period still counts as held, so that query runs each cycle until it is
+    /// dropped.
     /// </para>
     /// </summary>
     public sealed class VerificationCycleRunner : IVerificationCycleRunner
@@ -252,16 +254,17 @@ namespace FlightAssistant.Application.Verification
         }
 
         /// <summary>
-        /// Drops the cached dataset of every source no open request uses (spec §4.3). The registry
-        /// has no EF dependency (controller ruling); this is where the queue is asked, in one query,
-        /// and only when some source holds something to drop.
+        /// Drops the cached dataset of every source no open request uses and no lookup has used for the
+        /// idle period (spec §4.3, #378). The registry has no EF or options dependency (controller
+        /// ruling); this is where the queue is asked, in one query, and only when some source holds
+        /// something to drop, and where the idle period comes from.
         /// </summary>
         private async Task ReleaseUnusedSourcesAsync(CancellationToken ct)
         {
             if (!_registry.AnySourceHasCachedData) return;
 
             var inUse = await _requests.GetSourceNamesInUseAsync(ct);
-            _registry.ReleaseUnused(inUse);
+            _registry.ReleaseUnused(inUse, _options.IdleRelease);
         }
     }
 }

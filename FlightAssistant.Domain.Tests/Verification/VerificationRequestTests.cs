@@ -149,6 +149,58 @@ namespace FlightAssistant.Domain.Tests.Verification
             Assert.Equal("entityKey", ex.ParamName);
         }
 
+        [Theory]
+        [InlineData(VerificationEntityType.Country, "gb", "GB")]
+        [InlineData(VerificationEntityType.Airport, "42", "42")]
+        [InlineData(VerificationEntityType.Airline, "2147483647", "2147483647")]
+        public void TryCanonicalEntityKey_AValidKey_ReturnsTheSameCanonicalFormCreateStores(
+            VerificationEntityType entityType, string key, string expected)
+        {
+            Assert.True(VerificationRequest.TryCanonicalEntityKey(entityType, key, out var canonical, out var error));
+
+            Assert.Equal(expected, canonical);
+            Assert.Null(error);
+            Assert.Equal(canonical, VerificationRequest.Create(entityType, key, new[] { "s" }, VerificationTrigger.Admin, "a", 0m, RequestedUtc).EntityKey);
+        }
+
+        [Theory]
+        [InlineData(VerificationEntityType.Country, null)]
+        [InlineData(VerificationEntityType.Country, "")]
+        [InlineData(VerificationEntityType.Country, "GB ")]
+        [InlineData(VerificationEntityType.Country, "GBR")]
+        [InlineData(VerificationEntityType.Airport, "042")]
+        [InlineData(VerificationEntityType.Airport, "2147483648")]
+        [InlineData(VerificationEntityType.Airline, "LHR")]
+        [InlineData((VerificationEntityType)99, "1")]
+        public void TryCanonicalEntityKey_AMalformedKey_ReturnsFalseWithAReason(VerificationEntityType entityType, string? key)
+        {
+            Assert.False(VerificationRequest.TryCanonicalEntityKey(entityType, key, out var canonical, out var error));
+
+            Assert.Null(canonical);
+            Assert.False(string.IsNullOrWhiteSpace(error));
+        }
+
+        [Theory]
+        [InlineData(VerificationEntityType.Airport, "", "Key cannot be blank.")]
+        [InlineData(VerificationEntityType.Country, null, "Key cannot be blank.")]
+        [InlineData(VerificationEntityType.Airport, " 42", "Key ' 42' has surrounding whitespace.")]
+        [InlineData(VerificationEntityType.Country, "GBR", "A Country key must be a two-letter code; got 'GBR'.")]
+        [InlineData(VerificationEntityType.Airline, "042", "An Airline key must be a positive integer id with no sign or leading zeros; got '042'.")]
+        public void TryCanonicalEntityKey_TheReason_IsReadableAndNamesNoParameter(
+            VerificationEntityType entityType, string? key, string expected)
+        {
+            Assert.False(VerificationRequest.TryCanonicalEntityKey(entityType, key, out _, out var error));
+
+            Assert.Equal(expected, error);
+        }
+
+        [Fact]
+        public void Create_NullEntityKey_StillThrowsArgumentNullException()
+        {
+            Assert.Throws<ArgumentNullException>(() =>
+                VerificationRequest.Create(VerificationEntityType.Airport, null!, new[] { "s" }, VerificationTrigger.Admin, "a", 0m, RequestedUtc));
+        }
+
         [Fact]
         public void Create_SourcesExactly100CharactersJoined_IsAccepted()
         {

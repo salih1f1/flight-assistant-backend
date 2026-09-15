@@ -483,7 +483,8 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         services.AddLogging();
         services.AddApplication();
         services.AddSingleton<TimeProvider>(_time);
-        services.AddSingleton<IVerificationJobOptions>(new JobOptions(BatchSize: 10, MaxAttempts: maxAttempts));
+        // IdleRelease zero: a source no open request uses is released after the cycle, as these tests expect.
+        services.AddSingleton<IVerificationJobOptions>(new JobOptions(BatchSize: 10, MaxAttempts: maxAttempts, IdleRelease: TimeSpan.Zero));
         foreach (var source in sources)
             services.AddSingleton(source);
         services.AddSingleton<IVerificationSourceRegistry, VerificationSourceRegistry>();
@@ -572,7 +573,7 @@ public class VerificationCyclePostgresTests : PostgresTestBase
     private static VerificationSourceFetchResult Found(IReadOnlyDictionary<string, string?> values) =>
         VerificationSourceFetchResult.Found(values);
 
-    private sealed record JobOptions(int BatchSize, int MaxAttempts) : IVerificationJobOptions;
+    private sealed record JobOptions(int BatchSize, int MaxAttempts, TimeSpan IdleRelease) : IVerificationJobOptions;
 
     private sealed class CountingHandler(HttpStatusCode status) : HttpMessageHandler
     {
@@ -626,7 +627,9 @@ public class VerificationCyclePostgresTests : PostgresTestBase
             return _lookup(key);
         }
 
-        public void ReleaseCache()
+        /// <summary>Releases whatever the idle period: the idle rule is <c>VerificationDatasetCache</c>'s,
+        /// covered by its own tests.</summary>
+        public void ReleaseCache(TimeSpan idleRelease)
         {
             ReleaseCount++;
             HasCachedData = false;

@@ -33,6 +33,12 @@ namespace FlightAssistant.API.HostedServices
         [Range(1, 10)]
         public int MaxAttempts { get; set; } = 3;
 
+        /// <summary>How long a source's downloaded dataset is kept after its last lookup once no open
+        /// request uses the source, so a one-row check soon after another doesn't download it again.
+        /// <c>00:00:00</c> releases it as soon as no open request does.</summary>
+        [Range(typeof(TimeSpan), "00:00:00", "1.00:00:00")]
+        public TimeSpan IdleRelease { get; set; } = TimeSpan.FromMinutes(30);
+
         /// <summary>How old a verification may be before a tracked flight re-queues the entity
         /// (step 10). Not used by the job itself.</summary>
         [Range(1, 3650)]

@@ -265,34 +265,75 @@ namespace FlightAssistant.Domain.Verification.Entities
         /// one key: <c>Country</c> is a two-letter code, upper-cased; <c>Airport</c> and <c>Airline</c>
         /// are a positive <see cref="int"/> id in canonical decimal form (ASCII digits, no sign, no
         /// leading zeros). Empty keys and keys with surrounding whitespace are rejected, not trimmed.
+        ///
+        /// <para>
+        /// <see cref="Create"/> throws on the same rule; callers that take keys from outside (the admin
+        /// enqueue endpoint, #378) call this first, so a malformed key is a validation failure rather
+        /// than an exception from deep inside the queue.
+        /// </para>
         /// </summary>
-        private static string CanonicalEntityKey(VerificationEntityType entityType, string entityKey)
+        /// <param name="canonical">The stored form, when the key is valid.</param>
+        /// <param name="error">Why the key is invalid, otherwise.</param>
+        public static bool TryCanonicalEntityKey(
+            VerificationEntityType entityType,
+            string? entityKey,
+            [NotNullWhen(true)] out string? canonical,
+            [NotNullWhen(false)] out string? error)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(entityKey);
+            canonical = null;
+
+            // The reasons are read by admins (a 400's field errors), so they name the key, not the parameter.
+            if (string.IsNullOrWhiteSpace(entityKey))
+            {
+                error = "Key cannot be blank.";
+                return false;
+            }
             if (char.IsWhiteSpace(entityKey[0]) || char.IsWhiteSpace(entityKey[^1]))
-                throw new ArgumentException($"entityKey '{entityKey}' has surrounding whitespace.", nameof(entityKey));
+            {
+                error = $"Key '{entityKey}' has surrounding whitespace.";
+                return false;
+            }
 
             switch (entityType)
             {
                 case VerificationEntityType.Country:
                     var code = entityKey.ToUpperInvariant();
                     if (code.Length != 2 || !code.All(char.IsAsciiLetterUpper))
-                        throw new ArgumentException($"A Country key must be a two-letter code; got '{entityKey}'.", nameof(entityKey));
-                    return code;
+                    {
+                        error = $"A Country key must be a two-letter code; got '{entityKey}'.";
+                        return false;
+                    }
+                    canonical = code;
+                    error = null;
+                    return true;
 
                 case VerificationEntityType.Airport:
                 case VerificationEntityType.Airline:
                     if (entityKey[0] == '0'
                         || !entityKey.All(char.IsAsciiDigit)
                         || !int.TryParse(entityKey, NumberStyles.None, CultureInfo.InvariantCulture, out _))
-                        throw new ArgumentException(
-                            $"An {entityType} key must be a positive integer id with no sign or leading zeros; got '{entityKey}'.",
-                            nameof(entityKey));
-                    return entityKey;
+                    {
+                        error = $"An {entityType} key must be a positive integer id with no sign or leading zeros; got '{entityKey}'.";
+                        return false;
+                    }
+                    canonical = entityKey;
+                    error = null;
+                    return true;
 
                 default:
-                    throw new ArgumentOutOfRangeException(nameof(entityType), entityType, "Unknown entity type.");
+                    error = $"Unknown entity type {entityType}.";
+                    return false;
             }
+        }
+
+        private static string CanonicalEntityKey(VerificationEntityType entityType, string entityKey)
+        {
+            // Kept ahead of the rule so a null key still throws ArgumentNullException.
+            ArgumentException.ThrowIfNullOrWhiteSpace(entityKey);
+
+            return TryCanonicalEntityKey(entityType, entityKey, out var canonical, out var error)
+                ? canonical
+                : throw new ArgumentException(error, nameof(entityKey));
         }
 
         /// <summary>

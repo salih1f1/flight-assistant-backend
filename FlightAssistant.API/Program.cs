@@ -395,6 +395,7 @@ adminGroup.MapAdminRefDataEndpoints();
 adminGroup.MapAdminLoyaltyEndpoints();
 adminGroup.MapAdminLoungeEndpoints();
 adminGroup.MapAdminVerifyEndpoints();
+adminGroup.MapAdminVerificationEndpoints();
 adminGroup.MapAdminExportEndpoints();
 adminGroup.MapAdminImportEndpoints();
 adminGroup.MapAdminUsageEndpoints();

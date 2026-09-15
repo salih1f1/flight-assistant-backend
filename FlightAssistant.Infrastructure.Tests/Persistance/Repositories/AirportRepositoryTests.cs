@@ -130,4 +130,29 @@ public class AirportRepositoryTests : PostgresTestBase
         Assert.Equal(3, secondPageTotal);
         Assert.Equal(["Airport C"], secondPageItems.Select(a => a.Name));
     }
+
+    /// <summary>
+    /// #378: accept-source refuses an ICAO code another airport already has, before the unique index on
+    /// <c>airports.Icao</c> would fail the save. The lookup matches whatever casing it is given, as
+    /// <see cref="AirportRepository.FindByIataAsync"/> does, and finds nothing for a free code, including
+    /// against an airport whose ICAO is null.
+    /// </summary>
+    [Fact]
+    public async Task FindByIcaoAsync_FindsTheAirportOwningTheCode_InAnyCase_AndNullForAFreeCode()
+    {
+        await using (var seed = CreateDbContext())
+        {
+            seed.Countries.Add(Country.Create("GB", "United Kingdom"));
+            seed.Airports.AddRange(
+                Airport.Create("LHR", "EGLL", "London Heathrow", "London", "GB"),
+                Airport.Create("LGW", null, "London Gatwick", "Crawley", "GB"));
+            await seed.SaveChangesAsync();
+        }
+
+        await using var db = CreateDbContext();
+
+        Assert.Equal("LHR", (await Repository(db).FindByIcaoAsync("egll"))?.Iata);
+        Assert.Equal("LHR", (await Repository(db).FindByIcaoAsync("EGLL"))?.Iata);
+        Assert.Null(await Repository(db).FindByIcaoAsync("EGKK"));
+    }
 }

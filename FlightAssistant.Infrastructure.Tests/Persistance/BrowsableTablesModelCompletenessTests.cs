@@ -1,5 +1,7 @@
 using FlightAssistant.Application.Administration;
+using FlightAssistant.Domain.Verification.Entities;
 using FlightAssistant.Infrastructure.Persistance;
+using FlightAssistant.Infrastructure.Persistance.Configurations.Verification;
 using Microsoft.EntityFrameworkCore;
 
 namespace FlightAssistant.Infrastructure.Tests.Persistance;
@@ -85,14 +87,20 @@ public class BrowsableTablesModelCompletenessTests
     // property being silently invisible in the browser — or, worse, a new *sensitive* property
     // being silently exposed because nobody re-ran the classification.
     //
-    // Empty today: every mapped scalar property discovered on the current model is already listed
-    // in BrowsableTables.cs (see that file), so nothing needs excluding yet. This map exists so a
-    // future property that genuinely should not be browsable can be recorded with a reason instead
-    // of just making this test fail with no explanation — mirroring BrowsableTables.NotBrowsable's
-    // shape at entity granularity, but kept in the test rather than the production registry because
-    // BrowsableTables' own spec (Task 1 brief, section 1) only describes an entity-level opt-out.
+    // This map records a mapped property that genuinely should not be browsable, with a reason,
+    // instead of just making this test fail with no explanation — mirroring
+    // BrowsableTables.NotBrowsable's shape at entity granularity, but kept in the test rather than the
+    // production registry because BrowsableTables' own spec (Task 1 brief, section 1) only describes
+    // an entity-level opt-out.
     private static readonly IReadOnlyDictionary<(Type EntityType, string Property), string> ExcludedColumns =
-        new Dictionary<(Type, string), string>();
+        new Dictionary<(Type, string), string>
+        {
+            // A shadow property mapped to PostgreSQL's xmin system column (#378): the verification job's
+            // concurrency token. It has no CLR property for the browser's projection to read, and an
+            // xmin value means nothing to an admin.
+            [(typeof(VerificationRequest), VerificationRequestConfiguration.RowVersionPropertyName)] =
+                "Row version (PostgreSQL xmin): a shadow concurrency token with no CLR property and no meaning to an admin",
+        };
 
     [Fact]
     public void EveryMappedScalarProperty_IsExposedOrExplicitlyExcluded()
@@ -151,5 +159,40 @@ public class BrowsableTablesModelCompletenessTests
     public void EveryExcludedColumnEntry_HasANonEmptyReason()
     {
         Assert.All(ExcludedColumns, kvp => Assert.False(string.IsNullOrWhiteSpace(kvp.Value)));
+    }
+
+    /// <summary>
+    /// An exclusion is a decision not to expose the column, so a column cannot be both. Without this,
+    /// listing an excluded column (such as <c>verification_requests</c>' xmin row version) as exposed
+    /// passes both completeness guards above: it is a mapped property, and it is accounted for.
+    /// </summary>
+    [Fact]
+    public void NoColumn_IsBothExposedAndExcluded()
+    {
+        var both = BrowsableTables.All
+            .SelectMany(table => table.Columns
+                .Where(column => ExcludedColumns.ContainsKey((table.EntityType, column)))
+                .Select(column => $"{table.Slug}.{column}"))
+            .ToList();
+
+        Assert.True(both.Count == 0, "Column(s) both exposed and excluded: " + string.Join(", ", both));
+    }
+
+    /// <summary>
+    /// The browser projects rows by CLR reflection, so a shadow property (one with no CLR member, such as
+    /// the xmin row version) can never be read, and exposing one would make every read of that table a 500.
+    /// </summary>
+    [Fact]
+    public void NoExposedColumn_IsAShadowProperty()
+    {
+        using var ctx = CreateContext();
+
+        var shadow = BrowsableTables.All
+            .SelectMany(table => table.Columns
+                .Where(column => ctx.Model.FindEntityType(table.EntityType)?.FindProperty(column)?.IsShadowProperty() == true)
+                .Select(column => $"{table.Slug}.{column}"))
+            .ToList();
+
+        Assert.True(shadow.Count == 0, "Exposed column(s) that are shadow properties: " + string.Join(", ", shadow));
     }
 }

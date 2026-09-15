@@ -467,7 +467,7 @@ public class MledozeCountriesVerificationSourceTests
         var source = Source(handler, clock);
 
         await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
-        source.ReleaseCache();
+        source.ReleaseCache(TimeSpan.Zero);
         await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
 
         Assert.Equal(2, handler.CallCount);

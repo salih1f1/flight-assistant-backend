@@ -56,10 +56,7 @@ namespace FlightAssistant.Application.Administration
         /// belongs here only with a concrete reason not to be browsable.
         /// </summary>
         public static readonly IReadOnlyDictionary<Type, string> NotBrowsable =
-            new Dictionary<Type, string>
-            {
-                [typeof(VerificationRequest)] = "Browsable from step 6 of the auto-verification spec (#342 §4.4)",
-            };
+            new Dictionary<Type, string>();
 
         private static readonly IReadOnlyList<BrowsableTable> Entries = new List<BrowsableTable>
         {
@@ -326,6 +323,30 @@ namespace FlightAssistant.Application.Administration
                 nameof(AdminAuditLog.Before),
                 nameof(AdminAuditLog.After),
                 nameof(AdminAuditLog.TraceId),
+            }),
+
+            // Every mapped column except the RowVersion shadow property (PostgreSQL's xmin, the job's
+            // concurrency token): it has no CLR property to project, and it means nothing to an admin.
+            // BrowsableTablesModelCompletenessTests excludes it explicitly. Nothing here is sensitive:
+            // Error holds fixed categories, and RequestedBy is an admin id, like VerifiedBy.
+            new("verification-requests", typeof(VerificationRequest), "Verification Requests", new[]
+            {
+                nameof(VerificationRequest.Id),
+                nameof(VerificationRequest.EntityType),
+                nameof(VerificationRequest.EntityKey),
+                nameof(VerificationRequest.Sources),
+                nameof(VerificationRequest.Trigger),
+                nameof(VerificationRequest.Status),
+                nameof(VerificationRequest.Attempts),
+                nameof(VerificationRequest.NextAttemptUtc),
+                nameof(VerificationRequest.DifferencesJson),
+                nameof(VerificationRequest.SourceValuesJson),
+                nameof(VerificationRequest.Error),
+                nameof(VerificationRequest.EstimatedCostUsd),
+                nameof(VerificationRequest.RequestedBy),
+                nameof(VerificationRequest.RequestedUtc),
+                nameof(VerificationRequest.StartedUtc),
+                nameof(VerificationRequest.CompletedUtc),
             }),
         };
 

@@ -608,6 +608,36 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     }
 
     /// <summary>
+    /// Accept-source's guard (#378): only a Pending or Running request for that exact entity type and key
+    /// counts as open.
+    /// </summary>
+    [Fact]
+    public async Task HasOpenRequestAsync_IsTrueOnlyForAPendingOrRunningRequestOfThatEntityTypeAndKey()
+    {
+        var ids = await SeedEachAsync(
+            Request("11"), // claimed below (the lowest id): Running
+            Request("12"), // Pending
+            Request("13"), // completed below
+            Request("14", entityType: VerificationEntityType.Airline)); // Pending, another entity type
+        await using (var db = CreateDbContext())
+        {
+            var repository = Repository(db);
+            Assert.Equal(ids[0], Assert.Single(await repository.ClaimBatchAsync(1, T0)).Id);
+            (await repository.GetByIdAsync(ids[2]))!.MarkError("Entity no longer exists", T0);
+            await repository.SaveChangesAsync();
+        }
+
+        await using var verify = CreateDbContext();
+        var reader = Repository(verify);
+        Assert.True(await reader.HasOpenRequestAsync(VerificationEntityType.Airport, "11")); // Running
+        Assert.True(await reader.HasOpenRequestAsync(VerificationEntityType.Airport, "12")); // Pending
+        Assert.False(await reader.HasOpenRequestAsync(VerificationEntityType.Airport, "13")); // completed
+        Assert.False(await reader.HasOpenRequestAsync(VerificationEntityType.Airport, "14")); // open, but an Airline
+        Assert.True(await reader.HasOpenRequestAsync(VerificationEntityType.Airline, "14"));
+        Assert.False(await reader.HasOpenRequestAsync(VerificationEntityType.Airport, "15")); // never queued
+    }
+
+    /// <summary>
     /// Final fix wave, C4: the job returns its unfinished claims on shutdown. Of three claims this
     /// worker made, one was reset and claimed again by another worker, one had its outcome saved, and
     /// one is still this worker's: only that one goes back to Pending, with no attempt counted.
