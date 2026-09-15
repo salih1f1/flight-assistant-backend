@@ -94,6 +94,27 @@ public class FlightRepositoryTests : PostgresTestBase
         db.SaveChanges();
     }
 
+    /// <summary>A saved flight scheduled to arrive at <paramref name="scheduledArrivalUtc"/>, tracked by
+    /// <paramref name="travelerId"/> when one is given.</summary>
+    private static Flight FlightArriving(FlightAssistantDbContext db, string flightNumber, DateTime scheduledArrivalUtc,
+        Guid? travelerId = null)
+    {
+        var (airlineId, departureAirportId, arrivalAirportId) = EnsureReferenceData(db);
+        var flight = Flight.Create(airlineId, flightNumber, departureAirportId, arrivalAirportId,
+            DateOnly.FromDateTime(scheduledArrivalUtc), scheduledArrivalUtc.AddHours(-3), scheduledArrivalUtc);
+        db.Flights.Add(flight);
+        db.SaveChanges();
+
+        if (travelerId is { } id)
+        {
+            EnsureTraveler(db, id);
+            db.TravelerFlights.Add(TravelerFlight.Create(id, flight.Id));
+            db.SaveChanges();
+        }
+
+        return flight;
+    }
+
     [Fact]
     public async Task GetDueTrackedFlightIdsAsync_ReturnsDueFlights_OldestDueFirst()
     {
@@ -196,5 +217,49 @@ public class FlightRepositoryTests : PostgresTestBase
 
         Assert.True(await repository.IsFlightTrackedAsync(tracked.Id));
         Assert.False(await repository.IsFlightTrackedAsync(untracked.Id));
+    }
+
+    // ── CountActiveTrackedFlightsAsync (#380) ──
+
+    [Fact]
+    public async Task CountActiveTrackedFlightsAsync_CountsOnlyTheTravelersFlightsThatHaveNotFinished()
+    {
+        using var db = CreateContext();
+        var traveler = Guid.NewGuid();
+
+        // Counts: arrives in 3 hours.
+        FlightArriving(db, "TK10", SyncNow.AddHours(3), traveler);
+        // Counts: its scheduled arrival has passed, but the estimate is still ahead.
+        var delayed = FlightArriving(db, "TK11", SyncNow.AddHours(-1), traveler);
+        delayed.ApplyStatusUpdate("DEP", null, SyncNow.AddHours(1), SyncNow.AddHours(-3), null, null, SyncNow);
+        // Doesn't count: it has an actual arrival, although its scheduled arrival is ahead.
+        var landed = FlightArriving(db, "TK12", SyncNow.AddHours(3), traveler);
+        landed.ApplyStatusUpdate("ARR", null, null, SyncNow.AddHours(-2), SyncNow.AddMinutes(-5), null, SyncNow);
+        // Doesn't count: cancelled, although its scheduled arrival is ahead.
+        var cancelled = FlightArriving(db, "TK13", SyncNow.AddHours(3), traveler);
+        cancelled.ApplyStatusUpdate("CAN", null, null, null, null, null, SyncNow);
+        // Doesn't count: its scheduled arrival has passed and there's no estimate.
+        FlightArriving(db, "TK14", SyncNow.AddHours(-1), traveler);
+        // Doesn't count: another traveler's flight, and an untracked one.
+        FlightArriving(db, "TK15", SyncNow.AddHours(3), Guid.NewGuid());
+        FlightArriving(db, "TK16", SyncNow.AddHours(3));
+        db.SaveChanges();
+
+        var count = await Repository(db, ClockAt(SyncNow)).CountActiveTrackedFlightsAsync(traveler, SyncNow);
+
+        Assert.Equal(2, count);
+    }
+
+    [Fact]
+    public async Task CountActiveTrackedFlightsAsync_AFlightArrivingExactlyNow_HasFinished()
+    {
+        using var db = CreateContext();
+        var traveler = Guid.NewGuid();
+        FlightArriving(db, "TK20", SyncNow, traveler);
+        FlightArriving(db, "TK21", SyncNow.AddMinutes(1), traveler);
+
+        var count = await Repository(db, ClockAt(SyncNow)).CountActiveTrackedFlightsAsync(traveler, SyncNow);
+
+        Assert.Equal(1, count);
     }
 }

@@ -38,6 +38,7 @@ public class TrackFlightCommandHandlerTests
         public TimeSpan StopAfterArrival => TimeSpan.FromMinutes(20);
         public TimeSpan StopWithoutArrivalAfter => TimeSpan.FromHours(12);
         public TimeSpan ManualSyncCooldown => TimeSpan.FromMinutes(4);
+        public int MaxActiveTrackedFlightsPerTraveler => 3;
     }
 
     private sealed class WindowOptions : IFlightStatusWindowOptions

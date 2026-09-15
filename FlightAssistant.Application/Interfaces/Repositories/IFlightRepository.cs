@@ -60,5 +60,13 @@ namespace FlightAssistant.Application.Interfaces.Repositories
 
         /// <summary>Whether any traveler tracks the flight.</summary>
         Task<bool> IsFlightTrackedAsync(int flightId, CancellationToken ct = default);
+
+        /// <summary>
+        /// How many flights the traveler tracks that haven't finished as of <paramref name="nowUtc"/>
+        /// (#380): no actual arrival, not cancelled, and an estimated (else scheduled) arrival still
+        /// ahead. Counted in SQL, since <c>traveler_flights</c> keeps every flight a traveler has ever
+        /// tracked.
+        /// </summary>
+        Task<int> CountActiveTrackedFlightsAsync(Guid travelerId, DateTime nowUtc, CancellationToken ct = default);
     }
 }

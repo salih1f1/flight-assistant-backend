@@ -42,5 +42,10 @@ namespace FlightAssistant.API.HostedServices
         /// provider call (#369). Zero turns it off.</summary>
         [Range(typeof(TimeSpan), "00:00:00", "01:00:00")]
         public TimeSpan ManualSyncCooldown { get; set; } = TimeSpan.FromMinutes(5);
+
+        /// <summary>How many flights that haven't finished a traveler can track at once (#380). Each
+        /// becomes a Live and then Fast poll, so this bounds one account's AeroAPI spend.</summary>
+        [Range(1, 1000)]
+        public int MaxActiveTrackedFlightsPerTraveler { get; set; } = 20;
     }
 }

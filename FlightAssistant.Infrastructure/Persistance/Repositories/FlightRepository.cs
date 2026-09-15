@@ -144,5 +144,13 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
 
         public Task<bool> IsFlightTrackedAsync(int flightId, CancellationToken ct = default) =>
             _db.TravelerFlights.AnyAsync(tf => tf.FlightId == flightId, ct);
+
+        public Task<int> CountActiveTrackedFlightsAsync(Guid travelerId, DateTime nowUtc, CancellationToken ct = default) =>
+            _db.TravelerFlights
+                .Where(tf => tf.TravelerId == travelerId)
+                .Join(_db.Flights, tf => tf.FlightId, f => f.Id, (tf, f) => f)
+                .CountAsync(f => f.ActualArrivalUtc == null
+                                 && f.CancelledAtUtc == null
+                                 && (f.EstimatedArrivalUtc ?? f.ScheduledArrivalUtc) > nowUtc, ct);
     }
 }
