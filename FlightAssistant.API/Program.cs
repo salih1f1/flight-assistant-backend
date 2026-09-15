@@ -14,6 +14,7 @@ using FlightAssistant.Infrastructure.HealthChecks;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.ApplicationInsights.Extensibility;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -198,6 +199,19 @@ builder.Services.AddAuthorization(options =>
               .RequireRole("admin"));
 });
 
+// App Service terminates TLS and proxies every request, so without the forwarded headers
+// RemoteIpAddress and Scheme are its front end's, and every IP-partitioned rate limit puts all
+// callers in one bucket (#371). The front end's addresses aren't fixed, so there is no known-proxy
+// list; ForwardLimit = 1 reads only the rightmost X-Forwarded-For entry — the one the front end
+// appended — so a client can't choose its own address by sending the header itself.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardLimit = 1;
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
 // Rate limiting — fixed-window per policy; limits are configurable via appsettings.json
 builder.Services.AddRateLimiter(rl =>
 {
@@ -311,6 +325,9 @@ app.Services.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>()
 // ------------------------------------------------------------
 // 5. Middleware Pipeline
 // ------------------------------------------------------------
+// First: everything after it sees the client's address and scheme (#371).
+app.UseForwardedHeaders();
+
 if (app.Environment.IsDevelopment() || app.Environment.IsStaging())
 {
     app.UseSwagger();
