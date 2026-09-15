@@ -473,6 +473,7 @@ public class AdminTravelerEndpointTests(FlightAssistantWebApplicationFactory fac
     {
         // The real host: the configured cap reaches the handler, and the count runs against the database (#380).
         var cap = factory.Services.GetRequiredService<IFlightSyncOptions>().MaxActiveTrackedFlightsPerTraveler;
+        Assert.Equal(3, cap); // appsettings.Testing.json: non-default (#308), so a hardcoded 20 can't pass
         var traveler = await SeedTravelerAsync();
         var client = factory.CreateAdminClient();
         for (var i = 0; i < cap; i++)
@@ -484,6 +485,9 @@ public class AdminTravelerEndpointTests(FlightAssistantWebApplicationFactory fac
         var refused = await client.PostAsJsonAsync($"admin/travelers/{traveler.Id}/flights", await SeedTrackableFlightAsync());
 
         Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        var problem = await refused.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("You can track up to 3 flights at a time. Stop tracking one to add another.",
+            problem.GetProperty("title").GetString());
         Assert.Equal(cap, (await TrackingRowsForAsync(traveler.Id)).Count);
     }
 
