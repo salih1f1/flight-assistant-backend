@@ -4,9 +4,11 @@ using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
 using FlightAssistant.Infrastructure.ExternalServices.GitHub;
+using FlightAssistant.Infrastructure.ExternalServices.Verification;
 using FlightAssistant.Infrastructure.Notifications;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
@@ -45,6 +47,60 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<ICountryRepository, CountryRepository>();
             services.AddScoped<IAllianceRepository, AllianceRepository>();
             services.AddScoped(typeof(IVerifiableRepository<>), typeof(EfVerifiableRepository<>));
+
+            // Verification queue (#367): one repository behind the queue and the job's interface.
+            services.AddScoped<IVerificationQueue, VerificationRequestRepository>();
+            services.AddScoped<IVerificationRequestRepository, VerificationRequestRepository>();
+
+            // Verification sources (#367 task 3): the two free outside datasets an automated check
+            // can name. Both hold no credentials — OurAirports and mledoze's raw GitHub file are
+            // public, unauthenticated URLs — so, unlike the GitHub clients below, following a
+            // redirect is not a credential-leak risk and the default SocketsHttpHandler (which
+            // follows redirects) is left as-is deliberately.
+            //
+            // Registered as singletons, not scoped: each source's parsed dataset is reused for up to
+            // 24h (spec §4.3), and the job's cycle runs in a fresh, short-lived DI scope every time —
+            // a scoped source would re-download on every single cycle instead of persisting across
+            // them. Each source is handed IHttpClientFactory itself (fix round 1, item 5), not a
+            // pre-created HttpClient captured once at registration time: it calls CreateClient(name)
+            // fresh for every download, so this singleton never outlives one HttpMessageHandler
+            // instance across the app's whole lifetime the way holding a single created HttpClient
+            // forever would. VerificationSourceRegistry is a singleton for the same cache-persistence
+            // reason, and depends on nothing but the sources themselves (IEnumerable<IVerificationSource>,
+            // resolved from every AddSingleton<IVerificationSource> registration below) — no
+            // repository/EF dependency (controller ruling); Task 4's job cycle is what asks
+            // IVerificationRequestRepository which sources are still in use.
+            //
+            // client.Timeout is a looser backstop only (same layering CLAUDE.md documents for
+            // AeroApi): VerificationSourceDownloader's own linked CancellationTokenSource, cancelled
+            // after each source's DownloadTimeout, is what actually bounds send *and* parse (fix
+            // round 1, item 1) — HttpClient.Timeout alone would cover only time-to-headers, since
+            // ResponseHeadersRead makes HttpClient drop its own timeout the instant headers arrive.
+            services.AddHttpClient(OurAirportsVerificationSource.HttpClientName, client =>
+            {
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("FlightAssistant-VerificationJob");
+                client.Timeout = OurAirportsVerificationSource.DownloadTimeout + TimeSpan.FromSeconds(30);
+            });
+
+            services.AddHttpClient(MledozeCountriesVerificationSource.HttpClientName, client =>
+            {
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("FlightAssistant-VerificationJob");
+                client.Timeout = MledozeCountriesVerificationSource.DownloadTimeout + TimeSpan.FromSeconds(30);
+            });
+
+            services.AddSingleton(sp => new OurAirportsVerificationSource(
+                sp.GetRequiredService<IHttpClientFactory>(),
+                sp.GetRequiredService<TimeProvider>(),
+                sp.GetRequiredService<ILogger<OurAirportsVerificationSource>>()));
+            services.AddSingleton<IVerificationSource>(sp => sp.GetRequiredService<OurAirportsVerificationSource>());
+
+            services.AddSingleton(sp => new MledozeCountriesVerificationSource(
+                sp.GetRequiredService<IHttpClientFactory>(),
+                sp.GetRequiredService<TimeProvider>(),
+                sp.GetRequiredService<ILogger<MledozeCountriesVerificationSource>>()));
+            services.AddSingleton<IVerificationSource>(sp => sp.GetRequiredService<MledozeCountriesVerificationSource>());
+
+            services.AddSingleton<IVerificationSourceRegistry, VerificationSourceRegistry>();
 
             // AeroAPI — the sole flight data provider (issue #280). This wires the HTTP
             // foundation: options, error mapping (AeroApiResponse), and the shared outbound

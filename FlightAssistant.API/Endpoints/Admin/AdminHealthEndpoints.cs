@@ -1,7 +1,9 @@
 using FlightAssistant.API.HostedServices;
+using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 
 namespace FlightAssistant.API.Endpoints.Admin
 {
@@ -32,6 +34,9 @@ namespace FlightAssistant.API.Endpoints.Admin
                 HealthCheckService healthCheckService,
                 FlightAssistantDbContext db,
                 FlightSyncHeartbeat heartbeat,
+                VerificationJobHeartbeat verificationHeartbeat,
+                IOptions<VerificationOptions> verificationOptions,
+                IVerificationRequestRepository verificationRequests,
                 IHostEnvironment env,
                 IConfiguration configuration,
                 ILoggerFactory loggerFactory,
@@ -44,7 +49,8 @@ namespace FlightAssistant.API.Endpoints.Admin
                     "FlightAssistant.API.Endpoints.Admin.AdminHealthReportBuilder");
 
                 var dto = await AdminHealthReportBuilder.BuildAsync(
-                    healthCheckService, db, heartbeat, env, configuration, logger, ct);
+                    healthCheckService, db, heartbeat, verificationHeartbeat, verificationOptions, verificationRequests,
+                    env, configuration, logger, ct);
 
                 // Always 200, even when Status is "Unhealthy": this is a report, not a probe. A
                 // non-2xx response would make the panel's HTTP error handling swallow the very body
@@ -59,8 +65,9 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "'apns', tagged 'external' and excluded from the load-balancer probe at " +
                 "/health/ready — and always responds 200, even when the overall status is " +
                 "Unhealthy. Also reports process/build info (version, build SHA, uptime), pending " +
-                "EF Core migrations, and the flight-status sync's last-run heartbeat. Exception " +
-                "detail on individual checks and the sync's last error render outside Production " +
+                "EF Core migrations, the flight-status sync's last-run heartbeat, and the reference " +
+                "verification job's last-cycle heartbeat with its pending request count. Exception " +
+                "detail on individual checks and both jobs' last errors render outside Production " +
                 "only.")
             .Produces<AdminHealthDto>(200)
             // Every known failure mode degrades gracefully into the 200 payload (including a

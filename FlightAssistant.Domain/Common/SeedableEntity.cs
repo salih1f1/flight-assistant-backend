@@ -19,6 +19,8 @@ namespace FlightAssistant.Domain.Common
 
         public void Verify(string verifiedBy, string source, DateTime verifiedAtUtc)
         {
+            VerificationGuard.EnsureValidVerify(verifiedBy, source, verifiedAtUtc);
+
             IsVerified = true;
             VerifiedAt = verifiedAtUtc;
             VerifiedBy = verifiedBy;
@@ -37,6 +39,8 @@ namespace FlightAssistant.Domain.Common
 
         public void MarkVerificationFailed(string issue)
         {
+            VerificationGuard.EnsureValidIssue(issue);
+
             IsVerified = false;
             VerifiedAt = null;
             VerifiedBy = null;

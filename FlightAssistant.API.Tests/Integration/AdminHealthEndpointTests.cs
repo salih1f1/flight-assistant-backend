@@ -166,6 +166,26 @@ public class AdminHealthEndpointTests(FlightAssistantWebApplicationFactory facto
             }));
     }
 
+    /// <summary>The verification job's counterpart of <see cref="WithFailedFlightSyncHeartbeat"/>:
+    /// overrides Program.cs's <c>VerificationJobHeartbeat</c> singleton with one whose last cycle
+    /// failed.</summary>
+    private static WebApplicationFactory<Program> WithFailedVerificationHeartbeat(
+        FlightAssistantWebApplicationFactory factory, string? environmentName = null)
+    {
+        var heartbeat = new VerificationJobHeartbeat(TimeProvider.System);
+        heartbeat.MarkRunStarted();
+        heartbeat.MarkRunFailed(new InvalidOperationException("verification boom"), DateTime.UtcNow.AddSeconds(30));
+
+        return factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+            {
+                if (environmentName is not null)
+                    services.AddSingleton<IHostEnvironment>(new FakeHostEnvironment(environmentName));
+
+                services.AddSingleton(heartbeat);
+            }));
+    }
+
     // Distinctive sentinel values for the redis/App Insights configured-ness test below. Chosen to
     // be unmistakable in a failure diff and to never plausibly appear anywhere else in the response
     // body.
@@ -289,6 +309,10 @@ public class AdminHealthEndpointTests(FlightAssistantWebApplicationFactory facto
         // Testing (the ambient, non-overridden environment here) is non-Production, so the reason
         // renders.
         Assert.NotNull(dto.Migrations.Error);
+
+        // The verification queue's count needs the same unreachable database: it degrades to
+        // "cannot tell" too, rather than failing the report.
+        Assert.Null(dto.Verification.PendingCount);
     }
 
     [Fact]
@@ -422,6 +446,54 @@ public class AdminHealthEndpointTests(FlightAssistantWebApplicationFactory facto
 
         Assert.Equal("Failed", dto!.FlightSync.LastOutcome);
         Assert.Null(dto.FlightSync.LastError);
+    }
+
+    [Fact]
+    public async Task GetHealth_Admin_ReportsTheVerificationSection_EnabledWithAPendingCount()
+    {
+        // Hosted services are stripped in this suite, so the job has never run: NeverRun, and the
+        // count is read from the (InMemory) queue table rather than left out.
+        var client = factory.CreateAdminClient();
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<AdminHealthDto>();
+        Assert.NotNull(dto);
+        Assert.True(dto!.Verification.Enabled);
+        Assert.Equal("NeverRun", dto.Verification.LastOutcome);
+        Assert.Null(dto.Verification.LastRunStartedUtc);
+        Assert.NotNull(dto.Verification.PendingCount);
+    }
+
+    [Fact]
+    public async Task GetHealth_VerificationFailed_PopulatesLastErrorOutsideProduction()
+    {
+        using var scopedFactory = WithFailedVerificationHeartbeat(factory, environmentName: Environments.Development);
+        var client = AdminClient(scopedFactory);
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<AdminHealthDto>();
+        Assert.NotNull(dto);
+        Assert.Equal("Failed", dto!.Verification.LastOutcome);
+        Assert.Equal("InvalidOperationException: verification boom", dto.Verification.LastError);
+    }
+
+    [Fact]
+    public async Task GetHealth_VerificationFailed_Production_NullsTheLastError()
+    {
+        using var scopedFactory = WithFailedVerificationHeartbeat(factory, environmentName: Environments.Production);
+        var client = AdminClient(scopedFactory);
+
+        var response = await client.GetAsync("admin/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<AdminHealthDto>();
+        Assert.NotNull(dto);
+        Assert.Equal("Failed", dto!.Verification.LastOutcome);
+        Assert.Null(dto.Verification.LastError);
     }
 
     [Fact]

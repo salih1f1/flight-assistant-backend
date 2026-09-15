@@ -5,6 +5,7 @@ using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
+using FlightAssistant.Domain.Verification.Entities;
 
 namespace FlightAssistant.Application.Administration
 {
@@ -51,11 +52,14 @@ namespace FlightAssistant.Application.Administration
         /// <summary>
         /// Entity types deliberately left out of <see cref="Entries"/>, each with a short reason, so
         /// the entity-completeness guard passes for a stated cause rather than an oversight. Default
-        /// to including things — this endpoint is read-only, admin-gated and masked — so this is
-        /// empty unless a future entity has a concrete reason not to be browsable.
+        /// to including things — this endpoint is read-only, admin-gated and masked — so an entity
+        /// belongs here only with a concrete reason not to be browsable.
         /// </summary>
         public static readonly IReadOnlyDictionary<Type, string> NotBrowsable =
-            new Dictionary<Type, string>();
+            new Dictionary<Type, string>
+            {
+                [typeof(VerificationRequest)] = "Browsable from step 6 of the auto-verification spec (#342 §4.4)",
+            };
 
         private static readonly IReadOnlyList<BrowsableTable> Entries = new List<BrowsableTable>
         {

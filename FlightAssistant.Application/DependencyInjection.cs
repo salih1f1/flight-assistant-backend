@@ -2,6 +2,7 @@ using FlightAssistant.Application.Administration;
 using FlightAssistant.Application.Behaviours;
 using FlightAssistant.Application.Commands.Admin.Verify;
 using FlightAssistant.Application.Interfaces.Administration;
+using FlightAssistant.Application.Verification;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
@@ -38,6 +39,11 @@ namespace FlightAssistant.Application
             // both views of one object with no cast anywhere (#313 Task 2 review, F3/I3).
             services.AddScoped<AdminContext>();
             services.AddScoped<IAdminContext>(sp => sp.GetRequiredService<AdminContext>());
+
+            // Reference verification job (#367). Scoped: the runner is resolved from the job's cycle
+            // scope, and a processor from each request's own scope, so each saves on its own context.
+            services.AddScoped<IVerificationCycleRunner, VerificationCycleRunner>();
+            services.AddScoped<VerificationRequestProcessor>();
 
             // VerifyEntityCommandHandler is a generic handler; register a concrete instance per entity type
             // so MediatR's assembly scan (which doesn't resolve open generics) can find them.

@@ -1414,7 +1414,7 @@
           "Admin - Health"
         ],
         "summary": "Operator health detail",
-        "description": "Runs every registered health check with no predicate — including 'aeroapi' and 'apns', tagged 'external' and excluded from the load-balancer probe at /health/ready — and always responds 200, even when the overall status is Unhealthy. Also reports process/build info (version, build SHA, uptime), pending EF Core migrations, and the flight-status sync's last-run heartbeat. Exception detail on individual checks and the sync's last error render outside Production only.",
+        "description": "Runs every registered health check with no predicate — including 'aeroapi' and 'apns', tagged 'external' and excluded from the load-balancer probe at /health/ready — and always responds 200, even when the overall status is Unhealthy. Also reports process/build info (version, build SHA, uptime), pending EF Core migrations, the flight-status sync's last-run heartbeat, and the reference verification job's last-cycle heartbeat with its pending request count. Exception detail on individual checks and both jobs' last errors render outside Production only.",
         "operationId": "AdminGetHealth",
         "responses": {
           "200": {
@@ -4237,6 +4237,9 @@
           },
           "flightSync": {
             "$ref": "#/components/schemas/AdminHealthFlightSyncDto"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/AdminHealthVerificationDto"
           }
         },
         "additionalProperties": false
@@ -4341,6 +4344,51 @@
           },
           "appInsightsConfigured": {
             "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminHealthVerificationDto": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "lastRunStartedUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastRunCompletedUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastOutcome": {
+            "type": "string",
+            "nullable": true
+          },
+          "requestsProcessed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "requestsFailed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "nextRunDueUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastError": {
+            "type": "string",
+            "nullable": true
+          },
+          "pendingCount": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
           }
         },
         "additionalProperties": false

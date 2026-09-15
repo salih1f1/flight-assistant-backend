@@ -6,6 +6,7 @@ using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
+using FlightAssistant.Domain.Verification.Entities;
 using Microsoft.EntityFrameworkCore;
 using System.Reflection;
 
@@ -47,6 +48,9 @@ namespace FlightAssistant.Infrastructure.Persistance
 
         // Administration
         public DbSet<AdminAuditLog> AdminAuditLogs => Set<AdminAuditLog>();
+
+        // Verification
+        public DbSet<VerificationRequest> VerificationRequests => Set<VerificationRequest>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
