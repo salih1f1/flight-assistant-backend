@@ -30,7 +30,8 @@ namespace FlightAssistant.API.Endpoints.Admin
             .WithDescription(
                 "The same search, inputs and responses as GET /flights/search, for the admin panel. " +
                 "Each row can be posted unmodified to POST /admin/travelers/{id}/flights. Every distinct " +
-                "search that misses the cache is a paid AeroAPI call, so it shares the flight-search rate limit, counted per admin.")
+                "search that misses the cache is a paid AeroAPI call, so it shares the flight-search rate limit, counted per admin. " +
+                "Once this month's flight data budget is nearly used up, a search that isn't cached returns 503.")
             .Produces<List<FlightSearchResultDto>>(200)
             .ProducesValidationProblem()
             .ProducesProblem(500)

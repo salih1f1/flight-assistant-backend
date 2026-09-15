@@ -1,8 +1,11 @@
+using System.Net;
+using System.Text;
 using FlightAssistant.Application;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Application.Queries.Admin.Usage;
 using FlightAssistant.Application.Queries.Flights;
+using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
@@ -11,6 +14,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Validators;
+using NSubstitute;
 
 namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroApi;
 
@@ -26,7 +30,9 @@ namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroApi;
 /// </summary>
 public class AeroApiDependencyInjectionTests
 {
-    private static ServiceProvider BuildContainer(IDictionary<string, string?>? extraSettings = null)
+    private static ServiceProvider BuildContainer(
+        IDictionary<string, string?>? extraSettings = null,
+        Action<IServiceCollection>? configure = null)
     {
         var settings = new Dictionary<string, string?> { ["AeroApi:ApiKey"] = "dummy-test-key" };
         foreach (var (key, value) in extraSettings ?? new Dictionary<string, string?>())
@@ -56,7 +62,24 @@ public class AeroApiDependencyInjectionTests
         // are resolved in production, not constructed directly with a hand-supplied fake.
         services.AddApplication();
 
+        configure?.Invoke(services);
+
         return services.BuildServiceProvider();
+    }
+
+    /// <summary>Stands in for AeroAPI, answering an empty 200 and counting everything that reaches it.</summary>
+    private sealed class CountingTransport : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            });
+        }
     }
 
     [Fact]
@@ -121,6 +144,35 @@ public class AeroApiDependencyInjectionTests
         var searchProvider = provider.GetRequiredService<IFlightSearchProvider>();
 
         Assert.IsType<AeroApiFlightSearchCachingDecorator>(searchProvider);
+    }
+
+    [Fact]
+    public async Task AddInfrastructure_TheSearchChain_ChecksTheBudgetBetweenTheCacheAndAeroApi()
+    {
+        // The decorator tests build the chain by hand; this proves the registered one (#303). Past the
+        // budget, a cached search is still answered and an uncached one is refused before any request.
+        // A counting transport stands in for AeroAPI, so a wrong chain fails here without a real call.
+        var transport = new CountingTransport();
+        var budget = Substitute.For<IProviderBudgetGuard>();
+        using var provider = BuildContainer(configure: services =>
+        {
+            services.AddScoped(_ => budget);
+            services.AddHttpClient("AeroApi").ConfigurePrimaryHttpMessageHandler(() => transport);
+        });
+        var search = provider.GetRequiredService<IFlightSearchProvider>();
+        var date = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30));
+
+        budget.GetStateAsync(Arg.Any<CancellationToken>()).Returns(ProviderBudgetState.Normal);
+        await search.SearchAsync(new FlightSearchCriteria(null, null, date, "BA123", false));
+
+        budget.GetStateAsync(Arg.Any<CancellationToken>()).Returns(ProviderBudgetState.Exhausted);
+        var cached = await search.SearchAsync(new FlightSearchCriteria(null, null, date, "BA123", false));
+        var refused = await Assert.ThrowsAsync<DomainException>(
+            () => search.SearchAsync(new FlightSearchCriteria(null, null, date, "BA124", false)));
+
+        Assert.Empty(cached);
+        Assert.Equal(503, refused.StatusCode);
+        Assert.Equal(1, transport.Calls);
     }
 
     [Fact]

@@ -220,7 +220,11 @@ namespace FlightAssistant.Infrastructure
             // AeroApiFlightSearchProvider itself stays registered and resolvable — the decorator wraps
             // it, it does not replace it.
             services.AddScoped<IFlightSearchProvider>(sp => new AeroApiFlightSearchCachingDecorator(
-                sp.GetRequiredService<AeroApiFlightSearchProvider>(),
+                // Inside the cache, so a cached search is answered past the budget (#303).
+                new AeroApiFlightSearchBudgetDecorator(
+                    sp.GetRequiredService<AeroApiFlightSearchProvider>(),
+                    sp.GetRequiredService<IProviderBudgetGuard>(),
+                    sp.GetRequiredService<ILogger<AeroApiFlightSearchBudgetDecorator>>()),
                 sp.GetRequiredService<ICacheService>(),
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
                 sp.GetRequiredService<TimeProvider>(),
