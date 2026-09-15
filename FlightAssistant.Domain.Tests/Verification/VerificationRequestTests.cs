@@ -180,6 +180,20 @@ namespace FlightAssistant.Domain.Tests.Verification
             Assert.False(string.IsNullOrWhiteSpace(error));
         }
 
+        [Theory]
+        [InlineData(VerificationEntityType.Airport, "", "Key cannot be blank.")]
+        [InlineData(VerificationEntityType.Country, null, "Key cannot be blank.")]
+        [InlineData(VerificationEntityType.Airport, " 42", "Key ' 42' has surrounding whitespace.")]
+        [InlineData(VerificationEntityType.Country, "GBR", "A Country key must be a two-letter code; got 'GBR'.")]
+        [InlineData(VerificationEntityType.Airline, "042", "An Airline key must be a positive integer id with no sign or leading zeros; got '042'.")]
+        public void TryCanonicalEntityKey_TheReason_IsReadableAndNamesNoParameter(
+            VerificationEntityType entityType, string? key, string expected)
+        {
+            Assert.False(VerificationRequest.TryCanonicalEntityKey(entityType, key, out _, out var error));
+
+            Assert.Equal(expected, error);
+        }
+
         [Fact]
         public void Create_NullEntityKey_StillThrowsArgumentNullException()
         {

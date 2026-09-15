@@ -282,14 +282,15 @@ namespace FlightAssistant.Domain.Verification.Entities
         {
             canonical = null;
 
+            // The reasons are read by admins (a 400's field errors), so they name the key, not the parameter.
             if (string.IsNullOrWhiteSpace(entityKey))
             {
-                error = "entityKey cannot be blank.";
+                error = "Key cannot be blank.";
                 return false;
             }
             if (char.IsWhiteSpace(entityKey[0]) || char.IsWhiteSpace(entityKey[^1]))
             {
-                error = $"entityKey '{entityKey}' has surrounding whitespace.";
+                error = $"Key '{entityKey}' has surrounding whitespace.";
                 return false;
             }
 

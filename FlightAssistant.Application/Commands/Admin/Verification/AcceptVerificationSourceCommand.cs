@@ -49,8 +49,10 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
     /// rules (<see cref="VerificationSourceChanges"/>).</item>
     /// <item>The entity's <c>Update</c>, then <c>Verify(actor, source)</c>, then one save.</item>
     /// </list>
-    /// The request itself is not changed: it stays <c>Mismatch</c> as history. Accepting it again
-    /// fails the changed-row check, because the columns now hold the source's values.
+    /// The request itself is not changed: it stays <c>Mismatch</c> as history. Accepting the same source
+    /// again fails the changed-row check whenever that source had differences, because those columns now
+    /// hold its values. When it had none (only another source disagreed), a second accept succeeds and
+    /// simply verifies the entity again: no data is written, only the verification stamp is renewed.
     /// </summary>
     public sealed class AcceptVerificationSourceCommandHandler : IRequestHandler<AcceptVerificationSourceCommand>
     {

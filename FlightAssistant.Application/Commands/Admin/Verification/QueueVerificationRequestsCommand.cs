@@ -38,7 +38,7 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
         {
             RuleFor(x => x.EntityType)
                 .Must(value => VerificationEntityTypeNames.TryParse(value, out _))
-                .WithMessage($"EntityType must be one of {VerificationEntityTypeNames.Allowed}.");
+                .WithMessage(VerificationEntityTypeNames.InvalidMessage);
 
             RuleFor(x => x.Keys)
                 .NotEmpty().WithMessage("At least one key is required.")
@@ -96,7 +96,7 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
         {
             // The validator has already refused both; resolved again for the parsed type and the cost.
             if (!VerificationEntityTypeNames.TryParse(request.EntityType, out var entityType))
-                throw new DomainException($"EntityType must be one of {VerificationEntityTypeNames.Allowed}.", 400);
+                throw new DomainException(VerificationEntityTypeNames.InvalidMessage, 400);
             if (!VerificationSourceSelection.TryResolve(_registry, entityType, request.Sources ?? [], out var selection, out var error))
                 throw new DomainException(error, 400);
 

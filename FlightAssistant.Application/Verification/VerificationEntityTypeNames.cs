@@ -10,8 +10,10 @@ namespace FlightAssistant.Application.Verification
     /// </summary>
     public static class VerificationEntityTypeNames
     {
-        /// <summary>The accepted names, for validation messages: <c>Airport, Airline, Country</c>.</summary>
-        public static string Allowed { get; } = string.Join(", ", Enum.GetNames<VerificationEntityType>());
+        /// <summary>The one message for an entity type <see cref="TryParse"/> refuses, used by every
+        /// validator and handler that reads one: <c>EntityType must be one of Airport, Airline, Country.</c></summary>
+        public static string InvalidMessage { get; } =
+            $"EntityType must be one of {string.Join(", ", Enum.GetNames<VerificationEntityType>())}.";
 
         /// <summary>True when <paramref name="value"/> is exactly a member name.</summary>
         public static bool TryParse(string? value, out VerificationEntityType entityType)

@@ -74,5 +74,6 @@ public class GetVerificationSourcesQueryTests
 
         var failure = Assert.Single(result.Errors);
         Assert.Equal(nameof(GetVerificationSourcesQuery.EntityType), failure.PropertyName);
+        Assert.Equal("EntityType must be one of Airport, Airline, Country.", failure.ErrorMessage);
     }
 }

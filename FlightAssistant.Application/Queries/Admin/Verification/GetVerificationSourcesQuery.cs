@@ -19,7 +19,7 @@ namespace FlightAssistant.Application.Queries.Admin.Verification
         {
             RuleFor(x => x.EntityType)
                 .Must(value => VerificationEntityTypeNames.TryParse(value, out _))
-                .WithMessage($"EntityType must be one of {VerificationEntityTypeNames.Allowed}.");
+                .WithMessage(VerificationEntityTypeNames.InvalidMessage);
         }
     }
 
@@ -39,7 +39,7 @@ namespace FlightAssistant.Application.Queries.Admin.Verification
         {
             // The validator has already refused this; checked again for a caller outside the pipeline.
             if (!VerificationEntityTypeNames.TryParse(request.EntityType, out var entityType))
-                throw new DomainException($"EntityType must be one of {VerificationEntityTypeNames.Allowed}.", 400);
+                throw new DomainException(VerificationEntityTypeNames.InvalidMessage, 400);
 
             IReadOnlyList<AdminVerificationSourceResult> sources = _registry.Sources
                 .Where(source => source.SupportedEntityTypes.Contains(entityType))

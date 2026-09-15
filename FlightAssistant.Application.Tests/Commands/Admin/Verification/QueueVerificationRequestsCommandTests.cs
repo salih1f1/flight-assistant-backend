@@ -123,6 +123,17 @@ public class QueueVerificationRequestsCommandTests
         AssertSingleFailure(Command(entityType, new[] { ValidKey(entityType), badKey }, sources), "Keys[1]");
     }
 
+    [Theory]
+    [InlineData(" 42", "Key ' 42' has surrounding whitespace.")]
+    [InlineData("", "Key cannot be blank.")]
+    public void Validator_AMalformedKey_ReportsTheDomainsReason_WithNoParameterName(string badKey, string expected)
+    {
+        var failure = Assert.Single(Validate(Command(keys: new[] { "1", badKey })).Errors);
+
+        Assert.Equal("Keys[1]", failure.PropertyName);
+        Assert.Equal(expected, failure.ErrorMessage);
+    }
+
     [Fact]
     public void Validator_ALowerCaseCountryCode_IsAcceptedBecauseTheDomainCanonicalisesIt()
     {
