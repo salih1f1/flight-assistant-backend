@@ -44,9 +44,9 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
     /// <item>404 when the entity no longer exists.</item>
     /// <item>409 when a differing column's current value no longer matches the <c>ours</c> the check
     /// stored, by <see cref="VerificationComparer.ColumnsMatch"/>: the row changed since the check.</item>
-    /// <item>409 when a value can't be parsed or would empty a required column
-    /// (<see cref="VerificationSourceChanges"/>), or when an airport's new IATA code belongs to
-    /// another airport.</item>
+    /// <item>409 when a new value for a unique column already belongs to another row.</item>
+    /// <item>409 when a value can't be parsed, would empty a required column, or breaks the admin edit's
+    /// rules (<see cref="VerificationSourceChanges"/>).</item>
     /// <item>The entity's <c>Update</c>, then <c>Verify(actor, source)</c>, then one save.</item>
     /// </list>
     /// The request itself is not changed: it stays <c>Mismatch</c> as history. Accepting it again
@@ -121,7 +121,9 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
                 ?? throw NoLongerExists(accepted.Request);
 
             var changes = ChangesSinceCheck(accepted, VerificationCheckedColumns.Project(airport));
-            await EnsureIataIsFreeAsync(airport, changes, ct);
+            await EnsureUniqueValuesAreFreeAsync<Airport>(changes, airport, a => a.Id,
+                (nameof(Airport.Iata), value => _airports.FindByIataAsync((string)value, ct)),
+                (nameof(Airport.Icao), value => _airports.FindByIcaoAsync((string)value, ct)));
             changes.ApplyTo(airport);
             airport.Verify(accepted.Command.VerifiedBy, accepted.Command.Source, UtcNow());
 
@@ -134,6 +136,9 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
                 ?? throw NoLongerExists(accepted.Request);
 
             var changes = ChangesSinceCheck(accepted, VerificationCheckedColumns.Project(airline));
+            await EnsureUniqueValuesAreFreeAsync<Airline>(changes, airline, a => a.Id,
+                (nameof(Airline.Iata), value => _airlines.FindByIataAsync((string)value, ct)),
+                (nameof(Airline.Icao), value => _airlines.FindByIcaoAsync((string)value, ct)));
             changes.ApplyTo(airline);
             airline.Verify(accepted.Command.VerifiedBy, accepted.Command.Source, UtcNow());
 
@@ -146,6 +151,9 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
                 ?? throw NoLongerExists(accepted.Request);
 
             var changes = ChangesSinceCheck(accepted, VerificationCheckedColumns.Project(country));
+            await EnsureUniqueValuesAreFreeAsync<Country>(changes, country, c => c.Code,
+                (nameof(Country.Alpha3), value => _countries.FindByAlpha3Async((string)value, ct)),
+                (nameof(Country.NumericCode), value => _countries.FindByNumericCodeAsync((int)value, ct)));
             changes.ApplyTo(country);
             country.Verify(accepted.Command.VerifiedBy, accepted.Command.Source, UtcNow());
 
@@ -185,24 +193,40 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
         }
 
         /// <summary>
-        /// <c>airports.Iata</c> has a unique index, and nothing translates its violation, so a collision
-        /// on save would be a 500. A code that already belongs to another airport is refused here, as a 409.
+        /// Refuses, with a 409 naming the column, a new value for a unique column that another row already
+        /// has: <c>airports.Iata</c>/<c>Icao</c>, <c>airlines.Iata</c>/<c>Icao</c> and
+        /// <c>countries.Alpha3</c>/<c>NumericCode</c> all carry unique indexes, and nothing translates their
+        /// violation on save, which would be a 500. Only the columns this accept writes are looked up, and
+        /// a cleared column needs no lookup: those indexes allow any number of nulls. Each value is already
+        /// in the form the entity will store (<see cref="VerificationSourceChanges.Parse"/> trims and
+        /// upper-cases codes), so the lookup matches what the index will compare.
         ///
         /// <para>
-        /// This is check-then-save, so it has a race: another write can take the code between this query
-        /// and <c>SaveChangesAsync</c>, and that collision still surfaces as the database's unique
-        /// violation (a 500). Accepted deliberately (controller ruling, #378): translating the violation in
-        /// Infrastructure would change every airport write, and two admins racing for one IATA code is rare.
+        /// This is check-then-save, so it has a race: another write can take the value between this query
+        /// and <c>SaveChangesAsync</c>, and that collision still surfaces as the database's unique violation
+        /// (a 500). Accepted deliberately (controller ruling, #378): translating the violation in
+        /// Infrastructure would change every reference-data write, and two admins racing for one code is rare.
         /// </para>
         /// </summary>
-        private async Task EnsureIataIsFreeAsync(Airport airport, VerificationSourceChanges changes, CancellationToken ct)
+        /// <param name="keyOf">The entity's key, to tell another row from this one.</param>
+        /// <param name="uniqueColumns">Each unique checked column, with the lookup that finds the row owning a value.</param>
+        private static async Task EnsureUniqueValuesAreFreeAsync<TEntity>(
+            VerificationSourceChanges changes,
+            TEntity entity,
+            Func<TEntity, object> keyOf,
+            params (string Column, Func<object, Task<TEntity?>> FindOwner)[] uniqueColumns)
+            where TEntity : class
         {
-            if (!changes.TryGetValue(nameof(Airport.Iata), out var value) || value is not string iata)
-                return;
+            foreach (var (column, findOwner) in uniqueColumns)
+            {
+                if (!changes.TryGetValue(column, out var value) || value is null)
+                    continue;
 
-            var owner = await _airports.FindByIataAsync(iata, ct);
-            if (owner is not null && owner.Id != airport.Id)
-                throw new DomainException($"IATA code {iata} already belongs to airport {owner.Id}.", 409);
+                var owner = await findOwner(value);
+                if (owner is not null && !Equals(keyOf(owner), keyOf(entity)))
+                    throw new DomainException(
+                        $"{typeof(TEntity).Name} {column} {value} already belongs to {typeof(TEntity).Name} {keyOf(owner)}.", 409);
+            }
         }
 
         private static DomainException NoLongerExists(VerificationRequest request) =>

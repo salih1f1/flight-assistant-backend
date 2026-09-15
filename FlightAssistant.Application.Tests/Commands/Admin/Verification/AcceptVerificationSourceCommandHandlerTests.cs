@@ -428,6 +428,32 @@ public class AcceptVerificationSourceCommandHandlerTests
         await AssertNothingSaved();
     }
 
+    // ── Unique columns: a value another row already has ────────────────────
+
+    private const string Airlines = "airlines";
+
+    private static Airline BritishAirways() => WithId(Airline.Create("BA", "BAW", "British Airways", "GB", "OW"), EntityId);
+
+    private Airline LoadedAirline()
+    {
+        var airline = BritishAirways();
+        _airlines.GetByIdAsync(EntityId, Arg.Any<CancellationToken>()).Returns(airline);
+        return airline;
+    }
+
+    /// <summary>British Airways checked against an airline source, which returned it with <paramref name="sourceOverrides"/>.</summary>
+    private VerificationRequest AirlineMismatch(params (string Column, string? Value)[] sourceOverrides)
+    {
+        var ours = VerificationCheckedColumns.Project(BritishAirways());
+        return CheckedAsMismatch(VerificationEntityType.Airline, "42", ours, (Airlines, With(ours, sourceOverrides)));
+    }
+
+    private static void AssertUnchanged(Airline airline)
+    {
+        Assert.Equal(VerificationCheckedColumns.Project(BritishAirways()), VerificationCheckedColumns.Project(airline));
+        Assert.False(airline.IsVerified);
+    }
+
     [Fact]
     public async Task Handle_TheNewIataBelongsToAnotherAirport_Is409_AndWritesNothing()
     {
@@ -438,8 +464,150 @@ public class AcceptVerificationSourceCommandHandlerTests
 
         var ex = await AcceptFails(409);
 
-        Assert.Contains("LGW already belongs to airport 99", ex.Message);
+        Assert.Contains("Airport Iata LGW already belongs to Airport 99", ex.Message);
         AssertUnchanged(airport);
+        await AssertNothingSaved();
+    }
+
+    [Fact]
+    public async Task Handle_TheNewIcaoBelongsToAnotherAirport_Is409_AndWritesNothing()
+    {
+        // Lower-case from the source: the lookup uses the upper-cased form the airport would store.
+        AirportMismatch((nameof(Airport.Icao), "egkk"), (nameof(Airport.City), "Crawley"));
+        var airport = LoadedAirport();
+        _airports.FindByIcaoAsync("EGKK", Arg.Any<CancellationToken>())
+            .Returns(WithId(Airport.Create("LGW", "EGKK", "London Gatwick", "Crawley", "GB"), 99));
+
+        var ex = await AcceptFails(409);
+
+        Assert.Contains("Airport Icao EGKK already belongs to Airport 99", ex.Message);
+        AssertUnchanged(airport);
+        await AssertNothingSaved();
+    }
+
+    [Fact]
+    public async Task Handle_AUniqueLookupThatFindsThisSameAirport_IsNotACollision()
+    {
+        AirportMismatch((nameof(Airport.Icao), "EGKK"));
+        var airport = LoadedAirport();
+        _airports.FindByIcaoAsync("EGKK", Arg.Any<CancellationToken>()).Returns(airport);
+
+        await Accept();
+
+        Assert.Equal("EGKK", airport.Icao);
+        await _airports.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Handle_UniqueColumnsThisAcceptDoesNotWriteOrClears_AreNotLookedUp()
+    {
+        AirportMismatch((nameof(Airport.Icao), ""), (nameof(Airport.City), "Hounslow"));
+        var airport = LoadedAirport();
+
+        await Accept();
+
+        Assert.Null(airport.Icao);
+        await _airports.DidNotReceive().FindByIataAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _airports.DidNotReceive().FindByIcaoAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Handle_TheNewIataBelongsToAnotherAirline_Is409_AndWritesNothing()
+    {
+        AirlineMismatch((nameof(Airline.Iata), "vs"), (nameof(Airline.Name), "British Airways Plc"));
+        var airline = LoadedAirline();
+        _airlines.FindByIataAsync("VS", Arg.Any<CancellationToken>())
+            .Returns(WithId(Airline.Create("VS", "VIR", "Virgin Atlantic", "GB"), 99));
+
+        var ex = await AcceptFails(409, source: Airlines);
+
+        Assert.Contains("Airline Iata VS already belongs to Airline 99", ex.Message);
+        AssertUnchanged(airline);
+        await AssertNothingSaved();
+    }
+
+    [Fact]
+    public async Task Handle_TheNewIcaoBelongsToAnotherAirline_Is409_AndWritesNothing()
+    {
+        AirlineMismatch((nameof(Airline.Icao), "VIR"), (nameof(Airline.Name), "British Airways Plc"));
+        var airline = LoadedAirline();
+        _airlines.FindByIcaoAsync("VIR", Arg.Any<CancellationToken>())
+            .Returns(WithId(Airline.Create("VS", "VIR", "Virgin Atlantic", "GB"), 99));
+
+        var ex = await AcceptFails(409, source: Airlines);
+
+        Assert.Contains("Airline Icao VIR already belongs to Airline 99", ex.Message);
+        AssertUnchanged(airline);
+        await AssertNothingSaved();
+    }
+
+    [Fact]
+    public async Task Handle_TheNewAlpha3BelongsToAnotherCountry_Is409_AndWritesNothing()
+    {
+        CountryMismatch((nameof(Country.Alpha3), "fra"), (nameof(Country.Name), "Britain"));
+        var country = LoadedCountry();
+        _countries.FindByAlpha3Async("FRA", Arg.Any<CancellationToken>())
+            .Returns(Country.Create("FR", "France", "FRA", 250));
+
+        var ex = await AcceptFails(409, source: Mledoze);
+
+        Assert.Contains("Country Alpha3 FRA already belongs to Country FR", ex.Message);
+        AssertUnchanged(country);
+        await AssertNothingSaved();
+    }
+
+    [Fact]
+    public async Task Handle_TheNewNumericCodeBelongsToAnotherCountry_Is409_AndWritesNothing()
+    {
+        CountryMismatch((nameof(Country.NumericCode), "250"), (nameof(Country.Name), "Britain"));
+        var country = LoadedCountry();
+        _countries.FindByNumericCodeAsync(250, Arg.Any<CancellationToken>())
+            .Returns(Country.Create("FR", "France", "FRA", 250));
+
+        var ex = await AcceptFails(409, source: Mledoze);
+
+        Assert.Contains("Country NumericCode 250 already belongs to Country FR", ex.Message);
+        AssertUnchanged(country);
+        await AssertNothingSaved();
+    }
+
+    // ── The admin edit's rules ──────────────────────────────────────────────
+
+    public static TheoryData<string, string> ValuesTheAirportEditRulesRefuse => new()
+    {
+        { nameof(Airport.Iata), "L1" }, // IATA is three letters
+        { nameof(Airport.Icao), "EGLLX" }, // five characters: ICAO is four letters, in a varchar(4)
+        { nameof(Airport.Name), new string('N', 201) }, // over the 200-character limit
+        { nameof(Airport.City), new string('C', 201) },
+        { nameof(Airport.CountryCode), "GBR" } // ISO 3166-1 alpha-2
+    };
+
+    [Theory]
+    [MemberData(nameof(ValuesTheAirportEditRulesRefuse))]
+    public async Task Handle_ASourceValueTheAirportEditRulesRefuse_Is409_NamingTheColumn_AndWritesNothing(string column, string value)
+    {
+        AirportMismatch((column, value), (nameof(Airport.Latitude), "51.5"));
+        var airport = LoadedAirport();
+
+        var ex = await AcceptFails(409);
+
+        Assert.Contains($"with an invalid {column}", ex.Message);
+        AssertUnchanged(airport);
+        await AssertNothingSaved();
+    }
+
+    [Theory]
+    [InlineData(nameof(Airline.Iata), "B-A")] // 2-3 letters or digits
+    [InlineData(nameof(Airline.Icao), "BAWXX")] // 3-4 letters
+    public async Task Handle_ASourceValueTheAirlineEditRulesRefuse_Is409_NamingTheColumn_AndWritesNothing(string column, string value)
+    {
+        AirlineMismatch((column, value), (nameof(Airline.Name), "British Airways Plc"));
+        var airline = LoadedAirline();
+
+        var ex = await AcceptFails(409, source: Airlines);
+
+        Assert.Contains($"with an invalid {column}", ex.Message);
+        AssertUnchanged(airline);
         await AssertNothingSaved();
     }
 

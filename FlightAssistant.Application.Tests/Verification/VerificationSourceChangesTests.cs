@@ -30,7 +30,7 @@ public class VerificationSourceChangesTests
     public void ApplyTo_OneCheckedColumn_ChangesThatColumnAndNoOther(VerificationEntityType entityType, string columnName)
     {
         var column = VerificationCheckedColumns.GetColumns(entityType).Single(c => c.Name == columnName);
-        var raw = NewValue(column.Kind);
+        var raw = NewValue(column);
         var changes = VerificationSourceChanges.Parse(entityType, new Dictionary<string, string?> { [columnName] = raw });
 
         var (before, after) = ApplyToAFreshEntity(entityType, changes);
@@ -70,15 +70,28 @@ public class VerificationSourceChangesTests
             VerificationEntityType.Airline, new Dictionary<string, string?> { [nameof(Airline.AllianceCode)] = "OW" }));
     }
 
-    private static string NewValue(VerificationColumnKind kind) => kind switch
+    /// <summary>A value different from every fixture's own, and one the admin edit rules accept (which
+    /// accept-source applies): an ICAO is four letters, a country code two, IATA and Alpha3 three.</summary>
+    private static string NewValue(VerificationColumnDefinition column) => column.Kind switch
     {
-        VerificationColumnKind.Code => "ZZ",
+        VerificationColumnKind.Code => column.Name switch
+        {
+            nameof(Airport.Icao) => "ZZZZ",
+            nameof(Airport.CountryCode) => "ZZ",
+            _ => "ZZZ"
+        },
         VerificationColumnKind.Text => "Changed",
         VerificationColumnKind.Coordinate => "12.5",
         VerificationColumnKind.Elevation => "1234",
         VerificationColumnKind.NumericCode => "999",
-        _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        _ => throw new ArgumentOutOfRangeException(nameof(column))
     };
+
+    private static TEntity WithId<TEntity>(TEntity entity, int id)
+    {
+        typeof(TEntity).GetProperty("Id")!.SetValue(entity, id);
+        return entity;
+    }
 
     private static (IReadOnlyDictionary<string, string?> Before, IReadOnlyDictionary<string, string?> After) ApplyToAFreshEntity(
         VerificationEntityType entityType, VerificationSourceChanges changes)
@@ -86,13 +99,13 @@ public class VerificationSourceChangesTests
         switch (entityType)
         {
             case VerificationEntityType.Airport:
-                var airport = Airport.Create("LHR", "EGLL", "London Heathrow", "London", "GB", 51.4706, -0.461941, 83);
+                var airport = WithId(Airport.Create("LHR", "EGLL", "London Heathrow", "London", "GB", 51.4706, -0.461941, 83), 1);
                 var airportBefore = VerificationCheckedColumns.Project(airport);
                 changes.ApplyTo(airport);
                 return (airportBefore, VerificationCheckedColumns.Project(airport));
 
             case VerificationEntityType.Airline:
-                var airline = Airline.Create("BA", "BAW", "British Airways", "GB", "OW");
+                var airline = WithId(Airline.Create("BA", "BAW", "British Airways", "GB", "OW"), 1);
                 var airlineBefore = VerificationCheckedColumns.Project(airline);
                 changes.ApplyTo(airline);
                 Assert.Equal("OW", airline.AllianceCode);

@@ -1,6 +1,9 @@
+using FlightAssistant.Application.Commands.Admin.Airlines;
+using FlightAssistant.Application.Commands.Admin.Airports;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Verification.Enums;
+using FluentValidation;
 
 namespace FlightAssistant.Application.Verification
 {
@@ -19,13 +22,25 @@ namespace FlightAssistant.Application.Verification
     /// </para>
     ///
     /// <para>
-    /// <b>Failures are 409s.</b> A value that cannot be parsed, or that would leave a required column
-    /// empty, is a conflict between the stored check and our schema: the request is valid, the data
-    /// it carries cannot be applied.
+    /// <b>No second set of write rules.</b> The merged airport or airline row is checked with the admin
+    /// edit's own validator (<see cref="UpdateAirportCommandValidator"/>, <see cref="UpdateAirlineCommandValidator"/>),
+    /// so a source value the edit form would refuse (an IATA code that isn't three letters, a name over
+    /// 200 characters, a five-character ICAO that would overflow its column) is refused here too, never
+    /// by a copy of those rules. Like the edit, the check covers the whole row.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Failures are 409s.</b> A value that cannot be parsed, would leave a required column empty, or
+    /// breaks the edit rules is a conflict between the stored check and our schema: the request is
+    /// valid, the data it carries cannot be applied. Nothing is written to the entity until every
+    /// check has passed.
     /// </para>
     /// </summary>
     public sealed class VerificationSourceChanges
     {
+        private static readonly UpdateAirportCommandValidator AirportEditRules = new();
+        private static readonly UpdateAirlineCommandValidator AirlineEditRules = new();
+
         private readonly VerificationEntityType _entityType;
         private readonly IReadOnlyDictionary<string, object?> _values;
         private readonly HashSet<string> _applied = new(StringComparer.Ordinal);
@@ -46,7 +61,7 @@ namespace FlightAssistant.Application.Verification
         /// <item><see cref="VerificationColumnKind.Coordinate"/>: a finite invariant-culture <see cref="double"/>;</item>
         /// <item><see cref="VerificationColumnKind.Elevation"/>: an <see cref="int"/> of feet. OurAirports
         /// publishes whole feet; a decimal is rounded to the nearest foot, half away from zero, rather
-        /// than refused. The check compared elevation as a number within
+        /// than refused (controller ruling, #378). The check compared elevation as a number within
         /// <see cref="VerificationComparer.ElevationToleranceFt"/>, so the rounded value still matches
         /// the source by the check's own rule;</item>
         /// <item><see cref="VerificationColumnKind.NumericCode"/>: an <see cref="int"/>, leading zeros allowed.</item>
@@ -76,40 +91,50 @@ namespace FlightAssistant.Application.Verification
         public bool TryGetValue(string column, out object? value) => _values.TryGetValue(column, out value);
 
         /// <summary>Writes these changes to <paramref name="airport"/>; nothing is written if any is refused.</summary>
-        /// <exception cref="DomainException">409: <c>Iata</c>, <c>Name</c>, <c>City</c> or <c>CountryCode</c> would become empty.</exception>
+        /// <exception cref="DomainException">409: <c>Iata</c>, <c>Name</c>, <c>City</c> or <c>CountryCode</c>
+        /// would become empty, or the merged row breaks <see cref="UpdateAirportCommandValidator"/>.</exception>
         public void ApplyTo(Airport airport)
         {
             ArgumentNullException.ThrowIfNull(airport);
             EnsureEntityType(VerificationEntityType.Airport);
 
-            var iata = RequiredString(nameof(Airport.Iata), airport.Iata);
-            var icao = OptionalString(nameof(Airport.Icao), airport.Icao);
-            var name = RequiredString(nameof(Airport.Name), airport.Name);
-            var city = RequiredString(nameof(Airport.City), airport.City);
-            var countryCode = RequiredString(nameof(Airport.CountryCode), airport.CountryCode);
-            var latitude = OptionalNumber(nameof(Airport.Latitude), airport.Latitude);
-            var longitude = OptionalNumber(nameof(Airport.Longitude), airport.Longitude);
-            var elevationFt = OptionalNumber(nameof(Airport.ElevationFt), airport.ElevationFt);
+            var merged = new UpdateAirportCommand(
+                Id: airport.Id,
+                Iata: RequiredString(nameof(Airport.Iata), airport.Iata),
+                Icao: OptionalString(nameof(Airport.Icao), airport.Icao),
+                Name: RequiredString(nameof(Airport.Name), airport.Name),
+                City: RequiredString(nameof(Airport.City), airport.City),
+                CountryCode: RequiredString(nameof(Airport.CountryCode), airport.CountryCode),
+                Latitude: OptionalNumber(nameof(Airport.Latitude), airport.Latitude),
+                Longitude: OptionalNumber(nameof(Airport.Longitude), airport.Longitude),
+                ElevationFt: OptionalNumber(nameof(Airport.ElevationFt), airport.ElevationFt));
             EnsureEveryColumnApplied();
+            EnsureEditRulesPass(AirportEditRules, merged);
 
-            airport.Update(iata, icao, name, city, countryCode, latitude, longitude, elevationFt);
+            airport.Update(merged.Iata, merged.Icao, merged.Name, merged.City, merged.CountryCode,
+                merged.Latitude, merged.Longitude, merged.ElevationFt);
         }
 
         /// <summary>Writes these changes to <paramref name="airline"/>, keeping its <c>AllianceCode</c>
         /// (not a checked column); nothing is written if any is refused.</summary>
-        /// <exception cref="DomainException">409: <c>Name</c> or <c>CountryCode</c> would become empty.</exception>
+        /// <exception cref="DomainException">409: <c>Name</c> or <c>CountryCode</c> would become empty,
+        /// or the merged row breaks <see cref="UpdateAirlineCommandValidator"/>.</exception>
         public void ApplyTo(Airline airline)
         {
             ArgumentNullException.ThrowIfNull(airline);
             EnsureEntityType(VerificationEntityType.Airline);
 
-            var iata = OptionalString(nameof(Airline.Iata), airline.Iata);
-            var icao = OptionalString(nameof(Airline.Icao), airline.Icao);
-            var name = RequiredString(nameof(Airline.Name), airline.Name);
-            var countryCode = RequiredString(nameof(Airline.CountryCode), airline.CountryCode);
+            var merged = new UpdateAirlineCommand(
+                Id: airline.Id,
+                Iata: OptionalString(nameof(Airline.Iata), airline.Iata),
+                Icao: OptionalString(nameof(Airline.Icao), airline.Icao),
+                Name: RequiredString(nameof(Airline.Name), airline.Name),
+                CountryCode: RequiredString(nameof(Airline.CountryCode), airline.CountryCode),
+                AllianceCode: airline.AllianceCode);
             EnsureEveryColumnApplied();
+            EnsureEditRulesPass(AirlineEditRules, merged);
 
-            airline.Update(iata, icao, name, countryCode, airline.AllianceCode);
+            airline.Update(merged.Iata, merged.Icao, merged.Name, merged.CountryCode, merged.AllianceCode);
         }
 
         /// <summary>Writes these changes to <paramref name="country"/>, keeping <c>IsEU</c>,
@@ -121,6 +146,9 @@ namespace FlightAssistant.Application.Verification
             ArgumentNullException.ThrowIfNull(country);
             EnsureEntityType(VerificationEntityType.Country);
 
+            // No edit rules to reuse: there is no admin country update command, so no validator. The
+            // format and length of Name, Alpha3, Region and Subregion are not checked here, and a
+            // value over its column size still fails on save (review Minor 1 of #378 task 2, deferred).
             var name = RequiredString(nameof(Country.Name), country.Name);
             var alpha3 = OptionalString(nameof(Country.Alpha3), country.Alpha3);
             var numericCode = OptionalNumber(nameof(Country.NumericCode), country.NumericCode);
@@ -193,6 +221,17 @@ namespace FlightAssistant.Application.Verification
             if (notApplied is not null)
                 throw new DomainException(
                     $"{_entityType} {notApplied} cannot be changed by accepting a source.", 409);
+        }
+
+        private void EnsureEditRulesPass<TUpdate>(IValidator<TUpdate> editRules, TUpdate merged)
+        {
+            var result = editRules.Validate(merged);
+            if (result.IsValid) return;
+
+            var columns = string.Join(", ", result.Errors.Select(e => e.PropertyName).Distinct(StringComparer.Ordinal));
+            throw new DomainException(
+                $"Accepting the source would leave the {_entityType} with an invalid {columns}.", 409,
+                diagnosticDetail: string.Join(" ", result.Errors.Select(e => e.ErrorMessage)));
         }
 
         private void EnsureEntityType(VerificationEntityType target)
