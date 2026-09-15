@@ -39,22 +39,24 @@ namespace FlightAssistant.Domain.Verification.Entities
         /// <summary>Joins source names in <see cref="Sources"/>.</summary>
         public const char SourceSeparator = ',';
 
-        /// <summary>The text before the claim count in <see cref="ClaimAbandonedError"/>.</summary>
+        /// <summary>The text before the attempt count in <see cref="ClaimAbandonedError"/>.</summary>
         public const string ClaimAbandonedErrorPrefix = "Claim abandoned: no result recorded after ";
 
-        /// <summary>The text after the claim count in <see cref="ClaimAbandonedError"/>.</summary>
-        public const string ClaimAbandonedErrorSuffix = " claims";
+        /// <summary>The text after the attempt count in <see cref="ClaimAbandonedError"/>.</summary>
+        public const string ClaimAbandonedErrorSuffix = " attempts";
 
         /// <summary>
         /// The <see cref="Error"/> of a request the job's stuck-request reset completed as
-        /// <see cref="VerificationRequestStatus.Error"/>: its claims kept ending without a recorded
-        /// result (a crash, or a failure that could not itself be recorded) until
-        /// <see cref="Attempts"/> reached the job's maximum. The reset is one SQL statement, like the
+        /// <see cref="VerificationRequestStatus.Error"/>: its last claim ended without a recorded
+        /// result (a crash, or a failure that could not itself be recorded) and that brought
+        /// <see cref="Attempts"/> to the job's maximum. The reset is one SQL statement, like the
         /// claim, so it builds this text from <see cref="ClaimAbandonedErrorPrefix"/> and
         /// <see cref="ClaimAbandonedErrorSuffix"/>; this method is the same text for C# callers.
         /// </summary>
-        public static string ClaimAbandonedError(int claims) =>
-            ClaimAbandonedErrorPrefix + claims.ToString(CultureInfo.InvariantCulture) + ClaimAbandonedErrorSuffix;
+        /// <param name="attempts">The request's <see cref="Attempts"/> after the reset counted the
+        /// abandoned claim: every attempt so far, source errors included, not only abandoned claims.</param>
+        public static string ClaimAbandonedError(int attempts) =>
+            ClaimAbandonedErrorPrefix + attempts.ToString(CultureInfo.InvariantCulture) + ClaimAbandonedErrorSuffix;
 
         public long Id { get; private set; }
 

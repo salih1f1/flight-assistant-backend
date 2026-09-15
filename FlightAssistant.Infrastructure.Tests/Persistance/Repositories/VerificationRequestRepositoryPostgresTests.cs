@@ -381,7 +381,7 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
             var row = await verify.VerificationRequests.AsNoTracking().SingleAsync();
             Assert.Equal(VerificationRequestStatus.Error, row.Status);
             Assert.Equal(3, row.Attempts);
-            Assert.Equal("Claim abandoned: no result recorded after 3 claims", row.Error);
+            Assert.Equal("Claim abandoned: no result recorded after 3 attempts", row.Error);
             Assert.Equal(now, row.CompletedUtc);
             Assert.Null(row.StartedUtc);
             Assert.Null(row.NextAttemptUtc);

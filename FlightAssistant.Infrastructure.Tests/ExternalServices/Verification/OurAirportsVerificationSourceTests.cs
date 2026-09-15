@@ -3,6 +3,7 @@ using System.Text;
 using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Domain.Verification.Enums;
 using FlightAssistant.Infrastructure.ExternalServices.Verification;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
@@ -380,12 +381,88 @@ public class OurAirportsVerificationSourceTests
     [Fact]
     public async Task LookupAsync_ReturnsASourceError_OnAHandlerLevelNetworkFailure()
     {
-        var source = Source(new ThrowingHandler(new HttpRequestException("connection reset")));
+        var source = Source(new ThrowingHandler(new HttpRequestException("connection reset by 10.20.30.40")));
 
         var result = await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("LHR", null));
 
         Assert.True(result.IsError);
         Assert.Null(result.Lookup);
+        Assert.Equal("Failed to download the ourairports dataset (network error)", result.Error);
+    }
+
+    [Fact]
+    public async Task LookupAsync_AnUnparseableDataset_ReturnsTheFixedCategory_AndLogsTheWholeExceptionOnceWithTheSourceName()
+    {
+        // Final fix wave, C1: CsvHelper's header-validation message describes the file's own content,
+        // so only the category is stored; the detail goes to one log line per failed load.
+        const string body = "secret_col,other_col\nsecret-record-content,10.20.30.40\n";
+        var logger = new CapturingLogger<OurAirportsVerificationSource>();
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var source = new OurAirportsVerificationSource(
+            new FakeHttpClientFactory(new StaticHandler(HttpStatusCode.OK, body)), clock, logger, TestTimeout);
+
+        var first = await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("LHR", null));
+        var second = await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("DUP", null));
+
+        Assert.Equal("Could not parse the ourairports dataset", first.Error);
+        Assert.Equal(first.Error, second.Error);
+        Assert.DoesNotContain("secret", first.Error);
+
+        var logged = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning);
+        Assert.Contains("ourairports", logged.Message);
+        var exception = Assert.IsType<VerificationSourceFetchException>(logged.Exception);
+        Assert.NotNull(exception.InnerException); // CsvHelper's own exception, with its detail
+    }
+
+    [Fact]
+    public async Task LookupAsync_SkipsMalformedRows_KeepsTheGoodOnes_AndLogsOneWarningWithTheCount()
+    {
+        // Final fix wave, C2: one malformed row must not fail the whole dataset.
+        var lines = FixtureCsv.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+        var csv = string.Join("\n",
+            lines[0], // the real header
+            lines[1], // LHR
+            // Text after a closing quote: CsvHelper's BadDataFound.
+            "5,BADQ,small_airport,\"Bad\" Quote Field,1,1,10,,,US,,,,\"Town\",no,,KBDQ,BDQ,,,,,5,2020-01-01",
+            // Cut short after iata_code: CsvHelper's MissingFieldFound, when score is read.
+            "6,MISS,small_airport,\"Missing Fields\",1,1,10,,,US,,,,\"Town\",no,,KMIS,MIS",
+            // An unquoted comma in the name: one field too many, so "KSHF" lands in iata_code.
+            "7,SHFT,small_airport,Shifted, Name,1,1,10,,,US,,,,\"Town\",no,,KSHF,SHF,,,,,5,2020-01-01",
+            "8,EGKK,large_airport,\"London Gatwick Airport\",51.1481,-0.1903,202,EU,\"United Kingdom\",GB,\"England\",GB-ENG,,\"London\",yes,EGKK,EGKK,LGW,,,,,800,2024-01-01",
+            "");
+        var logger = new CapturingLogger<OurAirportsVerificationSource>();
+        var source = new OurAirportsVerificationSource(
+            new FakeHttpClientFactory(new StaticHandler(HttpStatusCode.OK, csv)), TimeProvider.System, logger, TestTimeout);
+
+        async Task<VerificationSourceFetchResult> Lookup(string iata) =>
+            await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport(iata, null));
+
+        Assert.Equal("London Heathrow Airport", (await Lookup("LHR")).Lookup!.Values!["Name"]);
+        Assert.Equal("London Gatwick Airport", (await Lookup("LGW")).Lookup!.Values!["Name"]);
+        foreach (var skippedCode in new[] { "BDQ", "MIS", "KSHF", "SHF" })
+        {
+            var result = await Lookup(skippedCode);
+            Assert.False(result.IsError, skippedCode);
+            Assert.False(result.Lookup!.IsFound, skippedCode);
+        }
+
+        var warning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning);
+        Assert.Contains("Skipped 3 malformed ourairports row(s)", warning.Message);
+        Assert.Contains("3, 4, 5", warning.Message);
+    }
+
+    /// <summary>Records every log call made through it, with its exception.</summary>
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Entries.Add((logLevel, formatter(state, exception), exception));
     }
 
     private sealed class ThrowingHandler(Exception exception) : HttpMessageHandler

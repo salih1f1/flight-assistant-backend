@@ -254,9 +254,9 @@ namespace FlightAssistant.Domain.Tests.Verification
         // ── The stuck-request reset's abandoned-claim error ─────────────────────
 
         [Fact]
-        public void ClaimAbandonedError_NamesHowManyClaimsRecordedNothing_FromItsPrefixAndSuffix()
+        public void ClaimAbandonedError_NamesTheAttemptCount_FromItsPrefixAndSuffix()
         {
-            Assert.Equal("Claim abandoned: no result recorded after 3 claims", VerificationRequest.ClaimAbandonedError(3));
+            Assert.Equal("Claim abandoned: no result recorded after 3 attempts", VerificationRequest.ClaimAbandonedError(3));
             Assert.Equal(
                 VerificationRequest.ClaimAbandonedErrorPrefix + "10" + VerificationRequest.ClaimAbandonedErrorSuffix,
                 VerificationRequest.ClaimAbandonedError(10));

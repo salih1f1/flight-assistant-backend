@@ -52,8 +52,10 @@ namespace FlightAssistant.Application.Interfaces.Verification
         /// A retryable source error -- the dataset itself could not be loaded or read: a timeout, a
         /// non-success HTTP status (5xx, 429, and a 404 on the dataset URL, which is a
         /// misconfiguration, not "no data"), a network failure, or content that could not be
-        /// parsed. Null unless <see cref="IsError"/>. Never shown to an end user as-is -- it is a
-        /// diagnostic string, logged and (eventually) stored on the request's <c>error</c> column.
+        /// parsed. Null unless <see cref="IsError"/>. Stored on the request's <c>error</c> column,
+        /// which admins see in every environment, so it is a fixed category plus facts the source
+        /// controls (e.g. an HTTP status code), never an upstream exception's message; the source
+        /// logs the detail instead.
         /// </summary>
         public string? Error { get; }
 

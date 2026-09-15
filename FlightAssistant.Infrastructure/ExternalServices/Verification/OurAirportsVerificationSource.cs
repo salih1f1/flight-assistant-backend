@@ -44,6 +44,13 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
     /// read at all, which the parse-failure catch below wraps as "Could not parse..." -- it never
     /// reaches the zero-rows check.
     /// </para>
+    ///
+    /// <para>
+    /// <b>One malformed row (final fix wave, C2).</b> A row with bad CSV data, a missing field, or
+    /// a field count unlike the header's is skipped, not a whole-dataset failure; one warning per
+    /// parse gives the count and the first few row numbers. The airport it named just looks up as
+    /// <c>NotFound</c>.
+    /// </para>
     /// </summary>
     public sealed class OurAirportsVerificationSource : IVerificationSource
     {
@@ -104,7 +111,8 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             }
             catch (VerificationSourceFetchException ex)
             {
-                _logger.LogWarning(ex, "OurAirports verification lookup failed: {Message}", ex.Message);
+                // Logged once, with the whole exception, where the load failed (DownloadAsync); a
+                // lookup inside the failure cooldown just hands on the same fixed-category error.
                 return VerificationSourceFetchResult.SourceError(ex.Message);
             }
 
@@ -119,23 +127,63 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
 
         public void ReleaseCache() => _cache.Release();
 
-        private Task<Dataset> DownloadAsync(CancellationToken ct) =>
-            VerificationSourceDownloader.DownloadAsync(
-                _httpClientFactory, HttpClientName, DatasetUrl, SourceName, _downloadTimeout, ParseAsync, ct);
+        private async Task<Dataset> DownloadAsync(CancellationToken ct)
+        {
+            try
+            {
+                return await VerificationSourceDownloader.DownloadAsync(
+                    _httpClientFactory, HttpClientName, DatasetUrl, SourceName, _downloadTimeout, ParseAsync, ct).ConfigureAwait(false);
+            }
+            catch (VerificationSourceFetchException ex)
+            {
+                // The stored error is a fixed category (final fix wave, C1); the upstream detail is
+                // only in this log line, written once per failed load with the whole exception.
+                _logger.LogWarning(ex, "Loading the {SourceName} verification dataset failed: {Error}", SourceName, ex.Message);
+                throw;
+            }
+        }
 
-        private static async Task<Dataset> ParseAsync(Stream stream, CancellationToken ct)
+        /// <summary>How many skipped rows one parse's warning names, by row number.</summary>
+        internal const int SkippedSampleSize = 3;
+
+        /// <summary>Instance method (not static) so it can log the skipped rows via <see cref="_logger"/>.</summary>
+        private async Task<Dataset> ParseAsync(Stream stream, CancellationToken ct)
         {
             using var reader = new StreamReader(stream);
-            var config = new CsvConfiguration(CultureInfo.InvariantCulture);
+
+            // Final fix wave, C2: a malformed row is skipped and counted, not a whole-dataset failure.
+            // CsvHelper's defaults throw on bad data (e.g. text after a closing quote) and on a missing
+            // field; these callbacks flag the row instead. Header validation keeps its throwing
+            // default, so a renamed or missing column still fails the whole parse loudly.
+            var rowIsMalformed = false;
+            var config = new CsvConfiguration(CultureInfo.InvariantCulture)
+            {
+                BadDataFound = _ => rowIsMalformed = true,
+                MissingFieldFound = _ => rowIsMalformed = true
+            };
             using var csv = new CsvReader(reader, config);
             csv.Context.TypeConverterOptionsCache.AddOptions<string>(
                 new CsvHelper.TypeConversion.TypeConverterOptions { NullValues = { "" } });
 
             var byIata = new Dictionary<string, Row>(StringComparer.OrdinalIgnoreCase);
             var byIcao = new Dictionary<string, Row>(StringComparer.OrdinalIgnoreCase);
+            var skipped = 0;
+            var skippedSample = new List<int>(SkippedSampleSize);
 
             await foreach (var record in csv.GetRecordsAsync<CsvRow>(ct))
             {
+                // The callbacks ran while this row was read and mapped; the next row is read only
+                // after this body. A field count unlike the header's is malformed too: an unquoted
+                // comma shifts every later column, so iata_code would hold another column's value.
+                if (rowIsMalformed || csv.Parser.Count != csv.HeaderRecord!.Length)
+                {
+                    rowIsMalformed = false;
+                    skipped++;
+                    if (skippedSample.Count < SkippedSampleSize)
+                        skippedSample.Add(csv.Parser.Row);
+                    continue;
+                }
+
                 if (string.Equals(record.Type, ClosedType, StringComparison.OrdinalIgnoreCase)) continue;
 
                 var row = new Row(
@@ -149,13 +197,19 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                     KeepHighestScore(byIcao, row.Icao, row);
             }
 
+            // One warning per parse, like mledoze's skipped records (final fix wave, C2).
+            if (skipped > 0)
+                _logger.LogWarning(
+                    "Skipped {SkippedCount} malformed {SourceName} row(s); first row numbers: {SkippedSample}.",
+                    skipped, SourceName, string.Join(", ", skippedSample));
+
             // Fix round 1, item 6 (wording corrected in fix round 2, item 7): an empty body, or a
             // syntactically valid header with zero data rows, lands here as zero indexed rows -- a
             // source error, never treated as "nothing matches". A renamed iata_code/icao_code
             // column is a *different* source error, caught earlier by CsvHelper's own header
             // validation (see the class doc's "Empty dataset" remark) -- it never reaches this check.
             if (byIata.Count == 0 && byIcao.Count == 0)
-                throw new VerificationSourceFetchException($"The {SourceName} dataset had no usable rows.");
+                throw new VerificationSourceFetchException(VerificationSourceDownloader.NoUsableRowsError(SourceName));
 
             return new Dataset(byIata, byIcao);
         }

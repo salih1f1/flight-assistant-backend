@@ -25,11 +25,6 @@ namespace FlightAssistant.Application.Interfaces.Repositories
     /// The newer claim owns the request.
     /// </para>
     /// </summary>
-    /// <summary>What <see cref="IVerificationRequestRepository.ResetStuckRunningAsync"/> did.</summary>
-    /// <param name="ReturnedToPending">Stuck requests returned to Pending, one attempt added.</param>
-    /// <param name="Abandoned">Stuck requests that ran out of attempts and completed as Error.</param>
-    public sealed record VerificationStuckResetResult(int ReturnedToPending, int Abandoned);
-
     public interface IVerificationRequestRepository
     {
         /// <summary>
@@ -107,4 +102,9 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// </summary>
         Task SaveChangesAsync(CancellationToken ct = default);
     }
+
+    /// <summary>What <see cref="IVerificationRequestRepository.ResetStuckRunningAsync"/> did.</summary>
+    /// <param name="ReturnedToPending">Stuck requests returned to Pending, one attempt added.</param>
+    /// <param name="Abandoned">Stuck requests that ran out of attempts and completed as Error.</param>
+    public sealed record VerificationStuckResetResult(int ReturnedToPending, int Abandoned);
 }

@@ -20,11 +20,32 @@ public class VerificationSourceDownloaderTests
     private const string Url = "https://example.test/dataset";
     private const string SourceName = "test-source";
 
-    private sealed class StaticHandler(HttpStatusCode status, string body) : HttpMessageHandler
+    private sealed class StaticHandler(HttpStatusCode status, string body, string? reasonPhrase = null) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "text/plain") });
+            Task.FromResult(new HttpResponseMessage(status)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "text/plain"),
+                ReasonPhrase = reasonPhrase
+            });
     }
+
+    /// <summary>Answers 200 with content whose body stream cannot even be opened.</summary>
+    private sealed class UnopenableBodyHandler(Exception exception) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new UnopenableContent(exception) });
+    }
+
+    private sealed class UnopenableContent(Exception exception) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context) => throw exception;
+        protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromException<Stream>(exception);
+        protected override bool TryComputeLength(out long length) { length = 0; return false; }
+    }
+
+    /// <summary>Upstream text that must never reach a stored source error (final fix wave, C1).</summary>
+    private const string UpstreamDetail = "proxy 10.20.30.40:3128 said no; raw record \"LHR,EGLL\"";
 
     private sealed class ThrowingHandler(Exception exception) : HttpMessageHandler
     {
@@ -121,25 +142,47 @@ public class VerificationSourceDownloaderTests
     }
 
     [Fact]
-    public async Task DownloadAsync_ThrowsASourceError_OnANonSuccessStatus()
+    public async Task DownloadAsync_ThrowsASourceError_OnANonSuccessStatus_NamingOnlyTheStatusCode()
     {
-        var factory = new FakeHttpClientFactory(new StaticHandler(HttpStatusCode.InternalServerError, "boom"));
+        // The reason phrase is upstream text (a proxy can put anything there), so it is not stored.
+        var factory = new FakeHttpClientFactory(new StaticHandler(HttpStatusCode.ServiceUnavailable, "boom", UpstreamDetail));
 
         var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() =>
             VerificationSourceDownloader.DownloadAsync(
                 factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), ReadAllTextAsync, default));
 
-        Assert.Contains("500", ex.Message);
+        Assert.Equal("test-source dataset download failed: HTTP 503", ex.Message);
+        Assert.DoesNotContain("10.20.30.40", ex.Message);
     }
 
     [Fact]
-    public async Task DownloadAsync_ThrowsASourceError_OnAHandlerLevelNetworkFailure()
+    public async Task DownloadAsync_ThrowsANetworkError_OnAHandlerLevelNetworkFailure_WithoutTheUpstreamMessage()
     {
-        var factory = new FakeHttpClientFactory(new ThrowingHandler(new HttpRequestException("connection reset")));
+        var upstream = new HttpRequestException(UpstreamDetail);
+        var factory = new FakeHttpClientFactory(new ThrowingHandler(upstream));
 
-        await Assert.ThrowsAsync<VerificationSourceFetchException>(() =>
+        var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() =>
             VerificationSourceDownloader.DownloadAsync(
                 factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), ReadAllTextAsync, default));
+
+        Assert.Equal("Failed to download the test-source dataset (network error)", ex.Message);
+        Assert.DoesNotContain("10.20.30.40", ex.Message);
+        Assert.Same(upstream, ex.InnerException); // kept for the source's log line
+    }
+
+    [Fact]
+    public async Task DownloadAsync_ThrowsANetworkError_WhenTheBodyStreamCannotBeOpened_WithoutTheUpstreamMessage()
+    {
+        var upstream = new IOException(UpstreamDetail);
+        var factory = new FakeHttpClientFactory(new UnopenableBodyHandler(upstream));
+
+        var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() =>
+            VerificationSourceDownloader.DownloadAsync(
+                factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), ReadAllTextAsync, default));
+
+        Assert.Equal("Failed to download the test-source dataset (network error)", ex.Message);
+        Assert.DoesNotContain("10.20.30.40", ex.Message);
+        Assert.Same(upstream, ex.InnerException);
     }
 
     [Fact]
@@ -150,7 +193,8 @@ public class VerificationSourceDownloaderTests
         var task = VerificationSourceDownloader.DownloadAsync(
             factory, ClientName, Url, SourceName, TimeSpan.FromMilliseconds(50), ReadAllTextAsync, default);
 
-        await Assert.ThrowsAsync<VerificationSourceFetchException>(() => task).WaitAsync(TimeSpan.FromSeconds(5));
+        var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() => task).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("Timed out downloading the test-source dataset", ex.Message);
     }
 
     [Fact]
@@ -163,7 +207,8 @@ public class VerificationSourceDownloaderTests
         var task = VerificationSourceDownloader.DownloadAsync(
             factory, ClientName, Url, SourceName, TimeSpan.FromMilliseconds(50), ReadAllTextAsync, default);
 
-        await Assert.ThrowsAsync<VerificationSourceFetchException>(() => task).WaitAsync(TimeSpan.FromSeconds(5));
+        var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() => task).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("Timed out downloading the test-source dataset", ex.Message);
     }
 
     [Fact]
@@ -195,8 +240,9 @@ public class VerificationSourceDownloaderTests
             VerificationSourceDownloader.DownloadAsync(
                 factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), ReadAllTextAsync, default));
 
-        Assert.Contains("Failed to download", ex.Message);
-        Assert.DoesNotContain("Could not parse", ex.Message);
+        Assert.Equal("Failed to download the test-source dataset (network error)", ex.Message);
+        Assert.DoesNotContain("mid-body", ex.Message); // the IOException's own message, from the stream
+        Assert.IsType<IOException>(ex.InnerException);
     }
 
     [Fact]
@@ -215,14 +261,18 @@ public class VerificationSourceDownloaderTests
     }
 
     [Fact]
-    public async Task DownloadAsync_WrapsAnUnexpectedParseException()
+    public async Task DownloadAsync_WrapsAnUnexpectedParseException_WithoutItsMessage()
     {
+        // A CsvHelper or JSON exception's message can quote raw record content.
+        var upstream = new FormatException(UpstreamDetail);
         var factory = new FakeHttpClientFactory(new StaticHandler(HttpStatusCode.OK, "irrelevant"));
-        Task<string> Parse(Stream stream, CancellationToken ct) => throw new FormatException("bad shape");
+        Task<string> Parse(Stream stream, CancellationToken ct) => throw upstream;
 
         var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() =>
             VerificationSourceDownloader.DownloadAsync(factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), Parse, default));
 
-        Assert.Contains("bad shape", ex.Message);
+        Assert.Equal("Could not parse the test-source dataset", ex.Message);
+        Assert.DoesNotContain("LHR,EGLL", ex.Message);
+        Assert.Same(upstream, ex.InnerException);
     }
 }

@@ -232,11 +232,13 @@ public class MledozeCountriesVerificationSourceTests
     [Fact]
     public async Task LookupAsync_ReturnsASourceError_OnGarbageContent()
     {
-        var source = Source(new StaticHandler(HttpStatusCode.OK, "not json at all {{{"));
+        var source = Source(new StaticHandler(HttpStatusCode.OK, "not json at all {{{ secret-record-content"));
 
         var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
 
         Assert.True(result.IsError);
+        // Final fix wave, C1: the JsonException's message (which can quote the content) is not stored.
+        Assert.Equal("Could not parse the mledoze dataset", result.Error);
     }
 
     [Fact]
@@ -366,12 +368,13 @@ public class MledozeCountriesVerificationSourceTests
     [Fact]
     public async Task LookupAsync_ReturnsASourceError_OnAHandlerLevelNetworkFailure()
     {
-        var source = Source(new ThrowingHandler(new HttpRequestException("connection reset")));
+        var source = Source(new ThrowingHandler(new HttpRequestException("connection reset by 10.20.30.40")));
 
         var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
 
         Assert.True(result.IsError);
         Assert.Null(result.Lookup);
+        Assert.Equal("Failed to download the mledoze dataset (network error)", result.Error);
     }
 
     [Fact]

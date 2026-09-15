@@ -101,7 +101,8 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             }
             catch (VerificationSourceFetchException ex)
             {
-                _logger.LogWarning(ex, "mledoze verification lookup failed: {Message}", ex.Message);
+                // Logged once, with the whole exception, where the load failed (DownloadAsync); a
+                // lookup inside the failure cooldown just hands on the same fixed-category error.
                 return VerificationSourceFetchResult.SourceError(ex.Message);
             }
 
@@ -113,9 +114,21 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
 
         public void ReleaseCache() => _cache.Release();
 
-        private Task<IReadOnlyDictionary<string, Row>> DownloadAsync(CancellationToken ct) =>
-            VerificationSourceDownloader.DownloadAsync(
-                _httpClientFactory, HttpClientName, DatasetUrl, SourceName, _downloadTimeout, ParseAsync, ct);
+        private async Task<IReadOnlyDictionary<string, Row>> DownloadAsync(CancellationToken ct)
+        {
+            try
+            {
+                return await VerificationSourceDownloader.DownloadAsync(
+                    _httpClientFactory, HttpClientName, DatasetUrl, SourceName, _downloadTimeout, ParseAsync, ct).ConfigureAwait(false);
+            }
+            catch (VerificationSourceFetchException ex)
+            {
+                // The stored error is a fixed category (final fix wave, C1); the upstream detail is
+                // only in this log line, written once per failed load with the whole exception.
+                _logger.LogWarning(ex, "Loading the {SourceName} verification dataset failed: {Error}", SourceName, ex.Message);
+                throw;
+            }
+        }
 
         /// <summary>How many skipped records one parse's warning names, as <c>index/cca3</c>.</summary>
         internal const int SkippedSampleSize = 3;
@@ -161,7 +174,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             // Zero *surviving* records -- an empty body, [], or every record being bad -- is the
             // one case that is still a source error (see the type's class doc remark).
             if (byCode.Count == 0)
-                throw new VerificationSourceFetchException($"The {SourceName} dataset had no usable rows.");
+                throw new VerificationSourceFetchException(VerificationSourceDownloader.NoUsableRowsError(SourceName));
 
             return byCode;
         }

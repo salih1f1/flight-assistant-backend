@@ -51,7 +51,9 @@ namespace FlightAssistant.Application.Verification
     /// </summary>
     public sealed class VerificationCycleRunner : IVerificationCycleRunner
     {
-        /// <summary>A Running request whose claim started longer ago than this is returned to Pending.</summary>
+        /// <summary>A Running request whose claim started longer ago than this is reset as stuck: the
+        /// reset counts an attempt, and returns it to Pending, or completes it as Error when that was
+        /// its last attempt.</summary>
         public static readonly TimeSpan StuckAfter = TimeSpan.FromMinutes(10);
 
         private readonly IVerificationRequestRepository _requests;
