@@ -87,11 +87,13 @@ namespace FlightAssistant.Domain.Flights.Entities
         }
 
         /// <summary>
-        /// Takes the provider's times for a status the flight already has (#351). Estimates and actuals are
-        /// taken as reported, so a missing one clears the stored value, as <see cref="ApplyStatusUpdate"/>
-        /// does. The aircraft type is taken only when reported. Raises no event, so it sends no push, and
-        /// leaves <see cref="CancelledAtUtc"/> alone, since that follows the status.
-        /// <see cref="UpdatedUtc"/> moves only when something changed.
+        /// Takes the provider's times (#351). Estimates are taken as reported, so a missing one clears the
+        /// stored value. An actual departure or arrival, once reported, is kept when a later response omits
+        /// it: clearing an actual arrival would send a landed flight back to the planner's no-arrival rule
+        /// and up to a day of Fast polls the budget guard doesn't hold back. The aircraft type is taken only
+        /// when reported. Raises no event, so it sends no push, and leaves <see cref="CancelledAtUtc"/> alone,
+        /// since that follows the status. <see cref="UpdatedUtc"/> moves only when something changed.
+        /// <see cref="ApplyStatusUpdate"/> uses it too, so both paths keep actual times the same way.
         /// </summary>
         public void ApplyProviderTimes(
             DateTime? estimatedDepartureUtc,
@@ -101,16 +103,19 @@ namespace FlightAssistant.Domain.Flights.Entities
             string? equipmentAircraftIcao,
             DateTime nowUtc)
         {
+            var actualDeparture = actualDepartureUtc ?? ActualDepartureUtc;
+            var actualArrival = actualArrivalUtc ?? ActualArrivalUtc;
+
             var changed = EstimatedDepartureUtc != estimatedDepartureUtc
                           || EstimatedArrivalUtc != estimatedArrivalUtc
-                          || ActualDepartureUtc != actualDepartureUtc
-                          || ActualArrivalUtc != actualArrivalUtc
+                          || ActualDepartureUtc != actualDeparture
+                          || ActualArrivalUtc != actualArrival
                           || (equipmentAircraftIcao is not null && EquipmentAircraftIcao != equipmentAircraftIcao);
 
             EstimatedDepartureUtc = estimatedDepartureUtc;
             EstimatedArrivalUtc = estimatedArrivalUtc;
-            ActualDepartureUtc = actualDepartureUtc;
-            ActualArrivalUtc = actualArrivalUtc;
+            ActualDepartureUtc = actualDeparture;
+            ActualArrivalUtc = actualArrival;
             if (equipmentAircraftIcao is not null)
                 EquipmentAircraftIcao = equipmentAircraftIcao;
 

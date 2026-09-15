@@ -122,6 +122,42 @@ namespace FlightAssistant.Domain.Tests.Flights
             Assert.Equal(Now, flight.UpdatedUtc);
             Assert.Equal("B789", flight.EquipmentAircraftIcao);
         }
+
+        [Fact]
+        public void ApplyProviderTimes_AResponseWithoutActualTimes_KeepsTheStoredOnes()
+        {
+            var flight = Flight.Create(1, "BA123", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(-9), Now.AddHours(-1));
+            flight.ApplyStatusUpdate("ARR", null, null, Now.AddHours(-9), Now.AddMinutes(-50), null, Now);
+
+            flight.ApplyProviderTimes(null, null, null, null, null, Now.AddMinutes(5));
+
+            Assert.Equal(Now.AddHours(-9), flight.ActualDepartureUtc);
+            Assert.Equal(Now.AddMinutes(-50), flight.ActualArrivalUtc);
+            Assert.Equal(Now, flight.UpdatedUtc); // nothing changed
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_AResponseWithoutAnActualArrival_KeepsTheStoredOne()
+        {
+            var flight = Flight.Create(1, "BA123", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(-9), Now.AddHours(-1));
+            flight.ApplyStatusUpdate("ARR", null, null, Now.AddHours(-9), Now.AddMinutes(-50), null, Now);
+
+            flight.ApplyStatusUpdate("ARR", null, null, Now.AddHours(-9), null, null, Now.AddMinutes(5));
+
+            Assert.Equal(Now.AddMinutes(-50), flight.ActualArrivalUtc);
+        }
+
+        [Fact]
+        public void ApplyProviderTimes_ANewActualTime_ReplacesTheStoredOne()
+        {
+            var flight = Flight.Create(1, "BA123", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(-9), Now.AddHours(-1));
+            flight.ApplyStatusUpdate("ARR", null, null, Now.AddHours(-9), Now.AddMinutes(-50), null, Now);
+
+            flight.ApplyProviderTimes(null, null, Now.AddHours(-9), Now.AddMinutes(-45), null, Now.AddMinutes(5));
+
+            Assert.Equal(Now.AddMinutes(-45), flight.ActualArrivalUtc);
+            Assert.Equal(Now.AddMinutes(5), flight.UpdatedUtc);
+        }
     }
 
     public class TravelerFlightTests
