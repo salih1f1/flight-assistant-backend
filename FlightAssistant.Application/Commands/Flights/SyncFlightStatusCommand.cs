@@ -286,6 +286,11 @@ namespace FlightAssistant.Application.Commands.Flights
             if (await _flights.FlightStatusEventExistsAsync(dedupHash, ct))
                 return await ApplyKnownStatusAsync(flight, statusId.Value, result, now, ct);
 
+            // The flight's current status is its most recently recorded event (#351). A push goes out only
+            // when the status changes, or a delay grows (#352): a corrected actual departure, or a delay
+            // slipping a few minutes, records the event without another push. Read before the flight changes.
+            var latest = await _flights.GetLatestFlightStatusEventAsync(flight.Id, ct);
+
             var evt = FlightStatusEvent.Create(
                 flight.Id,
                 statusId.Value,
@@ -306,7 +311,8 @@ namespace FlightAssistant.Application.Commands.Flights
                 result.ActualDepartureUtc,
                 result.ActualArrivalUtc,
                 result.EquipmentIcao,
-                now);
+                now,
+                statusChanged: latest?.StatusId != statusId.Value);
 
             await _flights.AddFlightStatusEventAsync(evt, ct);
             return true;

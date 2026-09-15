@@ -33,8 +33,18 @@ namespace FlightAssistant.Application.EventHandlers
 
         public async Task Handle(FlightStatusChanged notification, CancellationToken ct)
         {
+            // A correction, or a delay that grew less than the threshold, records the event but sends
+            // nothing (#352).
+            if (!notification.ShouldNotify)
+            {
+                _logger.LogInformation(
+                    "Skipping push for flight {FlightNumber}: status {Status} didn't change enough to notify",
+                    notification.FlightNumber, notification.StatusCode);
+                return;
+            }
+
             // Find all travelers tracking this flight with notifications enabled
-            var body = GetStatusMessage(notification.StatusCode);
+            var body = GetStatusMessage(notification.StatusCode, notification.DelayMinutes);
 
             // Suppress non-actionable status updates (e.g. SCH, UNK) — no meaningful
             // user-facing message, so skip before doing any tracking/traveler lookups.
@@ -118,11 +128,12 @@ namespace FlightAssistant.Application.EventHandlers
             }
         }
 
-        private static string? GetStatusMessage(string statusCode) => statusCode switch
+        private static string? GetStatusMessage(string statusCode, int? delayMinutes) => statusCode switch
         {
             "DEP" => "Your flight has departed.",
             "ARR" => "Your flight has landed.",
-            "DLY" => "Your flight is delayed.",
+            // Minutes late rather than a clock time, so the message needs no timezone or locale (#352).
+            "DLY" => delayMinutes is { } minutes ? $"Your flight is delayed by {minutes} min." : "Your flight is delayed.",
             "CAN" => "Your flight has been cancelled.",
             "DIV" => "Your flight has been diverted.",
             _ => null

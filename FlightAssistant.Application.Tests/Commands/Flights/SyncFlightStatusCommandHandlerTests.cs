@@ -905,7 +905,37 @@ public class SyncFlightStatusCommandHandlerTests
 
         Assert.True(await Sync());
 
-        Assert.Single(flight.DomainEvents, e => e is FlightStatusChanged);
+        Assert.True(Assert.IsType<FlightStatusChanged>(Assert.Single(flight.DomainEvents)).ShouldNotify);
+    }
+
+    [Fact]
+    public async Task NewStatus_TheSameStatusAsTheLatestEvent_RecordsIt_WithoutAPush()
+    {
+        // A corrected actual departure: DEP again at a new effective time (#352).
+        var flight = Given(Departing(Now.AddHours(1)));
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
+            .Returns(Status("DEP", effectiveAtUtc: Now.AddMinutes(2)));
+        _flights.GetLatestFlightStatusEventAsync(flight.Id, Arg.Any<CancellationToken>())
+            .Returns(FlightStatusEvent.Create(flight.Id, 2, Now, "TestProvider", "ext-1", "A1", "T5"));
+
+        Assert.True(await Sync());
+
+        await _flights.Received(1).AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
+        Assert.False(Assert.IsType<FlightStatusChanged>(Assert.Single(flight.DomainEvents)).ShouldNotify);
+    }
+
+    [Fact]
+    public async Task NewStatus_ADifferentStatusFromTheLatestEvent_Notifies()
+    {
+        var flight = Given(Departing(Now.AddHours(1)));
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
+            .Returns(Status("DEP"));
+        _flights.GetLatestFlightStatusEventAsync(flight.Id, Arg.Any<CancellationToken>())
+            .Returns(FlightStatusEvent.Create(flight.Id, 1, Now.AddMinutes(-30), "TestProvider", "ext-1"));
+
+        Assert.True(await Sync());
+
+        Assert.True(Assert.IsType<FlightStatusChanged>(Assert.Single(flight.DomainEvents)).ShouldNotify);
     }
 
     [Fact]
