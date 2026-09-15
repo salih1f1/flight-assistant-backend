@@ -201,7 +201,7 @@ Most values are pulled from Azure Key Vault in deployed environments; for local 
 | `AeroApi:TimeoutSeconds` | Optional; default 30. Per-attempt **network** budget, *excluding* the throttle wait added on top |
 | `AeroApi:MonthlyBudgetUsd` | Optional; default 5. Reference line for the admin usage gauge only — every cost figure comes from AeroAPI's own report, nothing is priced locally |
 | `FlightSync:Enabled` | Optional; default `true`. Set `false` for a local run, or it polls AeroAPI alongside the deployed app (#347) |
-| `FlightSync:LoopInterval`, `NearDepartureInterval`, `Interval`, `ScheduleCheckInterval`, `FastWindowBeforeDeparture`, `StopAfterArrival`, `StopWithoutArrivalAfter` | Optional; defaults 1 min, 5 min (Fast), 30 min (Live), 1 day, 4 h, 30 min, 1 day; Fast and Live lengthened for cost in #364. Validated on start |
+| `FlightSync:LoopInterval`, `NearDepartureInterval`, `Interval`, `ScheduleCheckInterval`, `FastWindowBeforeDeparture`, `StopAfterArrival`, `StopWithoutArrivalAfter` | Optional; defaults 1 min, 5 min (Fast), 30 min (Live), 1 day, 4 h, 30 min, 1 day; Fast and Live lengthened for cost in #364. `ScheduleCheckInterval` has no effect until step 2 of #349 (the `/schedules` check). Validated on start |
 | `Apns:BundleId`, `Apns:KeyId`, `Apns:TeamId`, `Apns:P8KeyContent` | iOS push; `Apns:UseSandbox=true` for dev |
 | `AdminPanel:AllowedOrigin` | CORS origin for admin UI. Code default `http://localhost:5173`; Development sets `http://localhost:5175` to match the panel's Entra redirect URI |
 | `GitHub:Token` | Optional; fine-grained, read-only, Actions: read on this repository. Without it `/admin/ci/*` answers 503. Key Vault: `GitHub--Token` |

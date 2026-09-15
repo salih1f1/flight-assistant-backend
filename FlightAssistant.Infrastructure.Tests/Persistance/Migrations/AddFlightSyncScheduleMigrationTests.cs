@@ -14,19 +14,13 @@ namespace FlightAssistant.Infrastructure.Tests.Persistance.Migrations;
 /// The shared, fully migrated database isn't touched.
 /// </summary>
 /// <remarks>
-/// Derives from <see cref="PostgresTestBase"/> — and re-lists <see cref="IAsyncLifetime"/> alongside
-/// it — solely to satisfy <c>PostgresCollectionMembershipTests</c>'s #310 guard, which requires every
-/// <c>[Collection(PostgresCollection.Name)]</c> member to derive from it. This class intentionally
-/// does not want that base's behaviour: it never touches the shared container's own database, so
-/// <see cref="PostgresTestBase.InitializeAsync"/>'s <c>ResetAsync</c> would truncate a database this
-/// test never uses, and <see cref="PostgresTestBase.DisposeAsync"/> is a no-op that would leave this
-/// test's own scratch database behind. Both are hidden with <c>new</c>, and — because a hiding member
-/// alone leaves interface dispatch bound to the base's implementation — <see cref="IAsyncLifetime"/>
-/// is re-declared here so xUnit's <c>((IAsyncLifetime)this).InitializeAsync/DisposeAsync</c> calls
-/// resolve to these methods instead.
+/// Derives from <see cref="PostgresTestBase"/> to satisfy <c>PostgresCollectionMembershipTests</c>'s #310
+/// guard. The base's reset of the shared database before each test is harmless here, so it's inherited;
+/// <see cref="DisposeAsync"/> is overridden to drop this test's scratch database, which the base would
+/// leave behind.
 /// </remarks>
 [Collection(PostgresCollection.Name)]
-public sealed class AddFlightSyncScheduleMigrationTests : PostgresTestBase, IAsyncLifetime
+public sealed class AddFlightSyncScheduleMigrationTests : PostgresTestBase
 {
     private const string MigrationSuffix = "_AddFlightSyncSchedule";
 
@@ -40,14 +34,16 @@ public sealed class AddFlightSyncScheduleMigrationTests : PostgresTestBase, IAsy
         _connectionString = new NpgsqlConnectionStringBuilder(fixture.ConnectionString) { Database = _databaseName }.ConnectionString;
     }
 
-    public new Task InitializeAsync() => Task.CompletedTask;
-
-    public new async Task DisposeAsync()
+    public override async Task DisposeAsync()
     {
         NpgsqlConnection.ClearAllPools();
-        await using var db = _fixture.CreateDbContext();
-        var drop = "DROP DATABASE IF EXISTS \"" + _databaseName + "\" WITH (FORCE)";
-        await db.Database.ExecuteSqlRawAsync(drop);
+        await using (var db = _fixture.CreateDbContext())
+        {
+            var drop = "DROP DATABASE IF EXISTS \"" + _databaseName + "\" WITH (FORCE)";
+            await db.Database.ExecuteSqlRawAsync(drop);
+        }
+
+        await base.DisposeAsync();
     }
 
     // Public: EF materializes it for SqlQueryRaw.

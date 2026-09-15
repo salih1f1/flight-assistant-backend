@@ -117,6 +117,10 @@ namespace FlightAssistant.API.Endpoints.Admin
             })
             .WithName("AdminSyncFlightStatus")
             .WithSummary("Sync flight status")
+            .WithDescription(
+                "Syncs the flight's status now. A flight not yet inside the provider's live-status window makes no provider call, " +
+                "and a flight no traveler tracks makes no call and has its sync plan cleared; both return { updated: false }. " +
+                "Otherwise returns { updated: true } if a new status was recorded.")
             .Produces(200);
         }
 
