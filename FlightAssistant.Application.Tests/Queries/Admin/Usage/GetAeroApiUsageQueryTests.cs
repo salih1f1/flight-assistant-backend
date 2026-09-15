@@ -56,6 +56,7 @@ public class GetAeroApiUsageQueryTests
     private sealed class FakeBudget : IAeroApiBudgetOptions
     {
         public decimal MonthlyBudgetUsd => 5m;
+        public decimal SoftLimitRatio => 0.8m;
     }
 
     private sealed class FakeThrottleObserver : IAeroApiThrottleObserver

@@ -136,6 +136,48 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
             new(value.Ticks - value.Ticks % TimeSpan.TicksPerSecond, TimeSpan.Zero);
     }
 
+    /// <summary>
+    /// The one copy of how the usage report is cached. <see cref="GetAeroApiUsageQueryHandler"/> and
+    /// <c>ProviderBudgetGuard</c> (#303) both read through it, so the admin gauge and the budget guard
+    /// share one cache entry and one upstream call per range.
+    /// </summary>
+    internal static class AeroApiUsageCache
+    {
+        /// <summary>Matches FlightAware's own refresh cadence for this data.</summary>
+        public static readonly TimeSpan Duration = TimeSpan.FromMinutes(10);
+
+        private const string KeyPrefix = "aeroapi:account-usage:";
+        private const string RangeFormat = "yyyy-MM-ddTHH:mm:ssZ";
+
+        /// <summary>
+        /// The cached report for the range, or a fresh one, which is then cached. A failed call throws
+        /// and caches nothing. <c>Fetched</c> is true when this call went upstream.
+        /// </summary>
+        public static async Task<(AeroApiAccountUsage Usage, bool Fetched)> GetOrFetchAsync(
+            IAeroApiAccountUsageProvider provider,
+            ICacheService cache,
+            DateTimeOffset startUtc,
+            DateTimeOffset endUtc,
+            CancellationToken ct)
+        {
+            var key = Key(startUtc, endUtc);
+
+            var cached = await cache.GetAsync<AeroApiAccountUsage>(key, ct);
+            if (cached is not null)
+                return (cached, false);
+
+            var usage = await provider.GetUsageAsync(startUtc, endUtc, ct);
+            await cache.SetAsync(key, usage, Duration, ct);
+            return (usage, true);
+        }
+
+        private static string Key(DateTimeOffset startUtc, DateTimeOffset endUtc) =>
+            KeyPrefix
+            + startUtc.UtcDateTime.ToString(RangeFormat, CultureInfo.InvariantCulture)
+            + ".."
+            + endUtc.UtcDateTime.ToString(RangeFormat, CultureInfo.InvariantCulture);
+    }
+
     public sealed class GetAeroApiUsageQueryValidator : AbstractValidator<GetAeroApiUsageQuery>
     {
         /// <summary>AeroAPI serves at most one year of usage history.</summary>
@@ -212,10 +254,7 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
     public sealed class GetAeroApiUsageQueryHandler : IRequestHandler<GetAeroApiUsageQuery, AeroApiUsageResult>
     {
         /// <summary>Matches FlightAware's own refresh cadence for this data.</summary>
-        public static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(10);
-
-        private const string CacheKeyPrefix = "aeroapi:account-usage:";
-        private const string RangeFormat = "yyyy-MM-ddTHH:mm:ssZ";
+        public static readonly TimeSpan CacheDuration = AeroApiUsageCache.Duration;
 
         private readonly IAeroApiAccountUsageProvider _usage;
         private readonly ICacheService _cache;
@@ -240,16 +279,10 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
         public async Task<AeroApiUsageResult> Handle(GetAeroApiUsageQuery request, CancellationToken ct)
         {
             var (startUtc, endUtc) = UsageRange.Resolve(request, _timeProvider.GetUtcNow(), CacheDuration);
-            var key = CacheKey(startUtc, endUtc);
 
             // Only the upstream payload is cached — the budget and the throttle's next slot are
             // local state that must not be frozen for 10 minutes alongside it.
-            var usage = await _cache.GetAsync<AeroApiAccountUsage>(key, ct);
-            if (usage is null)
-            {
-                usage = await _usage.GetUsageAsync(startUtc, endUtc, ct);
-                await _cache.SetAsync(key, usage, CacheDuration, ct);
-            }
+            var (usage, _) = await AeroApiUsageCache.GetOrFetchAsync(_usage, _cache, startUtc, endUtc, ct);
 
             return new AeroApiUsageResult(
                 startUtc,
@@ -267,11 +300,5 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
                     .ToList(),
                 _throttle.NextSlotUtc);
         }
-
-        private static string CacheKey(DateTimeOffset startUtc, DateTimeOffset endUtc) =>
-            CacheKeyPrefix
-            + startUtc.UtcDateTime.ToString(RangeFormat, CultureInfo.InvariantCulture)
-            + ".."
-            + endUtc.UtcDateTime.ToString(RangeFormat, CultureInfo.InvariantCulture);
     }
 }

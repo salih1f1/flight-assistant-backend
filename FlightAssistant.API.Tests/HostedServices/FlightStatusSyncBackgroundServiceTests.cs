@@ -3,6 +3,7 @@ using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Flights.Enums;
@@ -156,10 +157,15 @@ public class FlightStatusSyncBackgroundServiceTests
         return flight;
     }
 
-    [Fact]
-    public async Task OverTenMinutes_AFlightNearDeparture_DoesNotSpeedUpTheOthers()
+    /// <summary>
+    /// Three tracked flights, all due now, run through the real handler and planner once a minute for
+    /// ten minutes. TK1 departs in 3 h (Fast), TK2 in 30 h (Live) and TK3 in 20 days (Schedule).
+    /// The intervals are non-default (#308): Fast every 3 min and Live every 20 min, with the Fast
+    /// window left at 4 h.
+    /// </summary>
+    private async Task<(IFlightStatusProvider Provider, Flight[] Flights, int Failed)> RunThreeFlightsForTenMinutesAsync(
+        ProviderBudgetState budgetState)
     {
-        // Non-default intervals (#308): Fast every 3 min, Live every 20 min; Fast window stays 4 h.
         var options = new FlightSyncOptions { NearDepartureInterval = TimeSpan.FromMinutes(3), Interval = TimeSpan.FromMinutes(20) };
         var fast = WithId(Flight.Create(1, "TK1", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(3), Now.AddHours(6)), 1);
         var live = WithId(Flight.Create(1, "TK2", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(30), Now.AddHours(33)), 2);
@@ -180,17 +186,28 @@ public class FlightStatusSyncBackgroundServiceTests
         provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
         var window = Substitute.For<IFlightStatusWindowOptions>();
         window.StatusWindowFutureDays.Returns(2);
-        var handler = new SyncFlightStatusCommandHandler(_flights, provider, Substitute.For<ICacheService>(), options, window, _clock,
+        var budget = Substitute.For<IProviderBudgetGuard>();
+        budget.GetStateAsync(Arg.Any<CancellationToken>()).Returns(budgetState);
+        var handler = new SyncFlightStatusCommandHandler(_flights, provider, budget, Substitute.For<ICacheService>(), options, window, _clock,
             NullLogger<SyncFlightStatusCommandHandler>.Instance);
         _mediator.Send(Arg.Any<SyncFlightStatusCommand>(), Arg.Any<CancellationToken>())
             .Returns(ci => handler.Handle(ci.ArgAt<SyncFlightStatusCommand>(0), CancellationToken.None).GetAwaiter().GetResult());
 
         var service = Service(options);
+        var failed = 0;
         for (var minute = 0; minute < 10; minute++)
         {
-            await service.RunOnceAsync(CancellationToken.None);
+            failed += (await service.RunOnceAsync(CancellationToken.None)).Failed;
             _clock.Advance(TimeSpan.FromMinutes(1));
         }
+
+        return (provider, all, failed);
+    }
+
+    [Fact]
+    public async Task OverTenMinutes_AFlightNearDeparture_DoesNotSpeedUpTheOthers()
+    {
+        var (provider, _, _) = await RunThreeFlightsForTenMinutesAsync(ProviderBudgetState.Normal);
 
         await provider.Received(4).GetStatusAsync("TK1", Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()); // minutes 0, 3, 6, 9
         await provider.Received(1).GetStatusAsync("TK2", Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()); // minute 0 only
@@ -198,5 +215,19 @@ public class FlightStatusSyncBackgroundServiceTests
         // Every call the loop makes is a scheduled poll (#375).
         await provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), StatusCallKind.Interactive, Arg.Any<CancellationToken>());
         Assert.Single(Sent(), c => c.FlightId == 3); // planned once, next due when Live starts
+    }
+
+    [Fact]
+    public async Task OverTenMinutes_BudgetExhausted_OnlyTheFlightNearDepartureIsCalled()
+    {
+        var (provider, flights, failed) = await RunThreeFlightsForTenMinutesAsync(ProviderBudgetState.Exhausted);
+
+        await provider.Received(4).GetStatusAsync("TK1", Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()); // Fast keeps its interval
+        await provider.DidNotReceive().GetStatusAsync("TK2", Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
+        await provider.DidNotReceive().GetStatusAsync("TK3", Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
+        // TK2 was checked at minute 0 without a call, and waits twice the Live interval.
+        Assert.Null(flights[1].LastSyncedUtc);
+        Assert.Equal(Now.AddMinutes(40), flights[1].NextSyncDueUtc);
+        Assert.Equal(0, failed); // held back, not failed
     }
 }

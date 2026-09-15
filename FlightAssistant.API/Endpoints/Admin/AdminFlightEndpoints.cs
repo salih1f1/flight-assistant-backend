@@ -30,7 +30,8 @@ namespace FlightAssistant.API.Endpoints.Admin
             .WithDescription(
                 "The same search, inputs and responses as GET /flights/search, for the admin panel. " +
                 "Each row can be posted unmodified to POST /admin/travelers/{id}/flights. Every distinct " +
-                "search that misses the cache is a paid AeroAPI call, so it shares the flight-search rate limit, counted per admin.")
+                "search that misses the cache is a paid AeroAPI call, so it shares the flight-search rate limit, counted per admin. " +
+                "Once this month's flight data budget is nearly used up, a search that isn't cached returns 503.")
             .Produces<List<FlightSearchResultDto>>(200)
             .ProducesValidationProblem()
             .ProducesProblem(500)
@@ -120,8 +121,10 @@ namespace FlightAssistant.API.Endpoints.Admin
             .WithDescription(
                 "Syncs the flight's status now. A flight not yet inside the provider's live-status window makes no provider call, " +
                 "and a flight no traveler tracks makes no call and has its sync plan cleared; both return { updated: false }. " +
-                "Otherwise returns { updated: true } if a new status was recorded.")
-            .Produces(200);
+                "Otherwise returns { updated: true } if a new status was recorded. " +
+                "Once this month's flight data budget is used up, only a flight in its near-departure window (by default, from 4 hours before departure until 30 minutes after it lands) makes a call; any other returns 503.")
+            .Produces(200)
+            .ProducesProblem(503);
         }
 
         private static AdminFlightStatusEventDto ToStatusEventDto(AdminFlightStatusEventResult e) => new(

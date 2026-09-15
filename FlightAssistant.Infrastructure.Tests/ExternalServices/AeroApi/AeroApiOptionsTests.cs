@@ -127,6 +127,33 @@ public class AeroApiOptionsTests
         Assert.Equal(12.50m, options.Value.MonthlyBudgetUsd);
     }
 
+    [Theory]
+    [InlineData("0")]     // a soft limit at $0 would hold back calls from the first cent
+    [InlineData("0.05")]  // below the floor: almost certainly a typo
+    [InlineData("1.01")]  // a soft limit past the hard stop would never apply
+    public void SoftLimitRatioOutsideRange_FailsValidation(string ratio)
+    {
+        var options = BuildOptions(new Dictionary<string, string?>
+        {
+            ["AeroApi:ApiKey"] = "dummy",
+            ["AeroApi:SoftLimitRatio"] = ratio
+        });
+
+        Assert.Throws<OptionsValidationException>(() => options.Value);
+    }
+
+    [Fact]
+    public void SoftLimitRatio_BindsAConfiguredValue()
+    {
+        var options = BuildOptions(new Dictionary<string, string?>
+        {
+            ["AeroApi:ApiKey"] = "dummy",
+            ["AeroApi:SoftLimitRatio"] = "0.65"
+        });
+
+        Assert.Equal(0.65m, options.Value.SoftLimitRatio);
+    }
+
     [Fact]
     public void ValidApiKey_BindsWithDocumentedDefaults()
     {
@@ -143,6 +170,7 @@ public class AeroApiOptionsTests
         Assert.Equal(30, value.TimeoutSeconds);
         Assert.Equal(2, value.MaxRetryAttempts);
         Assert.Equal(5m, value.MonthlyBudgetUsd);
+        Assert.Equal(0.8m, value.SoftLimitRatio);
         Assert.Equal(TimeSpan.FromMinutes(5), value.SearchCacheTtlPastOrToday);
         Assert.Equal(TimeSpan.FromHours(12), value.SearchCacheTtlFuture);
 

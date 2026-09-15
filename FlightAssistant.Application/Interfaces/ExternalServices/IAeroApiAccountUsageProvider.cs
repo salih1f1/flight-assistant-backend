@@ -63,13 +63,17 @@ namespace FlightAssistant.Application.Interfaces.ExternalServices
 
     /// <summary>
     /// The configured monthly spend budget, exposed here (in the Application layer) so the usage
-    /// query can return it for the panel's gauge without depending on the Infrastructure-layer
-    /// options class that owns it — Application never references Infrastructure. The concrete
-    /// provider options type implements this interface, exactly as it does
+    /// query can return it for the panel's gauge, and the budget guard can enforce it (#303), without
+    /// depending on the Infrastructure-layer options class that owns it — Application never references
+    /// Infrastructure. The concrete provider options type implements this interface, exactly as it does
     /// <see cref="IFlightSearchHorizonOptions"/>.
     /// </summary>
     public interface IAeroApiBudgetOptions
     {
         decimal MonthlyBudgetUsd { get; }
+
+        /// <summary>The share of <see cref="MonthlyBudgetUsd"/> at which the budget guard's soft
+        /// limit starts (#303).</summary>
+        decimal SoftLimitRatio { get; }
     }
 }

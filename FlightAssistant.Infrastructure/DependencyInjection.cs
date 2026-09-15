@@ -5,6 +5,7 @@ using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Interfaces.Verification;
+using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
 using FlightAssistant.Infrastructure.ExternalServices.GitHub;
@@ -219,7 +220,11 @@ namespace FlightAssistant.Infrastructure
             // AeroApiFlightSearchProvider itself stays registered and resolvable — the decorator wraps
             // it, it does not replace it.
             services.AddScoped<IFlightSearchProvider>(sp => new AeroApiFlightSearchCachingDecorator(
-                sp.GetRequiredService<AeroApiFlightSearchProvider>(),
+                // Inside the cache, so a cached search is answered past the budget (#303).
+                new AeroApiFlightSearchBudgetDecorator(
+                    sp.GetRequiredService<AeroApiFlightSearchProvider>(),
+                    sp.GetRequiredService<IProviderBudgetGuard>(),
+                    sp.GetRequiredService<ILogger<AeroApiFlightSearchBudgetDecorator>>()),
                 sp.GetRequiredService<ICacheService>(),
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
                 sp.GetRequiredService<TimeProvider>(),
@@ -249,6 +254,10 @@ namespace FlightAssistant.Infrastructure
 
             services.AddScoped<IAeroApiAccountUsageProvider>(sp =>
                 sp.GetRequiredService<AeroApiAccountUsageProvider>());
+
+            // The budget guard (#303) reads this month's spend from the same cached usage report the
+            // admin gauge uses. Flight search and status sync ask it before a call they can hold back.
+            services.AddScoped<IProviderBudgetGuard, ProviderBudgetGuard>();
 
             // CI results (issue #332): the admin tests page reads the CI workflow's runs and its
             // test-results artifact through the API, so the panel never holds a GitHub token.
