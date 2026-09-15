@@ -180,6 +180,23 @@ public class AeroApiClientPipelineTests
     }
 
     [Fact]
+    public async Task A429_IsNeverRetried()
+    {
+        // Retrying a throttle response on a metered tier only makes it worse; this rule sits right
+        // before the skip-retries check in the same predicate.
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var transport = new CountingTransport(HttpStatusCode.TooManyRequests);
+        using var provider = BuildContainer(clock, transport, maxRetryAttempts: 1);
+        var client = provider.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi");
+
+        var pending = client.GetAsync("flights/TK1028");
+        await AdvanceUntilSettled(clock, pending, TimeSpan.FromMinutes(5));
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, (await pending).StatusCode);
+        Assert.Equal(1, transport.Calls);
+    }
+
+    [Fact]
     public async Task ANetworkError_IsRetried_UpToMaxRetryAttempts()
     {
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);

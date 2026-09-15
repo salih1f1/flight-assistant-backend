@@ -127,8 +127,9 @@ namespace FlightAssistant.Infrastructure
                 // retrying a rate-limit response only makes the throttling worse. A request marked
                 // with AeroApiRetry.Skip isn't retried either — a scheduled status poll, whose next
                 // due sync is its retry (#375). The request is read from the resilience context,
-                // because a network error has no response to find it on. All other transient outcomes
-                // (5xx, timeouts, network errors) keep the default handling.
+                // because an exception outcome (a network error or an attempt timeout) has no
+                // response to find it on. All other transient outcomes (5xx, timeouts, network
+                // errors) keep the default handling.
                 options.Retry.ShouldHandle = args =>
                 {
                     if (args.Outcome.Result?.StatusCode == HttpStatusCode.TooManyRequests)
