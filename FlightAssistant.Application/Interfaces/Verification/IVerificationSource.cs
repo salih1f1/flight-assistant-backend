@@ -136,7 +136,8 @@ namespace FlightAssistant.Application.Interfaces.Verification
         /// <summary>
         /// Drops this source's cached dataset, if any, so the next <see cref="LookupAsync"/> call
         /// downloads again -- unless a lookup used it less than <paramref name="idleRelease"/> ago, or
-        /// a load is in flight. A cached failure is dropped regardless: it keeps only its cooldown.
+        /// a load is in flight. A cached failure is dropped regardless: it keeps only its cooldown. So is a
+        /// dataset at or past its 24-hour maximum age, however recently it was used.
         /// <see cref="TimeSpan.Zero"/> drops whatever is held. Called by
         /// <see cref="IVerificationSourceRegistry.ReleaseUnused"/> once no open request uses this
         /// source; safe to call when nothing is cached, and safe to call even though this source was

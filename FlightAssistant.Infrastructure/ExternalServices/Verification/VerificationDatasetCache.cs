@@ -56,7 +56,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
     /// is answered from it: a call that reuses it, or the load finishing, which answers every call
     /// waiting on it. <see cref="Release"/> keeps a dataset used less than its idle period ago, so a
     /// one-row check soon after another reuses the download instead of repeating it. The idle
-    /// period never extends the maximum age, which still counts from the download. A load in flight
+    /// period never extends the maximum age, which still counts from the download: a dataset at or
+    /// past it is dropped by the next release however recently it was used, since the next call
+    /// would download again anyway. A load in flight
     /// counts as in use. A cached failure is never kept for being recent: it has only its cooldown.
     /// The last-used time sits under the same lock as the release, so a call can't use a dataset
     /// between the idle check and the drop.
@@ -156,9 +158,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
         /// <summary>
         /// Drops the cached dataset or cached failure, if any, so the next <see cref="GetAsync"/> call
         /// downloads again -- unless it has been idle for less than <paramref name="idleRelease"/>: a
-        /// dataset last used less than that long ago, or a load in flight, is kept. A cached failure is
-        /// always dropped. <see cref="TimeSpan.Zero"/> drops whatever is held. Safe to call when nothing
-        /// is cached.
+        /// dataset last used less than that long ago, or a load in flight, is kept. A cached failure, and
+        /// a dataset at or past its maximum age, are always dropped. <see cref="TimeSpan.Zero"/> drops
+        /// whatever is held. Safe to call when nothing is cached.
         /// </summary>
         /// <exception cref="ArgumentOutOfRangeException"><paramref name="idleRelease"/> is negative.</exception>
         public void Release(TimeSpan idleRelease)
@@ -176,8 +178,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             }
         }
 
-        /// <summary>How long <paramref name="current"/> has gone unused at <paramref name="now"/>.
-        /// Called under <see cref="_gate"/>.</summary>
+        /// <summary>How long <paramref name="current"/> has gone unused at <paramref name="now"/>, or
+        /// <see cref="TimeSpan.MaxValue"/> when the idle rule must not keep it (a failure, or a dataset at
+        /// or past its maximum age). Called under <see cref="_gate"/>.</summary>
         private TimeSpan IdleFor(Task<T> current, DateTimeOffset now)
         {
             // A failed or cancelled load is not held by the idle rule: a failure keeps only its cooldown.
@@ -187,6 +190,11 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             // In flight: a caller is waiting on it right now.
             if (!current.IsCompleted)
                 return TimeSpan.Zero;
+
+            // Expired: CanReuse refuses it, so the next call downloads again however recently it was used,
+            // and holding it would keep a dataset nothing can be answered from.
+            if (now - _loadedAtUtc >= _maxAge)
+                return TimeSpan.MaxValue;
 
             // Until the continuation has recorded the completion, the load has only just answered its
             // callers. Never negative, so a wall clock stepping back can't keep a dataset past a zero period.

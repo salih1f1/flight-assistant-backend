@@ -473,6 +473,30 @@ public class VerificationDatasetCacheTests
         Assert.Equal(2, loadCount);
     }
 
+    /// <summary>A dataset at its maximum age is never answered from again (the next call downloads), so a
+    /// release drops it however recently it was used instead of holding it for the idle period.</summary>
+    [Fact]
+    public async Task Release_ADatasetAtItsMaximumAge_IsDropped_EvenThoughItWasUsedWithinTheIdlePeriod()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+        var loadCount = 0;
+        Task<string> Load(CancellationToken ct) { loadCount++; return Task.FromResult("v" + loadCount); }
+
+        await cache.GetAsync(Load, default);
+        clock.Advance(TimeSpan.FromHours(24) - TimeSpan.FromMinutes(1));
+        Assert.Equal("v1", await cache.GetAsync(Load, default)); // reused a minute before the cap
+        clock.Advance(TimeSpan.FromSeconds(30));
+        cache.Release(IdleRelease);
+        Assert.True(cache.HasCachedData); // within its maximum age, used 30 s ago: kept
+
+        clock.Advance(TimeSpan.FromSeconds(30)); // exactly 24 h after the download, used a minute ago
+        cache.Release(IdleRelease);
+
+        Assert.False(cache.HasCachedData);
+        Assert.Equal(1, loadCount);
+    }
+
     [Fact]
     public async Task GetAsync_ADatasetUsedTooOftenToGoIdle_IsStillDownloadedAgainAtItsMaximumAge()
     {

@@ -679,6 +679,29 @@ public class AcceptVerificationSourceCommandHandlerTests
         await AssertNothingSaved();
     }
 
+    /// <summary>
+    /// The edit rules check the whole merged row, as the admin edit does: a value already invalid in a column
+    /// the source didn't touch (a legacy name over 200 characters, saved before the rule) blocks the accept
+    /// with a 409 naming that column, though the source only differed on City.
+    /// </summary>
+    [Fact]
+    public async Task Handle_AnInvalidValueAlreadyInAColumnTheSourceDidNotTouch_Is409_NamingThatColumn_AndWritesNothing()
+    {
+        var legacyName = new string('N', 201);
+        Airport Legacy() => Airport.Create("LHR", "EGLL", legacyName, "London", "GB", 51.4706, -0.461941, 83);
+        var ours = VerificationCheckedColumns.Project(Legacy());
+        CheckedAsMismatch(VerificationEntityType.Airport, "42", ours, (OurAirports, With(ours, (nameof(Airport.City), "Hounslow"))));
+        var airport = LoadedAirport(WithId(Legacy(), EntityId));
+
+        var ex = await AcceptFails(409);
+
+        Assert.Equal("Accepting the source would leave the Airport with an invalid Name.", ex.Message);
+        Assert.Equal("London", airport.City);
+        Assert.Equal(legacyName, airport.Name);
+        Assert.False(airport.IsVerified);
+        await AssertNothingSaved();
+    }
+
     // ── Verify, and the request ─────────────────────────────────────────────
 
     [Fact]

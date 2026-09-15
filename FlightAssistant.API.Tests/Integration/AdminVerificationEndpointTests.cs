@@ -9,6 +9,7 @@ using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Verification.Entities;
 using FlightAssistant.Domain.Verification.Enums;
+using FlightAssistant.Infrastructure.ExternalServices.Verification;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,7 +25,8 @@ namespace FlightAssistant.API.Tests.Integration;
 /// <para>
 /// The host's real source registry is used: <c>ourairports</c> (Airport) and <c>mledoze</c> (Country). None of
 /// these routes downloads a dataset: only the verification job calls <c>LookupAsync</c>, and the factory strips
-/// the job. The InMemory database is shared by the whole "Integration" collection, so every test uses its own
+/// the job; as a backstop, the factory also makes both source clients' transport throw
+/// (<see cref="SourceHttpClients_RefuseToSend"/>). The InMemory database is shared by the whole "Integration" collection, so every test uses its own
 /// entity keys (<see cref="NextKey"/>) and airport codes, and asserts on its own rows.
 /// </para>
 /// </summary>
@@ -36,6 +38,25 @@ public class AdminVerificationEndpointTests(FlightAssistantWebApplicationFactory
 
     /// <summary>An Airport key no other test queues: keys are not checked for existence, so any positive id is valid.</summary>
     private static string NextKey() => Interlocked.Increment(ref _nextKey).ToString(CultureInfo.InvariantCulture);
+
+    // ══════════════ No dataset downloads ══════════════
+
+    /// <summary>
+    /// The factory's structural backstop: the source clients' transport throws, so a test that reaches a real
+    /// download fails instead of fetching a dataset. Sent to a closed local port, so without the backstop this
+    /// is a refused connection, never a download.
+    /// </summary>
+    [Theory]
+    [InlineData(OurAirportsVerificationSource.HttpClientName)]
+    [InlineData(MledozeCountriesVerificationSource.HttpClientName)]
+    public async Task SourceHttpClients_RefuseToSend(string clientName)
+    {
+        var client = factory.Services.GetRequiredService<IHttpClientFactory>().CreateClient(clientName);
+
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetAsync("http://127.0.0.1:9/"));
+
+        Assert.Equal(FlightAssistantWebApplicationFactory.VerificationDownloadRefused, refused.Message);
+    }
 
     // ══════════════ GET /admin/verification-sources ══════════════
 
