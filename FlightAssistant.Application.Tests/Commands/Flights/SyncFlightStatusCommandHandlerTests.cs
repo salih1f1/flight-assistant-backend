@@ -150,7 +150,7 @@ public class SyncFlightStatusCommandHandlerTests
     public async Task Fast_NewStatus_RecordsEvent_MarksSynced_NextSyncAfterTheFastInterval()
     {
         var flight = Given(Departing(Now.AddHours(1)));
-        _provider.GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>()).Returns(Status());
+        _provider.GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).Returns(Status());
 
         Assert.True(await Sync());
 
@@ -165,7 +165,7 @@ public class SyncFlightStatusCommandHandlerTests
     public async Task Live_NextSyncAfterTheLiveInterval()
     {
         var flight = Given(Departing(Now.AddHours(10)));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
         await Sync();
 
@@ -177,7 +177,7 @@ public class SyncFlightStatusCommandHandlerTests
     public async Task ProviderReturnsNothing_ReturnsFalse_ButRecordsTheSyncAndSaves()
     {
         var flight = Given(Departing(Now.AddHours(1)));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
         Assert.False(await Sync());
 
@@ -190,7 +190,7 @@ public class SyncFlightStatusCommandHandlerTests
     public async Task DuplicateStatus_ReturnsFalse_AddsNoEvent_ButRecordsTheSync()
     {
         var flight = Given(Departing(Now.AddHours(1)));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).Returns(Status());
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).Returns(Status());
         _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(true);
 
         Assert.False(await Sync());
@@ -205,7 +205,7 @@ public class SyncFlightStatusCommandHandlerTests
     {
         // Live before the call; the estimate puts departure inside the 3 h Fast window.
         var flight = Given(Departing(Now.AddHours(10)));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
             .Returns(Status("DLY", estimatedDepartureUtc: Now.AddHours(2)));
         _flights.GetFlightStatusIdByCodeAsync("DLY", Arg.Any<CancellationToken>()).Returns(4);
 
@@ -219,13 +219,13 @@ public class SyncFlightStatusCommandHandlerTests
     public async Task Cancelled_SetsCancelledAtUtc_AndALaterOtherStatusClearsIt()
     {
         var flight = Given(Departing(Now.AddHours(1)));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).Returns(Status("CAN"));
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).Returns(Status("CAN"));
 
         await Sync();
         Assert.Equal(Now, flight.CancelledAtUtc);
 
         _clock.Advance(TimeSpan.FromMinutes(3));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
             .Returns(Status("SCH", effectiveAtUtc: Now.AddMinutes(3)));
 
         await Sync();
@@ -243,7 +243,7 @@ public class SyncFlightStatusCommandHandlerTests
 
         Assert.False(await Sync(SyncTrigger.Admin));
 
-        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
         Assert.Null(flight.SyncMode);
         Assert.Null(flight.NextSyncDueUtc);
         Assert.Null(flight.LastSyncedUtc);
@@ -265,7 +265,7 @@ public class SyncFlightStatusCommandHandlerTests
 
         Assert.False(await Sync(SyncTrigger.Scheduled));
 
-        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
         Assert.Equal(FlightSyncMode.Stopped, flight.SyncMode);
         Assert.Null(flight.NextSyncDueUtc);
         Assert.Null(flight.LastSyncedUtc);
@@ -281,11 +281,11 @@ public class SyncFlightStatusCommandHandlerTests
         Guid? travelerId = trigger == SyncTrigger.Traveler ? Guid.NewGuid() : null;
         if (travelerId is { } id)
             _flights.GetTravelerFlightAsync(id, 1, Arg.Any<CancellationToken>()).Returns(TravelerFlight.Create(id, 1));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
         await Sync(trigger, travelerId);
 
-        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
         Assert.Equal(Now, flight.LastSyncedUtc);
         Assert.Equal(FlightSyncMode.Stopped, flight.SyncMode);
         Assert.Null(flight.NextSyncDueUtc);
@@ -298,7 +298,7 @@ public class SyncFlightStatusCommandHandlerTests
         // is 6 h away here, so that fallback can't be what stops it).
         var flight = Given(Departing(Now.AddHours(-2)));
         var arrived = Now.AddMinutes(-5);
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
             .Returns(Status("ARR") with { ActualArrivalUtc = arrived });
         _flights.GetFlightStatusIdByCodeAsync("ARR", Arg.Any<CancellationToken>()).Returns(3);
 
@@ -309,7 +309,7 @@ public class SyncFlightStatusCommandHandlerTests
         _clock.SetUtcNow(new DateTimeOffset(arrived + new SyncOptions().StopAfterArrival));
         Assert.False(await Sync());
 
-        await _provider.Received(1).GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await _provider.Received(1).GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
         Assert.Equal(FlightSyncMode.Stopped, flight.SyncMode);
         Assert.Null(flight.NextSyncDueUtc);
     }
@@ -324,7 +324,7 @@ public class SyncFlightStatusCommandHandlerTests
 
         Assert.False(await Sync(SyncTrigger.Scheduled));
 
-        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
         await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
         Assert.Equal(Now.AddMinutes(1), flight.NextSyncDueUtc);
     }
@@ -334,11 +334,11 @@ public class SyncFlightStatusCommandHandlerTests
     {
         var flight = Given(Departing(Now.AddHours(1)));
         flight.ApplySyncPlan(FlightSyncMode.Fast, Now.AddMinutes(1));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
         await Sync(SyncTrigger.Admin);
 
-        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
     }
 
     // ── Traveler cooldown (#369) ──
@@ -351,7 +351,7 @@ public class SyncFlightStatusCommandHandlerTests
 
         Assert.False(await Sync(SyncTrigger.Traveler));
 
-        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
         await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
         Assert.Equal(Now.AddMinutes(-3), flight.LastSyncedUtc);
     }
@@ -363,22 +363,22 @@ public class SyncFlightStatusCommandHandlerTests
     {
         var flight = Given(Departing(Now.AddHours(1)));
         flight.MarkSynced(Now.AddMinutes(-minutesSinceLastSync));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
         await Sync(SyncTrigger.Traveler);
 
-        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task TravelerSync_NeverSynced_CallsTheProvider()
     {
         var flight = Given(Departing(Now.AddHours(1)));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
         await Sync(SyncTrigger.Traveler);
 
-        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -386,11 +386,11 @@ public class SyncFlightStatusCommandHandlerTests
     {
         var flight = Given(Departing(Now.AddHours(1)));
         flight.MarkSynced(Now.AddMinutes(-1));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
         await Sync(SyncTrigger.Admin);
 
-        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -399,11 +399,11 @@ public class SyncFlightStatusCommandHandlerTests
         var handler = Handler(syncOptions: new SyncOptions { ManualSyncCooldown = TimeSpan.Zero });
         var flight = Given(Departing(Now.AddHours(1)));
         flight.MarkSynced(Now);
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
         await handler.Handle(new SyncFlightStatusCommand(null, 1, SyncTrigger.Traveler), CancellationToken.None);
 
-        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
     }
 
     // ── Traveler-attempt marker (#369): the cooldown starts when the call is attempted ──
@@ -413,13 +413,13 @@ public class SyncFlightStatusCommandHandlerTests
     {
         Given(Departing(Now.AddHours(1)));
         // Fails once, then answers, so a retry that got through shows as a second call.
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
             .Returns<FlightStatusResult?>(_ => throw new DomainException("AeroAPI unavailable", 502), _ => null);
 
         await Assert.ThrowsAsync<DomainException>(() => Sync(SyncTrigger.Traveler));
         Assert.False(await Sync(SyncTrigger.Traveler));
 
-        await _provider.Received(1).GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await _provider.Received(1).GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -430,7 +430,7 @@ public class SyncFlightStatusCommandHandlerTests
 
         Assert.False(await Sync(SyncTrigger.Traveler));
 
-        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
         await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
         Assert.Null(flight.LastSyncedUtc);
     }
@@ -440,7 +440,7 @@ public class SyncFlightStatusCommandHandlerTests
     {
         var flight = Given(Departing(Now.AddHours(1)));
         var markedBeforeTheCall = false;
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
             .Returns<FlightStatusResult?>(_ =>
             {
                 markedBeforeTheCall = _cache.Entries.ContainsKey(MarkerKey(flight));
@@ -461,11 +461,11 @@ public class SyncFlightStatusCommandHandlerTests
     {
         var flight = Given(Departing(Now.AddHours(1))); // never planned, so due for the loop
         _cache.Entries[MarkerKey(flight)] = Now.ToString("O");
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
         await Sync(trigger);
 
-        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
         Assert.Empty(_cache.Expiries);
     }
 
@@ -475,11 +475,11 @@ public class SyncFlightStatusCommandHandlerTests
         var cache = new FakeCache { FailReads = true, FailWrites = true };
         var handler = Handler(syncOptions: new SyncOptions { ManualSyncCooldown = TimeSpan.Zero }, cache: cache);
         var flight = Given(Departing(Now.AddHours(1)));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
         await handler.Handle(new SyncFlightStatusCommand(null, 1, SyncTrigger.Traveler), CancellationToken.None);
 
-        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
         Assert.Equal(0, cache.Accesses);
     }
 
@@ -489,11 +489,11 @@ public class SyncFlightStatusCommandHandlerTests
         var logger = new CapturingLogger<SyncFlightStatusCommandHandler>();
         var handler = Handler(logger, cache: new FakeCache { FailReads = true });
         var flight = Given(Departing(Now.AddHours(1)));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
         await handler.Handle(new SyncFlightStatusCommand(null, 1, SyncTrigger.Traveler), CancellationToken.None);
 
-        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
     }
 
@@ -503,11 +503,11 @@ public class SyncFlightStatusCommandHandlerTests
         var logger = new CapturingLogger<SyncFlightStatusCommandHandler>();
         var handler = Handler(logger, cache: new FakeCache { FailWrites = true });
         var flight = Given(Departing(Now.AddHours(1)));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
         await handler.Handle(new SyncFlightStatusCommand(null, 1, SyncTrigger.Traveler), CancellationToken.None);
 
-        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
     }
 
@@ -518,7 +518,7 @@ public class SyncFlightStatusCommandHandlerTests
 
         Assert.False(await Sync(SyncTrigger.Traveler));
 
-        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
         Assert.Empty(_cache.Expiries);
     }
 
@@ -532,7 +532,7 @@ public class SyncFlightStatusCommandHandlerTests
 
         Assert.False(await Sync(trigger));
 
-        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
         Assert.Equal(FlightSyncMode.Schedule, flight.SyncMode);
         Assert.Equal(departure.AddDays(-1), flight.NextSyncDueUtc); // StatusWindowFutureDays = 1
         Assert.Null(flight.LastSyncedUtc);
@@ -541,7 +541,7 @@ public class SyncFlightStatusCommandHandlerTests
     // ── Failures ──
 
     private void ProviderThrows(Exception ex) =>
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
             .Returns<FlightStatusResult?>(_ => throw ex);
 
     [Fact]
@@ -647,7 +647,7 @@ public class SyncFlightStatusCommandHandlerTests
     public async Task UnrecognisedStatusCode_FallsBackToUnk_AndLogsWarning_RatherThanThrowing()
     {
         var flight = Given(Departing(Now.AddHours(1)));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
             .Returns(Status() with { StatusCode = "WEIRD" });
         _flights.GetFlightStatusIdByCodeAsync("WEIRD", Arg.Any<CancellationToken>()).ReturnsNull();
         _flights.GetFlightStatusIdByCodeAsync("UNK", Arg.Any<CancellationToken>()).Returns(7);
@@ -677,7 +677,7 @@ public class SyncFlightStatusCommandHandlerTests
     public async Task UnrecognisedStatusCode_Throws_WhenUnkItselfIsNotSeeded_AndDefersTheNextSync()
     {
         var flight = Given(Departing(Now.AddHours(1)));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
             .Returns(Status() with { StatusCode = "WEIRD" });
         _flights.GetFlightStatusIdByCodeAsync("WEIRD", Arg.Any<CancellationToken>()).ReturnsNull();
         _flights.GetFlightStatusIdByCodeAsync("UNK", Arg.Any<CancellationToken>()).ReturnsNull();
@@ -697,7 +697,7 @@ public class SyncFlightStatusCommandHandlerTests
     {
         // First call: not a dedup
         var flight = Given(Departing(Now.AddHours(1)));
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
             .Returns(Status());
         _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(false);
 
@@ -706,7 +706,7 @@ public class SyncFlightStatusCommandHandlerTests
         // Second call, once the flight is due again: different effective time → different hash → also not a dedup
         _clock.Advance(new SyncOptions().NearDepartureInterval);
         var laterStatus = Status() with { EffectiveAtUtc = Now.AddMinutes(30) };
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
             .Returns(laterStatus);
 
         var second = await Sync();
@@ -715,5 +715,31 @@ public class SyncFlightStatusCommandHandlerTests
         Assert.True(second);
         await _flights.Received(2).AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
         await _flights.Received(2).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    // ── Retry intent (#375) ──
+
+    [Fact]
+    public async Task ScheduledSync_CallsTheProvider_AsAScheduledPoll()
+    {
+        var flight = Given(Departing(Now.AddHours(1)));
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        await Sync(SyncTrigger.Scheduled);
+
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, StatusCallKind.ScheduledPoll, Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(SyncTrigger.Admin)]
+    [InlineData(SyncTrigger.Traveler)]
+    public async Task PersonSync_CallsTheProvider_AsInteractive(SyncTrigger trigger)
+    {
+        var flight = Given(Departing(Now.AddHours(1)));
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        await Sync(trigger);
+
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, StatusCallKind.Interactive, Arg.Any<CancellationToken>());
     }
 }

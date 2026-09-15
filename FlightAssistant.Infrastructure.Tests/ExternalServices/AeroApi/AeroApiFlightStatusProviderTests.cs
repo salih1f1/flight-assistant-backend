@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using Microsoft.Extensions.Logging;
@@ -29,6 +30,7 @@ public class AeroApiFlightStatusProviderTests
         private readonly HttpStatusCode _status;
         private readonly string _body;
         public Uri? LastRequestUri { get; private set; }
+        public bool LastRequestSkippedRetries { get; private set; }
 
         public StubHttpMessageHandler(string body, HttpStatusCode status = HttpStatusCode.OK)
         {
@@ -40,6 +42,7 @@ public class AeroApiFlightStatusProviderTests
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             LastRequestUri = request.RequestUri;
+            LastRequestSkippedRetries = AeroApiRetry.IsSkipped(request);
             return Task.FromResult(new HttpResponseMessage(_status)
             {
                 Content = new StringContent(_body, Encoding.UTF8, "application/json")
@@ -129,7 +132,7 @@ public class AeroApiFlightStatusProviderTests
 
         // 2026-08-30 row: status "Arrived / Gate Arrival", cancelled=false, actual_out and
         // actual_on set, actual_in null, gate/terminal/baggage all populated.
-        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
 
         Assert.NotNull(result);
         Assert.Equal("ARR", result!.StatusCode);
@@ -158,7 +161,7 @@ public class AeroApiFlightStatusProviderTests
         // fallback an arrived flight never gets an actual arrival, so it never stops syncing (#345).
         var handler = new StubHttpMessageHandler(ReadFixture("flight-status.json"));
 
-        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 29));
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 29), StatusCallKind.Interactive);
 
         Assert.Equal(new DateTime(2026, 8, 29, 8, 5, 35, DateTimeKind.Utc), result!.ActualArrivalUtc);
     }
@@ -173,7 +176,7 @@ public class AeroApiFlightStatusProviderTests
         row["actual_in"] = "2026-08-29T08:12:00Z";
         var handler = new StubHttpMessageHandler(body.ToJsonString());
 
-        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 29));
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 29), StatusCallKind.Interactive);
 
         Assert.Equal(new DateTime(2026, 8, 29, 8, 12, 0, DateTimeKind.Utc), result!.ActualArrivalUtc);
     }
@@ -183,7 +186,7 @@ public class AeroApiFlightStatusProviderTests
     {
         var handler = new StubHttpMessageHandler(ReadFixture("flight-status.json"));
 
-        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 9, 1));
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 9, 1), StatusCallKind.Interactive);
 
         Assert.NotNull(result);
         Assert.Equal(DateTimeKind.Utc, result!.EstimatedDepartureUtc!.Value.Kind);
@@ -195,7 +198,7 @@ public class AeroApiFlightStatusProviderTests
     {
         var handler = new StubHttpMessageHandler(ReadFixture("flight-status.json"));
 
-        await Provider(handler).GetStatusAsync("tk1028", new DateOnly(2026, 8, 30));
+        await Provider(handler).GetStatusAsync("tk1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
 
         Assert.Equal("/aeroapi/flights/TK1028", handler.LastRequestUri!.AbsolutePath);
     }
@@ -220,7 +223,7 @@ public class AeroApiFlightStatusProviderTests
         };
 
         await Provider(handler, timeProvider: clock, options: options)
-            .GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
+            .GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
 
         var expectedStart = Uri.EscapeDataString("2026-08-27T12:00:00Z");
         var expectedEnd = Uri.EscapeDataString("2026-08-31T12:00:00Z");
@@ -238,7 +241,7 @@ public class AeroApiFlightStatusProviderTests
         var options = new AeroApiOptions { ApiKey = "dummy", StatusWindowPastDays = 7, StatusWindowFutureDays = 1 };
 
         await Provider(handler, timeProvider: clock, options: options)
-            .GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
+            .GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
 
         var expectedStart = Uri.EscapeDataString("2026-12-25T00:00:00Z");
         var expectedEnd = Uri.EscapeDataString("2027-01-02T00:00:00Z");
@@ -255,7 +258,7 @@ public class AeroApiFlightStatusProviderTests
         var handler = new StubHttpMessageHandler(ReadFixture("flight-status.json"));
 
         // The fixture spans 2026-08-19 .. 2026-09-01; a date well outside that range never matches.
-        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2027, 1, 1));
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2027, 1, 1), StatusCallKind.Interactive);
 
         Assert.Null(result);
     }
@@ -265,7 +268,7 @@ public class AeroApiFlightStatusProviderTests
     {
         var handler = new StubHttpMessageHandler("""{ "flights": [], "links": null, "num_pages": 1 }""");
 
-        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
 
         Assert.Null(result);
     }
@@ -311,7 +314,7 @@ public class AeroApiFlightStatusProviderTests
         var handler = new StubHttpMessageHandler(
             TwoDayBody("AKL", "Pacific/Auckland", "2026-09-28T18:00:00Z", "2026-09-29T18:00:00Z"));
 
-        var result = await Provider(handler).GetStatusAsync("NZ101", new DateOnly(2026, 9, 29));
+        var result = await Provider(handler).GetStatusAsync("NZ101", new DateOnly(2026, 9, 29), StatusCallKind.Interactive);
 
         Assert.NotNull(result);
         Assert.Equal("ANZ101-2026-09-28T18:00:00Z", result!.ExternalId);
@@ -326,7 +329,7 @@ public class AeroApiFlightStatusProviderTests
         var handler = new StubHttpMessageHandler(
             TwoDayBody("LAX", "America/Los_Angeles", "2026-09-29T04:00:00Z", "2026-09-30T04:00:00Z"));
 
-        var result = await Provider(handler).GetStatusAsync("NZ101", new DateOnly(2026, 9, 29));
+        var result = await Provider(handler).GetStatusAsync("NZ101", new DateOnly(2026, 9, 29), StatusCallKind.Interactive);
 
         Assert.NotNull(result);
         Assert.Equal("ANZ101-2026-09-30T04:00:00Z", result!.ExternalId);
@@ -340,7 +343,7 @@ public class AeroApiFlightStatusProviderTests
         var handler = new StubHttpMessageHandler(
             TwoDayBody("AKL", null, "2026-09-28T18:00:00Z", "2026-09-29T18:00:00Z"));
 
-        var result = await Provider(handler).GetStatusAsync("NZ101", new DateOnly(2026, 9, 29));
+        var result = await Provider(handler).GetStatusAsync("NZ101", new DateOnly(2026, 9, 29), StatusCallKind.Interactive);
 
         Assert.NotNull(result);
         Assert.Equal("ANZ101-2026-09-29T18:00:00Z", result!.ExternalId);
@@ -352,7 +355,7 @@ public class AeroApiFlightStatusProviderTests
         var handler = new StubHttpMessageHandler(
             TwoDayBody("AKL", "Not/AZone", "2026-09-28T18:00:00Z", "2026-09-29T18:00:00Z"));
 
-        var result = await Provider(handler).GetStatusAsync("NZ101", new DateOnly(2026, 9, 29));
+        var result = await Provider(handler).GetStatusAsync("NZ101", new DateOnly(2026, 9, 29), StatusCallKind.Interactive);
 
         Assert.NotNull(result);
         Assert.Equal("ANZ101-2026-09-29T18:00:00Z", result!.ExternalId);
@@ -367,7 +370,7 @@ public class AeroApiFlightStatusProviderTests
     {
         var handler = new StubHttpMessageHandler(ReadFixture("flight-status.json"));
 
-        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 9, 1));
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 9, 1), StatusCallKind.Interactive);
 
         Assert.Equal("SCH", result!.StatusCode);
     }
@@ -377,7 +380,7 @@ public class AeroApiFlightStatusProviderTests
     {
         var handler = new StubHttpMessageHandler(ReadFixture("flight-status.json"));
 
-        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 25));
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 25), StatusCallKind.Interactive);
 
         Assert.Equal("ARR", result!.StatusCode);
     }
@@ -394,7 +397,7 @@ public class AeroApiFlightStatusProviderTests
     {
         var handler = new StubHttpMessageHandler(SingleFlightBody(status: statusText));
 
-        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
 
         Assert.Equal(expectedCode, result!.StatusCode);
     }
@@ -405,7 +408,7 @@ public class AeroApiFlightStatusProviderTests
         // "Scheduled" text but cancelled=true — the boolean is authoritative.
         var handler = new StubHttpMessageHandler(SingleFlightBody(status: "Scheduled", cancelled: true));
 
-        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
 
         Assert.Equal("CAN", result!.StatusCode);
     }
@@ -422,7 +425,7 @@ public class AeroApiFlightStatusProviderTests
         // mapped to DEP — the exact failure the cancelled check exists to prevent.
         var handler = new StubHttpMessageHandler(SingleFlightBody(status: statusText, diverted: true));
 
-        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
 
         Assert.Equal("DIV", result!.StatusCode);
     }
@@ -435,7 +438,7 @@ public class AeroApiFlightStatusProviderTests
         var handler = new StubHttpMessageHandler(
             SingleFlightBody(status: "En Route", cancelled: true, diverted: true));
 
-        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
 
         Assert.Equal("CAN", result!.StatusCode);
     }
@@ -446,7 +449,7 @@ public class AeroApiFlightStatusProviderTests
         var logger = new CapturingLogger<AeroApiFlightStatusProvider>();
         var handler = new StubHttpMessageHandler(SingleFlightBody(status: "Some New Status FlightAware Invents Later"));
 
-        var result = await Provider(handler, logger: logger).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
+        var result = await Provider(handler, logger: logger).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
 
         Assert.Equal("UNK", result!.StatusCode);
         Assert.Contains(logger.Entries, e =>
@@ -460,10 +463,34 @@ public class AeroApiFlightStatusProviderTests
         var logger = new CapturingLogger<AeroApiFlightStatusProvider>();
         var handler = new StubHttpMessageHandler(SingleFlightBody(status: null));
 
-        var result = await Provider(handler, logger: logger).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30));
+        var result = await Provider(handler, logger: logger).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
 
         Assert.Equal("UNK", result!.StatusCode);
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
+    }
+
+    // ------------------------------------------------------------------
+    // Retry intent (#375)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetStatusAsync_MarksAScheduledPoll_SoTheClientDoesNotRetryIt()
+    {
+        var handler = new StubHttpMessageHandler(ReadFixture("flight-status.json"));
+
+        await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.ScheduledPoll);
+
+        Assert.True(handler.LastRequestSkippedRetries);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_LeavesAnInteractiveCall_Retryable()
+    {
+        var handler = new StubHttpMessageHandler(ReadFixture("flight-status.json"));
+
+        await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
+
+        Assert.False(handler.LastRequestSkippedRetries);
     }
 
     private static string SingleFlightBody(string? status, bool cancelled = false, bool diverted = false)

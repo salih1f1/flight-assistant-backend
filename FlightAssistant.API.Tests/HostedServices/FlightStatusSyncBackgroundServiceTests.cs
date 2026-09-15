@@ -177,7 +177,7 @@ public class FlightStatusSyncBackgroundServiceTests
         _flights.IsFlightTrackedAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
 
         var provider = Substitute.For<IFlightStatusProvider>();
-        provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
         var window = Substitute.For<IFlightStatusWindowOptions>();
         window.StatusWindowFutureDays.Returns(2);
         var handler = new SyncFlightStatusCommandHandler(_flights, provider, Substitute.For<ICacheService>(), options, window, _clock,
@@ -192,9 +192,9 @@ public class FlightStatusSyncBackgroundServiceTests
             _clock.Advance(TimeSpan.FromMinutes(1));
         }
 
-        await provider.Received(4).GetStatusAsync("TK1", Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()); // minutes 0, 3, 6, 9
-        await provider.Received(1).GetStatusAsync("TK2", Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()); // minute 0 only
-        await provider.DidNotReceive().GetStatusAsync("TK3", Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await provider.Received(4).GetStatusAsync("TK1", Arg.Any<DateOnly>(), StatusCallKind.ScheduledPoll, Arg.Any<CancellationToken>()); // minutes 0, 3, 6, 9
+        await provider.Received(1).GetStatusAsync("TK2", Arg.Any<DateOnly>(), StatusCallKind.ScheduledPoll, Arg.Any<CancellationToken>()); // minute 0 only
+        await provider.DidNotReceive().GetStatusAsync("TK3", Arg.Any<DateOnly>(), StatusCallKind.ScheduledPoll, Arg.Any<CancellationToken>());
         Assert.Single(Sent(), c => c.FlightId == 3); // planned once, next due when Live starts
     }
 }
