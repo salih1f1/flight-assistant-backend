@@ -1,5 +1,6 @@
 using FlightAssistant.Application;
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Application.Queries.Admin.Usage;
 using FlightAssistant.Application.Queries.Flights;
 using FlightAssistant.Infrastructure.Caching;
@@ -260,6 +261,19 @@ public class AeroApiDependencyInjectionTests
         var budget = provider.GetRequiredService<IAeroApiBudgetOptions>();
 
         Assert.Equal(5m, budget.MonthlyBudgetUsd);
+        Assert.Equal(0.8m, budget.SoftLimitRatio);
+    }
+
+    [Fact]
+    public void AddInfrastructure_ResolvesIProviderBudgetGuard_AsProviderBudgetGuard()
+    {
+        using var provider = BuildContainer();
+
+        // The guard's own tests construct it by hand; this proves the host can build it (#303) from
+        // the usage provider, the cache, the budget options and the TimeProvider AddInfrastructure registers.
+        var guard = provider.GetRequiredService<IProviderBudgetGuard>();
+
+        Assert.IsType<ProviderBudgetGuard>(guard);
     }
 
     [Fact]

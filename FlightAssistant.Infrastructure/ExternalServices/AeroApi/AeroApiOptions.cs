@@ -42,13 +42,23 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         public TimeSpan MinRequestInterval { get; set; } = TimeSpan.FromSeconds(12);
 
         /// <summary>
-        /// The monthly spend the admin panel draws its usage gauge against — the personal tier this
-        /// runs on is $5/month. Purely a local reference line: every actual cost figure comes from
+        /// The monthly spend budget — the personal tier this runs on is $5/month. The admin panel draws
+        /// its usage gauge against it, and the budget guard enforces it (#303): past
+        /// <see cref="SoftLimitRatio"/> of it, uncached searches are refused and Live polls slow down,
+        /// and at the budget only Fast-mode flights make calls. Every cost figure still comes from
         /// AeroAPI's own <c>/account/usage</c> report, because FlightAware bills per page (not per
         /// call) and bills failed calls too, so nothing here prices anything locally.
         /// </summary>
         [Range(0.01, 10_000)]
         public decimal MonthlyBudgetUsd { get; set; } = 5m;
+
+        /// <summary>
+        /// The share of <see cref="MonthlyBudgetUsd"/> at which the budget guard's soft limit starts
+        /// (#303). The floor stops a typo from holding back calls at almost no spend; 1.0 makes the
+        /// soft limit the same as the hard stop.
+        /// </summary>
+        [Range(0.1, 1.0)]
+        public decimal SoftLimitRatio { get; set; } = 0.8m;
 
         [Range(1, 12)]
         public int MaxFutureMonths { get; set; } = 12;
