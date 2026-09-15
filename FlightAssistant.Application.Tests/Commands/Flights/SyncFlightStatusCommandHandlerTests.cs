@@ -289,19 +289,74 @@ public class SyncFlightStatusCommandHandlerTests
 
     // ── Failures ──
 
+    private void ProviderThrows(Exception ex) =>
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns<FlightStatusResult?>(_ => throw ex);
+
     [Fact]
-    public async Task ProviderThrows_PropagatesAndLeavesTheFlightUntouched()
+    public async Task ScheduledSync_ProviderThrows_Propagates_AndMovesTheNextSyncOneIntervalOn()
+    {
+        // A failed call can still be billed; retrying on every loop would cost a call a minute.
+        var flight = Given(Departing(Now.AddHours(1)));
+        flight.ApplySyncPlan(FlightSyncMode.Fast, Now);
+        ProviderThrows(new DomainException("AeroAPI unavailable", 502));
+
+        await Assert.ThrowsAsync<DomainException>(() => Sync(SyncTrigger.Scheduled));
+
+        Assert.Equal(FlightSyncMode.Fast, flight.SyncMode);
+        Assert.Equal(Now.AddMinutes(3), flight.NextSyncDueUtc);
+        Assert.Null(flight.LastSyncedUtc);
+        await _flights.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+        await _flights.DidNotReceive().AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(SyncTrigger.Admin)]
+    [InlineData(SyncTrigger.Traveler)]
+    public async Task PersonSync_ProviderThrows_PropagatesAndSavesNothing(SyncTrigger trigger)
     {
         var flight = Given(Departing(Now.AddHours(1)));
         flight.ApplySyncPlan(FlightSyncMode.Fast, Now);
-        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
-            .Returns<FlightStatusResult?>(_ => throw new DomainException("AeroAPI unavailable", 502));
+        Guid? travelerId = trigger == SyncTrigger.Traveler ? Guid.NewGuid() : null;
+        if (travelerId is { } id)
+            _flights.GetTravelerFlightAsync(id, 1, Arg.Any<CancellationToken>()).Returns(TravelerFlight.Create(id, 1));
+        ProviderThrows(new DomainException("AeroAPI unavailable", 502));
 
-        await Assert.ThrowsAsync<DomainException>(() => Sync());
+        await Assert.ThrowsAsync<DomainException>(() => Sync(trigger, travelerId));
 
         await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
         Assert.Null(flight.LastSyncedUtc);
-        Assert.Equal(Now, flight.NextSyncDueUtc); // retried on the next loop
+        Assert.Equal(Now, flight.NextSyncDueUtc);
+    }
+
+    [Fact]
+    public async Task ScheduledSync_ProviderThrows_AndTheSaveFails_StillThrowsTheProviderError()
+    {
+        Given(Departing(Now.AddHours(1)));
+        ProviderThrows(new DomainException("AeroAPI unavailable", 502));
+        _flights.SaveChangesAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromException(new InvalidOperationException("database down")));
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => Sync(SyncTrigger.Scheduled));
+
+        Assert.Equal(502, ex.StatusCode);
+        await _flights.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ScheduledSync_CancelledByTheToken_SavesNothing()
+    {
+        var flight = Given(Departing(Now.AddHours(1)));
+        flight.ApplySyncPlan(FlightSyncMode.Fast, Now);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        ProviderThrows(new OperationCanceledException(cts.Token));
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            _handler.Handle(new SyncFlightStatusCommand(null, 1, SyncTrigger.Scheduled), cts.Token));
+
+        await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+        Assert.Equal(Now, flight.NextSyncDueUtc);
     }
 
     [Fact]
@@ -364,10 +419,11 @@ public class SyncFlightStatusCommandHandlerTests
     /// <summary>
     /// The one case that should still be loud: if "UNK" itself can't be resolved, the reference
     /// table is misconfigured (a genuine deployment error), not a provider surprise, so this
-    /// throws rather than swallowing the sync.
+    /// throws rather than swallowing the sync. The billed call is already spent, so the loop
+    /// defers the flight one interval like any other failure.
     /// </summary>
     [Fact]
-    public async Task UnrecognisedStatusCode_Throws_WhenUnkItselfIsNotSeeded()
+    public async Task UnrecognisedStatusCode_Throws_WhenUnkItselfIsNotSeeded_AndDefersTheNextSync()
     {
         var flight = Given(Departing(Now.AddHours(1)));
         _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
@@ -375,12 +431,14 @@ public class SyncFlightStatusCommandHandlerTests
         _flights.GetFlightStatusIdByCodeAsync("WEIRD", Arg.Any<CancellationToken>()).ReturnsNull();
         _flights.GetFlightStatusIdByCodeAsync("UNK", Arg.Any<CancellationToken>()).ReturnsNull();
 
-        var ex = await Assert.ThrowsAsync<DomainException>(() => Sync());
+        var ex = await Assert.ThrowsAsync<DomainException>(() => Sync(SyncTrigger.Scheduled));
         Assert.Equal(404, ex.StatusCode);
 
         await _flights.DidNotReceive().AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
-        await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+        await _flights.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
         Assert.Null(flight.LastSyncedUtc);
+        Assert.Equal(FlightSyncMode.Fast, flight.SyncMode);
+        Assert.Equal(Now.AddMinutes(3), flight.NextSyncDueUtc);
     }
 
     [Fact]

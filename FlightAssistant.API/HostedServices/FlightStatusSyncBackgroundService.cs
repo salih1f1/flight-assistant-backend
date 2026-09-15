@@ -109,7 +109,8 @@ namespace FlightAssistant.API.HostedServices
                 }
                 catch (Exception ex)
                 {
-                    // Its NextSyncDueUtc is unchanged, so the next loop retries it.
+                    // The handler moved its next sync one interval on, so it's retried at its mode's
+                    // cadence, not on every loop.
                     _log.LogError(ex, "Failed to sync flight {FlightId}", flightId);
                     failed++;
                 }

@@ -93,7 +93,19 @@ namespace FlightAssistant.Application.Commands.Flights
                     return false;
             }
 
-            var recorded = await ApplyLiveStatusAsync(flight, now, ct);
+            bool recorded;
+            try
+            {
+                recorded = await ApplyLiveStatusAsync(flight, now, ct);
+            }
+            // A failed call can still be billed, so the loop waits one interval of the flight's mode
+            // rather than retrying it every loop. A person's sync saves nothing.
+            catch (Exception ex) when (cmd.Trigger == SyncTrigger.Scheduled &&
+                                       !(ex is OperationCanceledException && ct.IsCancellationRequested))
+            {
+                await DeferNextSyncAsync(flight, plan, ct);
+                throw;
+            }
 
             // Any call that returned counts as a sync, even an empty or duplicate one. Re-plan from
             // the times the call may just have changed.
@@ -106,8 +118,25 @@ namespace FlightAssistant.Application.Commands.Flights
         }
 
         /// <summary>
+        /// Stores the pre-call plan (now + the mode's interval, capped) without marking the flight
+        /// synced. A failed save is only logged, so the caller still gets the original error.
+        /// </summary>
+        private async Task DeferNextSyncAsync(Flight flight, FlightSyncPlan plan, CancellationToken ct)
+        {
+            flight.ApplySyncPlan(plan.Mode, plan.NextSyncDueUtc);
+            try
+            {
+                await _flights.SaveChangesAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Couldn't defer the next sync of flight {FlightId} after a failed sync", flight.Id);
+            }
+        }
+
+        /// <summary>
         /// Fetches the live status and, if it's new, records it. Changes the flight only after every
-        /// step that can throw, so a failure leaves it untouched for the next attempt.
+        /// step that can throw, so a failure leaves nothing half-applied for the deferral to save.
         /// </summary>
         private async Task<bool> ApplyLiveStatusAsync(Flight flight, DateTime now, CancellationToken ct)
         {

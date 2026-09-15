@@ -109,7 +109,7 @@ All five are added to the `flights` browsable table's column list, so the raw gr
 
 A run can take longer than a minute when many flights are due, because AeroAPI calls are spaced 12 seconds apart (`MinRequestInterval`). The next run starts when the current one ends, and flights are taken oldest due first, so none is skipped.
 
-A flight that fails keeps its old `NextSyncDueUtc`, so it's retried on the next loop. That matches today, where a failed flight is retried in the next batch.
+A flight whose sync fails keeps its mode and has its next sync moved one interval on, so the next attempt comes at its mode's cadence, not on every loop. A failed call can still be billed, and a failure that persists (a rejected request, a throttle) would otherwise cost a call a minute. `LastSyncedUtc` isn't set and no event is recorded.
 
 ### 2.3 Sync command
 
@@ -127,7 +127,7 @@ Steps:
    - Schedule: schedule check (§2.4).
 4. Set `LastSyncedUtc = now` for any call that reached AeroAPI, including one that returned nothing. Re-plan the mode (the call may have changed the times) and save the mode and `NextSyncDueUtc`.
 
-On an AeroAPI failure (502/503) nothing is saved and the exception propagates, as today.
+On an AeroAPI failure (502/503) the exception propagates. A scheduled sync first keeps the flight's mode and moves its next sync one interval on (§2.2); an admin or traveler sync saves nothing.
 
 | Outcome | When |
 |---|---|
@@ -263,7 +263,7 @@ Compared with today:
 **Backend**
 
 - `FlightSyncPlanner`: each rule at its boundary, 1 minute either side (4 h before departure, 2 days before departure, 30 min after arrival or cancellation, 24 h without arrival); estimated departure moving Fast; untracked; every next-due cap in §1.1.
-- `SyncFlightStatusCommandHandler`: each outcome; `LastSyncedUtc` set on an empty live response; loop skips a Stopped flight with no provider call; admin sync of a Stopped flight still calls; AeroAPI failure saves nothing; `CancelledAtUtc` set and cleared.
+- `SyncFlightStatusCommandHandler`: each outcome; `LastSyncedUtc` set on an empty live response; loop skips a Stopped flight with no provider call; admin sync of a Stopped flight still calls; AeroAPI failure moves a loop sync's next sync one interval on and saves nothing for an admin or traveler sync; `CancelledAtUtc` set and cleared.
 - Schedule check: times changed, unchanged, flight missing then found again (clears the flag), match requires the same departure airport.
 - `FlightStatusSyncBackgroundService`: only due flights are synced; with one Fast and one Schedule flight over 10 minutes, the Schedule flight is synced once (#344).
 - `GetDueTrackedFlightIdsAsync` (integration): tracked and due only, oldest due first.
