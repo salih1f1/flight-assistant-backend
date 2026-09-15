@@ -15,9 +15,18 @@ namespace FlightAssistant.Application.Interfaces.ExternalServices
         string? RawPayloadJson
     );
 
+    /// <summary>Who a status call is for (#375). A scheduled poll isn't retried on a transient
+    /// failure, because AeroAPI bills failed calls and the sync loop's next due sync is the retry. A call a
+    /// person is waiting on keeps the provider's retries.</summary>
+    public enum StatusCallKind
+    {
+        Interactive,
+        ScheduledPoll
+    }
+
     public interface IFlightStatusProvider
     {
         string ProviderName { get; }
-        Task<FlightStatusResult?> GetStatusAsync(string flightNumber, DateOnly serviceDate, CancellationToken ct = default);
+        Task<FlightStatusResult?> GetStatusAsync(string flightNumber, DateOnly serviceDate, StatusCallKind kind, CancellationToken ct = default);
     }
 }

@@ -74,15 +74,21 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         }
 
         public async Task<FlightStatusResult?> GetStatusAsync(
-            string flightNumber, DateOnly serviceDate, CancellationToken ct = default)
+            string flightNumber, DateOnly serviceDate, StatusCallKind kind, CancellationToken ct = default)
         {
             var ident = flightNumber.ToUpperInvariant();
             var criteria = $"{ident} {serviceDate:yyyy-MM-dd}";
 
+            // A scheduled poll isn't retried: failed calls are billed, and the loop's next due sync is
+            // the retry (#375). A call a person is waiting on keeps the client's retries.
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildUrl(ident));
+            if (kind == StatusCallKind.ScheduledPoll)
+                AeroApiRetry.Skip(request);
+
             HttpResponseMessage response;
             try
             {
-                response = await _http.GetAsync(BuildUrl(ident), ct);
+                response = await _http.SendAsync(request, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

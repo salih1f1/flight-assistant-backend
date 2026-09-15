@@ -16,6 +16,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Polly;
 namespace FlightAssistant.Infrastructure
 {
     public static class DependencyInjection
@@ -123,11 +124,18 @@ namespace FlightAssistant.Infrastructure
 
                 options.Retry.MaxRetryAttempts = aeroApi.MaxRetryAttempts;
                 // 429 must never be retried automatically: this is a $5/month metered tier, and
-                // retrying a rate-limit response only makes the throttling worse. All other
-                // transient outcomes (5xx, timeouts, network errors) keep the default handling.
+                // retrying a rate-limit response only makes the throttling worse. A request marked
+                // with AeroApiRetry.Skip isn't retried either — a scheduled status poll, whose next
+                // due sync is its retry (#375). The request is read from the resilience context,
+                // because an exception outcome (a network error or an attempt timeout) has no
+                // response to find it on. All other transient outcomes (5xx, timeouts, network
+                // errors) keep the default handling.
                 options.Retry.ShouldHandle = args =>
                 {
                     if (args.Outcome.Result?.StatusCode == HttpStatusCode.TooManyRequests)
+                        return ValueTask.FromResult(false);
+
+                    if (AeroApiRetry.IsSkipped(args.Context.GetRequestMessage()))
                         return ValueTask.FromResult(false);
 
                     return ValueTask.FromResult(HttpClientResiliencePredicates.IsTransient(args.Outcome));

@@ -120,10 +120,12 @@ namespace FlightAssistant.Application.Commands.Flights
             if (travelerCooldown)
                 await MarkTravelerAttemptAsync(flight.Id, now, ct);
 
+            var kind = cmd.Trigger == SyncTrigger.Scheduled ? StatusCallKind.ScheduledPoll : StatusCallKind.Interactive;
+
             bool recorded;
             try
             {
-                recorded = await ApplyLiveStatusAsync(flight, now, ct);
+                recorded = await ApplyLiveStatusAsync(flight, now, kind, ct);
             }
             // A failed call can still be billed, so the loop waits one interval of the flight's mode
             // rather than retrying it every loop. A person's sync saves nothing.
@@ -198,9 +200,9 @@ namespace FlightAssistant.Application.Commands.Flights
         /// Fetches the live status and, if it's new, records it. Changes the flight only after every
         /// step that can throw, so a failure leaves nothing half-applied for the deferral to save.
         /// </summary>
-        private async Task<bool> ApplyLiveStatusAsync(Flight flight, DateTime now, CancellationToken ct)
+        private async Task<bool> ApplyLiveStatusAsync(Flight flight, DateTime now, StatusCallKind kind, CancellationToken ct)
         {
-            var result = await _provider.GetStatusAsync(flight.FlightNumber, flight.ServiceDateUtc, ct);
+            var result = await _provider.GetStatusAsync(flight.FlightNumber, flight.ServiceDateUtc, kind, ct);
             if (result is null) return false;
 
             // Look up the FlightStatus row id first, so the dedup hash uses the same id-based
