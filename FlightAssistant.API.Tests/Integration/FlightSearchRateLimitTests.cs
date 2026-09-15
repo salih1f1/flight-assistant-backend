@@ -81,6 +81,27 @@ public class FlightSearchRateLimitTests(FlightAssistantWebApplicationFactory fac
         Assert.Equal(HttpStatusCode.TooManyRequests, spoofed.StatusCode);
     }
 
+    [Fact]
+    public async Task AnonymousSearch_WithThePlatformForwardedHeadersFlag_StillTrustsOnlyTheRightmostEntry()
+    {
+        // ASPNETCORE_FORWARDEDHEADERS_ENABLED=true makes the host add the forwarded-headers middleware itself.
+        // A second run in Program.cs would consume the front end's entry and then trust the client's own.
+        // This host has its own services and limiter state.
+        using var flagged = factory.WithWebHostBuilder(builder => builder.UseSetting("FORWARDEDHEADERS_ENABLED", "true"));
+        var client = flagged.CreateClient();
+        var realAddress = UniqueClientIp();
+
+        await SpendAllPermitsAsync(client, "flights/search", $"{UniqueClientIp()}, {realAddress}");
+
+        var spoofed = await client.SendAsync(RejectedSearch("flights/search", $"{UniqueClientIp()}, {realAddress}"));
+        Assert.Equal(HttpStatusCode.TooManyRequests, spoofed.StatusCode);
+
+        // The test server gives a request no client address, so a host that forwarded nothing would put every
+        // request in one bucket and pass the check above. Another real address must still have its own.
+        var otherClient = await client.SendAsync(RejectedSearch("flights/search", $"{UniqueClientIp()}, {UniqueClientIp()}"));
+        Assert.Equal(HttpStatusCode.BadRequest, otherClient.StatusCode);
+    }
+
     // ── Partitioned by caller (#371) ──
 
     [Fact]

@@ -326,8 +326,12 @@ app.Services.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>()
 // ------------------------------------------------------------
 // 5. Middleware Pipeline
 // ------------------------------------------------------------
-// First: everything after it sees the client's address and scheme (#371).
-app.UseForwardedHeaders();
+// First: everything after it sees the client's address and scheme (#371). With
+// ASPNETCORE_FORWARDEDHEADERS_ENABLED=true the host runs this middleware itself, before this pipeline, and a
+// second run here would consume the front end's X-Forwarded-For entry and then trust the client's own. The
+// check is the host's own (ForwardedHeadersStartupFilter), so exactly one of the two adds it.
+if (!string.Equals("true", app.Configuration["ForwardedHeaders_Enabled"], StringComparison.OrdinalIgnoreCase))
+    app.UseForwardedHeaders();
 
 if (app.Environment.IsDevelopment() || app.Environment.IsStaging())
 {
