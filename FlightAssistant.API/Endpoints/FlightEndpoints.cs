@@ -55,7 +55,8 @@ namespace FlightAssistant.API.Endpoints
                 "- 400: invalid/insufficient parameters.\n" +
                 "- 500: server-side configuration issue with the flight data provider.\n" +
                 "- 502: the flight data provider was unreachable or returned an unexpected error.\n" +
-                "- 503: the flight data provider is throttling requests; retry after the period in the Retry-After header.")
+                "- 503: the flight data provider is throttling requests; retry after the period in the Retry-After header.\n" +
+                "- 429: too many searches from this caller (per signed-in traveler, or per client IP when anonymous); retry after the period in the Retry-After header.\n")
             .Produces<List<FlightSearchResultDto>>(200)
             .ProducesValidationProblem()
             .ProducesProblem(500)

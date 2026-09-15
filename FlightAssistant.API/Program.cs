@@ -217,15 +217,24 @@ builder.Services.AddRateLimiter(rl =>
 {
     rl.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
-    // Flight search — public, partition by client IP. Lowered from 20 to 8 (issue #282): now that
-    // AeroApiFlightSearchCachingDecorator absorbs repeated identical searches for free, this ceiling
-    // only bounds the number of *distinct* searches one IP can force upstream per window, so a lower
-    // number costs a legitimate user little while meaningfully cutting a scripted client's ability to
-    // burn through the $5/month metered AeroAPI tier by varying the search each time.
+    // Policies partition by caller: oid, then sub, then IP (#318's reasoning — IP alone
+    // would throttle everyone behind one NAT together and let a caller who rotates addresses dodge it).
+    static string CallerPartitionKey(HttpContext ctx) =>
+        ctx.User.FindFirst("oid")?.Value
+        ?? ctx.User.FindFirst("sub")?.Value
+        ?? ctx.Connection.RemoteIpAddress?.ToString()
+        ?? "unknown";
+
+    // Flight search — public, partition by caller (#371): a signed-in traveler or admin by identity, an
+    // anonymous caller by client IP (forwarded, see UseForwardedHeaders). Lowered from 20 to 8 (issue
+    // #282): now that AeroApiFlightSearchCachingDecorator absorbs repeated identical searches for free,
+    // this ceiling only bounds the number of *distinct* searches one caller can force upstream per
+    // window, so a lower number costs a legitimate user little while meaningfully cutting a scripted
+    // client's ability to burn through the $5/month metered AeroAPI tier by varying the search each time.
     var fsLimit = builder.Configuration.GetValue("RateLimiting:FlightSearch:PermitLimit", 8);
     var fsWindow = builder.Configuration.GetValue("RateLimiting:FlightSearch:WindowSeconds", 60);
     rl.AddPolicy("flight-search", ctx => RateLimitPartition.GetFixedWindowLimiter(
-        partitionKey: ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        partitionKey: CallerPartitionKey(ctx),
         factory: _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = fsLimit,
@@ -233,14 +242,6 @@ builder.Services.AddRateLimiter(rl =>
             QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
             QueueLimit = 0
         }));
-
-    // Authenticated policies partition by caller: oid, then sub, then IP (#318's reasoning — IP alone
-    // would throttle everyone behind one NAT together and let a caller who rotates addresses dodge it).
-    static string CallerPartitionKey(HttpContext ctx) =>
-        ctx.User.FindFirst("oid")?.Value
-        ?? ctx.User.FindFirst("sub")?.Value
-        ?? ctx.Connection.RemoteIpAddress?.ToString()
-        ?? "unknown";
 
     // Loyalty programs — authenticated, partition by user ID
     var loyaltyLimit = builder.Configuration.GetValue("RateLimiting:LoyaltyPrograms:PermitLimit", 60);

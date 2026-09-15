@@ -80,4 +80,32 @@ public class FlightSearchRateLimitTests(FlightAssistantWebApplicationFactory fac
         var spoofed = await client.SendAsync(RejectedSearch("flights/search", $"{UniqueClientIp()}, {realAddress}"));
         Assert.Equal(HttpStatusCode.TooManyRequests, spoofed.StatusCode);
     }
+
+    // ── Partitioned by caller (#371) ──
+
+    [Fact]
+    public async Task SignedInSearch_TwoTravelersFromOneAddress_DoNotShareABucket()
+    {
+        var sharedAddress = UniqueClientIp();
+        var travelerA = factory.CreateUserClient(Guid.NewGuid().ToString());
+        var travelerB = factory.CreateUserClient(Guid.NewGuid().ToString());
+
+        await SpendAllPermitsAsync(travelerA, "flights/search", sharedAddress);
+        Assert.Equal(HttpStatusCode.TooManyRequests, (await travelerA.SendAsync(RejectedSearch("flights/search", sharedAddress))).StatusCode);
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await travelerB.SendAsync(RejectedSearch("flights/search", sharedAddress))).StatusCode);
+    }
+
+    [Fact]
+    public async Task AdminSearch_TwoAdminsFromOneAddress_DoNotShareABucket()
+    {
+        var sharedAddress = UniqueClientIp();
+        var adminA = factory.CreateAdminClient($"search-a-{Guid.NewGuid():N}");
+        var adminB = factory.CreateAdminClient($"search-b-{Guid.NewGuid():N}");
+
+        await SpendAllPermitsAsync(adminA, "admin/flights/search", sharedAddress);
+        Assert.Equal(HttpStatusCode.TooManyRequests, (await adminA.SendAsync(RejectedSearch("admin/flights/search", sharedAddress))).StatusCode);
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await adminB.SendAsync(RejectedSearch("admin/flights/search", sharedAddress))).StatusCode);
+    }
 }
