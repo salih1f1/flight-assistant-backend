@@ -248,8 +248,10 @@ namespace FlightAssistant.Application.Commands.Flights
         }
 
         /// <summary>
-        /// Fetches the live status and, if it's new, records it. Changes the flight only after every
-        /// step that can throw, so a failure leaves nothing half-applied for the deferral to save.
+        /// Fetches the live status and records it. A new status becomes an event and raises the push; a
+        /// status the flight already has goes to <see cref="ApplyKnownStatusAsync"/> (#351). Changes the
+        /// flight only after every step that can throw, so a failure leaves nothing half-applied for the
+        /// deferral to save.
         /// </summary>
         private async Task<bool> ApplyLiveStatusAsync(Flight flight, DateTime now, StatusCallKind kind, CancellationToken ct)
         {
@@ -281,7 +283,8 @@ namespace FlightAssistant.Application.Commands.Flights
             }
 
             var dedupHash = FlightStatusEvent.ComputeDedupHash(flight.Id, statusId.Value, result.EffectiveAtUtc, _provider.ProviderName, result.ExternalId);
-            if (await _flights.FlightStatusEventExistsAsync(dedupHash, ct)) return false;
+            if (await _flights.FlightStatusEventExistsAsync(dedupHash, ct))
+                return await ApplyKnownStatusAsync(flight, statusId.Value, result, now, ct);
 
             var evt = FlightStatusEvent.Create(
                 flight.Id,
@@ -308,6 +311,39 @@ namespace FlightAssistant.Application.Commands.Flights
             await _flights.AddFlightStatusEventAsync(evt, ct);
             return true;
         }
+
+        /// <summary>
+        /// The provider reported a status this flight already has (#351). The response used to be dropped.
+        /// Now its times update the flight, and a newly reported gate, terminal or baggage claim is recorded
+        /// as a detail-change event. Neither raises <c>FlightStatusChanged</c>, so neither sends a push. A
+        /// detail the provider no longer reports keeps its last known value. Returns whether an event was
+        /// recorded. The flight changes only after the latest-event read, the step that can throw.
+        /// </summary>
+        private async Task<bool> ApplyKnownStatusAsync(
+            Flight flight, int statusId, FlightStatusResult result, DateTime now, CancellationToken ct)
+        {
+            var latest = await _flights.GetLatestFlightStatusEventAsync(flight.Id, ct);
+
+            flight.ApplyProviderTimes(result.EstimatedDepartureUtc, result.EstimatedArrivalUtc,
+                result.ActualDepartureUtc, result.ActualArrivalUtc, result.EquipmentIcao, now);
+
+            if (latest is null || !ReportsNewDetails(result, latest))
+                return false;
+
+            await _flights.AddFlightStatusEventAsync(FlightStatusEvent.CreateDetailChange(
+                flight.Id, statusId, result.EffectiveAtUtc, _provider.ProviderName, result.ExternalId, latest.Id,
+                gate: result.Gate ?? latest.Gate,
+                terminal: result.Terminal ?? latest.Terminal,
+                baggageClaim: result.BaggageClaim ?? latest.BaggageClaim,
+                rawPayloadJson: result.RawPayloadJson), ct);
+            return true;
+        }
+
+        /// <summary>A detail is new only when the provider reports a value that differs from the latest event's.</summary>
+        private static bool ReportsNewDetails(FlightStatusResult result, FlightStatusEvent latest) =>
+            (result.Gate is not null && result.Gate != latest.Gate)
+            || (result.Terminal is not null && result.Terminal != latest.Terminal)
+            || (result.BaggageClaim is not null && result.BaggageClaim != latest.BaggageClaim);
     }
 
     public sealed class SyncFlightStatusCommandValidator : AbstractValidator<SyncFlightStatusCommand>
