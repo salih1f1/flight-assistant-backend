@@ -11,8 +11,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     ///
     /// Endpoint: GET /airports/{id}
     ///
-    /// Results are cached under <c>ICacheService</c> for 30 days, successes only, because airport
-    /// timezone assignments change on the order of once a decade.
+    /// A success is cached under <c>ICacheService</c> for 365 days, because airport timezone
+    /// assignments change on the order of once a decade; a failed lookup is cached for 1 hour, so
+    /// an airport that keeps failing costs at most one billed call an hour (#373).
     ///
     /// AeroAPI's <c>scheduled_out</c>/<c>scheduled_in</c> timestamps are already UTC — this
     /// lookup exists purely to resolve the *origin's local day* for
@@ -25,7 +26,19 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     /// </summary>
     public sealed class AeroApiAirportTimezoneLookup
     {
-        private static readonly TimeSpan CacheDuration = TimeSpan.FromDays(30);
+        // Airport time zones change about once a decade, so a success is kept for a year (#373).
+        private static readonly TimeSpan SuccessCacheDuration = TimeSpan.FromDays(365);
+
+        // A failed lookup (unknown airport, no timezone field, a throttled or failed call) is kept for
+        // an hour, so an airport that keeps failing costs at most one billed call an hour instead of
+        // one per search row (#373), while a transient failure still clears within the hour.
+        private static readonly TimeSpan MissCacheDuration = TimeSpan.FromHours(1);
+
+        // A cached miss is the empty string: GetAsync returns null for an absent key but "" for this
+        // marker, in both MemoryCacheService and RedisCacheService (JSON "" round-trips). Zone ids
+        // cached before #373 are non-empty strings, so they stay readable.
+        private const string CachedMiss = "";
+
         private const string Operation = "Airport lookup";
         private const string CacheKeyPrefix = "aeroapi:airport-tz:";
 
@@ -52,15 +65,18 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
             var key = CacheKeyPrefix + normalized;
 
             var cached = await _cache.GetAsync<string>(key, ct);
-            if (!string.IsNullOrWhiteSpace(cached)) return cached;
+            if (cached is not null)
+                return cached.Length == 0 ? null : cached;
 
             var timezone = await FetchAsync(normalized, ct);
 
-            // Only successes are cached — caching a miss would keep an airport "broken" for 30
-            // days over what may have been a single throttled or transient failure.
-            if (!string.IsNullOrWhiteSpace(timezone))
-                await _cache.SetAsync(key, timezone, CacheDuration, ct);
+            if (string.IsNullOrWhiteSpace(timezone))
+            {
+                await _cache.SetAsync(key, CachedMiss, MissCacheDuration, ct);
+                return null;
+            }
 
+            await _cache.SetAsync(key, timezone, SuccessCacheDuration, ct);
             return timezone;
         }
 
