@@ -2927,6 +2927,221 @@
         }
       }
     },
+    "/admin/verification-sources": {
+      "get": {
+        "tags": [
+          "Admin - Verification"
+        ],
+        "summary": "List the verification sources that can check an entity type",
+        "description": "The registered sources whose supported entity types include 'entityType', ordered by name, with each one's cost per row lookup. 'entityType' is required and must be exactly Airport, Airline or Country; anything else is a 400. An empty list is a valid answer: no source checks Airline yet.",
+        "operationId": "AdminListVerificationSources",
+        "parameters": [
+          {
+            "name": "entityType",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VerificationSourceDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/verification-requests": {
+      "post": {
+        "tags": [
+          "Admin - Verification"
+        ],
+        "summary": "Queue verification checks for reference-data rows",
+        "description": "Queues one Pending request per key, checked against every selected source, with trigger 'admin', the caller as requested_by, and the selected sources' summed per-row cost as the estimated cost. Keys are not checked for existence: a missing entity completes as Error when the job runs it. A repeated key, or an entity that already has an open request, is counted as skipped. 400 when entityType is not Airport, Airline or Country; keys or sources are empty; there are more than 1000 keys; a key is malformed for the entity type (the error names it, e.g. 'Keys[1]'); or a source is unknown or does not support the entity type. Queue rows are not audited; requested_by records who asked.",
+        "operationId": "AdminQueueVerificationRequests",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueueVerificationRequestsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationEnqueueDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/verification-requests/{id}/accept-source": {
+      "post": {
+        "tags": [
+          "Admin - Verification"
+        ],
+        "summary": "Accept one source's values for a mismatched check",
+        "description": "Writes the chosen source's values to the entity for only the columns that source reported as different, verifies the entity with that source as the caller, and saves once. The entity write is audited as an Update; the request itself stays Mismatch. 400 when 'source' is blank, is not one of the request's sources, or has no stored values. 404 when the request or the entity no longer exists. 409 when the request is not Mismatch; a differing column has changed since the check; a value cannot be parsed or would empty a required column; a new unique code already belongs to another row; or the row would break the admin edit's rules. That last check validates the whole row, as the admin edit does, so an existing invalid value in a column the source did not touch also returns 409, naming that column.",
+        "operationId": "AdminAcceptVerificationSource",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptVerificationSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/verification-requests/{id}/retry": {
+      "post": {
+        "tags": [
+          "Admin - Verification"
+        ],
+        "summary": "Check an entity again with an earlier request's sources",
+        "description": "Queues a new Pending request for the same entity type, key and sources, with trigger 'admin', the caller as requested_by, and the sources' current cost. The earlier request is left as it is. 400 when one of its sources is no longer registered or no longer supports the entity type. 404 when the request does not exist. 409 when the entity already has an open request.",
+        "operationId": "AdminRetryVerificationRequest",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationEnqueueDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/flights/search": {
       "get": {
         "tags": [
@@ -3832,6 +4047,16 @@
   },
   "components": {
     "schemas": {
+      "AcceptVerificationSourceRequest": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "AddDeviceTokenRequest": {
         "type": "object",
         "properties": {
@@ -5748,6 +5973,30 @@
         },
         "additionalProperties": { }
       },
+      "QueueVerificationRequestsRequest": {
+        "type": "object",
+        "properties": {
+          "entityType": {
+            "type": "string",
+            "nullable": true
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "RegisterTravelerRequest": {
         "type": "object",
         "properties": {
@@ -6036,6 +6285,34 @@
             "type": "string",
             "format": "date",
             "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "VerificationEnqueueDto": {
+        "type": "object",
+        "properties": {
+          "queued": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "VerificationSourceDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "costPerRowUsd": {
+            "type": "number",
+            "format": "double"
           }
         },
         "additionalProperties": false
