@@ -436,6 +436,16 @@ public class AeroApiFlightStatusProviderTests
     }
 
     [Fact]
+    public async Task GetStatusAsync_ReportsTheScheduledDeparture()
+    {
+        var handler = new StubHttpMessageHandler(SingleFlightBody(status: "Scheduled"));
+
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
+
+        Assert.Equal(new DateTime(2026, 8, 30, 6, 35, 0, DateTimeKind.Utc), result!.ScheduledDepartureUtc);
+    }
+
+    [Fact]
     public async Task GetStatusAsync_CancelledFlag_WinsOverStatusText_RegardlessOfStatusString()
     {
         // "Scheduled" text but cancelled=true — the boolean is authoritative.

@@ -89,7 +89,8 @@ namespace FlightAssistant.Domain.Flights.Entities
         /// changed (<paramref name="statusChanged"/>), or, for a flight that stays delayed, once its
         /// estimated departure is at least <see cref="DelayThreshold"/> later than the last delay push's.
         /// A correction to an existing status (a revised actual departure, a small slip) records the event
-        /// without a push. For a delay, the event carries how many minutes late the estimate is.
+        /// without a push. For a delay, the event carries how many minutes the estimate is after the
+        /// provider's reported schedule.
         /// </summary>
         public void ApplyStatusUpdate(
             string statusCode,
@@ -99,7 +100,8 @@ namespace FlightAssistant.Domain.Flights.Entities
             DateTime? actualArrivalUtc,
             string? equipmentAircraftIcao,
             DateTime nowUtc,
-            bool statusChanged = true)
+            bool statusChanged = true,
+            DateTime? reportedScheduledDepartureUtc = null)
         {
             ApplyProviderTimes(estimatedDepartureUtc, estimatedArrivalUtc, actualDepartureUtc, actualArrivalUtc, equipmentAircraftIcao, nowUtc);
             CancelledAtUtc = statusCode == CancelledStatusCode ? CancelledAtUtc ?? nowUtc : null;
@@ -109,8 +111,11 @@ namespace FlightAssistant.Domain.Flights.Entities
             int? delayMinutes = null;
             if (statusCode == DelayedStatusCode && estimatedDepartureUtc is { } estimate)
             {
-                if (estimate > ScheduledDepartureUtc)
-                    delayMinutes = (int)Math.Round((estimate - ScheduledDepartureUtc).TotalMinutes);
+                // From the provider's current schedule, the one the delay was detected against; a retime
+                // leaves the stored ScheduledDepartureUtc stale.
+                var scheduled = reportedScheduledDepartureUtc ?? ScheduledDepartureUtc;
+                if (estimate > scheduled)
+                    delayMinutes = (int)Math.Round((estimate - scheduled).TotalMinutes);
 
                 shouldNotify = shouldNotify
                                || DelayNotifiedDepartureUtc is null

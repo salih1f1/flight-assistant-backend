@@ -12,7 +12,10 @@ namespace FlightAssistant.Application.Interfaces.ExternalServices
         string? BaggageClaim,
         string? EquipmentIcao,
         string? ExternalId,
-        string? RawPayloadJson
+        string? RawPayloadJson,
+        // The provider's current scheduled departure (#352). A delay's minutes count from it: the tracked
+        // flight's stored schedule isn't refreshed, so a retime would leave it stale.
+        DateTime? ScheduledDepartureUtc = null
     );
 
     /// <summary>Who a status call is for (#375). A scheduled poll isn't retried on a transient

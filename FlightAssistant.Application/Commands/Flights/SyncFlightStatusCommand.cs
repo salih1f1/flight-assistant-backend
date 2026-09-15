@@ -312,7 +312,8 @@ namespace FlightAssistant.Application.Commands.Flights
                 result.ActualArrivalUtc,
                 result.EquipmentIcao,
                 now,
-                statusChanged: latest?.StatusId != statusId.Value);
+                statusChanged: latest?.StatusId != statusId.Value,
+                reportedScheduledDepartureUtc: result.ScheduledDepartureUtc);
 
             await _flights.AddFlightStatusEventAsync(evt, ct);
             return true;

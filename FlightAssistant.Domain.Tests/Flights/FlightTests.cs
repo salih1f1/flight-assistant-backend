@@ -263,6 +263,28 @@ namespace FlightAssistant.Domain.Tests.Flights
         }
 
         [Fact]
+        public void ApplyStatusUpdate_ADelayCountsMinutesFromTheReportedSchedule()
+        {
+            // Stored schedule Now+1h. AeroAPI now schedules Now+1h30 and estimates Now+1h50: 20 min late, not 50.
+            var flight = NewFlight();
+
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(50), null, null, null, null, Now,
+                statusChanged: true, reportedScheduledDepartureUtc: Now.AddHours(1).AddMinutes(30));
+
+            Assert.Equal(20, SingleEvent(flight).DelayMinutes);
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_AnEstimateNotAfterTheSchedule_HasNoMinutes()
+        {
+            var flight = NewFlight();
+
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1), null, null, null, null, Now, statusChanged: true);
+
+            Assert.Null(SingleEvent(flight).DelayMinutes);
+        }
+
+        [Fact]
         public void ApplyStatusUpdate_ReturningToDelayed_Notifies_EvenWithinTheThreshold()
         {
             // DLY (40) → SCH → DLY (45): back to DLY is a status change, so it pushes.

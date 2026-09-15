@@ -939,6 +939,20 @@ public class SyncFlightStatusCommandHandlerTests
     }
 
     [Fact]
+    public async Task NewStatus_ADelay_CountsMinutesFromTheReportedSchedule()
+    {
+        var flight = Given(Departing(Now.AddHours(1)));
+        _flights.GetFlightStatusIdByCodeAsync("DLY", Arg.Any<CancellationToken>()).Returns(4);
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
+            .Returns(Status("DLY", estimatedDepartureUtc: Now.AddHours(1).AddMinutes(50))
+                with { ScheduledDepartureUtc = Now.AddHours(1).AddMinutes(30) });
+
+        await Sync();
+
+        Assert.Equal(20, Assert.IsType<FlightStatusChanged>(Assert.Single(flight.DomainEvents)).DelayMinutes);
+    }
+
+    [Fact]
     public async Task KnownStatus_ANewGate_RecordsADetailChange_WithNoPush()
     {
         var flight = GivenKnownStatus(Status() with { Gate = "B7" });

@@ -228,7 +228,8 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
                 BaggageClaim: TryGetString(flight, "baggage_claim"),
                 EquipmentIcao: TryGetString(flight, "aircraft_type"),
                 ExternalId: TryGetString(flight, "fa_flight_id"),
-                RawPayloadJson: flight.GetRawText()
+                RawPayloadJson: flight.GetRawText(),
+                ScheduledDepartureUtc: scheduledOut
             );
         }
 
