@@ -31,6 +31,7 @@ public class SyncFlightStatusCommandHandlerTests
         public TimeSpan FastWindowBeforeDeparture => TimeSpan.FromHours(3);
         public TimeSpan StopAfterArrival => TimeSpan.FromMinutes(20);
         public TimeSpan StopWithoutArrivalAfter => TimeSpan.FromHours(12);
+        public TimeSpan ManualSyncCooldown { get; init; } = TimeSpan.FromMinutes(4);
     }
 
     private sealed class WindowOptions : IFlightStatusWindowOptions
@@ -77,8 +78,9 @@ public class SyncFlightStatusCommandHandlerTests
         ExternalId: "ext-1",
         RawPayloadJson: null);
 
-    private SyncFlightStatusCommandHandler Handler(ILogger<SyncFlightStatusCommandHandler>? logger = null) =>
-        new(_flights, _provider, new SyncOptions(), new WindowOptions(), _clock,
+    private SyncFlightStatusCommandHandler Handler(
+        ILogger<SyncFlightStatusCommandHandler>? logger = null, IFlightSyncOptions? syncOptions = null) =>
+        new(_flights, _provider, syncOptions ?? new SyncOptions(), new WindowOptions(), _clock,
             logger ?? NullLogger<SyncFlightStatusCommandHandler>.Instance);
 
     public SyncFlightStatusCommandHandlerTests()
@@ -294,6 +296,71 @@ public class SyncFlightStatusCommandHandlerTests
         _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
         await Sync(SyncTrigger.Admin);
+
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+    }
+
+    // ── Traveler cooldown (#369) ──
+
+    [Fact]
+    public async Task TravelerSync_WithinTheCooldown_MakesNoCallAndSavesNothing()
+    {
+        var flight = Given(Departing(Now.AddHours(1)));
+        flight.MarkSynced(Now.AddMinutes(-3)); // the cooldown is 4 min
+
+        Assert.False(await Sync(SyncTrigger.Traveler));
+
+        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+        Assert.Equal(Now.AddMinutes(-3), flight.LastSyncedUtc);
+    }
+
+    [Theory]
+    [InlineData(4)]  // exactly the cooldown ago: no longer within it
+    [InlineData(10)]
+    public async Task TravelerSync_CooldownOver_CallsTheProvider(int minutesSinceLastSync)
+    {
+        var flight = Given(Departing(Now.AddHours(1)));
+        flight.MarkSynced(Now.AddMinutes(-minutesSinceLastSync));
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        await Sync(SyncTrigger.Traveler);
+
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TravelerSync_NeverSynced_CallsTheProvider()
+    {
+        var flight = Given(Departing(Now.AddHours(1)));
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        await Sync(SyncTrigger.Traveler);
+
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AdminSync_WithinTheTravelerCooldown_StillCallsTheProvider()
+    {
+        var flight = Given(Departing(Now.AddHours(1)));
+        flight.MarkSynced(Now.AddMinutes(-1));
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        await Sync(SyncTrigger.Admin);
+
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TravelerSync_CooldownZero_IsOff()
+    {
+        var handler = Handler(syncOptions: new SyncOptions { ManualSyncCooldown = TimeSpan.Zero });
+        var flight = Given(Departing(Now.AddHours(1)));
+        flight.MarkSynced(Now);
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        await handler.Handle(new SyncFlightStatusCommand(null, 1, SyncTrigger.Traveler), CancellationToken.None);
 
         await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
     }

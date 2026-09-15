@@ -207,6 +207,7 @@ public class FlightSyncPlannerTests
         public TimeSpan FastWindowBeforeDeparture => TimeSpan.FromMinutes(4);
         public TimeSpan StopAfterArrival => TimeSpan.FromMinutes(5);
         public TimeSpan StopWithoutArrivalAfter => TimeSpan.FromMinutes(6);
+        public TimeSpan ManualSyncCooldown => TimeSpan.FromMinutes(4);
     }
 
     private sealed class WindowOptions : IFlightStatusWindowOptions

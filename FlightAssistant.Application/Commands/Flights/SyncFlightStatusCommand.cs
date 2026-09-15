@@ -74,6 +74,12 @@ namespace FlightAssistant.Application.Commands.Flights
             if (cmd.Trigger == SyncTrigger.Scheduled && flight.SyncMode is not null && flight.NextSyncDueUtc > now)
                 return false;
 
+            // A traveler pulling to refresh gets what the last sync stored: every call is billed, and
+            // the loop already syncs a flight near departure every few minutes (#369). It reads the
+            // flight's own LastSyncedUtc, so every traveler tracking the flight shares the cooldown.
+            if (cmd.Trigger == SyncTrigger.Traveler && flight.LastSyncedUtc > now - _syncOptions.ManualSyncCooldown)
+                return false;
+
             var options = FlightSyncPlanOptions.From(_syncOptions, _windowOptions);
             var isTracked = cmd.TravelerId is not null || await _flights.IsFlightTrackedAsync(flight.Id, ct);
             var plan = FlightSyncPlanner.Plan(flight, isTracked, now, options);

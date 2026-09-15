@@ -14,5 +14,9 @@ namespace FlightAssistant.Application.FlightSync
         TimeSpan FastWindowBeforeDeparture { get; }
         TimeSpan StopAfterArrival { get; }
         TimeSpan StopWithoutArrivalAfter { get; }
+
+        /// <summary>A traveler's manual sync within this long of the flight's last sync makes no
+        /// provider call (#369).</summary>
+        TimeSpan ManualSyncCooldown { get; }
     }
 }

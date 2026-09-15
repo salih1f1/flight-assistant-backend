@@ -37,5 +37,10 @@ namespace FlightAssistant.API.HostedServices
 
         [Range(typeof(TimeSpan), "01:00:00", "7.00:00:00")]
         public TimeSpan StopWithoutArrivalAfter { get; set; } = TimeSpan.FromDays(1);
+
+        /// <summary>A traveler's manual sync within this long of the flight's last sync makes no
+        /// provider call (#369). Zero turns it off.</summary>
+        [Range(typeof(TimeSpan), "00:00:00", "01:00:00")]
+        public TimeSpan ManualSyncCooldown { get; set; } = TimeSpan.FromMinutes(5);
     }
 }
