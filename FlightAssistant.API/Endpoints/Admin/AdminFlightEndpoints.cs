@@ -121,8 +121,10 @@ namespace FlightAssistant.API.Endpoints.Admin
             .WithDescription(
                 "Syncs the flight's status now. A flight not yet inside the provider's live-status window makes no provider call, " +
                 "and a flight no traveler tracks makes no call and has its sync plan cleared; both return { updated: false }. " +
-                "Otherwise returns { updated: true } if a new status was recorded.")
-            .Produces(200);
+                "Otherwise returns { updated: true } if a new status was recorded. " +
+                "Once this month's flight data budget is used up, only a flight in its near-departure window makes a call; any other returns 503.")
+            .Produces(200)
+            .ProducesProblem(503);
         }
 
         private static AdminFlightStatusEventDto ToStatusEventDto(AdminFlightStatusEventResult e) => new(

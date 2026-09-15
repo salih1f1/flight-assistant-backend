@@ -3,6 +3,7 @@ using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Flights.Enums;
@@ -21,7 +22,8 @@ namespace FlightAssistant.Application.Commands.Flights
     }
 
     /// <summary>
-    /// Syncs one flight when its sync mode calls for it, then stores when it's next due (#356).
+    /// Syncs one flight when its sync mode calls for it, then stores when it's next due (#356). Holds
+    /// back calls as this month's AeroAPI spend nears the budget (#303).
     /// </summary>
     /// <param name="TravelerId">When set, enforces that the traveler is tracking the flight. Pass null for admin/background callers.</param>
     public record SyncFlightStatusCommand(Guid? TravelerId, int FlightId, SyncTrigger Trigger) : IRequest<bool>; // true if a new event was recorded
@@ -39,6 +41,7 @@ namespace FlightAssistant.Application.Commands.Flights
 
         private readonly IFlightRepository _flights;
         private readonly IFlightStatusProvider _provider;
+        private readonly IProviderBudgetGuard _budget;
         private readonly ICacheService _cache;
         private readonly IFlightSyncOptions _syncOptions;
         private readonly IFlightStatusWindowOptions _windowOptions;
@@ -48,6 +51,7 @@ namespace FlightAssistant.Application.Commands.Flights
         public SyncFlightStatusCommandHandler(
             IFlightRepository flights,
             IFlightStatusProvider provider,
+            IProviderBudgetGuard budget,
             ICacheService cache,
             IFlightSyncOptions syncOptions,
             IFlightStatusWindowOptions windowOptions,
@@ -56,6 +60,7 @@ namespace FlightAssistant.Application.Commands.Flights
         {
             _flights = flights;
             _provider = provider;
+            _budget = budget;
             _cache = cache;
             _syncOptions = syncOptions;
             _windowOptions = windowOptions;
@@ -115,6 +120,30 @@ namespace FlightAssistant.Application.Commands.Flights
                     flight.ApplySyncPlan(FlightSyncMode.Schedule, FlightSyncPlanner.LiveStartsAtUtc(flight, options));
                     await _flights.SaveChangesAsync(ct);
                     return false;
+            }
+
+            // #303: a flight in Fast mode always gets its call and never reads the budget. Past the soft
+            // limit, a Live flight's polls run at twice the interval. Once the budget is used up, the loop
+            // makes no call for it, and a person's sync is told why rather than handed stored status.
+            var budget = plan.Mode == FlightSyncMode.Fast
+                ? ProviderBudgetState.Normal
+                : await _budget.GetStateAsync(ct);
+            if (budget != ProviderBudgetState.Normal)
+            {
+                options = options with { LiveInterval = options.LiveInterval * 2 };
+                plan = FlightSyncPlanner.Plan(flight, isTracked, now, options);
+            }
+
+            if (budget == ProviderBudgetState.Exhausted)
+            {
+                if (cmd.Trigger != SyncTrigger.Scheduled)
+                    throw new DomainException(
+                        "Flight status can't be refreshed right now: this month's flight data budget is used up. Please try again later.",
+                        503);
+
+                flight.ApplySyncPlan(plan.Mode, plan.NextSyncDueUtc);
+                await _flights.SaveChangesAsync(ct);
+                return false;
             }
 
             if (travelerCooldown)

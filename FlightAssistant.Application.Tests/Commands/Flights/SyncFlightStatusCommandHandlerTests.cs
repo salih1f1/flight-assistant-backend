@@ -3,6 +3,7 @@ using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Flights.Enums;
@@ -20,6 +21,7 @@ public class SyncFlightStatusCommandHandlerTests
 
     private readonly IFlightRepository _flights = Substitute.For<IFlightRepository>();
     private readonly IFlightStatusProvider _provider = Substitute.For<IFlightStatusProvider>();
+    private readonly IProviderBudgetGuard _budget = Substitute.For<IProviderBudgetGuard>();
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(Now));
     private readonly SyncFlightStatusCommandHandler _handler;
 
@@ -121,7 +123,7 @@ public class SyncFlightStatusCommandHandlerTests
     private SyncFlightStatusCommandHandler Handler(
         ILogger<SyncFlightStatusCommandHandler>? logger = null, IFlightSyncOptions? syncOptions = null,
         ICacheService? cache = null) =>
-        new(_flights, _provider, cache ?? _cache, syncOptions ?? new SyncOptions(), new WindowOptions(), _clock,
+        new(_flights, _provider, _budget, cache ?? _cache, syncOptions ?? new SyncOptions(), new WindowOptions(), _clock,
             logger ?? NullLogger<SyncFlightStatusCommandHandler>.Instance);
 
     public SyncFlightStatusCommandHandlerTests()
@@ -133,6 +135,7 @@ public class SyncFlightStatusCommandHandlerTests
         _flights.GetFlightStatusIdByCodeAsync("CAN", Arg.Any<CancellationToken>()).Returns(5);
         _flights.GetFlightStatusIdByCodeAsync("SCH", Arg.Any<CancellationToken>()).Returns(1);
         _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(false);
+        _budget.GetStateAsync(Arg.Any<CancellationToken>()).Returns(ProviderBudgetState.Normal);
     }
 
     private Flight Given(Flight flight)
@@ -143,6 +146,9 @@ public class SyncFlightStatusCommandHandlerTests
 
     private Task<bool> Sync(SyncTrigger trigger = SyncTrigger.Scheduled, Guid? travelerId = null) =>
         _handler.Handle(new SyncFlightStatusCommand(travelerId, 1, trigger), CancellationToken.None);
+
+    private void BudgetIs(ProviderBudgetState state) =>
+        _budget.GetStateAsync(Arg.Any<CancellationToken>()).Returns(state);
 
     // ── Fast / Live ──
 
@@ -741,5 +747,116 @@ public class SyncFlightStatusCommandHandlerTests
         await Sync(trigger);
 
         await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, StatusCallKind.Interactive, Arg.Any<CancellationToken>());
+    }
+
+    // ── Budget guard (#303) ──
+
+    [Fact]
+    public async Task Live_PastTheSoftLimit_CallsTheProvider_NextSyncAfterTwiceTheLiveInterval()
+    {
+        var flight = Given(Departing(Now.AddHours(10)));
+        BudgetIs(ProviderBudgetState.SoftLimit);
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        await Sync();
+
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, StatusCallKind.ScheduledPoll, Arg.Any<CancellationToken>());
+        Assert.Equal(Now, flight.LastSyncedUtc);
+        Assert.Equal(FlightSyncMode.Live, flight.SyncMode);
+        Assert.Equal(Now.AddMinutes(14), flight.NextSyncDueUtc);
+    }
+
+    [Fact]
+    public async Task Live_PastTheSoftLimit_AFailedScheduledSync_WaitsTwiceTheLiveInterval()
+    {
+        var flight = Given(Departing(Now.AddHours(10)));
+        BudgetIs(ProviderBudgetState.SoftLimit);
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
+            .Returns<FlightStatusResult?>(_ => throw new DomainException("AeroAPI unavailable", 502));
+
+        await Assert.ThrowsAsync<DomainException>(() => Sync());
+
+        Assert.Null(flight.LastSyncedUtc);
+        Assert.Equal(Now.AddMinutes(14), flight.NextSyncDueUtc);
+    }
+
+    [Fact]
+    public async Task Live_BudgetExhausted_ScheduledSync_MakesNoCall_NextSyncAfterTwiceTheLiveInterval()
+    {
+        var flight = Given(Departing(Now.AddHours(10)));
+        BudgetIs(ProviderBudgetState.Exhausted);
+
+        Assert.False(await Sync());
+
+        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
+        Assert.Null(flight.LastSyncedUtc);
+        Assert.Equal(FlightSyncMode.Live, flight.SyncMode);
+        Assert.Equal(Now.AddMinutes(14), flight.NextSyncDueUtc);
+        await _flights.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Live_BudgetExhausted_ScheduledSync_IsDueAgainNoLaterThanFastStarts()
+    {
+        // Fast starts in 10 min, before twice the Live interval (14 min).
+        var flight = Given(Departing(Now.AddHours(3).AddMinutes(10)));
+        BudgetIs(ProviderBudgetState.Exhausted);
+
+        await Sync();
+
+        Assert.Equal(Now.AddMinutes(10), flight.NextSyncDueUtc);
+    }
+
+    [Theory]
+    [InlineData(SyncTrigger.Admin)]
+    [InlineData(SyncTrigger.Traveler)]
+    public async Task Live_BudgetExhausted_PersonSync_Throws503_WithoutACallOrAMarker(SyncTrigger trigger)
+    {
+        var flight = Given(Departing(Now.AddHours(10)));
+        BudgetIs(ProviderBudgetState.Exhausted);
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => Sync(trigger));
+
+        Assert.Equal(503, ex.StatusCode);
+        Assert.Contains("budget", ex.Message);
+        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
+        Assert.False(_cache.Entries.ContainsKey(MarkerKey(flight)));
+        await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Stopped_BudgetExhausted_PersonSync_Throws503_WithoutACall()
+    {
+        Given(ArrivedAnHourAgo());
+        BudgetIs(ProviderBudgetState.Exhausted);
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => Sync(SyncTrigger.Admin));
+
+        Assert.Equal(503, ex.StatusCode);
+        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Fast_BudgetExhausted_StillCallsTheProvider_WithoutReadingTheBudget()
+    {
+        var flight = Given(Departing(Now.AddHours(1)));
+        BudgetIs(ProviderBudgetState.Exhausted);
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        await Sync();
+
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, StatusCallKind.ScheduledPoll, Arg.Any<CancellationToken>());
+        await _budget.DidNotReceive().GetStateAsync(Arg.Any<CancellationToken>());
+        Assert.Equal(Now.AddMinutes(3), flight.NextSyncDueUtc);
+    }
+
+    [Fact]
+    public async Task Schedule_NeverReadsTheBudget()
+    {
+        Given(Departing(Now.AddDays(5)));
+
+        await Sync();
+
+        await _budget.DidNotReceive().GetStateAsync(Arg.Any<CancellationToken>());
     }
 }
