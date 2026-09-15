@@ -79,16 +79,43 @@ namespace FlightAssistant.Domain.Flights.Entities
             string? equipmentAircraftIcao,
             DateTime nowUtc)
         {
+            ApplyProviderTimes(estimatedDepartureUtc, estimatedArrivalUtc, actualDepartureUtc, actualArrivalUtc, equipmentAircraftIcao, nowUtc);
+            CancelledAtUtc = statusCode == CancelledStatusCode ? CancelledAtUtc ?? nowUtc : null;
+            UpdatedUtc = nowUtc;
+
+            Raise(new FlightStatusChanged(Id, FlightNumber, ServiceDateUtc, statusCode, nowUtc));
+        }
+
+        /// <summary>
+        /// Takes the provider's times for a status the flight already has (#351). Estimates and actuals are
+        /// taken as reported, so a missing one clears the stored value, as <see cref="ApplyStatusUpdate"/>
+        /// does. The aircraft type is taken only when reported. Raises no event, so it sends no push, and
+        /// leaves <see cref="CancelledAtUtc"/> alone, since that follows the status.
+        /// <see cref="UpdatedUtc"/> moves only when something changed.
+        /// </summary>
+        public void ApplyProviderTimes(
+            DateTime? estimatedDepartureUtc,
+            DateTime? estimatedArrivalUtc,
+            DateTime? actualDepartureUtc,
+            DateTime? actualArrivalUtc,
+            string? equipmentAircraftIcao,
+            DateTime nowUtc)
+        {
+            var changed = EstimatedDepartureUtc != estimatedDepartureUtc
+                          || EstimatedArrivalUtc != estimatedArrivalUtc
+                          || ActualDepartureUtc != actualDepartureUtc
+                          || ActualArrivalUtc != actualArrivalUtc
+                          || (equipmentAircraftIcao is not null && EquipmentAircraftIcao != equipmentAircraftIcao);
+
             EstimatedDepartureUtc = estimatedDepartureUtc;
             EstimatedArrivalUtc = estimatedArrivalUtc;
             ActualDepartureUtc = actualDepartureUtc;
             ActualArrivalUtc = actualArrivalUtc;
             if (equipmentAircraftIcao is not null)
                 EquipmentAircraftIcao = equipmentAircraftIcao;
-            CancelledAtUtc = statusCode == CancelledStatusCode ? CancelledAtUtc ?? nowUtc : null;
-            UpdatedUtc = nowUtc;
 
-            Raise(new FlightStatusChanged(Id, FlightNumber, ServiceDateUtc, statusCode, nowUtc));
+            if (changed)
+                UpdatedUtc = nowUtc;
         }
 
         /// <summary>Records a check against the provider, whether or not anything changed.</summary>

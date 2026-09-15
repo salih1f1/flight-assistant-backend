@@ -46,6 +46,10 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// </summary>
         Task<IReadOnlyList<FlightStatusEvent>> GetRecentFlightStatusEventsAsync(int flightId, int limit, CancellationToken ct = default);
 
+        /// <summary>The flight's most recently recorded status event (the highest id), or null when it has
+        /// none (#351). Read-only (not tracked).</summary>
+        Task<FlightStatusEvent?> GetLatestFlightStatusEventAsync(int flightId, CancellationToken ct = default);
+
         Task AddFlightStatusEventAsync(FlightStatusEvent evt, CancellationToken ct = default);
         Task<bool> FlightStatusEventExistsAsync(string dedupHash, CancellationToken ct = default);
         Task<int?> GetFlightStatusIdByCodeAsync(string code, CancellationToken ct = default);

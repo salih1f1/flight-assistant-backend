@@ -101,6 +101,8 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 .Where(e => e.FlightId == flightId)
                 .Include(e => e.Status)
                 .OrderByDescending(e => e.EffectiveAtUtc)
+                // A detail change shares its status event's effective time (#351); the newer one comes first.
+                .ThenByDescending(e => e.Id)
                 .ToListAsync(ct);
 
         public async Task<IReadOnlyList<FlightStatusEvent>> GetRecentFlightStatusEventsAsync(int flightId, int limit, CancellationToken ct = default) =>
@@ -109,8 +111,17 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 .Where(e => e.FlightId == flightId)
                 .Include(e => e.Status)
                 .OrderByDescending(e => e.EffectiveAtUtc)
+                // A detail change shares its status event's effective time (#351); the newer one comes first.
+                .ThenByDescending(e => e.Id)
                 .Take(limit)
                 .ToListAsync(ct);
+
+        public Task<FlightStatusEvent?> GetLatestFlightStatusEventAsync(int flightId, CancellationToken ct = default) =>
+            _db.FlightStatusEvents
+                .AsNoTracking()
+                .Where(e => e.FlightId == flightId)
+                .OrderByDescending(e => e.Id)
+                .FirstOrDefaultAsync(ct);
 
         public async Task AddFlightStatusEventAsync(FlightStatusEvent evt, CancellationToken ct = default) =>
             await _db.FlightStatusEvents.AddAsync(evt, ct);
