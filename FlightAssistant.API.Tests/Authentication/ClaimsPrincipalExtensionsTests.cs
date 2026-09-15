@@ -69,4 +69,30 @@ public class ClaimsPrincipalExtensionsTests
 
         Assert.Equal(401, ex.StatusCode);
     }
+
+    [Fact]
+    public void GetAdminActorId_OidClaim_ReturnsItUnparsed()
+    {
+        Assert.Equal("admin-oid-1", UserWith("oid", "admin-oid-1").GetAdminActorId());
+    }
+
+    [Fact]
+    public void GetAdminActorId_BothClaims_PrefersOid()
+    {
+        var user = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "the-sub"), new Claim("oid", "the-oid")], "test"));
+
+        Assert.Equal("the-oid", user.GetAdminActorId());
+    }
+
+    [Fact]
+    public void GetAdminActorId_NoOid_FallsBackToSub()
+    {
+        Assert.Equal("the-sub", UserWith("sub", "the-sub").GetAdminActorId());
+    }
+
+    [Fact]
+    public void GetAdminActorId_NoOidOrSub_IsAdmin()
+    {
+        Assert.Equal("admin", UserWithNoClaims().GetAdminActorId());
+    }
 }

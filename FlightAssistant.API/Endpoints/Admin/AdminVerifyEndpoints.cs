@@ -1,3 +1,4 @@
+using FlightAssistant.API.Authentication;
 using FlightAssistant.Application.Commands.Admin.Verify;
 using FlightAssistant.Contracts.Requests.Admin;
 using FlightAssistant.Domain.Common;
@@ -56,8 +57,7 @@ namespace FlightAssistant.API.Endpoints.Admin
         private static async Task<IResult> VerifyAsync<TEntity>(object key, VerifyRequest req, ClaimsPrincipal user, IMediator mediator, CancellationToken ct)
             where TEntity : class, IVerifiable
         {
-            var verifiedBy = user.FindFirstValue("oid") ?? user.FindFirstValue("sub") ?? "admin";
-            var found = await mediator.Send(new VerifyEntityCommand<TEntity>(key, req.IsVerified, verifiedBy), ct);
+            var found = await mediator.Send(new VerifyEntityCommand<TEntity>(key, req.IsVerified, user.GetAdminActorId()), ct);
             return found ? Results.NoContent() : Results.NotFound();
         }
     }
