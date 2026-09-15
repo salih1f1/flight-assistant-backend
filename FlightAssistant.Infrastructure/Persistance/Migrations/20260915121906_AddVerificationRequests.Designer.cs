@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FlightAssistant.Infrastructure.Persistance.Migrations
 {
     [DbContext(typeof(FlightAssistantDbContext))]
-    [Migration("20260915074534_AddVerificationRequests")]
+    [Migration("20260915121906_AddVerificationRequests")]
     partial class AddVerificationRequests
     {
         /// <inheritdoc />
@@ -122,6 +122,9 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.Property<int>("ArrivalAirportId")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime?>("CancelledAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -143,6 +146,15 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasMaxLength(8)
                         .HasColumnType("character varying(8)");
 
+                    b.Property<DateTime?>("LastSyncedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("NextSyncDueUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ScheduleMissingSinceUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime>("ScheduledArrivalUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -152,10 +164,17 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.Property<DateOnly>("ServiceDateUtc")
                         .HasColumnType("date");
 
+                    b.Property<string>("SyncMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
                     b.Property<DateTime>("UpdatedUtc")
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("NextSyncDueUtc")
+                        .HasDatabaseName("ix_flight_next_sync_due");
 
                     b.HasIndex("ArrivalAirportId", "ServiceDateUtc")
                         .HasDatabaseName("ix_flight_arr_day");
