@@ -316,7 +316,8 @@ namespace FlightAssistant.Application.Commands.Flights
         /// The provider reported a status this flight already has (#351). The response used to be dropped.
         /// Now its times update the flight, and a newly reported gate, terminal or baggage claim is recorded
         /// as a detail-change event. Neither raises <c>FlightStatusChanged</c>, so neither sends a push. A
-        /// detail the provider no longer reports keeps its last known value. Returns whether an event was
+        /// detail the provider no longer reports keeps its last known value. A detail change is recorded
+        /// only when the reported status is the latest event's. Returns whether an event was
         /// recorded. The flight changes only after the latest-event read, the step that can throw.
         /// </summary>
         private async Task<bool> ApplyKnownStatusAsync(
@@ -327,7 +328,11 @@ namespace FlightAssistant.Application.Commands.Flights
             flight.ApplyProviderTimes(result.EstimatedDepartureUtc, result.EstimatedArrivalUtc,
                 result.ActualDepartureUtc, result.ActualArrivalUtc, result.EquipmentIcao, now);
 
-            if (latest is null || !ReportsNewDetails(result, latest))
+            // Only on top of the same status as the latest event. A response whose status matches an older
+            // event but not the latest (a status that returned, or an out-of-order response) records nothing,
+            // as before: a detail change under that status would relabel the current status with no push and
+            // no CancelledAtUtc update.
+            if (latest is null || latest.StatusId != statusId || !ReportsNewDetails(result, latest))
                 return false;
 
             await _flights.AddFlightStatusEventAsync(FlightStatusEvent.CreateDetailChange(

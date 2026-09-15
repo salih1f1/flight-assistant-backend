@@ -882,16 +882,17 @@ public class SyncFlightStatusCommandHandlerTests
     // ── A status the flight already has (#351) ──
 
     /// <summary>The provider reports <paramref name="reported"/> for a status already stored for the flight,
-    /// whose latest event has the given details.</summary>
+    /// whose latest event (id 41, status <paramref name="latestStatusId"/>) has the given details.</summary>
     private Flight GivenKnownStatus(FlightStatusResult reported, string? gate = "A1", string? terminal = "T5",
-        string? baggageClaim = null, DateTime? departureUtc = null)
+        string? baggageClaim = null, DateTime? departureUtc = null, int latestStatusId = 2)
     {
         var flight = Given(Departing(departureUtc ?? Now.AddHours(1)));
         _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
             .Returns(reported);
         _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(true);
-        _flights.GetLatestFlightStatusEventAsync(flight.Id, Arg.Any<CancellationToken>())
-            .Returns(FlightStatusEvent.Create(flight.Id, 2, Now, "TestProvider", "ext-1", gate, terminal, baggageClaim));
+        var latest = FlightStatusEvent.Create(flight.Id, latestStatusId, Now, "TestProvider", "ext-1", gate, terminal, baggageClaim);
+        typeof(FlightStatusEvent).GetProperty(nameof(FlightStatusEvent.Id))!.SetValue(latest, 41L);
+        _flights.GetLatestFlightStatusEventAsync(flight.Id, Arg.Any<CancellationToken>()).Returns(latest);
         return flight;
     }
 
@@ -918,10 +919,21 @@ public class SyncFlightStatusCommandHandlerTests
             Arg.Is<FlightStatusEvent>(e =>
                 e.Gate == "B7" && e.Terminal == "T5" && e.BaggageClaim == null
                 && e.StatusId == 2 && e.EffectiveAtUtc == Now && e.Source == "TestProvider"
-                && e.DedupHash == FlightStatusEvent.ComputeDetailChangeHash(flight.Id, 2, Now, "TestProvider", "ext-1", 0, "B7", "T5", null)),
+                && e.DedupHash == FlightStatusEvent.ComputeDetailChangeHash(flight.Id, 2, Now, "TestProvider", "ext-1", 41, "B7", "T5", null)),
             Arg.Any<CancellationToken>());
         Assert.DoesNotContain(flight.DomainEvents, e => e is FlightStatusChanged);
         Assert.Equal(Now, flight.LastSyncedUtc);
+    }
+
+    [Fact]
+    public async Task KnownStatus_MatchingAnOlderEvent_ButNotTheLatestStatus_RecordsNothing()
+    {
+        // DEP is stored, but the latest event is CAN (id 5): a new gate on DEP must not relabel the current status.
+        GivenKnownStatus(Status() with { Gate = "B7" }, latestStatusId: 5);
+
+        Assert.False(await Sync());
+
+        await _flights.DidNotReceive().AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

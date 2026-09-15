@@ -318,6 +318,28 @@ public class FlightRepositoryTests : PostgresTestBase
     }
 
     [Fact]
+    public async Task EventLists_PutTheMostRecentlyRecordedEventFirst_EvenWhenItsEffectiveTimeIsEarlier()
+    {
+        using var db = CreateContext();
+        var flight = FlightArriving(db, "TK32", SyncNow.AddHours(3));
+        var scheduled = StatusId(db, "SCH");
+
+        var first = FlightStatusEvent.Create(flight.Id, scheduled, SyncNow, "AeroAPI", "fa-2", "A1", "T5");
+        db.FlightStatusEvents.Add(first);
+        db.SaveChanges();
+        // The estimate moves earlier: recorded later, with an earlier effective time.
+        var second = FlightStatusEvent.Create(flight.Id, scheduled, SyncNow.AddMinutes(-5), "AeroAPI", "fa-2", "A1", "T5");
+        db.FlightStatusEvents.Add(second);
+        db.SaveChanges();
+
+        var repo = Repository(db, ClockAt(SyncNow));
+
+        Assert.Equal(new[] { second.Id, first.Id }, (await repo.GetFlightStatusEventsAsync(flight.Id)).Select(e => e.Id));
+        Assert.Equal(second.Id, Assert.Single(await repo.GetRecentFlightStatusEventsAsync(flight.Id, limit: 1)).Id);
+        Assert.Equal(second.Id, (await repo.GetLatestFlightStatusEventAsync(flight.Id))!.Id);
+    }
+
+    [Fact]
     public async Task GetLatestFlightStatusEventAsync_AFlightWithNoEvents_ReturnsNull()
     {
         using var db = CreateContext();

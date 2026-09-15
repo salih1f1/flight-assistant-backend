@@ -37,7 +37,7 @@ namespace FlightAssistant.Application.Interfaces.Repositories
 
         /// <summary>
         /// The <paramref name="limit"/> most recent <see cref="FlightStatusEvent"/> rows for the
-        /// flight, newest first, capped server-side (a <c>LIMIT</c> in the generated SQL, not a
+        /// flight, most recently recorded first (#351), capped server-side (a <c>LIMIT</c> in the generated SQL, not a
         /// client-side <c>Take</c> after loading everything) — for the admin flight drill-down
         /// (#322). Unlike <see cref="GetFlightStatusEventsAsync"/>, which returns the full,
         /// unbounded history: a flight tracked for weeks and polled every couple of minutes

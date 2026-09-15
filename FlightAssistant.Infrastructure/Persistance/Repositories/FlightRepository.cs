@@ -100,9 +100,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             await _db.FlightStatusEvents
                 .Where(e => e.FlightId == flightId)
                 .Include(e => e.Status)
-                .OrderByDescending(e => e.EffectiveAtUtc)
-                // A detail change shares its status event's effective time (#351); the newer one comes first.
-                .ThenByDescending(e => e.Id)
+                // Most recently recorded first (#351): the first row is the event GetLatestFlightStatusEventAsync
+                // returns, the one a sync compares details against. Effective time can move backwards (an
+                // estimate returning to an earlier value), so it doesn't say which event is current.
+                .OrderByDescending(e => e.Id)
                 .ToListAsync(ct);
 
         public async Task<IReadOnlyList<FlightStatusEvent>> GetRecentFlightStatusEventsAsync(int flightId, int limit, CancellationToken ct = default) =>
@@ -110,9 +111,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 .AsNoTracking()
                 .Where(e => e.FlightId == flightId)
                 .Include(e => e.Status)
-                .OrderByDescending(e => e.EffectiveAtUtc)
-                // A detail change shares its status event's effective time (#351); the newer one comes first.
-                .ThenByDescending(e => e.Id)
+                // Most recently recorded first (#351): the first row is the event GetLatestFlightStatusEventAsync
+                // returns, the one a sync compares details against. Effective time can move backwards (an
+                // estimate returning to an earlier value), so it doesn't say which event is current.
+                .OrderByDescending(e => e.Id)
                 .Take(limit)
                 .ToListAsync(ct);
 
