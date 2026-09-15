@@ -2742,7 +2742,7 @@
           "Admin - Travelers"
         ],
         "summary": "Track a flight for a traveler",
-        "description": "Adds a flight to this traveler's tracking list, exactly as POST /flights does for the signed-in traveler. A row from GET /admin/flights/search can be posted here unmodified. Tracking a flight the traveler already tracks changes nothing and still returns 201 with its flightId. An unknown traveler is a 404 and writes nothing.",
+        "description": "Adds a flight to this traveler's tracking list, exactly as POST /flights does for the signed-in traveler. A row from GET /admin/flights/search can be posted here unmodified. Tracking a flight the traveler already tracks changes nothing and still returns 201 with its flightId. An unknown traveler is a 404 and writes nothing. The same cap as POST /flights applies: at the traveler's limit of flights tracked at a time, tracking another returns 409 and writes nothing.",
         "operationId": "AdminTrackFlightForTraveler",
         "parameters": [
           {
@@ -2781,6 +2781,16 @@
           },
           "404": {
             "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3076,7 +3086,7 @@
           "Flights"
         ],
         "summary": "Track a flight",
-        "description": "Adds a flight to the authenticated traveler's tracking list. A row returned by GET /flights/search can be posted here unmodified — this body is exactly that shape. If the flight already exists in the system (same airline, number, and service date) it is reused; otherwise a new flight record is created. The airline is derived from the first two characters of FlightNumber (e.g. 'BA123' -> 'BA', '6E4120' -> '6E'); there is no separate airline field. Body fields: FlightNumber (e.g. 'BA123' or '6E4120'), ServiceDate (YYYY-MM-DD), DepartureAirportIata, ArrivalAirportIata, ScheduledDepartureUtc, ScheduledArrivalUtc.",
+        "description": "Adds a flight to the authenticated traveler's tracking list. A row returned by GET /flights/search can be posted here unmodified — this body is exactly that shape. If the flight already exists in the system (same airline, number, and service date) it is reused; otherwise a new flight record is created. The airline is derived from the first two characters of FlightNumber (e.g. 'BA123' -> 'BA', '6E4120' -> '6E'); there is no separate airline field. Body fields: FlightNumber (e.g. 'BA123' or '6E4120'), ServiceDate (YYYY-MM-DD), DepartureAirportIata, ArrivalAirportIata, ScheduledDepartureUtc, ScheduledArrivalUtc. A traveler can track up to 20 flights at a time by default; a flight stops counting once it lands, is cancelled, or its arrival time passes. Tracking another returns 409 and adds nothing; tracking a flight the traveler already tracks still returns 201.",
         "operationId": "TrackFlight",
         "requestBody": {
           "content": {
@@ -3098,6 +3108,16 @@
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
                 }
               }
             }

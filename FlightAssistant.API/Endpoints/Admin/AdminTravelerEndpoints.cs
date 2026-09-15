@@ -119,10 +119,12 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "Adds a flight to this traveler's tracking list, exactly as POST /flights does for the " +
                 "signed-in traveler. A row from GET /admin/flights/search can be posted here unmodified. " +
                 "Tracking a flight the traveler already tracks changes nothing and still returns 201 with " +
-                "its flightId. An unknown traveler is a 404 and writes nothing.")
+                "its flightId. An unknown traveler is a 404 and writes nothing. " +
+                "The same cap as POST /flights applies: at the traveler's limit of flights tracked at a time, tracking another returns 409 and writes nothing.")
             .Produces(201)
             .ProducesValidationProblem()
-            .ProducesProblem(404);
+            .ProducesProblem(404)
+            .ProducesProblem(409);
 
             // DELETE /admin/travelers/{travelerId}/device-tokens/{tokenId}
             group.MapDelete("{travelerId:guid}/device-tokens/{tokenId:guid}",
