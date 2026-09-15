@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FlightAssistant.Infrastructure.Persistance.Migrations
 {
     [DbContext(typeof(FlightAssistantDbContext))]
-    [Migration("20260915071538_AddVerificationRequests")]
+    [Migration("20260915074534_AddVerificationRequests")]
     partial class AddVerificationRequests
     {
         /// <inheritdoc />
@@ -1145,6 +1145,12 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.Property<DateTime>("RequestedUtc")
                         .HasColumnType("timestamptz")
                         .HasColumnName("requested_utc");
+
+                    b.Property<uint>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
 
                     b.Property<string>("SourceValuesJson")
                         .HasColumnType("jsonb")

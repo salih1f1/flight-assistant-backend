@@ -1,3 +1,4 @@
+using System.Globalization;
 using FlightAssistant.Domain.Verification.Enums;
 
 namespace FlightAssistant.Domain.Verification.Entities
@@ -39,7 +40,8 @@ namespace FlightAssistant.Domain.Verification.Entities
 
         public VerificationEntityType EntityType { get; private set; }
 
-        /// <summary>The entity's key as a string: the numeric id for airports and airlines, the code for countries.</summary>
+        /// <summary>The entity's key in canonical form: the positive integer id (no sign, no leading
+        /// zeros) for airports and airlines, the upper-case two-letter code for countries.</summary>
         public string EntityKey { get; private set; } = default!;
 
         /// <summary>The requested source names, comma-joined in request order, e.g. <c>ourairports,aeroapi</c>.
@@ -91,6 +93,8 @@ namespace FlightAssistant.Domain.Verification.Entities
         /// <summary>
         /// A new <see cref="VerificationRequestStatus.Pending"/> request with no attempts.
         /// </summary>
+        /// <param name="entityKey">Canonicalised: a Country code is upper-cased; an Airport or Airline id must
+        /// already be canonical decimal. Empty, surrounding-whitespace or malformed keys throw.</param>
         /// <param name="sources">One or more source names. Duplicates are dropped (first occurrence
         /// kept); a name may not be blank or contain whitespace, <c>,</c> or <c>+</c> (the separators
         /// of <see cref="Sources"/> and of <c>IVerifiable.VerificationSource</c>).</param>
@@ -109,9 +113,7 @@ namespace FlightAssistant.Domain.Verification.Entities
             if (!Enum.IsDefined(trigger))
                 throw new ArgumentOutOfRangeException(nameof(trigger), trigger, "Unknown trigger.");
 
-            ArgumentException.ThrowIfNullOrWhiteSpace(entityKey);
-            EnsureMaxLength(entityKey, MaxEntityKeyLength, nameof(entityKey));
-
+            var canonicalKey = CanonicalEntityKey(entityType, entityKey);
             var joinedSources = JoinSources(sources);
 
             ArgumentException.ThrowIfNullOrWhiteSpace(requestedBy);
@@ -123,7 +125,7 @@ namespace FlightAssistant.Domain.Verification.Entities
             return new VerificationRequest
             {
                 EntityType = entityType,
-                EntityKey = entityKey,
+                EntityKey = canonicalKey,
                 Sources = joinedSources,
                 Trigger = trigger,
                 Status = VerificationRequestStatus.Pending,
@@ -233,6 +235,41 @@ namespace FlightAssistant.Domain.Verification.Entities
             if (!IsOpen)
                 throw new InvalidOperationException(
                     $"Verification request {Id} is already {Status}; a completed request cannot change outcome.");
+        }
+
+        /// <summary>
+        /// The one stored form of an entity key, so the open-request unique index sees one entity as
+        /// one key: <c>Country</c> is a two-letter code, upper-cased; <c>Airport</c> and <c>Airline</c>
+        /// are a positive <see cref="int"/> id in canonical decimal form (ASCII digits, no sign, no
+        /// leading zeros). Empty keys and keys with surrounding whitespace are rejected, not trimmed.
+        /// </summary>
+        private static string CanonicalEntityKey(VerificationEntityType entityType, string entityKey)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(entityKey);
+            if (char.IsWhiteSpace(entityKey[0]) || char.IsWhiteSpace(entityKey[^1]))
+                throw new ArgumentException($"entityKey '{entityKey}' has surrounding whitespace.", nameof(entityKey));
+
+            switch (entityType)
+            {
+                case VerificationEntityType.Country:
+                    var code = entityKey.ToUpperInvariant();
+                    if (code.Length != 2 || !code.All(char.IsAsciiLetterUpper))
+                        throw new ArgumentException($"A Country key must be a two-letter code; got '{entityKey}'.", nameof(entityKey));
+                    return code;
+
+                case VerificationEntityType.Airport:
+                case VerificationEntityType.Airline:
+                    if (entityKey[0] == '0'
+                        || !entityKey.All(char.IsAsciiDigit)
+                        || !int.TryParse(entityKey, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+                        throw new ArgumentException(
+                            $"An {entityType} key must be a positive integer id with no sign or leading zeros; got '{entityKey}'.",
+                            nameof(entityKey));
+                    return entityKey;
+
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(entityType), entityType, "Unknown entity type.");
+            }
         }
 
         private static string JoinSources(IEnumerable<string> sources)

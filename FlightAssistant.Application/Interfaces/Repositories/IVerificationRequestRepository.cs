@@ -11,6 +11,17 @@ namespace FlightAssistant.Application.Interfaces.Repositories
     /// they bypass the change tracker (and the audit interceptor, which skips this table anyway),
     /// need PostgreSQL, and commit on their own unless the caller has an open transaction.
     /// </para>
+    ///
+    /// <para>
+    /// <b>Claim lost.</b> Every request carries a PostgreSQL <c>xmin</c> concurrency token. If a
+    /// request changed after this context read it (typically a slow claim that
+    /// <see cref="ResetStuckRunningAsync"/> returned to <c>Pending</c> and another cycle claimed
+    /// again), <see cref="SaveChangesAsync"/> throws EF Core's <c>DbUpdateConcurrencyException</c>
+    /// and the <b>whole</b> save rolls back, including any entity <c>Verify</c> or
+    /// <c>MarkVerificationFailed</c> and its audit row. Callers must treat that as "claim lost":
+    /// discard the result and the scope's context, and do <b>not</b> record it as a source error.
+    /// The newer claim owns the request.
+    /// </para>
     /// </summary>
     public interface IVerificationRequestRepository
     {
@@ -43,6 +54,12 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// already tracking any of these requests (the job uses a fresh scope per cycle): EF would
         /// hand back the already-tracked instance, with its stale status.
         /// </para>
+        ///
+        /// <para>
+        /// Each returned request carries the concurrency token of this claim. If the claim is
+        /// lost before the outcome is saved, <see cref="SaveChangesAsync"/> throws
+        /// <c>DbUpdateConcurrencyException</c>; see "Claim lost" on the interface.
+        /// </para>
         /// </summary>
         /// <param name="batchSize">At least 1.</param>
         /// <param name="nowUtc">Must have <see cref="DateTimeKind.Utc"/>.</param>
@@ -62,7 +79,12 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// <summary>The request with <paramref name="id"/>, tracked, or null.</summary>
         Task<VerificationRequest?> GetByIdAsync(long id, CancellationToken ct = default);
 
-        /// <summary>Saves tracked changes, e.g. an outcome applied to a claimed request.</summary>
+        /// <summary>
+        /// Saves tracked changes, e.g. an outcome applied to a claimed request, in one transaction.
+        /// Throws <c>DbUpdateConcurrencyException</c> when a tracked request changed in the database
+        /// since it was read, and then nothing from this save is written. Treat that as "claim lost"
+        /// (see the interface remarks), not as a source error.
+        /// </summary>
         Task SaveChangesAsync(CancellationToken ct = default);
     }
 }

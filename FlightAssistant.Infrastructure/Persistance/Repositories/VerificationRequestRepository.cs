@@ -39,11 +39,12 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             VerificationRequest NewRequest(string key) =>
                 VerificationRequest.Create(entityType, key, sources, trigger, requestedBy, estimatedCostUsd, requestedUtc);
 
-            var distinctKeys = keys.Distinct(StringComparer.Ordinal).ToList();
-
-            // Built before the check so invalid arguments throw even when every key is skipped.
-            var candidates = distinctKeys.Select(NewRequest).ToList();
-            var skipped = keys.Count - distinctKeys.Count; // a repeated key: its first occurrence is queued or skipped
+            // Built first: Create validates every argument (so invalid input throws even when every
+            // key would be skipped) and canonicalises each key, so "gb" and "GB" are one key below.
+            var candidates = keys.Select(NewRequest).ToList();
+            var distinct = candidates.DistinctBy(r => r.EntityKey, StringComparer.Ordinal).ToList();
+            var skipped = candidates.Count - distinct.Count; // a repeated key: its first occurrence is queued or skipped
+            var distinctKeys = distinct.Select(r => r.EntityKey).ToList();
 
             var alreadyOpen = (await _db.VerificationRequests
                     .AsNoTracking()
@@ -54,8 +55,8 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                     .ToListAsync(ct))
                 .ToHashSet(StringComparer.Ordinal);
 
-            var toQueue = candidates.Where(r => !alreadyOpen.Contains(r.EntityKey)).ToList();
-            skipped += candidates.Count - toQueue.Count;
+            var toQueue = distinct.Where(r => !alreadyOpen.Contains(r.EntityKey)).ToList();
+            skipped += distinct.Count - toQueue.Count;
             if (toQueue.Count == 0) return new VerificationEnqueueResult(0, skipped);
 
             // Usual path: one save for the whole batch.
@@ -113,23 +114,29 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             var running = nameof(VerificationRequestStatus.Running);
             var flight = VerificationRequestConfiguration.FlightTriggerValue;
 
-            // One statement, so selecting and marking Running cannot be separated by another
-            // claimer. FOR UPDATE locks the chosen rows until this statement's transaction ends;
-            // SKIP LOCKED makes a concurrent claimer pass over those rows instead of waiting for
-            // them and then claiming them a second time. Every value is a parameter.
+            // One statement, so choosing rows and marking them Running cannot be separated by another
+            // claimer. The CTE picks at most batchSize ids exactly once; an IN (subquery) form can be
+            // rescanned by the planner and claim more. FOR UPDATE locks the chosen rows until this
+            // statement's transaction ends; SKIP LOCKED makes a concurrent claimer pass over them
+            // instead of waiting and then claiming them a second time. xmin (the concurrency token)
+            // is returned explicitly because RETURNING v.* never includes system columns. Every
+            // value is a parameter.
             var claimed = await _db.VerificationRequests
                 .FromSql($"""
-                    UPDATE "verification_requests"
-                    SET "status" = {running}, "started_utc" = {nowUtc}
-                    WHERE "id" IN (
+                    WITH claimable AS (
                         SELECT "id"
                         FROM "verification_requests"
                         WHERE "status" = {pending}
                           AND ("next_attempt_utc" IS NULL OR "next_attempt_utc" <= {nowUtc})
                         ORDER BY ("trigger" = {flight}) DESC, "requested_utc", "id"
                         LIMIT {batchSize}
-                        FOR UPDATE SKIP LOCKED)
-                    RETURNING *
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    UPDATE "verification_requests" AS v
+                    SET "status" = {running}, "started_utc" = {nowUtc}
+                    FROM claimable
+                    WHERE v."id" = claimable."id"
+                    RETURNING v.*, v."xmin"
                     """)
                 .ToListAsync(ct);
 

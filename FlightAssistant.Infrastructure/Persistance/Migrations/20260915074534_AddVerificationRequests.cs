@@ -32,7 +32,8 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     requested_by = table.Column<string>(type: "character varying(255)", maxLength: 255, nullable: false),
                     requested_utc = table.Column<DateTime>(type: "timestamptz", nullable: false),
                     started_utc = table.Column<DateTime>(type: "timestamptz", nullable: true),
-                    completed_utc = table.Column<DateTime>(type: "timestamptz", nullable: true)
+                    completed_utc = table.Column<DateTime>(type: "timestamptz", nullable: true),
+                    xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)
                 },
                 constraints: table =>
                 {

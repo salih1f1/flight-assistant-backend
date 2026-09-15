@@ -66,7 +66,6 @@ namespace FlightAssistant.Domain.Tests.Verification
             const VerificationTrigger admin = VerificationTrigger.Admin;
 
             yield return Case("blank key", "entityKey", () => VerificationRequest.Create(airport, " ", sources, admin, "a", 0m, RequestedUtc));
-            yield return Case("key over 50", "entityKey", () => VerificationRequest.Create(airport, new string('k', 51), sources, admin, "a", 0m, RequestedUtc));
             yield return Case("no sources", "sources", () => VerificationRequest.Create(airport, "1", Array.Empty<string>(), admin, "a", 0m, RequestedUtc));
             yield return Case("blank source", "sources", () => VerificationRequest.Create(airport, "1", new[] { " " }, admin, "a", 0m, RequestedUtc));
             yield return Case("source with comma", "sources", () => VerificationRequest.Create(airport, "1", new[] { "a,b" }, admin, "a", 0m, RequestedUtc));
@@ -90,6 +89,54 @@ namespace FlightAssistant.Domain.Tests.Verification
             var ex = Assert.ThrowsAny<ArgumentException>(create);
 
             Assert.Equal(paramName, ex.ParamName);
+        }
+
+        // ── Entity key canonical form ───────────────────────────────────────────
+
+        [Theory]
+        [InlineData(VerificationEntityType.Country, "GB", "GB")]
+        [InlineData(VerificationEntityType.Country, "gb", "GB")]
+        [InlineData(VerificationEntityType.Country, "Gb", "GB")]
+        [InlineData(VerificationEntityType.Airport, "1", "1")]
+        [InlineData(VerificationEntityType.Airport, "42", "42")]
+        [InlineData(VerificationEntityType.Airline, "2147483647", "2147483647")]
+        public void Create_EntityKey_IsStoredInCanonicalForm(VerificationEntityType entityType, string key, string expected)
+        {
+            var request = VerificationRequest.Create(entityType, key, new[] { "ourairports" }, VerificationTrigger.Admin, "a", 0m, RequestedUtc);
+
+            Assert.Equal(expected, request.EntityKey);
+        }
+
+        [Theory]
+        // Empty, or surrounding whitespace: rejected, never trimmed.
+        [InlineData(VerificationEntityType.Country, "")]
+        [InlineData(VerificationEntityType.Airport, "")]
+        [InlineData(VerificationEntityType.Country, " GB")]
+        [InlineData(VerificationEntityType.Country, "GB ")]
+        [InlineData(VerificationEntityType.Airport, " 42")]
+        [InlineData(VerificationEntityType.Airline, "42\t")]
+        // Country: two letters after upper-casing.
+        [InlineData(VerificationEntityType.Country, "GBR")]
+        [InlineData(VerificationEntityType.Country, "G")]
+        [InlineData(VerificationEntityType.Country, "G1")]
+        [InlineData(VerificationEntityType.Country, "ÅB")]
+        [InlineData(VerificationEntityType.Country, "G B")]
+        // Airport, Airline: positive Int32 in canonical decimal.
+        [InlineData(VerificationEntityType.Airport, "0")]
+        [InlineData(VerificationEntityType.Airport, "042")]
+        [InlineData(VerificationEntityType.Airport, "-1")]
+        [InlineData(VerificationEntityType.Airport, "+1")]
+        [InlineData(VerificationEntityType.Airline, "1.0")]
+        [InlineData(VerificationEntityType.Airline, "1 2")]
+        [InlineData(VerificationEntityType.Airline, "LHR")]
+        [InlineData(VerificationEntityType.Airport, "2147483648")]
+        [InlineData(VerificationEntityType.Airport, "٤٢")] // Arabic-Indic digits "42"
+        public void Create_NonCanonicalEntityKey_Throws(VerificationEntityType entityType, string key)
+        {
+            var ex = Assert.ThrowsAny<ArgumentException>(() =>
+                VerificationRequest.Create(entityType, key, new[] { "ourairports" }, VerificationTrigger.Admin, "a", 0m, RequestedUtc));
+
+            Assert.Equal("entityKey", ex.ParamName);
         }
 
         [Fact]

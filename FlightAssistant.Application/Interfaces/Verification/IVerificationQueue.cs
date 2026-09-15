@@ -29,7 +29,17 @@ namespace FlightAssistant.Application.Interfaces.Verification
         /// </para>
         /// </summary>
         /// <param name="entityType">The type every key belongs to.</param>
-        /// <param name="keys">Entity keys as stored in <c>entity_key</c>: numeric ids for airports and airlines, codes for countries.</param>
+        /// <param name="keys">
+        /// Entity keys, canonicalised by <c>VerificationRequest.Create</c> before the open-request check,
+        /// so one entity is always one key:
+        /// <list type="bullet">
+        /// <item><c>Country</c>: a two-letter code, upper-cased (<c>gb</c> is stored and matched as <c>GB</c>).</item>
+        /// <item><c>Airport</c>, <c>Airline</c>: the positive <see cref="int"/> id in canonical decimal
+        /// form, with ASCII digits only, no sign and no leading zeros (<c>42</c>, never <c>042</c> or <c>+42</c>).</item>
+        /// </list>
+        /// A key that is empty, has surrounding whitespace or is not in that form throws
+        /// <see cref="ArgumentException"/>. Keys that canonicalise to the same value count as repeats.
+        /// </param>
         /// <param name="sources">Source names to check against, e.g. <c>ourairports</c>.</param>
         /// <param name="trigger">What asked for the checks; <see cref="VerificationTrigger.Flight"/> is claimed first.</param>
         /// <param name="requestedBy">The admin's id, or <c>system</c>.</param>

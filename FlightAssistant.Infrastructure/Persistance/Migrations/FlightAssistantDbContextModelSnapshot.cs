@@ -1162,6 +1162,12 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasColumnType("timestamptz")
                         .HasColumnName("requested_utc");
 
+                    b.Property<uint>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
                     b.Property<string>("SourceValuesJson")
                         .HasColumnType("jsonb")
                         .HasColumnName("source_values");

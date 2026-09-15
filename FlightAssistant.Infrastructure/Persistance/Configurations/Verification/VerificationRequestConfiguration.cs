@@ -20,6 +20,13 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Verification
         /// <summary>The claim query's supporting index.</summary>
         public const string ClaimIndexName = "ix_verification_requests_claim";
 
+        /// <summary>
+        /// Shadow property mapped to PostgreSQL's <c>xmin</c> system column: the row's concurrency
+        /// token. The claim SQL has to return <c>xmin</c> explicitly, because <c>RETURNING *</c>
+        /// never includes system columns.
+        /// </summary>
+        public const string RowVersionPropertyName = "RowVersion";
+
         /// <summary>Stored value of <see cref="VerificationTrigger.Admin"/>.</summary>
         public const string AdminTriggerValue = "admin";
 
@@ -70,6 +77,12 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Verification
             b.Property(x => x.RequestedUtc).HasColumnName("requested_utc").HasColumnType("timestamptz");
             b.Property(x => x.StartedUtc).HasColumnName("started_utc").HasColumnType("timestamptz");
             b.Property(x => x.CompletedUtc).HasColumnName("completed_utc").HasColumnType("timestamptz");
+
+            // Optimistic concurrency (#367): xmin changes on every write to the row, so a save made
+            // from a claim that has since been reset as stuck and claimed again matches no row and
+            // throws DbUpdateConcurrencyException, instead of overwriting the newer claim. xmin
+            // exists on every PostgreSQL table, so this needs no DDL.
+            b.Property<uint>(RowVersionPropertyName).IsRowVersion();
 
             b.HasIndex(x => new { x.EntityType, x.EntityKey })
                 .IsUnique()
