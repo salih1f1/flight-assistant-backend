@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FlightAssistant.Application.Verification;
+using FlightAssistant.Contracts.Paging;
 using FlightAssistant.Contracts.Requests.Admin;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Domain.ReferenceData.Entities;
@@ -15,7 +16,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace FlightAssistant.API.Tests.Integration;
 
 /// <summary>
-/// The four admin verification endpoints (#378). They map
+/// The four admin verification endpoints (#378) and <c>GET /admin/data/verification-requests</c>. They map
 /// each handler's outcome onto a status; the rules themselves are covered by the Application handler tests,
 /// and the audit row and unique-collision refusal by <c>AcceptVerificationSourcePostgresTests</c>, since this
 /// host runs on InMemory with the audit interceptor stripped.
@@ -336,6 +337,57 @@ public class AdminVerificationEndpointTests(FlightAssistantWebApplicationFactory
         Assert.Single(await RequestsForAsync(key));
     }
 
+    // ══════════════ GET /admin/data/verification-requests ══════════════
+
+    [Fact]
+    public async Task BrowseVerificationRequests_ReturnsARowJustQueued_WithEveryColumnButTheRowVersion()
+    {
+        var adminId = Guid.NewGuid().ToString();
+        var key = NextKey();
+        var client = factory.CreateAdminClient(adminId);
+        await client.PostAsJsonAsync("admin/verification-requests",
+            new QueueVerificationRequestsRequest("Airport", new[] { key }, new[] { "ourairports" }));
+
+        var page = await BrowseAsync(client, $"admin/data/verification-requests?filter=EntityKey:{key}");
+
+        var row = Assert.Single(page.Items);
+        Assert.Equal(key, row[nameof(VerificationRequest.EntityKey)].GetString());
+        Assert.Equal(adminId, row[nameof(VerificationRequest.RequestedBy)].GetString());
+        Assert.Equal("ourairports", row[nameof(VerificationRequest.Sources)].GetString());
+        Assert.Equal(
+            new[]
+            {
+                "Id", "EntityType", "EntityKey", "Sources", "Trigger", "Status", "Attempts", "NextAttemptUtc",
+                "DifferencesJson", "SourceValuesJson", "Error", "EstimatedCostUsd", "RequestedBy", "RequestedUtc",
+                "StartedUtc", "CompletedUtc"
+            }.Order(),
+            row.Keys.Order());
+    }
+
+    [Fact]
+    public async Task BrowseVerificationRequests_SortsById_AndFiltersByStatus()
+    {
+        var airport = await SeedAirportAsync("ZVD", "Browse Test Airport");
+        var firstMismatch = await SeedMismatchAsync(airport, nameof(Airport.Name), "Browse Test Airport", "Browse A");
+        var secondMismatch = await SeedMismatchAsync(airport, nameof(Airport.Name), "Browse Test Airport", "Browse B");
+        var pending = await SeedRequestAsync(NewRequest(NextKey()));
+        var client = factory.CreateAdminClient();
+
+        var mismatches = await BrowseAsync(client, "admin/data/verification-requests?filter=Status:Mismatch&sort=-Id&pageSize=200");
+
+        var ids = mismatches.Items.Select(r => r[nameof(VerificationRequest.Id)].GetInt64()).ToList();
+        Assert.Contains(firstMismatch, ids);
+        Assert.Contains(secondMismatch, ids);
+        Assert.DoesNotContain(pending, ids);
+        Assert.All(mismatches.Items, r => Assert.Equal((int)VerificationRequestStatus.Mismatch, r[nameof(VerificationRequest.Status)].GetInt32()));
+        Assert.Equal(ids.OrderDescending(), ids);
+
+        var ascending = await BrowseAsync(client, "admin/data/verification-requests?sort=Id&pageSize=200");
+        var ascendingIds = ascending.Items.Select(r => r[nameof(VerificationRequest.Id)].GetInt64()).ToList();
+        Assert.Contains(pending, ascendingIds);
+        Assert.Equal(ascendingIds.Order(), ascendingIds);
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private static VerificationRequest NewRequest(string key, string source = "ourairports", string requestedBy = "admin-oid") =>
@@ -389,6 +441,13 @@ public class AdminVerificationEndpointTests(FlightAssistantWebApplicationFactory
         return await db.VerificationRequests.AsNoTracking()
             .Where(r => r.EntityType == VerificationEntityType.Airport && keys.Contains(r.EntityKey))
             .ToListAsync();
+    }
+
+    private static async Task<PagedResult<Dictionary<string, JsonElement>>> BrowseAsync(HttpClient client, string url)
+    {
+        var response = await client.GetAsync(url);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<PagedResult<Dictionary<string, JsonElement>>>())!;
     }
 
     /// <summary>A 400 <c>ValidationProblemDetails</c> whose errors are exactly these field names and messages.</summary>
