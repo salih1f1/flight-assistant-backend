@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using FlightAssistant.Application.Administration;
 using FlightAssistant.Application.Interfaces.Verification;
+using FlightAssistant.Application.Verification;
 using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Verification.Entities;
@@ -156,7 +157,7 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
 
     /// <summary>
     /// A claims; A runs so long that B resets the request as stuck and claims it again; A then saves
-    /// an outcome. A's save must fail on the <c>xmin</c> token instead of overwriting B's claim,
+    /// an outcome. A's save must fail on the <c>xmin</c> token (as <see cref="VerificationClaimLostException"/>) instead of overwriting B's claim,
     /// and B's claim, and then B's own outcome, must be untouched by it.
     /// </summary>
     [Fact]
@@ -176,7 +177,9 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         var current = Assert.Single(await secondRepository.ClaimBatchAsync(1, secondClaimAt));
 
         stale.MarkVerified(firstClaimAt.AddMinutes(15));
-        await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => firstRepository.SaveChangesAsync());
+        var lost = await Assert.ThrowsAsync<VerificationClaimLostException>(() => firstRepository.SaveChangesAsync());
+        Assert.IsType<DbUpdateConcurrencyException>(lost.InnerException);
+        Assert.Equal(new[] { stale.Id }, lost.RequestIds);
 
         await using (var afterStaleSave = CreateDbContext())
         {
@@ -228,7 +231,9 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         var airport = await first.Airports.SingleAsync(a => a.Id == airportId);
         airport.Verify("system", "ourairports");
         stale.MarkVerified(secondClaimAt.AddMinutes(2));
-        await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => firstRepository.SaveChangesAsync());
+        var lost = await Assert.ThrowsAsync<VerificationClaimLostException>(() => firstRepository.SaveChangesAsync());
+        Assert.IsType<DbUpdateConcurrencyException>(lost.InnerException);
+        Assert.Equal(new[] { stale.Id }, lost.RequestIds);
 
         await using var verify = CreateDbContext();
         Assert.False((await verify.Airports.AsNoTracking().SingleAsync(a => a.Id == airportId)).IsVerified);

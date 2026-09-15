@@ -1,0 +1,443 @@
+using System.Globalization;
+using System.Text.Json.Nodes;
+using FlightAssistant.Application;
+using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Interfaces.Verification;
+using FlightAssistant.Application.Verification;
+using FlightAssistant.Domain.Administration.Enums;
+using FlightAssistant.Domain.Common;
+using FlightAssistant.Domain.Common.Interfaces;
+using FlightAssistant.Domain.ReferenceData.Entities;
+using FlightAssistant.Domain.Verification.Entities;
+using FlightAssistant.Domain.Verification.Enums;
+using FlightAssistant.Infrastructure.ExternalServices.Verification;
+using FlightAssistant.Infrastructure.Persistance;
+using FlightAssistant.Infrastructure.Persistance.Repositories;
+using FlightAssistant.Infrastructure.Tests.TestSupport;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
+
+namespace FlightAssistant.Infrastructure.Tests.Persistance;
+
+/// <summary>
+/// Whole verification cycles (#367 Task 4) against real PostgreSQL: the Application runner and
+/// processor from <c>AddApplication</c>, the real repositories on a real <c>DbContext</c> with the
+/// real <see cref="AdminAuditInterceptor"/>, and the real <see cref="VerificationSourceRegistry"/>
+/// over fake sources (no network). Everything the job depends on that InMemory cannot show is here:
+/// the claim and reset SQL, the <c>xmin</c> token, <c>jsonb</c>, and the audit rows written in the
+/// same transaction as each entity write.
+///
+/// <para>
+/// <see cref="RunCycleAsync"/> stands in for <c>ReferenceVerificationBackgroundService</c>, but its
+/// cycle scope deliberately carries <b>no</b> actor: every audit row asserted here can only come
+/// from the scopes the runner creates for each request.
+/// </para>
+/// </summary>
+[Collection(PostgresCollection.Name)]
+public class VerificationCyclePostgresTests : PostgresTestBase
+{
+    private static readonly DateTime T0 = new(2026, 9, 15, 12, 0, 0, DateTimeKind.Utc);
+
+    private readonly PostgresContainerFixture _fixture;
+    private readonly FakeTimeProvider _time = new(new DateTimeOffset(T0));
+
+    public VerificationCyclePostgresTests(PostgresContainerFixture fixture) : base(fixture)
+    {
+        _fixture = fixture;
+    }
+
+    private static Country UnitedKingdom() => Country.Create("GB", "United Kingdom", "GBR", 826, "Europe", "Northern Europe");
+    private static Country France(string name = "France") => Country.Create("FR", name, "FRA", 250, "Europe", "Western Europe");
+    private static Airport Heathrow() => Airport.Create("LHR", "EGLL", "London Heathrow", "London", "GB", 51.4706, -0.461941, 83);
+    private static Airport CharlesDeGaulle() => Airport.Create("CDG", "LFPG", "Paris Charles de Gaulle", "Paris", "FR", 49.0097, 2.5479, 392);
+
+    // ── Outcomes and auditing ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task RunCycle_VerifiesMatches_FlagsMismatchesAndMissingRows_AndAuditsEachEntityWriteAsASystemVerify()
+    {
+        await SeedAsync(UnitedKingdom(), France());
+        var lhr = Heathrow();
+        var cdg = CharlesDeGaulle();
+        await SeedAsync(lhr, cdg);
+
+        var lhrRequest = await EnqueueAsync(VerificationEntityType.Airport, Key(lhr.Id), "ourairports");
+        var cdgRequest = await EnqueueAsync(VerificationEntityType.Airport, Key(cdg.Id), "ourairports");
+        var gbRequest = await EnqueueAsync(VerificationEntityType.Country, "GB", "mledoze");
+        var frRequest = await EnqueueAsync(VerificationEntityType.Country, "FR", "mledoze");
+        var deletedRequest = await EnqueueAsync(VerificationEntityType.Airport, "999999", "ourairports");
+        var aeroApiRequest = await EnqueueAsync(VerificationEntityType.Airline, "1", "aeroapi");
+
+        var ourAirports = new FakeSource("ourairports", VerificationEntityType.Airport, key =>
+            key.Iata == "LHR" ? Found(VerificationCheckedColumns.Project(Heathrow())) : VerificationSourceFetchResult.NotFound);
+        var mledoze = new FakeSource("mledoze", VerificationEntityType.Country, key => key.CountryCode switch
+        {
+            "GB" => Found(VerificationCheckedColumns.Project(UnitedKingdom())),
+            "FR" => Found(VerificationCheckedColumns.Project(France(name: "French Republic"))),
+            _ => VerificationSourceFetchResult.NotFound
+        });
+        await using var job = BuildJob(new IVerificationSource[] { ourAirports, mledoze });
+
+        var result = await RunCycleAsync(job);
+
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, RequestsProcessed: 6, RequestsFailed: 2, ClaimsLost: 0), result);
+
+        await using var verify = CreateDbContext();
+        var airports = await verify.Airports.AsNoTracking().ToDictionaryAsync(a => a.Iata);
+        AssertVerifiedBySystem(airports["LHR"], "ourairports");
+        AssertNeedsAttention(airports["CDG"], "Not found in ourairports");
+        var countries = await verify.Countries.AsNoTracking().ToDictionaryAsync(c => c.Code);
+        AssertVerifiedBySystem(countries["GB"], "mledoze");
+        AssertNeedsAttention(countries["FR"], "Name differ (mledoze)");
+
+        var requests = await verify.VerificationRequests.AsNoTracking().ToDictionaryAsync(r => r.Id);
+        Assert.Equal(VerificationRequestStatus.Verified, requests[lhrRequest].Status);
+        Assert.Equal(VerificationRequestStatus.Verified, requests[gbRequest].Status);
+
+        Assert.Equal(VerificationRequestStatus.NotFound, requests[cdgRequest].Status);
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse("{}"), JsonNode.Parse(requests[cdgRequest].SourceValuesJson!)));
+
+        var frRow = requests[frRequest];
+        Assert.Equal(VerificationRequestStatus.Mismatch, frRow.Status);
+        Assert.True(JsonNode.DeepEquals(
+            JsonNode.Parse("""[{"column":"Name","ours":"France","source":"French Republic","sourceName":"mledoze"}]"""),
+            JsonNode.Parse(frRow.DifferencesJson!)));
+        Assert.Equal("French Republic", JsonNode.Parse(frRow.SourceValuesJson!)!["mledoze"]!["Name"]!.GetValue<string>());
+
+        Assert.Equal(VerificationRequestStatus.Error, requests[deletedRequest].Status);
+        Assert.Equal("Entity no longer exists", requests[deletedRequest].Error);
+        Assert.Equal(VerificationRequestStatus.Error, requests[aeroApiRequest].Status);
+        Assert.Equal("Source 'aeroapi' is not registered.", requests[aeroApiRequest].Error);
+
+        Assert.All(requests.Values, r =>
+        {
+            Assert.Equal(T0, r.CompletedUtc);
+            Assert.Equal(0, r.Attempts);
+        });
+
+        // One audit row per entity write -- none for the six request status changes -- all a system Verify.
+        var audit = await verify.AdminAuditLogs.AsNoTracking().ToListAsync();
+        Assert.Equal(
+            new[] { ("Airport", Key(cdg.Id)), ("Airport", Key(lhr.Id)), ("Country", "FR"), ("Country", "GB") }.Order(),
+            audit.Select(a => (a.EntityType, a.EntityId!)).Order());
+        Assert.All(audit, a =>
+        {
+            Assert.Equal(AdminAuditAction.Verify, a.Action);
+            Assert.Equal("system", a.ActorId);
+            Assert.Equal("Verification job", a.ActorName);
+        });
+        Assert.DoesNotContain(audit, a => a.EntityType == nameof(VerificationRequest));
+        Assert.NotNull(Assert.Single(audit.Select(a => a.TraceId).Distinct()));
+
+        // Nothing is open any more, so both sources' datasets are released.
+        Assert.Equal(1, ourAirports.ReleaseCount);
+        Assert.Equal(1, mledoze.ReleaseCount);
+    }
+
+    // ── Stuck requests ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RunCycle_ResetsAClaimStuckForOverTenMinutes_AndProcessesIt_LeavingAYoungerClaimAlone()
+    {
+        await SeedAsync(UnitedKingdom(), France());
+        var stuck = await EnqueueAsync(VerificationEntityType.Country, "GB", "mledoze", requestedUtc: T0.AddHours(-2));
+        var young = await EnqueueAsync(VerificationEntityType.Country, "FR", "mledoze", requestedUtc: T0.AddHours(-1));
+
+        // Another worker claimed GB 11 minutes ago and died; it claimed FR 9 minutes ago and is still working.
+        Assert.Equal(stuck, Assert.Single(await ClaimOnAnotherWorkerAsync(T0.AddMinutes(-11), batchSize: 1)).Id);
+        Assert.Equal(young, Assert.Single(await ClaimOnAnotherWorkerAsync(T0.AddMinutes(-9), batchSize: 1)).Id);
+
+        var mledoze = new FakeSource("mledoze", VerificationEntityType.Country, key =>
+            Found(VerificationCheckedColumns.Project(key.CountryCode == "GB" ? UnitedKingdom() : France())));
+        await using var job = BuildJob(new IVerificationSource[] { mledoze });
+
+        var result = await RunCycleAsync(job);
+
+        Assert.Equal(new VerificationCycleResult(StuckReset: 1, RequestsProcessed: 1, RequestsFailed: 0, ClaimsLost: 0), result);
+        Assert.Equal(VerificationSourceLookupKey.ForCountry("GB"), Assert.Single(mledoze.Lookups));
+
+        await using var verify = CreateDbContext();
+        var rows = await verify.VerificationRequests.AsNoTracking().ToDictionaryAsync(r => r.Id);
+        Assert.Equal(VerificationRequestStatus.Verified, rows[stuck].Status);
+        Assert.Equal(T0, rows[stuck].StartedUtc);
+        Assert.Equal(0, rows[stuck].Attempts);
+
+        Assert.Equal(VerificationRequestStatus.Running, rows[young].Status);
+        Assert.Equal(T0.AddMinutes(-9), rows[young].StartedUtc);
+        Assert.Null(rows[young].CompletedUtc);
+
+        var countries = await verify.Countries.AsNoTracking().ToDictionaryAsync(c => c.Code);
+        AssertVerifiedBySystem(countries["GB"], "mledoze");
+        Assert.False(countries["FR"].IsVerified);
+    }
+
+    // ── Source errors and backoff ───────────────────────────────────────────
+
+    [Fact]
+    public async Task RunCycle_SourceErrors_BackOffOneThenFiveMinutes_AreNotReclaimedEarly_AndEndInErrorWithTheEntityUnchanged()
+    {
+        var gb = UnitedKingdom();
+        var manuallyVerifiedAt = T0.AddDays(-1);
+        gb.Verify("admin-oid", VerificationSources.Manual, manuallyVerifiedAt);
+        await SeedAsync(gb);
+        var requestId = await EnqueueAsync(VerificationEntityType.Country, "GB", "mledoze");
+
+        var mledoze = new FakeSource("mledoze", VerificationEntityType.Country, _ => VerificationSourceFetchResult.SourceError("HTTP 503"));
+        await using var job = BuildJob(new IVerificationSource[] { mledoze }, maxAttempts: 3);
+
+        // Attempt 1 fails: retry after one minute. A request waiting to retry still uses its source.
+        Assert.Equal(new VerificationCycleResult(0, RequestsProcessed: 1, RequestsFailed: 1, 0), await RunCycleAsync(job));
+        await AssertPendingAsync(requestId, attempts: 1, nextAttemptUtc: T0.AddMinutes(1));
+        Assert.Equal(0, mledoze.ReleaseCount);
+
+        // Not due yet: not claimed and not looked up again.
+        _time.SetUtcNow(T0.AddSeconds(59));
+        Assert.Equal(new VerificationCycleResult(0, 0, 0, 0), await RunCycleAsync(job));
+        Assert.Single(mledoze.Lookups);
+        await AssertPendingAsync(requestId, attempts: 1, nextAttemptUtc: T0.AddMinutes(1));
+
+        // Attempt 2 once due: retry after five minutes.
+        _time.SetUtcNow(T0.AddMinutes(1));
+        Assert.Equal(new VerificationCycleResult(0, 1, 1, 0), await RunCycleAsync(job));
+        await AssertPendingAsync(requestId, attempts: 2, nextAttemptUtc: T0.AddMinutes(6));
+
+        _time.SetUtcNow(T0.AddMinutes(5));
+        Assert.Equal(new VerificationCycleResult(0, 0, 0, 0), await RunCycleAsync(job));
+        Assert.Equal(2, mledoze.Lookups.Count);
+
+        // Attempt 3 reaches MaxAttempts: Error, and nothing open uses the source any more.
+        _time.SetUtcNow(T0.AddMinutes(6));
+        Assert.Equal(new VerificationCycleResult(0, 1, 1, 0), await RunCycleAsync(job));
+        Assert.Equal(3, mledoze.Lookups.Count);
+        Assert.Equal(1, mledoze.ReleaseCount);
+
+        await using var verify = CreateDbContext();
+        var row = await verify.VerificationRequests.AsNoTracking().SingleAsync();
+        Assert.Equal(VerificationRequestStatus.Error, row.Status);
+        Assert.Equal(3, row.Attempts);
+        Assert.Equal("mledoze: HTTP 503", row.Error);
+        Assert.Equal(T0.AddMinutes(6), row.CompletedUtc);
+        Assert.Null(row.NextAttemptUtc);
+
+        var country = await verify.Countries.AsNoTracking().SingleAsync();
+        Assert.True(country.IsVerified);
+        Assert.Equal("admin-oid", country.VerifiedBy);
+        Assert.Equal(VerificationSources.Manual, country.VerificationSource);
+        Assert.Equal(manuallyVerifiedAt, country.VerifiedAt);
+        Assert.Empty(await verify.AdminAuditLogs.ToListAsync());
+    }
+
+    // ── Lost claims ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Mid-lookup, another worker resets this cycle's claim as stuck and claims the request again.
+    /// The verified outcome's save then fails on the <c>xmin</c> token: nothing is written -- no
+    /// entity <c>Verify</c>, no audit row, no attempt -- and the other worker's claim stands.
+    /// </summary>
+    [Fact]
+    public async Task RunCycle_ClaimLostBeforeTheSave_DiscardsTheOutcome_WithoutAnAttempt_AndTheNewClaimStands()
+    {
+        await SeedAsync(UnitedKingdom());
+        await EnqueueAsync(VerificationEntityType.Country, "GB", "mledoze");
+        var reclaimedAt = T0.AddMinutes(20);
+
+        var mledoze = new FakeSource("mledoze", VerificationEntityType.Country, async _ =>
+        {
+            Assert.Equal(1, await ResetOnAnotherWorkerAsync(reclaimedAt));
+            Assert.Single(await ClaimOnAnotherWorkerAsync(reclaimedAt, batchSize: 1));
+            return Found(VerificationCheckedColumns.Project(UnitedKingdom()));
+        });
+        await using var job = BuildJob(new IVerificationSource[] { mledoze });
+
+        var result = await RunCycleAsync(job);
+
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, RequestsProcessed: 1, RequestsFailed: 0, ClaimsLost: 1), result);
+
+        await using var verify = CreateDbContext();
+        var row = await verify.VerificationRequests.AsNoTracking().SingleAsync();
+        Assert.Equal(VerificationRequestStatus.Running, row.Status);
+        Assert.Equal(reclaimedAt, row.StartedUtc);
+        Assert.Equal(0, row.Attempts);
+        Assert.Null(row.Error);
+        Assert.Null(row.CompletedUtc);
+
+        Assert.False((await verify.Countries.AsNoTracking().SingleAsync()).IsVerified);
+        Assert.Empty(await verify.AdminAuditLogs.ToListAsync());
+    }
+
+    /// <summary>
+    /// While the batch's first request is being looked up, another worker resets both claims as
+    /// stuck and claims both again. The second request, re-loaded afterwards, carries the other
+    /// worker's claim and a fresh concurrency token; it must be skipped, not processed and saved
+    /// over that claim.
+    /// </summary>
+    [Fact]
+    public async Task RunCycle_AClaimTakenOverBeforeItsTurn_IsSkipped_AndTheOtherWorkersClaimIsNotOverwritten()
+    {
+        await SeedAsync(UnitedKingdom(), France());
+        var first = await EnqueueAsync(VerificationEntityType.Country, "GB", "mledoze", requestedUtc: T0.AddHours(-2));
+        var second = await EnqueueAsync(VerificationEntityType.Country, "FR", "mledoze", requestedUtc: T0.AddHours(-1));
+        var reclaimedAt = T0.AddMinutes(20);
+
+        var mledoze = new FakeSource("mledoze", VerificationEntityType.Country, async key =>
+        {
+            if (key.CountryCode == "GB")
+            {
+                Assert.Equal(2, await ResetOnAnotherWorkerAsync(reclaimedAt));
+                Assert.Equal(2, (await ClaimOnAnotherWorkerAsync(reclaimedAt, batchSize: 2)).Count);
+            }
+            return Found(VerificationCheckedColumns.Project(key.CountryCode == "GB" ? UnitedKingdom() : France()));
+        });
+        await using var job = BuildJob(new IVerificationSource[] { mledoze });
+
+        var result = await RunCycleAsync(job);
+
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, RequestsProcessed: 2, RequestsFailed: 0, ClaimsLost: 2), result);
+        Assert.Equal(VerificationSourceLookupKey.ForCountry("GB"), Assert.Single(mledoze.Lookups));
+
+        await using var verify = CreateDbContext();
+        var rows = await verify.VerificationRequests.AsNoTracking().ToDictionaryAsync(r => r.Id);
+        foreach (var id in new[] { first, second })
+        {
+            Assert.Equal(VerificationRequestStatus.Running, rows[id].Status);
+            Assert.Equal(reclaimedAt, rows[id].StartedUtc);
+            Assert.Equal(0, rows[id].Attempts);
+        }
+
+        Assert.DoesNotContain(await verify.Countries.AsNoTracking().ToListAsync(), c => c.IsVerified);
+        Assert.Empty(await verify.AdminAuditLogs.ToListAsync());
+    }
+
+    // ── helpers ─────────────────────────────────────────────────────────────
+
+    /// <summary>The job's services as the API host wires them, minus what a cycle doesn't touch.</summary>
+    private ServiceProvider BuildJob(IVerificationSource[] sources, int maxAttempts = 3)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddApplication();
+        services.AddSingleton<TimeProvider>(_time);
+        services.AddSingleton<IVerificationJobOptions>(new JobOptions(BatchSize: 10, MaxAttempts: maxAttempts));
+        foreach (var source in sources)
+            services.AddSingleton(source);
+        services.AddSingleton<IVerificationSourceRegistry, VerificationSourceRegistry>();
+
+        // Program.cs's DbContext registration: the audit interceptor reads the scope's IAdminContext.
+        services.AddScoped<AdminAuditInterceptor>();
+        services.AddDbContext<FlightAssistantDbContext>((sp, options) => options
+            .UseNpgsql(_fixture.ConnectionString)
+            .AddInterceptors(sp.GetRequiredService<AdminAuditInterceptor>()));
+        services.AddScoped<IAirportRepository, AirportRepository>();
+        services.AddScoped<IAirlineRepository, AirlineRepository>();
+        services.AddScoped<ICountryRepository, CountryRepository>();
+        services.AddScoped<IVerificationRequestRepository, VerificationRequestRepository>();
+
+        return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+    }
+
+    private static async Task<VerificationCycleResult> RunCycleAsync(ServiceProvider job)
+    {
+        using var cycleScope = job.CreateScope();
+        return await cycleScope.ServiceProvider.GetRequiredService<IVerificationCycleRunner>().RunCycleAsync();
+    }
+
+    private async Task SeedAsync(params object[] entities)
+    {
+        await using var db = CreateDbContext();
+        db.AddRange(entities);
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<long> EnqueueAsync(VerificationEntityType entityType, string key, string source, DateTime? requestedUtc = null)
+    {
+        await using var db = CreateDbContext();
+        var request = VerificationRequest.Create(
+            entityType, key, new[] { source }, VerificationTrigger.Admin, "admin-oid", 0m, requestedUtc ?? T0.AddHours(-1));
+        db.VerificationRequests.Add(request);
+        await db.SaveChangesAsync();
+        return request.Id;
+    }
+
+    private VerificationRequestRepository AnotherWorker(FlightAssistantDbContext db, DateTime at) =>
+        new(db, new FakeTimeProvider(new DateTimeOffset(at)));
+
+    private async Task<IReadOnlyList<VerificationRequest>> ClaimOnAnotherWorkerAsync(DateTime at, int batchSize)
+    {
+        await using var db = CreateDbContext();
+        return await AnotherWorker(db, at).ClaimBatchAsync(batchSize, at);
+    }
+
+    private async Task<int> ResetOnAnotherWorkerAsync(DateTime at)
+    {
+        await using var db = CreateDbContext();
+        return await AnotherWorker(db, at).ResetStuckRunningAsync(at - VerificationCycleRunner.StuckAfter);
+    }
+
+    private async Task AssertPendingAsync(long requestId, int attempts, DateTime nextAttemptUtc)
+    {
+        await using var verify = CreateDbContext();
+        var row = await verify.VerificationRequests.AsNoTracking().SingleAsync(r => r.Id == requestId);
+        Assert.Equal(VerificationRequestStatus.Pending, row.Status);
+        Assert.Equal(attempts, row.Attempts);
+        Assert.Equal(nextAttemptUtc, row.NextAttemptUtc);
+        Assert.Null(row.StartedUtc);
+        Assert.Null(row.CompletedUtc);
+    }
+
+    private void AssertVerifiedBySystem(IVerifiable entity, string source)
+    {
+        Assert.True(entity.IsVerified);
+        Assert.Equal("system", entity.VerifiedBy);
+        Assert.Equal(source, entity.VerificationSource);
+        Assert.Equal(_time.GetUtcNow().UtcDateTime, entity.VerifiedAt);
+        Assert.Null(entity.VerificationIssue);
+    }
+
+    private static void AssertNeedsAttention(IVerifiable entity, string issue)
+    {
+        Assert.False(entity.IsVerified);
+        Assert.Null(entity.VerifiedBy);
+        Assert.Null(entity.VerificationSource);
+        Assert.Equal(issue, entity.VerificationIssue);
+    }
+
+    private static string Key(int id) => id.ToString(CultureInfo.InvariantCulture);
+
+    private static VerificationSourceFetchResult Found(IReadOnlyDictionary<string, string?> values) =>
+        VerificationSourceFetchResult.Found(values);
+
+    private sealed record JobOptions(int BatchSize, int MaxAttempts) : IVerificationJobOptions;
+
+    private sealed class FakeSource : IVerificationSource
+    {
+        private readonly Func<VerificationSourceLookupKey, Task<VerificationSourceFetchResult>> _lookup;
+
+        public FakeSource(string name, VerificationEntityType supported, Func<VerificationSourceLookupKey, Task<VerificationSourceFetchResult>> lookup)
+        {
+            Name = name;
+            SupportedEntityTypes = new[] { supported };
+            _lookup = lookup;
+        }
+
+        public FakeSource(string name, VerificationEntityType supported, Func<VerificationSourceLookupKey, VerificationSourceFetchResult> lookup)
+            : this(name, supported, key => Task.FromResult(lookup(key)))
+        {
+        }
+
+        public string Name { get; }
+        public decimal CostPerRowUsd => 0m;
+        public IReadOnlyCollection<VerificationEntityType> SupportedEntityTypes { get; }
+        public List<VerificationSourceLookupKey> Lookups { get; } = new();
+        public int ReleaseCount { get; private set; }
+
+        public Task<VerificationSourceFetchResult> LookupAsync(
+            VerificationEntityType entityType, VerificationSourceLookupKey key, CancellationToken ct = default)
+        {
+            Lookups.Add(key);
+            return _lookup(key);
+        }
+
+        public void ReleaseCache() => ReleaseCount++;
+    }
+}

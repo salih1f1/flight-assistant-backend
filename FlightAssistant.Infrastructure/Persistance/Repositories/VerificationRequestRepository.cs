@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Interfaces.Verification;
+using FlightAssistant.Application.Verification;
 using FlightAssistant.Domain.Verification.Entities;
 using FlightAssistant.Domain.Verification.Enums;
 using FlightAssistant.Infrastructure.Persistance.Configurations.Verification;
@@ -168,7 +169,20 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         public Task<VerificationRequest?> GetByIdAsync(long id, CancellationToken ct = default) =>
             _db.VerificationRequests.FirstOrDefaultAsync(r => r.Id == id, ct);
 
-        public Task SaveChangesAsync(CancellationToken ct = default) => _db.SaveChangesAsync(ct);
+        public async Task SaveChangesAsync(CancellationToken ct = default)
+        {
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateConcurrencyException ex) when (ex.Entries.Any(e => e.Entity is VerificationRequest))
+            {
+                // The xmin token: a request changed since this context read it, so the claim was
+                // lost. Application can't see EF's exception type, so it gets its own.
+                var requestIds = ex.Entries.Select(e => e.Entity).OfType<VerificationRequest>().Select(r => r.Id).ToList();
+                throw new VerificationClaimLostException(requestIds, ex);
+            }
+        }
 
         private static bool IsOpenRequestConflict(DbUpdateException ex) =>
             ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } pg
