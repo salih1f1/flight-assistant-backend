@@ -12,8 +12,9 @@ namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroApi;
 
 /// <summary>
 /// Drives <see cref="AeroApiAirportTimezoneLookup"/> against stubbed <c>/airports/{id}</c>
-/// responses, pinning its contract: cache a success for 365 days and a failed lookup for 1 hour,
-/// never let a failure propagate, never cache a cancelled call.
+/// responses, pinning its contract: cache a success for 365 days and an airport AeroAPI doesn't
+/// know for 1 hour, cache no transient failure, never let a failure propagate, never cache a
+/// cancelled call.
 /// </summary>
 public class AeroApiAirportTimezoneLookupTests
 {
@@ -129,10 +130,11 @@ public class AeroApiAirportTimezoneLookupTests
 
     [Theory]
     [InlineData(HttpStatusCode.NotFound, "{ \"title\": \"not found\" }")]
-    [InlineData(HttpStatusCode.TooManyRequests, "{ \"title\": \"too many requests\" }")]
-    [InlineData(HttpStatusCode.Unauthorized, "{ \"title\": \"unauthorized\" }")]
+    [InlineData(HttpStatusCode.BadRequest, "{ \"title\": \"bad request\" }")]
     [InlineData(HttpStatusCode.OK, "{ \"code_iata\": \"ZZZ\" }")] // no timezone field
-    public async Task TryGetTimezoneAsync_ReturnsNull_AndCachesTheMissForAnHour_WhenTheLookupFails(HttpStatusCode status, string body)
+    [InlineData(HttpStatusCode.OK, "{ \"code_iata\": \"ZZZ\", \"timezone\": \"  \" }")] // whitespace-only timezone
+    public async Task TryGetTimezoneAsync_ReturnsNull_AndCachesTheMissForAnHour_WhenAeroApiDoesNotKnowTheAirport(
+        HttpStatusCode status, string body)
     {
         var handler = new StubHttpMessageHandler(status, body);
         var cache = EmptyCache();
@@ -144,8 +146,30 @@ public class AeroApiAirportTimezoneLookupTests
             "aeroapi:airport-tz:ZZZ", "", TimeSpan.FromHours(1), Arg.Any<CancellationToken>());
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests, "{ \"title\": \"too many requests\" }")]
+    [InlineData(HttpStatusCode.Unauthorized, "{ \"title\": \"unauthorized\" }")]
+    [InlineData(HttpStatusCode.Forbidden, "{ \"title\": \"forbidden\" }")]
+    [InlineData(HttpStatusCode.InternalServerError, "{ \"title\": \"internal server error\" }")]
+    [InlineData(HttpStatusCode.BadGateway, "{ \"title\": \"bad gateway\" }")]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "{ \"title\": \"service unavailable\" }")]
+    [InlineData(HttpStatusCode.OK, "not json")]
+    public async Task TryGetTimezoneAsync_ReturnsNull_AndCachesNothing_WhenTheLookupFailsTransiently(
+        HttpStatusCode status, string body)
+    {
+        // A cached miss sends searches from this origin to the UTC-date fallback, which gives
+        // wrong-day rows for a far-offset airport, so a failure that may clear is never cached.
+        var handler = new StubHttpMessageHandler(status, body);
+        var cache = EmptyCache();
+
+        var timezone = await Lookup(handler, cache).TryGetTimezoneAsync("ZZZ");
+
+        Assert.Null(timezone);
+        await cache.DidNotReceiveWithAnyArgs().SetAsync<string>(default!, default!, default, default);
+    }
+
     [Fact]
-    public async Task TryGetTimezoneAsync_CachesTheMissForAnHour_WhenAeroApiIsUnreachable()
+    public async Task TryGetTimezoneAsync_CachesNothing_WhenAeroApiIsUnreachable()
     {
         var handler = new ThrowingHttpMessageHandler(new HttpRequestException("connection refused"));
         var cache = EmptyCache();
@@ -153,8 +177,7 @@ public class AeroApiAirportTimezoneLookupTests
         var timezone = await Lookup(handler, cache).TryGetTimezoneAsync("SOF");
 
         Assert.Null(timezone);
-        await cache.Received(1).SetAsync(
-            "aeroapi:airport-tz:SOF", "", TimeSpan.FromHours(1), Arg.Any<CancellationToken>());
+        await cache.DidNotReceiveWithAnyArgs().SetAsync<string>(default!, default!, default, default);
     }
 
     [Fact]

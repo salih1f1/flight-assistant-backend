@@ -3,7 +3,9 @@ using System.Text;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Domain.Common.Exceptions;
+using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -65,6 +67,27 @@ public class AeroApiFlightSearchProviderTests
             var status = zones.TryGetValue(iata, out var known) && known is not null
                 ? HttpStatusCode.OK
                 : HttpStatusCode.NotFound;
+
+            return Task.FromResult(new HttpResponseMessage(status)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
+    /// <summary>Answers <c>/airports/{iata}</c> with a 429 on the first call and with AKL's zone
+    /// after that: a lookup that fails transiently once, then recovers.</summary>
+    private sealed class ThrottledOnceAklTimezoneStub : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Calls++;
+            var (status, body) = Calls == 1
+                ? (HttpStatusCode.TooManyRequests, """{ "title": "too many requests" }""")
+                : (HttpStatusCode.OK, """{ "code_iata": "AKL", "timezone": "Pacific/Auckland" }""");
 
             return Task.FromResult(new HttpResponseMessage(status)
             {
@@ -407,6 +430,42 @@ public class AeroApiFlightSearchProviderTests
         Assert.Equal(
             new[] { new DateTime(2026, 9, 29, 6, 0, 0, DateTimeKind.Utc), new DateTime(2026, 9, 29, 6, 35, 0, DateTimeKind.Utc) },
             results.Select(r => r.ScheduledDepartureUtc));
+        Assert.Equal(2, stub.Calls);
+    }
+
+    [Fact]
+    public async Task SearchAsync_ATransientOriginLookupFailure_IsRetriedInTheFilter_AndRowsUseTheRealZone()
+    {
+        // The window lookup for AKL is throttled (429), so the window widens. The per-row filter
+        // then looks AKL up again and, over a real cache, must not be served a cached miss: that
+        // would drop to the UTC-date fallback and return the wrong day's row for a UTC+13 airport.
+        // AKL is UTC+13 from 2026-09-27: 2026-09-28T18:00Z is 07:00 on the 29th in Auckland, and
+        // 2026-09-29T18:00Z is 07:00 on the 30th.
+        const string body = """
+        {
+          "scheduled": [
+            { "ident_iata": "NZ103", "actual_ident_iata": null, "origin_iata": "AKL", "destination_iata": "SYD",
+              "scheduled_out": "2026-09-28T18:00:00Z", "scheduled_in": "2026-09-28T21:30:00Z" },
+            { "ident_iata": "NZ103", "actual_ident_iata": null, "origin_iata": "AKL", "destination_iata": "SYD",
+              "scheduled_out": "2026-09-29T18:00:00Z", "scheduled_in": "2026-09-29T21:30:00Z" }
+          ],
+          "links": null,
+          "num_pages": 1
+        }
+        """;
+        var handler = new ScriptedHttpMessageHandler((HttpStatusCode.OK, body));
+        var stub = new ThrottledOnceAklTimezoneStub();
+        var timezones = new AeroApiAirportTimezoneLookup(
+            new HttpClient(stub) { BaseAddress = new Uri("http://stub/aeroapi/") },
+            new MemoryCacheService(new MemoryCache(new MemoryCacheOptions())),
+            Options.Create(new AeroApiOptions { ApiKey = "dummy" }),
+            NullLogger<AeroApiAirportTimezoneLookup>.Instance);
+
+        var results = await Provider(handler, timezones).SearchAsync(
+            new FlightSearchCriteria("AKL", "SYD", new DateOnly(2026, 9, 29), null));
+
+        var kept = Assert.Single(results);
+        Assert.Equal(new DateTime(2026, 9, 28, 18, 0, 0, DateTimeKind.Utc), kept.ScheduledDepartureUtc);
         Assert.Equal(2, stub.Calls);
     }
 

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Domain.Common.Exceptions;
@@ -12,8 +13,11 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     /// Endpoint: GET /airports/{id}
     ///
     /// A success is cached under <c>ICacheService</c> for 365 days, because airport timezone
-    /// assignments change on the order of once a decade; a failed lookup is cached for 1 hour, so
-    /// an airport that keeps failing costs at most one billed call an hour (#373).
+    /// assignments change on the order of once a decade. An airport AeroAPI doesn't know, or has no
+    /// timezone for, is kept as a miss for 1 hour. A transient failure isn't cached: a cached miss
+    /// sends searches from that origin to the UTC-date fallback, which gives wrong-day rows for a
+    /// far-offset airport, and the search cache would keep them. The per-search dedupe already caps
+    /// a transient failure at one retried lookup per origin per search (#373).
     ///
     /// AeroAPI's <c>scheduled_out</c>/<c>scheduled_in</c> timestamps are already UTC — this
     /// lookup exists purely to resolve the *origin's local day* for
@@ -29,14 +33,16 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         // Airport time zones change about once a decade, so a success is kept for a year (#373).
         private static readonly TimeSpan SuccessCacheDuration = TimeSpan.FromDays(365);
 
-        // A failed lookup (unknown airport, no timezone field, a throttled or failed call) is kept for
-        // an hour, so an airport that keeps failing costs at most one billed call an hour instead of
-        // one per search row (#373), while a transient failure still clears within the hour.
+        // An airport AeroAPI doesn't know (404, 400) or has no timezone for is kept as a miss for an
+        // hour (#373). A transient failure isn't cached at all: a cached miss would send that origin's
+        // searches to the UTC-date fallback, wrong-day rows for a far-offset airport that the search
+        // cache would then keep.
         private static readonly TimeSpan MissCacheDuration = TimeSpan.FromHours(1);
 
         // A cached miss is the empty string: GetAsync returns null for an absent key but "" for this
-        // marker, in both MemoryCacheService and RedisCacheService (JSON "" round-trips). Zone ids
-        // cached before #373 are non-empty strings, so they stay readable.
+        // marker, in both MemoryCacheService and RedisCacheService (JSON "" round-trips). Only an
+        // airport AeroAPI doesn't know writes it, never a transient failure. Zone ids cached before
+        // #373 are non-empty strings, so they stay readable.
         private const string CachedMiss = "";
 
         private const string Operation = "Airport lookup";
@@ -68,19 +74,32 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
             if (cached is not null)
                 return cached.Length == 0 ? null : cached;
 
-            var timezone = await FetchAsync(normalized, ct);
+            var result = await FetchAsync(normalized, ct);
 
-            if (string.IsNullOrWhiteSpace(timezone))
+            if (result.Timezone is not null)
             {
-                await _cache.SetAsync(key, CachedMiss, MissCacheDuration, ct);
-                return null;
+                await _cache.SetAsync(key, result.Timezone, SuccessCacheDuration, ct);
+                return result.Timezone;
             }
 
-            await _cache.SetAsync(key, timezone, SuccessCacheDuration, ct);
-            return timezone;
+            if (result.IsPermanentMiss)
+                await _cache.SetAsync(key, CachedMiss, MissCacheDuration, ct);
+
+            return null;
         }
 
-        private async Task<string?> FetchAsync(string iata, CancellationToken ct)
+        /// <summary>A usable timezone, or no timezone plus whether the miss is AeroAPI's answer for
+        /// this airport (cached) rather than a transient failure (not cached).</summary>
+        private readonly record struct FetchResult(string? Timezone, bool IsPermanentMiss)
+        {
+            public static FetchResult Found(string timezone) => new(timezone, IsPermanentMiss: false);
+
+            public static FetchResult PermanentMiss => new(null, IsPermanentMiss: true);
+
+            public static FetchResult TransientFailure => new(null, IsPermanentMiss: false);
+        }
+
+        private async Task<FetchResult> FetchAsync(string iata, CancellationToken ct)
         {
             HttpResponseMessage response;
             try
@@ -90,17 +109,25 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogWarning(ex, "Could not reach AeroAPI to look up a timezone for airport {Iata}", iata);
-                return null;
+                return FetchResult.TransientFailure;
             }
+
+            // Captured before ReadOrThrowAsync, which maps a 404 and a 5xx to the same 502.
+            var status = response.StatusCode;
 
             try
             {
                 using var doc = await AeroApiResponse.ReadOrThrowAsync(
                     response, Operation, iata, _apiKey, _logger, ct);
 
-                return doc.RootElement.TryGetProperty("timezone", out var tz) && tz.ValueKind == JsonValueKind.String
+                var timezone = doc.RootElement.TryGetProperty("timezone", out var tz) && tz.ValueKind == JsonValueKind.String
                     ? tz.GetString()
                     : null;
+
+                // A 200 with no usable timezone is AeroAPI's answer for this airport, not a failed call.
+                return string.IsNullOrWhiteSpace(timezone)
+                    ? FetchResult.PermanentMiss
+                    : FetchResult.Found(timezone);
             }
             catch (DomainException ex)
             {
@@ -108,7 +135,12 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
                 // own degraded-but-correct fallback for "no zone available" and must not have an
                 // entire search fail just because one airport's lookup was throttled or unknown.
                 _logger.LogWarning(ex, "Airport timezone lookup for {Iata} failed: {Message}", iata, ex.Message);
-                return null;
+
+                // An unknown airport (404) or a code AeroAPI rejects (400) won't change within the hour;
+                // anything else (429, 401/403, 5xx, an unparseable 200) may clear on the next search.
+                return status is HttpStatusCode.NotFound or HttpStatusCode.BadRequest
+                    ? FetchResult.PermanentMiss
+                    : FetchResult.TransientFailure;
             }
         }
     }
