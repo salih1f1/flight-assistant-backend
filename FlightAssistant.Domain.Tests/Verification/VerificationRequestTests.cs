@@ -149,6 +149,44 @@ namespace FlightAssistant.Domain.Tests.Verification
             Assert.Equal("entityKey", ex.ParamName);
         }
 
+        [Theory]
+        [InlineData(VerificationEntityType.Country, "gb", "GB")]
+        [InlineData(VerificationEntityType.Airport, "42", "42")]
+        [InlineData(VerificationEntityType.Airline, "2147483647", "2147483647")]
+        public void TryCanonicalEntityKey_AValidKey_ReturnsTheSameCanonicalFormCreateStores(
+            VerificationEntityType entityType, string key, string expected)
+        {
+            Assert.True(VerificationRequest.TryCanonicalEntityKey(entityType, key, out var canonical, out var error));
+
+            Assert.Equal(expected, canonical);
+            Assert.Null(error);
+            Assert.Equal(canonical, VerificationRequest.Create(entityType, key, new[] { "s" }, VerificationTrigger.Admin, "a", 0m, RequestedUtc).EntityKey);
+        }
+
+        [Theory]
+        [InlineData(VerificationEntityType.Country, null)]
+        [InlineData(VerificationEntityType.Country, "")]
+        [InlineData(VerificationEntityType.Country, "GB ")]
+        [InlineData(VerificationEntityType.Country, "GBR")]
+        [InlineData(VerificationEntityType.Airport, "042")]
+        [InlineData(VerificationEntityType.Airport, "2147483648")]
+        [InlineData(VerificationEntityType.Airline, "LHR")]
+        [InlineData((VerificationEntityType)99, "1")]
+        public void TryCanonicalEntityKey_AMalformedKey_ReturnsFalseWithAReason(VerificationEntityType entityType, string? key)
+        {
+            Assert.False(VerificationRequest.TryCanonicalEntityKey(entityType, key, out var canonical, out var error));
+
+            Assert.Null(canonical);
+            Assert.False(string.IsNullOrWhiteSpace(error));
+        }
+
+        [Fact]
+        public void Create_NullEntityKey_StillThrowsArgumentNullException()
+        {
+            Assert.Throws<ArgumentNullException>(() =>
+                VerificationRequest.Create(VerificationEntityType.Airport, null!, new[] { "s" }, VerificationTrigger.Admin, "a", 0m, RequestedUtc));
+        }
+
         [Fact]
         public void Create_SourcesExactly100CharactersJoined_IsAccepted()
         {
