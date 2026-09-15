@@ -154,8 +154,9 @@ POST /admin/verification-requests
      → 400 when entityType is invalid; keys or sources is empty; keys has more than 1000 entries (a panel
        selection is at most one page of 200); a key is malformed for the entity type (named, e.g.
        "Keys[1]"); or a source is unregistered or does not support the entity type
-     // estimatedCostUsd is the sum of the selected sources' costPerRowUsd. Keys are not checked for
-     // existence: a missing entity completes as Error ("Entity no longer exists") when the job claims it.
+     // Not in the response: each queued request stores estimated_cost_usd, the sum of the selected
+     // sources' costPerRowUsd. Keys are not checked for existence: a missing entity completes as Error
+     // ("Entity no longer exists") when the job claims it.
 ```
 
 **Flight-started**
@@ -194,7 +195,7 @@ Each cycle:
 
 **When even recording a failure fails** (the save that would record a source error itself throws), the request is left `Running` with no attempt counted at all; the stuck-request reset in step 1 is what eventually reclaims it and is the only place its attempt gets counted. This case is included in the cycle's reported failure count.
 
-**Release failures don't lose the batch's outcome.** After every claimed request in the batch has been processed, the job releases the cached dataset of any source no open request still uses (§4.3), asking the queue for those source names in one query. When no source holds a dataset or a cached failure, the step is skipped, so an idle queue costs only the reset and the claim each poll. If that release itself fails, the heartbeat still reports the batch's real counts (marked failed), and the loop continues on its next poll — the batch was processed and saved before the release ran.
+**Release failures don't lose the batch's outcome.** After every claimed request in the batch has been processed, the job releases the cached dataset of any source no open request still uses (§4.3), asking the queue for those source names in one query. That query is skipped only when no source holds anything (a dataset, a load in flight, or a cached failure): while a dataset is kept inside its idle window (§4.3), every poll, an idle one included, still runs it, and once nothing is held an idle poll costs only the reset and the claim. If that release itself fails, the heartbeat still reports the batch's real counts (marked failed), and the loop continues on its next poll — the batch was processed and saved before the release ran.
 
 **Shutdown mid-batch returns the unfinished claims.** When the job's token is cancelled while a batch is being processed (a deploy or restart), the request in progress and every later claim go back to `Pending` with `started_utc` cleared and no attempt counted, instead of waiting out the 10-minute stuck reset, which would spend an attempt on each (and turn them straight into `Error` with `MaxAttempts = 1`). It is one set-based statement guarded by claim ownership (`status = 'Running'` and the claim's own `started_utc`), so a claim another worker has taken over, or an outcome already saved, is left alone. It runs on its own 5-second timeout, not the cancelled token, and is best effort: a failure is logged and the stuck reset remains the fallback.
 
@@ -211,7 +212,7 @@ The job's scope sets `IAdminContext` to a `system` actor, so its writes to the e
 **Shared lifecycle (both free sources).** `ourairports` and `mledoze` share one dataset-cache helper (download-once, reuse, release) and one download/parse pipeline, so this bookkeeping exists once rather than twice:
 - A dataset loads only when a claimed request uses that source.
 - It is reused for at most **24 hours** from when it was downloaded.
-- It is dropped (released) once no open (`Pending`/`Running`) request uses that source **and** it has gone unused — no lookup answered from it — for `Verification:IdleRelease` (default 30 min; `0` releases immediately, today's pre-#378 behaviour): a one-row check soon after another then reuses the download instead of repeating it. The idle period never extends the 24-hour maximum age above, and a cached failure is unaffected — it keeps only its own 60-second cooldown, never held for being recent. A load that finishes with no caller left waiting on it is stamped as last-used right then, so it still starts its idle clock even though nothing has asked for it since. The job checks after every cycle (§4.2).
+- It is dropped (released) once no open (`Pending`/`Running`) request uses that source **and** it has gone unused — no lookup answered from it — for `Verification:IdleRelease` (default 30 min; `0` releases immediately, today's pre-#378 behaviour): a one-row check soon after another then reuses the download instead of repeating it. The idle period never extends the 24-hour maximum age above — a dataset at or past it is dropped at the next release however recently it was used — and a cached failure is unaffected — it keeps only its own 60-second cooldown, never held for being recent. A load that finishes with no caller left waiting on it is stamped as last-used right then, so it still starts its idle clock even though nothing has asked for it since. The job checks after every cycle (§4.2).
 - Concurrent callers needing the same stale-or-absent dataset share **one** download rather than each starting their own; a caller's own cancellation only cancels its own wait on the shared result, never the download itself or any other caller still waiting on it.
 - A failed load is kept for a **60-second failure cooldown** (no longer than the first retry backoff), counted from when it failed: every lookup inside it gets the same source error with no new download, so a batch against a stalled or reshaped upstream downloads once, not once per request. The first lookup after the cooldown downloads again, and a release drops the failure. A load that ends cancelled is never kept.
 - A dataset that parses but yields **zero** usable rows — an empty body, or every record failing to parse — is a source error, never "not found for everything": `NotFound` means the dataset loaded and has rows, just not this one, and a silently empty dataset must never look like that for every single lookup.
@@ -230,18 +231,22 @@ POST /admin/verification-requests/{id}/accept-source
      → 204: writes only that source's differing columns (the `differences` entries whose sourceName is
        `source`) — parsed into the column's own type — to the entity, then Verify(adminId, source), one
        save. A column that already matched keeps our own formatting. The request itself is unchanged:
-       it stays Mismatch, as history.
+       it stays Mismatch, as history, so accepting the same source again is a 409 only if that source had
+       differences (those columns now hold its values); if it had none, it just verifies the entity again.
      → 400 if `source` is blank, is not one of the request's sources, or has no stored values
      → 404 if the request, or the entity, no longer exists
-     → 409 if the request is not Mismatch; a differing column's current value no longer equals the `ours`
-       value stored in `differences`, by the checked-column comparer's own rule, not raw string equality
-       (`İstanbul` still equals `Istanbul`); a value can't be parsed, or would leave a required column
-       empty; a new unique code (Airport/Airline Iata/Icao, Country Alpha3/NumericCode) already belongs
-       to another row — checked before saving, so a genuinely concurrent write can still land between
-       that check and the save and hit the database's own unique index as a 500, an accepted race; or
-       the merged row fails the entity's own admin-edit validator — the whole row, so a pre-existing
-       invalid value in a column the source never touched also blocks the accept, naming that column.
-       Country has no edit validator, so its formats and lengths go unchecked here.
+     → 409 if the request is not Mismatch; the entity has an open (Pending/Running) request — reference
+       rows carry no concurrency token, so that newer check could save its own outcome over the accepted
+       row; a differing column's current value no longer equals the `ours` value stored in `differences`,
+       by the checked-column comparer's own rule, not raw string equality (`İstanbul` still equals
+       `Istanbul`); a value can't be parsed, or would leave a required column empty; the merged row fails
+       the entity's own admin-edit validator — the whole row, so a pre-existing invalid value in a column
+       the source never touched also blocks the accept, naming that column; a new unique code
+       (Airport/Airline Iata/Icao, Country Alpha3/NumericCode) already belongs to another row; or a new
+       Airport/Airline CountryCode isn't one of our countries, which both tables reference by foreign key
+       (a source can know XK). The last two are looked up before saving, so a genuinely concurrent write
+       can still land between the lookup and the save and hit the database's own constraint as a 500, an
+       accepted race. Country has no edit validator, so its formats and lengths go unchecked here.
 
 POST /admin/verification-requests/{id}/retry
      → 202 { "queued": 1, "skipped": 0 }: a new Pending request, same entity type, key and sources,
