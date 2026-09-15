@@ -130,7 +130,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             return row is null ? VerificationSourceFetchResult.NotFound : VerificationSourceFetchResult.Found(ToValues(row));
         }
 
-        public void ReleaseCache() => _cache.Release();
+        public void ReleaseCache(TimeSpan idleRelease) => _cache.Release(idleRelease);
 
         public bool HasCachedData => _cache.HasCachedData;
 

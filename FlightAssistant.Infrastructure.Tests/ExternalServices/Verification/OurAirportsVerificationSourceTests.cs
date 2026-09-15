@@ -472,7 +472,7 @@ public class OurAirportsVerificationSourceTests
         await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("LHR", null));
         Assert.True(source.HasCachedData);
 
-        source.ReleaseCache();
+        source.ReleaseCache(TimeSpan.Zero);
         Assert.False(source.HasCachedData);
     }
 
@@ -576,7 +576,7 @@ public class OurAirportsVerificationSourceTests
         var source = Source(handler, clock);
 
         await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("LHR", null));
-        source.ReleaseCache();
+        source.ReleaseCache(TimeSpan.Zero);
         await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("LHR", null));
 
         Assert.Equal(2, handler.CallCount);
@@ -624,7 +624,7 @@ public class OurAirportsVerificationSourceTests
         var source = Source(handler, clock);
 
         await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("LHR", null));
-        source.ReleaseCache();
+        source.ReleaseCache(TimeSpan.Zero);
         await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("LHR", null));
 
         Assert.Equal(2, handler.CallCount);

@@ -34,7 +34,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
         public IVerificationSource? TryGet(string name) =>
             !string.IsNullOrWhiteSpace(name) && _byName.TryGetValue(name, out var source) ? source : null;
 
-        public void ReleaseUnused(IReadOnlyCollection<string> sourceNamesInUse)
+        public void ReleaseUnused(IReadOnlyCollection<string> sourceNamesInUse, TimeSpan idleRelease)
         {
             ArgumentNullException.ThrowIfNull(sourceNamesInUse);
             var inUse = new HashSet<string>(sourceNamesInUse, StringComparer.Ordinal);
@@ -42,7 +42,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             foreach (var source in Sources)
             {
                 if (!inUse.Contains(source.Name))
-                    source.ReleaseCache();
+                    source.ReleaseCache(idleRelease);
             }
         }
     }

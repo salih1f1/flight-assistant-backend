@@ -149,9 +149,23 @@ public class VerificationCycleRunnerTests
         await RunCycleAsync(registry);
 
         await _requests.Received(1).GetSourceNamesInUseAsync(Arg.Any<CancellationToken>());
-        Assert.Equal(new[] { "still-used", "not-registered" }, Assert.Single(registry.ReleaseCalls));
+        Assert.Equal(new[] { "still-used", "not-registered" }, Assert.Single(registry.ReleaseCalls).SourceNamesInUse);
         Assert.Equal(1, unused.ReleaseCount);
         Assert.Equal(0, stillUsed.ReleaseCount);
+    }
+
+    /// <summary>#378: the release hands the registry the configured idle period, so an unused source's
+    /// dataset is kept that long after its last lookup.</summary>
+    [Fact]
+    public async Task RunCycleAsync_ReleasesWithTheConfiguredIdlePeriod()
+    {
+        ClaimAirports();
+        var cached = new FakeVerificationSource("ourairports", VerificationEntityType.Airport, VerificationSourceFetchResult.NotFound) { HasCachedData = true };
+        var registry = new FakeVerificationSourceRegistry(cached);
+
+        await RunCycleAsync(registry, new FakeJobOptions(IdleRelease: TimeSpan.FromMinutes(45)));
+
+        Assert.Equal(TimeSpan.FromMinutes(45), Assert.Single(registry.ReleaseCalls).IdleRelease);
     }
 
     /// <summary>Final fix wave, C3: with nothing claimed and no source holding a dataset or a failure,

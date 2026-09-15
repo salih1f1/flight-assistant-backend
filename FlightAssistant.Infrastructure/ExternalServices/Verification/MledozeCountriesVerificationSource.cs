@@ -117,7 +117,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             return VerificationSourceFetchResult.Found(ToValues(row));
         }
 
-        public void ReleaseCache() => _cache.Release();
+        public void ReleaseCache(TimeSpan idleRelease) => _cache.Release(idleRelease);
 
         public bool HasCachedData => _cache.HasCachedData;
 

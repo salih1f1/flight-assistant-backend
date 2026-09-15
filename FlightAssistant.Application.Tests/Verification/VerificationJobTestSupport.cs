@@ -5,8 +5,8 @@ using FlightAssistant.Domain.Verification.Enums;
 
 namespace FlightAssistant.Application.Tests.Verification;
 
-/// <summary>Job settings for a test.</summary>
-internal sealed record FakeJobOptions(int BatchSize = 10, int MaxAttempts = 3) : IVerificationJobOptions;
+/// <summary>Job settings for a test. <see cref="IdleRelease"/> defaults to zero: release at once.</summary>
+internal sealed record FakeJobOptions(int BatchSize = 10, int MaxAttempts = 3, TimeSpan IdleRelease = default) : IVerificationJobOptions;
 
 /// <summary>A source whose answer the test decides, recording every lookup and release.</summary>
 internal sealed class FakeVerificationSource : IVerificationSource
@@ -46,7 +46,9 @@ internal sealed class FakeVerificationSource : IVerificationSource
         return _lookup(key, ct);
     }
 
-    public void ReleaseCache()
+    /// <summary>Releases whatever the idle period: the idle rule is Infrastructure's
+    /// <c>VerificationDatasetCache</c>, covered by its own tests.</summary>
+    public void ReleaseCache(TimeSpan idleRelease)
     {
         ReleaseCount++;
         HasCachedData = false;
@@ -66,15 +68,15 @@ internal sealed class FakeVerificationSourceRegistry : IVerificationSourceRegist
 
     public IReadOnlyCollection<IVerificationSource> Sources { get; }
     public bool AnySourceHasCachedData => Sources.Any(s => s.HasCachedData);
-    public List<IReadOnlyCollection<string>> ReleaseCalls { get; } = new();
+    public List<(IReadOnlyCollection<string> SourceNamesInUse, TimeSpan IdleRelease)> ReleaseCalls { get; } = new();
 
     public IVerificationSource? TryGet(string name) => _byName.GetValueOrDefault(name);
 
-    public void ReleaseUnused(IReadOnlyCollection<string> sourceNamesInUse)
+    public void ReleaseUnused(IReadOnlyCollection<string> sourceNamesInUse, TimeSpan idleRelease)
     {
-        ReleaseCalls.Add(sourceNamesInUse.ToList());
+        ReleaseCalls.Add((sourceNamesInUse.ToList(), idleRelease));
         foreach (var source in Sources.Where(s => !sourceNamesInUse.Contains(s.Name)))
-            source.ReleaseCache();
+            source.ReleaseCache(idleRelease);
     }
 }
 

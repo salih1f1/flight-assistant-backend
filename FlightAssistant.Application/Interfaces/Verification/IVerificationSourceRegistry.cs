@@ -34,13 +34,18 @@ namespace FlightAssistant.Application.Interfaces.Verification
         bool AnySourceHasCachedData { get; }
 
         /// <summary>
-        /// Calls <see cref="IVerificationSource.ReleaseCache"/> on every registered source whose
-        /// <see cref="IVerificationSource.Name"/> is not in <paramref name="sourceNamesInUse"/>. A
+        /// Calls <see cref="IVerificationSource.ReleaseCache"/> with <paramref name="idleRelease"/> on
+        /// every registered source whose <see cref="IVerificationSource.Name"/> is not in
+        /// <paramref name="sourceNamesInUse"/>; a source in use is never released, however idle. A
         /// source already released (or never loaded) is left alone -- releasing is idempotent.
         /// Safe to call every job cycle regardless of whether anything actually needs releasing.
         /// </summary>
         /// <param name="sourceNamesInUse">Source names named by at least one open (Pending/Running)
         /// request, gathered by the caller from <c>IVerificationRequestRepository</c>.</param>
-        void ReleaseUnused(IReadOnlyCollection<string> sourceNamesInUse);
+        /// <param name="idleRelease">How long an unused source's dataset must have gone without a
+        /// lookup to be dropped (<see cref="Application.Verification.IVerificationJobOptions.IdleRelease"/>);
+        /// <see cref="TimeSpan.Zero"/> drops it at once. Passed by the caller, so the registry depends
+        /// on nothing but its sources.</param>
+        void ReleaseUnused(IReadOnlyCollection<string> sourceNamesInUse, TimeSpan idleRelease);
     }
 }

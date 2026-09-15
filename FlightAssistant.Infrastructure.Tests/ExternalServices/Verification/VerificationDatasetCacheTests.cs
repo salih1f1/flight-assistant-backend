@@ -15,6 +15,9 @@ public class VerificationDatasetCacheTests
     private static VerificationDatasetCache<string> NewCache(TimeProvider timeProvider) =>
         new(timeProvider, TimeSpan.FromHours(24));
 
+    /// <summary>The production default of <c>Verification:IdleRelease</c> (#378).</summary>
+    private static readonly TimeSpan IdleRelease = TimeSpan.FromMinutes(30);
+
     [Fact]
     public async Task GetAsync_SecondCallWithinMaxAge_DoesNotReload()
     {
@@ -56,7 +59,7 @@ public class VerificationDatasetCacheTests
         Task<string> Load(CancellationToken ct) { loadCount++; return Task.FromResult("v" + loadCount); }
 
         await cache.GetAsync(Load, default);
-        cache.Release();
+        cache.Release(TimeSpan.Zero);
         await cache.GetAsync(Load, default);
 
         Assert.Equal(2, loadCount);
@@ -177,13 +180,13 @@ public class VerificationDatasetCacheTests
 
         await cache.GetAsync(_ => Task.FromResult("value"), default);
         Assert.True(cache.HasCachedData);
-        cache.Release();
+        cache.Release(TimeSpan.Zero);
         Assert.False(cache.HasCachedData);
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => cache.GetAsync(_ => Task.FromException<string>(new InvalidOperationException("boom")), default));
         Assert.True(cache.HasCachedData); // the failure is held for its cooldown
-        cache.Release();
+        cache.Release(TimeSpan.Zero);
         Assert.False(cache.HasCachedData);
     }
 
@@ -243,7 +246,7 @@ public class VerificationDatasetCacheTests
             : Task.FromResult("recovered");
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => cache.GetAsync(Load, default));
-        cache.Release();
+        cache.Release(TimeSpan.Zero);
 
         Assert.Equal("recovered", await cache.GetAsync(Load, default));
         Assert.Equal(2, loadCount);
@@ -294,7 +297,7 @@ public class VerificationDatasetCacheTests
         Task<string> Load(CancellationToken ct) => ++loadCount == 1 ? older.Task : Task.FromResult("newer");
 
         var olderWait = cache.GetAsync(Load, default);
-        cache.Release();
+        cache.Release(TimeSpan.Zero);
         Assert.Equal("newer", await cache.GetAsync(Load, default));
 
         older.SetException(new InvalidOperationException("late"));
@@ -311,5 +314,184 @@ public class VerificationDatasetCacheTests
 
         Assert.Throws<ArgumentOutOfRangeException>(() => new VerificationDatasetCache<string>(
             TimeProvider.System, TimeSpan.FromHours(24), VerificationRetryBackoff.AfterFirstAttempt + TimeSpan.FromTicks(1)));
+    }
+
+    // ── Idle release (#378) ──────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Release_ADatasetUsedLessThanTheIdlePeriodAgo_IsKept()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+        var loadCount = 0;
+        Task<string> Load(CancellationToken ct) { loadCount++; return Task.FromResult("v" + loadCount); }
+
+        await cache.GetAsync(Load, default);
+        clock.Advance(TimeSpan.FromMinutes(20));
+        await cache.GetAsync(Load, default); // a later lookup restarts the idle period
+        clock.Advance(IdleRelease - TimeSpan.FromTicks(1));
+        cache.Release(IdleRelease);
+
+        Assert.True(cache.HasCachedData);
+        Assert.Equal("v1", await cache.GetAsync(Load, default));
+        Assert.Equal(1, loadCount);
+    }
+
+    [Fact]
+    public async Task Release_ADatasetIdleForLongerThanTheIdlePeriod_IsDropped_AndTheNextCallLoadsAgain()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+        var loadCount = 0;
+        Task<string> Load(CancellationToken ct) { loadCount++; return Task.FromResult("v" + loadCount); }
+
+        await cache.GetAsync(Load, default);
+        clock.Advance(IdleRelease + TimeSpan.FromMinutes(1));
+        cache.Release(IdleRelease);
+
+        Assert.False(cache.HasCachedData);
+        Assert.Equal("v2", await cache.GetAsync(Load, default));
+        Assert.Equal(2, loadCount);
+    }
+
+    [Fact]
+    public async Task Release_ADatasetIdleForExactlyTheIdlePeriod_IsDropped()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+
+        await cache.GetAsync(_ => Task.FromResult("value"), default);
+        clock.Advance(IdleRelease);
+        cache.Release(IdleRelease);
+
+        Assert.False(cache.HasCachedData);
+    }
+
+    [Fact]
+    public async Task Release_WithAZeroIdlePeriod_DropsADatasetUsedThisInstant_AndALoadInFlight()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+
+        await cache.GetAsync(_ => Task.FromResult("value"), default);
+        cache.Release(TimeSpan.Zero);
+        Assert.False(cache.HasCachedData);
+
+        var loading = new TaskCompletionSource<string>();
+        var waiting = cache.GetAsync(_ => loading.Task, default);
+        cache.Release(TimeSpan.Zero);
+        Assert.False(cache.HasCachedData);
+
+        // The caller already waiting still gets its dataset; it just isn't kept.
+        loading.SetResult("late");
+        Assert.Equal("late", await waiting);
+        Assert.False(cache.HasCachedData);
+    }
+
+    [Fact]
+    public async Task Release_WithAZeroIdlePeriod_DropsADataset_EvenAfterTheClockSteppedBackSinceItsLastUse()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+
+        await cache.GetAsync(_ => Task.FromResult("value"), default);
+        clock.AdjustTime(clock.GetUtcNow() - TimeSpan.FromSeconds(1)); // a wall clock corrected backwards
+        cache.Release(TimeSpan.Zero);
+
+        Assert.False(cache.HasCachedData);
+    }
+
+    [Fact]
+    public void Release_WithANegativeIdlePeriod_Throws()
+    {
+        var cache = NewCache(new FakeTimeProvider(DateTimeOffset.UtcNow));
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => cache.Release(TimeSpan.FromTicks(-1)));
+    }
+
+    [Fact]
+    public async Task Release_ALoadInFlight_IsKept_HoweverLongItHasRun()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+        var loading = new TaskCompletionSource<string>();
+        var loadCount = 0;
+        Task<string> Load(CancellationToken ct) { loadCount++; return loading.Task; }
+
+        var waiting = cache.GetAsync(Load, default);
+        clock.Advance(IdleRelease + TimeSpan.FromMinutes(1));
+        cache.Release(IdleRelease);
+
+        Assert.True(cache.HasCachedData);
+        loading.SetResult("value");
+        Assert.Equal("value", await waiting);
+        Assert.Equal("value", await cache.GetAsync(Load, default));
+        Assert.Equal(1, loadCount);
+    }
+
+    [Fact]
+    public async Task Release_ALoadedDataset_IsIdleFromWhenItsLoadFinished_NotFromWhenItStarted()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+        var loading = new TaskCompletionSource<string>();
+
+        var waiting = cache.GetAsync(_ => loading.Task, default);
+        clock.Advance(TimeSpan.FromMinutes(20));
+        loading.SetResult("value"); // answers the waiting call now: its last use
+        Assert.Equal("value", await waiting);
+
+        clock.Advance(IdleRelease - TimeSpan.FromTicks(1));
+        cache.Release(IdleRelease);
+        Assert.True(cache.HasCachedData);
+
+        clock.Advance(TimeSpan.FromTicks(1));
+        cache.Release(IdleRelease);
+        Assert.False(cache.HasCachedData);
+    }
+
+    /// <summary>A cached failure is not kept for being recent, even right after a lookup inside its
+    /// cooldown: release drops it, and the next call loads again. (Its cooldown expiring on its own is
+    /// <see cref="GetAsync_OnceTheFailureCooldownHasPassed_LoadsAgain"/>.)</summary>
+    [Fact]
+    public async Task Release_ACachedFailure_IsDroppedAtOnce_NotKeptForTheIdlePeriod()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+        var loadCount = 0;
+        Task<string> Load(CancellationToken ct) => ++loadCount == 1
+            ? Task.FromException<string>(new InvalidOperationException("boom"))
+            : Task.FromResult("recovered");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => cache.GetAsync(Load, default));
+        clock.Advance(TimeSpan.FromSeconds(30));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => cache.GetAsync(Load, default));
+        cache.Release(IdleRelease);
+
+        Assert.False(cache.HasCachedData);
+        Assert.Equal("recovered", await cache.GetAsync(Load, default));
+        Assert.Equal(2, loadCount);
+    }
+
+    [Fact]
+    public async Task GetAsync_ADatasetUsedTooOftenToGoIdle_IsStillDownloadedAgainAtItsMaximumAge()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var cache = NewCache(clock);
+        var loadCount = 0;
+        Task<string> Load(CancellationToken ct) { loadCount++; return Task.FromResult("v" + loadCount); }
+
+        await cache.GetAsync(Load, default);
+        for (var i = 1; i < 144; i++) // a lookup and a release every 10 minutes, for 23h50m
+        {
+            clock.Advance(TimeSpan.FromMinutes(10));
+            Assert.Equal("v1", await cache.GetAsync(Load, default));
+            cache.Release(IdleRelease);
+            Assert.True(cache.HasCachedData);
+        }
+
+        clock.Advance(TimeSpan.FromMinutes(10)); // 24 hours after the download
+        Assert.Equal("v2", await cache.GetAsync(Load, default));
+        Assert.Equal(2, loadCount);
     }
 }
