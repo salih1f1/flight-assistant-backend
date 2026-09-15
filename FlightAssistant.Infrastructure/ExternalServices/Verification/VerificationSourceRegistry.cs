@@ -29,6 +29,8 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
 
         public IReadOnlyCollection<IVerificationSource> Sources { get; }
 
+        public bool AnySourceHasCachedData => Sources.Any(source => source.HasCachedData);
+
         public IVerificationSource? TryGet(string name) =>
             !string.IsNullOrWhiteSpace(name) && _byName.TryGetValue(name, out var source) ? source : null;
 

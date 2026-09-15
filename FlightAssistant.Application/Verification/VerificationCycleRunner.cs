@@ -12,6 +12,8 @@ namespace FlightAssistant.Application.Verification
         /// releases source caches no open request uses.</summary>
         /// <exception cref="VerificationCycleFailedException">The batch was processed, then releasing
         /// source caches failed; carries the batch's counts.</exception>
+        /// <exception cref="OperationCanceledException"><paramref name="ct"/> was cancelled. Claims the
+        /// cycle had not finished are first returned to Pending, best effort.</exception>
         Task<VerificationCycleResult> RunCycleAsync(CancellationToken ct = default);
     }
 
@@ -32,8 +34,8 @@ namespace FlightAssistant.Application.Verification
     /// <summary>
     /// Runs one verification cycle. Resolved from the job's cycle scope (which carries the system
     /// actor, set by <c>ReferenceVerificationBackgroundService</c>), where it only resets stuck
-    /// requests and reads which sources open requests use: nothing is tracked or saved on that
-    /// context.
+    /// requests, reads which sources open requests use and returns unfinished claims on shutdown:
+    /// nothing is tracked or saved on that context.
     ///
     /// <para>
     /// <b>Scopes (controller ruling).</b> The batch is claimed in a scope of its own, and each claimed
@@ -46,7 +48,17 @@ namespace FlightAssistant.Application.Verification
     /// <para>
     /// <b>Isolation.</b> An exception while processing one request never stops the batch: it is logged
     /// and recorded as a source error for that request. Only cancellation of the cycle's token
-    /// propagates, leaving the unprocessed requests Running for the stuck-request reset.
+    /// propagates. Before it does, the claims the cycle had not finished (the one in progress and every
+    /// later one) are returned to Pending without counting an attempt, so a deploy or restart doesn't
+    /// spend an attempt on each of them. That step is best effort, on a short timeout of its own
+    /// (<see cref="ReturnClaimsTimeout"/>): if it fails, those requests stay Running until the
+    /// stuck-request reset, which counts the attempt.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Releasing datasets.</b> After the batch, the cycle drops the cached dataset of every source no
+    /// open request uses. When no source holds anything, that step is skipped, so an idle queue costs
+    /// no query for it.
     /// </para>
     /// </summary>
     public sealed class VerificationCycleRunner : IVerificationCycleRunner
@@ -55,6 +67,10 @@ namespace FlightAssistant.Application.Verification
         /// reset counts an attempt, and returns it to Pending, or completes it as Error when that was
         /// its last attempt.</summary>
         public static readonly TimeSpan StuckAfter = TimeSpan.FromMinutes(10);
+
+        /// <summary>How long returning unfinished claims to Pending may take once the cycle is
+        /// cancelled. Short, because the host is shutting down; the stuck-request reset is the fallback.</summary>
+        public static readonly TimeSpan ReturnClaimsTimeout = TimeSpan.FromSeconds(5);
 
         private readonly IVerificationRequestRepository _requests;
         private readonly IServiceScopeFactory _scopeFactory;
@@ -103,24 +119,33 @@ namespace FlightAssistant.Application.Verification
             var failed = 0;
             var lost = 0;
             var unrecorded = 0;
-            foreach (var claim in claims)
+            var next = 0;
+            try
             {
-                ct.ThrowIfCancellationRequested();
-
-                switch (await ProcessOneAsync(claim, cycleId, ct))
+                for (; next < claims.Count; next++)
                 {
-                    case VerificationProcessOutcome.RetryScheduled:
-                    case VerificationProcessOutcome.Error:
-                        failed++;
-                        break;
-                    case VerificationProcessOutcome.ClaimLost:
-                        lost++;
-                        break;
-                    case VerificationProcessOutcome.FailureUnrecorded:
-                        failed++;
-                        unrecorded++;
-                        break;
+                    ct.ThrowIfCancellationRequested();
+
+                    switch (await ProcessOneAsync(claims[next], cycleId, ct))
+                    {
+                        case VerificationProcessOutcome.RetryScheduled:
+                        case VerificationProcessOutcome.Error:
+                            failed++;
+                            break;
+                        case VerificationProcessOutcome.ClaimLost:
+                            lost++;
+                            break;
+                        case VerificationProcessOutcome.FailureUnrecorded:
+                            failed++;
+                            unrecorded++;
+                            break;
+                    }
                 }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                await ReturnUnfinishedClaimsAsync(claims.Skip(next).ToList());
+                throw;
             }
 
             var result = new VerificationCycleResult(reset.ReturnedToPending, reset.Abandoned, claims.Count, failed, lost, unrecorded);
@@ -200,18 +225,42 @@ namespace FlightAssistant.Application.Verification
         }
 
         /// <summary>
+        /// On a cancelled cycle, returns the claims it had not finished to Pending with no attempt
+        /// counted, in one repository call guarded by each claim's own <c>StartedUtc</c>, so a claim
+        /// another worker has taken over (or an outcome that was saved after all) is not touched. Runs
+        /// on its own <see cref="ReturnClaimsTimeout"/>, never on the cancelled token. A failure is
+        /// logged and swallowed: the stuck-request reset still reclaims those requests.
+        /// </summary>
+        private async Task ReturnUnfinishedClaimsAsync(IReadOnlyCollection<VerificationClaim> unfinished)
+        {
+            if (unfinished.Count == 0) return;
+
+            try
+            {
+                using var timeout = new CancellationTokenSource(ReturnClaimsTimeout, _timeProvider);
+                var returned = await _requests.ReturnClaimsToPendingAsync(unfinished, timeout.Token);
+                _logger.LogInformation(
+                    "Verification cycle cancelled: returned {Returned} of {Unfinished} unfinished claim(s) to Pending without counting an attempt.",
+                    returned, unfinished.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Verification cycle cancelled: could not return {Unfinished} unfinished claim(s) to Pending; the stuck-request reset reclaims them after {StuckAfter}, counting an attempt.",
+                    unfinished.Count, StuckAfter);
+            }
+        }
+
+        /// <summary>
         /// Drops the cached dataset of every source no open request uses (spec §4.3). The registry
-        /// has no EF dependency (controller ruling); this is where the queue is asked.
+        /// has no EF dependency (controller ruling); this is where the queue is asked, in one query,
+        /// and only when some source holds something to drop.
         /// </summary>
         private async Task ReleaseUnusedSourcesAsync(CancellationToken ct)
         {
-            var inUse = new List<string>();
-            foreach (var source in _registry.Sources)
-            {
-                if (await _requests.AnyOpenRequestUsesSourceAsync(source.Name, ct))
-                    inUse.Add(source.Name);
-            }
+            if (!_registry.AnySourceHasCachedData) return;
 
+            var inUse = await _requests.GetSourceNamesInUseAsync(ct);
             _registry.ReleaseUnused(inUse);
         }
     }

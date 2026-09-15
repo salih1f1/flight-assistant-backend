@@ -119,6 +119,19 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             return task.WaitAsync(ct);
         }
 
+        /// <summary>Whether anything is held for <see cref="Release"/> to drop: a loaded dataset (even
+        /// one past its maximum age), a load in flight, or a failed load. No I/O.</summary>
+        public bool HasCachedData
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _loadTask is not null;
+                }
+            }
+        }
+
         /// <summary>Drops the cached dataset or cached failure, if any, so the next
         /// <see cref="GetAsync"/> call downloads again. Safe to call when nothing is cached.</summary>
         public void Release()

@@ -281,7 +281,11 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         }
         Assert.Single(await ClaimOnAnotherWorkerAsync(T0.AddMinutes(-11), batchSize: 1));
 
-        var mledoze = new FakeSource("mledoze", VerificationEntityType.Country, _ => Found(VerificationCheckedColumns.Project(UnitedKingdom())));
+        // Holding the dataset an earlier cycle loaded, so there is something to release.
+        var mledoze = new FakeSource("mledoze", VerificationEntityType.Country, _ => Found(VerificationCheckedColumns.Project(UnitedKingdom())))
+        {
+            HasCachedData = true
+        };
         await using var job = BuildJob(new IVerificationSource[] { mledoze }, maxAttempts: 3);
 
         var result = await RunCycleAsync(job);
@@ -340,6 +344,51 @@ public class VerificationCyclePostgresTests : PostgresTestBase
             Assert.StartsWith("ourairports: ", r.Error);
         });
         Assert.Single(rows.Select(r => r.Error).Distinct());
+    }
+
+    // ── Shutdown mid-batch ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Final fix wave, C4: the host stops while the second of three claimed requests is being looked
+    /// up. The first keeps its saved outcome; the second and third go back to Pending with no attempt
+    /// counted and no claim stamp, so the next cycle claims them at once instead of the stuck-request
+    /// reset spending an attempt on each after 10 minutes.
+    /// </summary>
+    [Fact]
+    public async Task RunCycle_CancelledMidBatch_ReturnsTheUnfinishedClaimsToPending_WithoutAnAttempt_AndKeepsTheFinishedOutcome()
+    {
+        await SeedAsync(UnitedKingdom(), France(), Country.Create("DE", "Germany", "DEU", 276, "Europe", "Western Europe"));
+        var gb = await EnqueueAsync(VerificationEntityType.Country, "GB", "mledoze", requestedUtc: T0.AddHours(-3));
+        var fr = await EnqueueAsync(VerificationEntityType.Country, "FR", "mledoze", requestedUtc: T0.AddHours(-2));
+        var de = await EnqueueAsync(VerificationEntityType.Country, "DE", "mledoze", requestedUtc: T0.AddHours(-1));
+
+        using var shutdown = new CancellationTokenSource();
+        var mledoze = new FakeSource("mledoze", VerificationEntityType.Country, key =>
+        {
+            if (key.CountryCode == "FR")
+            {
+                shutdown.Cancel();
+                shutdown.Token.ThrowIfCancellationRequested();
+            }
+            return Task.FromResult(Found(VerificationCheckedColumns.Project(UnitedKingdom())));
+        });
+        await using var job = BuildJob(new IVerificationSource[] { mledoze });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => RunCycleAsync(job, shutdown.Token));
+
+        await using var verify = CreateDbContext();
+        var rows = await verify.VerificationRequests.AsNoTracking().ToDictionaryAsync(r => r.Id);
+        Assert.Equal(VerificationRequestStatus.Verified, rows[gb].Status);
+        foreach (var id in new[] { fr, de })
+        {
+            Assert.Equal(VerificationRequestStatus.Pending, rows[id].Status);
+            Assert.Null(rows[id].StartedUtc);
+            Assert.Equal(0, rows[id].Attempts);
+            Assert.Null(rows[id].Error);
+            Assert.Null(rows[id].CompletedUtc);
+        }
+
+        Assert.Equal(new[] { fr, de }, (await ClaimOnAnotherWorkerAsync(T0, batchSize: 10)).Select(r => r.Id));
     }
 
     // ── Lost claims ─────────────────────────────────────────────────────────
@@ -452,10 +501,10 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
     }
 
-    private static async Task<VerificationCycleResult> RunCycleAsync(ServiceProvider job)
+    private static async Task<VerificationCycleResult> RunCycleAsync(ServiceProvider job, CancellationToken ct = default)
     {
         using var cycleScope = job.CreateScope();
-        return await cycleScope.ServiceProvider.GetRequiredService<IVerificationCycleRunner>().RunCycleAsync();
+        return await cycleScope.ServiceProvider.GetRequiredService<IVerificationCycleRunner>().RunCycleAsync(ct);
     }
 
     private async Task SeedAsync(params object[] entities)
@@ -565,13 +614,22 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         public List<VerificationSourceLookupKey> Lookups { get; } = new();
         public int ReleaseCount { get; private set; }
 
+        /// <summary>Like a real source: set by a lookup, cleared by a release; a test can set it to
+        /// stand for a dataset an earlier cycle loaded.</summary>
+        public bool HasCachedData { get; set; }
+
         public Task<VerificationSourceFetchResult> LookupAsync(
             VerificationEntityType entityType, VerificationSourceLookupKey key, CancellationToken ct = default)
         {
             Lookups.Add(key);
+            HasCachedData = true;
             return _lookup(key);
         }
 
-        public void ReleaseCache() => ReleaseCount++;
+        public void ReleaseCache()
+        {
+            ReleaseCount++;
+            HasCachedData = false;
+        }
     }
 }

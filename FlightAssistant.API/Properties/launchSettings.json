@@ -17,7 +17,8 @@
       "applicationUrl": "http://localhost:5100",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "FlightSync__Enabled": "false"
+        "FlightSync__Enabled": "false",
+        "Verification__Enabled": "false"
       }
     },
     "https": {
@@ -28,7 +29,8 @@
       "applicationUrl": "https://localhost:7034;http://localhost:5100",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "FlightSync__Enabled": "false"
+        "FlightSync__Enabled": "false",
+        "Verification__Enabled": "false"
       }
     },
     "IIS Express": {
@@ -37,7 +39,8 @@
       "launchUrl": "swagger",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "FlightSync__Enabled": "false"
+        "FlightSync__Enabled": "false",
+        "Verification__Enabled": "false"
       }
     }
   }

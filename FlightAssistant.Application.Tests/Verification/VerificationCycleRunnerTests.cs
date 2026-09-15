@@ -34,6 +34,7 @@ public class VerificationCycleRunnerTests
         // A sealed record gets no auto-value from NSubstitute; nothing is stuck unless a test says so.
         _requests.ResetStuckRunningAsync(default, default, default, default)
             .ReturnsForAnyArgs(new VerificationStuckResetResult(ReturnedToPending: 0, Abandoned: 0));
+        _requests.GetSourceNamesInUseAsync(default).ReturnsForAnyArgs(Array.Empty<string>());
     }
 
     private static Airport Airport(string iata) => Domain.ReferenceData.Entities.Airport.Create(iata, null, $"{iata} Airport", "City", "GB");
@@ -137,19 +138,37 @@ public class VerificationCycleRunnerTests
     }
 
     [Fact]
-    public async Task RunCycleAsync_ReleasesTheCacheOfEverySourceNoOpenRequestUses()
+    public async Task RunCycleAsync_WhenASourceHoldsData_AsksForTheSourcesInUseOnce_AndReleasesEverySourceNoOpenRequestUses()
     {
         ClaimAirports();
-        _requests.AnyOpenRequestUsesSourceAsync("still-used", Arg.Any<CancellationToken>()).Returns(true);
-        var unused = new FakeVerificationSource("unused", VerificationEntityType.Airport, VerificationSourceFetchResult.NotFound);
-        var stillUsed = new FakeVerificationSource("still-used", VerificationEntityType.Airport, VerificationSourceFetchResult.NotFound);
+        _requests.GetSourceNamesInUseAsync(Arg.Any<CancellationToken>()).Returns(new[] { "still-used", "not-registered" });
+        var unused = new FakeVerificationSource("unused", VerificationEntityType.Airport, VerificationSourceFetchResult.NotFound) { HasCachedData = true };
+        var stillUsed = new FakeVerificationSource("still-used", VerificationEntityType.Airport, VerificationSourceFetchResult.NotFound) { HasCachedData = true };
         var registry = new FakeVerificationSourceRegistry(unused, stillUsed);
 
         await RunCycleAsync(registry);
 
-        Assert.Equal(new[] { "still-used" }, Assert.Single(registry.ReleaseCalls));
+        await _requests.Received(1).GetSourceNamesInUseAsync(Arg.Any<CancellationToken>());
+        Assert.Equal(new[] { "still-used", "not-registered" }, Assert.Single(registry.ReleaseCalls));
         Assert.Equal(1, unused.ReleaseCount);
         Assert.Equal(0, stillUsed.ReleaseCount);
+    }
+
+    /// <summary>Final fix wave, C3: with nothing claimed and no source holding a dataset or a failure,
+    /// releasing has nothing to drop, so the cycle doesn't ask the queue which sources are in use.</summary>
+    [Fact]
+    public async Task RunCycleAsync_AnIdleQueueWithNothingCached_RunsNoSourcesInUseQuery()
+    {
+        ClaimAirports();
+        var registry = new FakeVerificationSourceRegistry(
+            new FakeVerificationSource("ourairports", VerificationEntityType.Airport, VerificationSourceFetchResult.NotFound),
+            new FakeVerificationSource("mledoze", VerificationEntityType.Country, VerificationSourceFetchResult.NotFound));
+
+        var result = await RunCycleAsync(registry);
+
+        Assert.Equal(new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 0, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0), result);
+        await _requests.DidNotReceive().GetSourceNamesInUseAsync(Arg.Any<CancellationToken>());
+        Assert.Empty(registry.ReleaseCalls);
     }
 
     [Fact]
@@ -186,6 +205,58 @@ public class VerificationCycleRunnerTests
         Assert.All(claimed, r => Assert.Equal(0, r.Attempts));
         await _requests.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
         Assert.Empty(registry.ReleaseCalls);
+        // Both claims are unfinished (the first was interrupted): both go back to Pending.
+        await _requests.Received(1).ReturnClaimsToPendingAsync(
+            Arg.Is<IReadOnlyCollection<VerificationClaim>>(c => c.Select(x => x.RequestId).SequenceEqual(new[] { 1L, 2L })),
+            Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>Final fix wave, C4: a restart mid-batch must not spend an attempt on every claim the
+    /// cycle never reached. The finished request keeps its outcome; the rest go back to Pending, on a
+    /// token of their own (the cycle's is already cancelled).</summary>
+    [Fact]
+    public async Task RunCycleAsync_CancelledAfterTheFirstRequest_ReturnsOnlyTheUnfinishedClaimsToPending_OnATokenOfItsOwn()
+    {
+        var claimed = ClaimAirports((1, "11"), (2, "22"), (3, "33"));
+        _airports.GetByIdAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(Airport("AAA"));
+        using var cts = new CancellationTokenSource();
+        var stopsTheHost = new FakeVerificationSource("ourairports", VerificationEntityType.Airport, (_, _) =>
+        {
+            cts.Cancel(); // shutdown starts during the first lookup, which still completes
+            return Task.FromResult(VerificationSourceFetchResult.NotFound);
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => RunCycleAsync(new FakeVerificationSourceRegistry(stopsTheHost), ct: cts.Token));
+
+        Assert.Equal(VerificationRequestStatus.NotFound, claimed[0].Status);
+        Assert.Single(stopsTheHost.Lookups);
+        await _requests.Received(1).ReturnClaimsToPendingAsync(
+            Arg.Is<IReadOnlyCollection<VerificationClaim>>(c =>
+                c.SequenceEqual(new[] { new VerificationClaim(2, ClaimedAt), new VerificationClaim(3, ClaimedAt) })),
+            Arg.Is<CancellationToken>(t => t.CanBeCanceled && !t.IsCancellationRequested));
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_CancelledAndReturningTheClaimsFails_StillPropagatesTheCancellation()
+    {
+        ClaimAirports((1, "11"));
+        _airports.GetByIdAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(Airport("AAA"));
+        _requests.ReturnClaimsToPendingAsync(Arg.Any<IReadOnlyCollection<VerificationClaim>>(), Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromException<int>(new TimeoutException("database gone")));
+        using var cts = new CancellationTokenSource();
+        var cancelling = new FakeVerificationSource("ourairports", VerificationEntityType.Airport, (_, ct) =>
+        {
+            cts.Cancel();
+            ct.ThrowIfCancellationRequested();
+            return Task.FromResult(VerificationSourceFetchResult.NotFound);
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => RunCycleAsync(new FakeVerificationSourceRegistry(cancelling), ct: cts.Token));
+
+        await _requests.Received(1).ReturnClaimsToPendingAsync(
+            Arg.Any<IReadOnlyCollection<VerificationClaim>>(), Arg.Any<CancellationToken>());
     }
 
     /// <summary>Releasing caches is the last step. If it throws, the batch's outcomes are already saved,
@@ -197,8 +268,8 @@ public class VerificationCycleRunnerTests
         var airport = Airport("AAA");
         _airports.GetByIdAsync(11, Arg.Any<CancellationToken>()).Returns(airport);
         var cause = new InvalidOperationException("database gone");
-        _requests.AnyOpenRequestUsesSourceAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(_ => Task.FromException<bool>(cause));
+        _requests.GetSourceNamesInUseAsync(Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromException<IReadOnlyCollection<string>>(cause));
 
         var ex = await Assert.ThrowsAsync<VerificationCycleFailedException>(
             () => RunCycleAsync(new FakeVerificationSourceRegistry(MatchingOurAirports())));

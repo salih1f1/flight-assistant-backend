@@ -47,6 +47,22 @@ public class VerificationSourceDownloaderTests
     /// <summary>Upstream text that must never reach a stored source error (final fix wave, C1).</summary>
     private const string UpstreamDetail = "proxy 10.20.30.40:3128 said no; raw record \"LHR,EGLL\"";
 
+    /// <summary>No size cap, for tests about something else.</summary>
+    private const long NoCap = long.MaxValue;
+
+    /// <summary>Answers 200 with a body of unknown length (a non-seekable stream gives no
+    /// Content-Length), so only counting the bytes as they are read can enforce a cap.</summary>
+    private sealed class UnsizedBodyHandler(byte[] body) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new NonSeekableStream(body)) });
+    }
+
+    private sealed class NonSeekableStream(byte[] body) : MemoryStream(body)
+    {
+        public override bool CanSeek => false;
+    }
+
     private sealed class ThrowingHandler(Exception exception) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
@@ -136,7 +152,7 @@ public class VerificationSourceDownloaderTests
         var factory = new FakeHttpClientFactory(new StaticHandler(HttpStatusCode.OK, "hello"));
 
         var result = await VerificationSourceDownloader.DownloadAsync(
-            factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), ReadAllTextAsync, default);
+            factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), NoCap, ReadAllTextAsync, default);
 
         Assert.Equal("hello", result);
     }
@@ -149,7 +165,7 @@ public class VerificationSourceDownloaderTests
 
         var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() =>
             VerificationSourceDownloader.DownloadAsync(
-                factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), ReadAllTextAsync, default));
+                factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), NoCap, ReadAllTextAsync, default));
 
         Assert.Equal("test-source dataset download failed: HTTP 503", ex.Message);
         Assert.DoesNotContain("10.20.30.40", ex.Message);
@@ -163,7 +179,7 @@ public class VerificationSourceDownloaderTests
 
         var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() =>
             VerificationSourceDownloader.DownloadAsync(
-                factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), ReadAllTextAsync, default));
+                factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), NoCap, ReadAllTextAsync, default));
 
         Assert.Equal("Failed to download the test-source dataset (network error)", ex.Message);
         Assert.DoesNotContain("10.20.30.40", ex.Message);
@@ -178,7 +194,7 @@ public class VerificationSourceDownloaderTests
 
         var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() =>
             VerificationSourceDownloader.DownloadAsync(
-                factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), ReadAllTextAsync, default));
+                factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), NoCap, ReadAllTextAsync, default));
 
         Assert.Equal("Failed to download the test-source dataset (network error)", ex.Message);
         Assert.DoesNotContain("10.20.30.40", ex.Message);
@@ -191,7 +207,7 @@ public class VerificationSourceDownloaderTests
         var factory = new FakeHttpClientFactory(new NeverRespondingHandler());
 
         var task = VerificationSourceDownloader.DownloadAsync(
-            factory, ClientName, Url, SourceName, TimeSpan.FromMilliseconds(50), ReadAllTextAsync, default);
+            factory, ClientName, Url, SourceName, TimeSpan.FromMilliseconds(50), NoCap, ReadAllTextAsync, default);
 
         var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() => task).WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal("Timed out downloading the test-source dataset", ex.Message);
@@ -205,7 +221,7 @@ public class VerificationSourceDownloaderTests
         var factory = new FakeHttpClientFactory(new StalledBodyHandler());
 
         var task = VerificationSourceDownloader.DownloadAsync(
-            factory, ClientName, Url, SourceName, TimeSpan.FromMilliseconds(50), ReadAllTextAsync, default);
+            factory, ClientName, Url, SourceName, TimeSpan.FromMilliseconds(50), NoCap, ReadAllTextAsync, default);
 
         var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() => task).WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal("Timed out downloading the test-source dataset", ex.Message);
@@ -222,7 +238,7 @@ public class VerificationSourceDownloaderTests
         using var cts = new CancellationTokenSource();
 
         var task = VerificationSourceDownloader.DownloadAsync(
-            factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(30), ReadAllTextAsync, cts.Token);
+            factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(30), NoCap, ReadAllTextAsync, cts.Token);
         cts.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task).WaitAsync(TimeSpan.FromSeconds(5));
@@ -238,7 +254,7 @@ public class VerificationSourceDownloaderTests
 
         var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() =>
             VerificationSourceDownloader.DownloadAsync(
-                factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), ReadAllTextAsync, default));
+                factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), NoCap, ReadAllTextAsync, default));
 
         Assert.Equal("Failed to download the test-source dataset (network error)", ex.Message);
         Assert.DoesNotContain("mid-body", ex.Message); // the IOException's own message, from the stream
@@ -255,7 +271,7 @@ public class VerificationSourceDownloaderTests
             throw new VerificationSourceFetchException("the dataset had no usable rows");
 
         var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() =>
-            VerificationSourceDownloader.DownloadAsync(factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), Parse, default));
+            VerificationSourceDownloader.DownloadAsync(factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), NoCap, Parse, default));
 
         Assert.Equal("the dataset had no usable rows", ex.Message);
     }
@@ -269,10 +285,52 @@ public class VerificationSourceDownloaderTests
         Task<string> Parse(Stream stream, CancellationToken ct) => throw upstream;
 
         var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() =>
-            VerificationSourceDownloader.DownloadAsync(factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), Parse, default));
+            VerificationSourceDownloader.DownloadAsync(factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), NoCap, Parse, default));
 
         Assert.Equal("Could not parse the test-source dataset", ex.Message);
         Assert.DoesNotContain("LHR,EGLL", ex.Message);
         Assert.Same(upstream, ex.InnerException);
+    }
+
+    // ── Size cap (final fix wave, C5) ────────────────────────────────────────
+
+    [Fact]
+    public async Task DownloadAsync_ADeclaredContentLengthOverTheCap_IsASourceError_WithoutReadingTheBody()
+    {
+        var parsed = false;
+        var factory = new FakeHttpClientFactory(new StaticHandler(HttpStatusCode.OK, new string('x', 17)));
+        Task<string> Parse(Stream stream, CancellationToken ct)
+        {
+            parsed = true;
+            return ReadAllTextAsync(stream, ct);
+        }
+
+        var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() =>
+            VerificationSourceDownloader.DownloadAsync(factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), 16, Parse, default));
+
+        Assert.Equal("The test-source dataset is larger than the 16-byte download limit", ex.Message);
+        Assert.False(parsed);
+    }
+
+    [Fact]
+    public async Task DownloadAsync_ABodyOfUnknownLengthReadPastTheCap_IsASourceError()
+    {
+        var factory = new FakeHttpClientFactory(new UnsizedBodyHandler(Encoding.UTF8.GetBytes(new string('x', 17))));
+
+        var ex = await Assert.ThrowsAsync<VerificationSourceFetchException>(() =>
+            VerificationSourceDownloader.DownloadAsync(factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), 16, ReadAllTextAsync, default));
+
+        Assert.Equal("The test-source dataset is larger than the 16-byte download limit", ex.Message);
+    }
+
+    [Fact]
+    public async Task DownloadAsync_ABodyOfExactlyTheCap_IsRead()
+    {
+        var factory = new FakeHttpClientFactory(new UnsizedBodyHandler(Encoding.UTF8.GetBytes(new string('x', 16))));
+
+        var result = await VerificationSourceDownloader.DownloadAsync(
+            factory, ClientName, Url, SourceName, TimeSpan.FromSeconds(5), 16, ReadAllTextAsync, default);
+
+        Assert.Equal(new string('x', 16), result);
     }
 }

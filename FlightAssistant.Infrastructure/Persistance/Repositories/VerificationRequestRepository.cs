@@ -6,6 +6,7 @@ using FlightAssistant.Domain.Verification.Enums;
 using FlightAssistant.Infrastructure.Persistance.Configurations.Verification;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace FlightAssistant.Infrastructure.Persistance.Repositories
 {
@@ -180,18 +181,53 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         public Task<int> CountPendingAsync(CancellationToken ct = default) =>
             _db.VerificationRequests.CountAsync(r => r.Status == VerificationRequestStatus.Pending, ct);
 
-        public Task<bool> AnyOpenRequestUsesSourceAsync(string sourceName, CancellationToken ct = default)
+        public async Task<IReadOnlyCollection<string>> GetSourceNamesInUseAsync(CancellationToken ct = default)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(sourceName);
+            // One query for the distinct joined lists (one per combination of sources in use, so few),
+            // split into whole names here.
+            var joinedLists = await _db.VerificationRequests
+                .AsNoTracking()
+                .Where(r => r.Status == VerificationRequestStatus.Pending || r.Status == VerificationRequestStatus.Running)
+                .Select(r => r.Sources)
+                .Distinct()
+                .ToListAsync(ct);
 
-            // Wrapping both sides in separators matches whole names only.
-            var separator = VerificationRequest.SourceSeparator.ToString();
-            var token = separator + sourceName + separator;
+            return joinedLists
+                .SelectMany(joined => joined.Split(VerificationRequest.SourceSeparator))
+                .ToHashSet(StringComparer.Ordinal);
+        }
 
-            return _db.VerificationRequests.AnyAsync(
-                r => (r.Status == VerificationRequestStatus.Pending || r.Status == VerificationRequestStatus.Running)
-                    && (separator + r.Sources + separator).Contains(token),
-                ct);
+        public async Task<int> ReturnClaimsToPendingAsync(IReadOnlyCollection<VerificationClaim> claims, CancellationToken ct = default)
+        {
+            ArgumentNullException.ThrowIfNull(claims);
+            if (claims.Count == 0) return 0;
+            foreach (var claim in claims)
+                EnsureUtc(claim.StartedUtc, nameof(claims));
+
+            var pending = nameof(VerificationRequestStatus.Pending);
+            var running = nameof(VerificationRequestStatus.Running);
+
+            // Typed explicitly: an array's element type decides the PostgreSQL type, and started_utc
+            // is timestamptz.
+            var ids = new NpgsqlParameter("claim_ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint)
+            {
+                Value = claims.Select(c => c.RequestId).ToArray()
+            };
+            var startedUtcs = new NpgsqlParameter("claim_started_utcs", NpgsqlDbType.Array | NpgsqlDbType.TimestampTz)
+            {
+                Value = claims.Select(c => c.StartedUtc).ToArray()
+            };
+
+            // One statement. Each claim matches on its id and its own claim stamp, and only while still
+            // Running: a request reset and reclaimed by another worker (a later started_utc), or one
+            // whose outcome was saved, is not touched. attempts, next_attempt_utc and error are not set,
+            // so no attempt is counted. Every value is a parameter.
+            return await _db.Database.ExecuteSqlAsync($"""
+                UPDATE "verification_requests" AS v
+                SET "status" = {pending}, "started_utc" = NULL
+                FROM unnest({ids}, {startedUtcs}) AS c("id", "started_utc")
+                WHERE v."id" = c."id" AND v."started_utc" = c."started_utc" AND v."status" = {running}
+                """, ct);
         }
 
         public Task<VerificationRequest?> GetByIdAsync(long id, CancellationToken ct = default) =>

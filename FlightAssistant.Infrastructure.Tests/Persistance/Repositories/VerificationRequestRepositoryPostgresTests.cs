@@ -391,7 +391,7 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         var laterRepository = Repository(later);
         Assert.Empty(await laterRepository.ClaimBatchAsync(10, now.AddDays(1)));
         Assert.Equal(0, await laterRepository.CountPendingAsync());
-        Assert.False(await laterRepository.AnyOpenRequestUsesSourceAsync("ourairports"));
+        Assert.Empty(await laterRepository.GetSourceNamesInUseAsync());
     }
 
     /// <summary>Starts from a claimed request, whose <c>StartedUtc</c> is set, so clearing it is
@@ -583,26 +583,90 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     }
 
     [Fact]
-    public async Task AnyOpenRequestUsesSourceAsync_MatchesWholeSourceNamesOnOpenRequestsOnly()
+    public async Task GetSourceNamesInUseAsync_ReturnsEveryWholeNameOnPendingAndRunningRequests_InOneQuery()
     {
+        // Final fix wave, C3: one query replaces one per registered source.
         var ids = await SeedEachAsync(
             Request("1", sources: new[] { "ourairports", "aeroapi" }),
-            Request("2", sources: new[] { "mledoze" }));
+            Request("2", sources: new[] { "ourairports2" }),
+            Request("3", sources: new[] { "aeroapi", "ourairports" }),
+            Request("4", sources: new[] { "mledoze" }));
         await using (var db = CreateDbContext())
         {
             var repository = Repository(db);
-            (await repository.GetByIdAsync(ids[1]))!.MarkError("Entity no longer exists", T0);
+            Assert.Equal(ids[0], Assert.Single(await repository.ClaimBatchAsync(1, T0)).Id); // Running
+            (await repository.GetByIdAsync(ids[3]))!.MarkError("Entity no longer exists", T0); // completed
             await repository.SaveChangesAsync();
         }
 
-        await using var verify = CreateDbContext();
-        var queryRepository = Repository(verify);
+        var commands = new CommandCounter();
+        await using var verify = CreateDbContext(commands);
+        var inUse = await Repository(verify).GetSourceNamesInUseAsync();
 
-        Assert.True(await queryRepository.AnyOpenRequestUsesSourceAsync("ourairports"));
-        Assert.True(await queryRepository.AnyOpenRequestUsesSourceAsync("aeroapi"));
-        Assert.False(await queryRepository.AnyOpenRequestUsesSourceAsync("ourair"));
-        Assert.False(await queryRepository.AnyOpenRequestUsesSourceAsync("airports,aero"));
-        Assert.False(await queryRepository.AnyOpenRequestUsesSourceAsync("mledoze"));
+        Assert.Equal(new[] { "aeroapi", "ourairports", "ourairports2" }, inUse.Order(StringComparer.Ordinal));
+        Assert.Equal(1, commands.Count);
+    }
+
+    /// <summary>
+    /// Final fix wave, C4: the job returns its unfinished claims on shutdown. Of three claims this
+    /// worker made, one was reset and claimed again by another worker, one had its outcome saved, and
+    /// one is still this worker's: only that one goes back to Pending, with no attempt counted.
+    /// </summary>
+    [Fact]
+    public async Task ReturnClaimsToPendingAsync_ReturnsOnlyClaimsStillRunningWithTheirOwnStamp_WithoutCountingAnAttempt()
+    {
+        var ids = await SeedEachAsync(
+            Request("1", requestedUtc: T0),
+            Request("2", requestedUtc: T0.AddMinutes(1)),
+            Request("3", requestedUtc: T0.AddMinutes(2)));
+        var takenOverAt = T0.AddMinutes(20);
+        var claimedAt = T0.AddMinutes(21);
+
+        // This worker claims 1; another worker resets that claim as stuck and claims 1 again.
+        VerificationClaim takenOver;
+        await using (var db = CreateDbContext())
+            takenOver = VerificationClaim.From(Assert.Single(await Repository(db).ClaimBatchAsync(1, T0)));
+        await using (var db = CreateDbContext())
+        {
+            var other = Repository(db, takenOverAt);
+            Assert.Equal(1, (await other.ResetStuckRunningAsync(takenOverAt - TimeSpan.FromMinutes(10), maxAttempts: 3, takenOverAt)).ReturnedToPending);
+            Assert.Equal(ids[0], Assert.Single(await other.ClaimBatchAsync(1, takenOverAt)).Id);
+        }
+
+        // This worker claims 2 and 3, and saves an outcome for 3.
+        List<VerificationClaim> claims;
+        await using (var db = CreateDbContext())
+        {
+            var repository = Repository(db, claimedAt);
+            claims = (await repository.ClaimBatchAsync(5, claimedAt)).Select(VerificationClaim.From).ToList();
+            Assert.Equal(new[] { ids[1], ids[2] }, claims.Select(c => c.RequestId));
+            (await repository.GetByIdAsync(ids[2]))!.MarkVerified(claimedAt);
+            await repository.SaveChangesAsync();
+        }
+
+        int returned;
+        await using (var db = CreateDbContext())
+            returned = await Repository(db).ReturnClaimsToPendingAsync(claims.Prepend(takenOver).ToList());
+
+        Assert.Equal(1, returned);
+        await using (var verify = CreateDbContext())
+        {
+            var rows = await verify.VerificationRequests.AsNoTracking().ToDictionaryAsync(r => r.Id);
+
+            Assert.Equal(VerificationRequestStatus.Running, rows[ids[0]].Status); // the other worker's claim stands
+            AssertUtc(takenOverAt, rows[ids[0]].StartedUtc);
+            Assert.Equal(1, rows[ids[0]].Attempts);
+
+            Assert.Equal(VerificationRequestStatus.Pending, rows[ids[1]].Status); // returned, no attempt
+            Assert.Null(rows[ids[1]].StartedUtc);
+            Assert.Equal(0, rows[ids[1]].Attempts);
+            Assert.Null(rows[ids[1]].NextAttemptUtc);
+
+            Assert.Equal(VerificationRequestStatus.Verified, rows[ids[2]].Status); // saved outcome stands
+        }
+
+        await using var next = CreateDbContext();
+        Assert.Equal(ids[1], Assert.Single(await Repository(next).ClaimBatchAsync(5, claimedAt)).Id);
     }
 
     // ── Storage ─────────────────────────────────────────────────────────────
@@ -771,6 +835,19 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         Assert.NotNull(actual);
         Assert.Equal(expected, actual.Value);
         Assert.Equal(DateTimeKind.Utc, actual.Value.Kind);
+    }
+
+    /// <summary>Counts the queries a context sends.</summary>
+    private sealed class CommandCounter : DbCommandInterceptor
+    {
+        public int Count { get; private set; }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            Count++;
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
     }
 
     /// <summary>Runs <paramref name="action"/> once, straight after the first SELECT on the context

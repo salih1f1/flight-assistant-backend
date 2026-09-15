@@ -69,6 +69,11 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
         /// The CSV is ~16 MB, hence minutes rather than seconds.</summary>
         public static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(3);
 
+        /// <summary>The largest body this source reads (final fix wave, C5): about four times the
+        /// file's ~16 MB today, so it can grow without a code change, while an unbounded or wrong body
+        /// fails as a source error instead of being parsed.</summary>
+        public const long MaxDownloadBytes = 64L * 1024 * 1024;
+
         private static readonly TimeSpan MaxCacheAge = TimeSpan.FromHours(24);
         private const string ClosedType = "closed";
 
@@ -127,12 +132,14 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
 
         public void ReleaseCache() => _cache.Release();
 
+        public bool HasCachedData => _cache.HasCachedData;
+
         private async Task<Dataset> DownloadAsync(CancellationToken ct)
         {
             try
             {
                 return await VerificationSourceDownloader.DownloadAsync(
-                    _httpClientFactory, HttpClientName, DatasetUrl, SourceName, _downloadTimeout, ParseAsync, ct).ConfigureAwait(false);
+                    _httpClientFactory, HttpClientName, DatasetUrl, SourceName, _downloadTimeout, MaxDownloadBytes, ParseAsync, ct).ConfigureAwait(false);
             }
             catch (VerificationSourceFetchException ex)
             {

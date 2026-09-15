@@ -139,5 +139,12 @@ namespace FlightAssistant.Application.Interfaces.Verification
         /// even though this source was never used this process.
         /// </summary>
         void ReleaseCache();
+
+        /// <summary>
+        /// Whether this source holds anything <see cref="ReleaseCache"/> would drop: a loaded dataset,
+        /// a load in flight, or a failed load kept for its cooldown. No I/O, so the job reads it every
+        /// cycle to skip asking the queue which sources are in use when nothing is held.
+        /// </summary>
+        bool HasCachedData { get; }
     }
 }

@@ -451,6 +451,49 @@ public class OurAirportsVerificationSourceTests
         Assert.Contains("3, 4, 5", warning.Message);
     }
 
+    [Fact]
+    public async Task LookupAsync_ADatasetDeclaringMoreThanMaxDownloadBytes_IsASourceError_WithoutReadingIt()
+    {
+        // Final fix wave, C5: proves the production cap is the one in use, without a 64 MB body.
+        var source = Source(new DeclaredLengthHandler(OurAirportsVerificationSource.MaxDownloadBytes + 1));
+
+        var result = await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("LHR", null));
+
+        Assert.Equal(64L * 1024 * 1024, OurAirportsVerificationSource.MaxDownloadBytes);
+        Assert.Equal("The ourairports dataset is larger than the 67108864-byte download limit", result.Error);
+    }
+
+    [Fact]
+    public async Task HasCachedData_IsFalseUntilALookupLoadsTheDataset_AndAgainAfterReleaseCache()
+    {
+        var source = Source(new StaticHandler(HttpStatusCode.OK, FixtureCsv));
+        Assert.False(source.HasCachedData);
+
+        await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("LHR", null));
+        Assert.True(source.HasCachedData);
+
+        source.ReleaseCache();
+        Assert.False(source.HasCachedData);
+    }
+
+    /// <summary>Answers 200 with content that declares <paramref name="length"/> bytes and has none.</summary>
+    private sealed class DeclaredLengthHandler(long length) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new DeclaredLengthContent(length) });
+    }
+
+    private sealed class DeclaredLengthContent(long length) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => Task.CompletedTask;
+
+        protected override bool TryComputeLength(out long computed)
+        {
+            computed = length;
+            return true;
+        }
+    }
+
     /// <summary>Records every log call made through it, with its exception.</summary>
     private sealed class CapturingLogger<T> : ILogger<T>
     {

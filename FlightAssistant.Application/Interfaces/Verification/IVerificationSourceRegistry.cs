@@ -24,10 +24,14 @@ namespace FlightAssistant.Application.Interfaces.Verification
         /// </summary>
         IVerificationSource? TryGet(string name);
 
-        /// <summary>Every registered source. Lets a caller enumerate names (e.g. to ask
-        /// <c>IVerificationRequestRepository.AnyOpenRequestUsesSourceAsync</c> about each one before
-        /// calling <see cref="ReleaseUnused"/>) and costs without resolving each by name first.</summary>
+        /// <summary>Every registered source. Lets a caller enumerate names and costs without resolving
+        /// each by name first.</summary>
         IReadOnlyCollection<IVerificationSource> Sources { get; }
+
+        /// <summary>Whether any registered source <see cref="IVerificationSource.HasCachedData"/>. When
+        /// false, <see cref="ReleaseUnused"/> would drop nothing, so the job skips the queue query that
+        /// feeds it.</summary>
+        bool AnySourceHasCachedData { get; }
 
         /// <summary>
         /// Calls <see cref="IVerificationSource.ReleaseCache"/> on every registered source whose

@@ -81,4 +81,17 @@ public class VerificationSourceRegistryTests
         a.Received(1).ReleaseCache();
         b.Received(1).ReleaseCache();
     }
+
+    [Fact]
+    public void AnySourceHasCachedData_IsTrueOnlyWhileSomeSourceHoldsData()
+    {
+        var a = FakeSource("a");
+        var b = FakeSource("b");
+        var registry = new VerificationSourceRegistry(new[] { a, b });
+
+        Assert.False(registry.AnySourceHasCachedData);
+
+        b.HasCachedData.Returns(true);
+        Assert.True(registry.AnySourceHasCachedData);
+    }
 }

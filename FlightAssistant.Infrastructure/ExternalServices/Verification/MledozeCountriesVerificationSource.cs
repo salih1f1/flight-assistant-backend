@@ -58,6 +58,11 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
         /// <summary>Bounds the whole download -- send and body/parse alike (fix round 1, item 1).</summary>
         public static readonly TimeSpan DownloadTimeout = TimeSpan.FromSeconds(30);
 
+        /// <summary>The largest body this source reads (final fix wave, C5): several times the
+        /// file's ~1.4 MB today, so it can grow without a code change, while an unbounded or wrong body
+        /// fails as a source error instead of being parsed.</summary>
+        public const long MaxDownloadBytes = 8L * 1024 * 1024;
+
         private static readonly TimeSpan MaxCacheAge = TimeSpan.FromHours(24);
 
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -114,12 +119,14 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
 
         public void ReleaseCache() => _cache.Release();
 
+        public bool HasCachedData => _cache.HasCachedData;
+
         private async Task<IReadOnlyDictionary<string, Row>> DownloadAsync(CancellationToken ct)
         {
             try
             {
                 return await VerificationSourceDownloader.DownloadAsync(
-                    _httpClientFactory, HttpClientName, DatasetUrl, SourceName, _downloadTimeout, ParseAsync, ct).ConfigureAwait(false);
+                    _httpClientFactory, HttpClientName, DatasetUrl, SourceName, _downloadTimeout, MaxDownloadBytes, ParseAsync, ct).ConfigureAwait(false);
             }
             catch (VerificationSourceFetchException ex)
             {

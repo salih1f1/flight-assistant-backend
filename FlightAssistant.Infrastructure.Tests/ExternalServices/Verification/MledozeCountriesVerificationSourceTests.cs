@@ -337,6 +337,36 @@ public class MledozeCountriesVerificationSourceTests
         Assert.Equal(1, handler.CallCount);
     }
 
+    [Fact]
+    public async Task LookupAsync_ADatasetDeclaringMoreThanMaxDownloadBytes_IsASourceError_WithoutReadingIt()
+    {
+        // Final fix wave, C5: proves the production cap is the one in use, without an 8 MB body.
+        var source = Source(new DeclaredLengthHandler(MledozeCountriesVerificationSource.MaxDownloadBytes + 1));
+
+        var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
+
+        Assert.Equal(8L * 1024 * 1024, MledozeCountriesVerificationSource.MaxDownloadBytes);
+        Assert.Equal("The mledoze dataset is larger than the 8388608-byte download limit", result.Error);
+    }
+
+    /// <summary>Answers 200 with content that declares <paramref name="length"/> bytes and has none.</summary>
+    private sealed class DeclaredLengthHandler(long length) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new DeclaredLengthContent(length) });
+    }
+
+    private sealed class DeclaredLengthContent(long length) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => Task.CompletedTask;
+
+        protected override bool TryComputeLength(out long computed)
+        {
+            computed = length;
+            return true;
+        }
+    }
+
     /// <summary>Records every log call made through it.</summary>
     private sealed class CapturingLogger<T> : ILogger<T>
     {

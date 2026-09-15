@@ -83,12 +83,24 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         Task<int> CountPendingAsync(CancellationToken ct = default);
 
         /// <summary>
-        /// Whether any open (<c>Pending</c>/<c>Running</c>) request names
-        /// <paramref name="sourceName"/> among its sources. Matches whole names only:
-        /// <c>ourairports</c> does not match a request for <c>ourairports2</c>. The job drops a
-        /// source's cached dataset when this is false.
+        /// Every source name that at least one open (<c>Pending</c>/<c>Running</c>) request names, in
+        /// one query: each request's comma-joined <c>sources</c> split into whole names, so
+        /// <c>ourairports</c> never stands in for <c>ourairports2</c>. The job drops the cached dataset
+        /// of every registered source not in this set.
         /// </summary>
-        Task<bool> AnyOpenRequestUsesSourceAsync(string sourceName, CancellationToken ct = default);
+        Task<IReadOnlyCollection<string>> GetSourceNamesInUseAsync(CancellationToken ct = default);
+
+        /// <summary>
+        /// Returns claims the job is giving up without an outcome (it is shutting down mid-batch) to
+        /// <c>Pending</c>, in one statement: <c>StartedUtc</c> cleared; <c>Attempts</c>,
+        /// <c>NextAttemptUtc</c> and <c>Error</c> unchanged, so no attempt is counted. A request is
+        /// touched only while it is still <c>Running</c> with that claim's own <c>StartedUtc</c>: one
+        /// another worker has reset and claimed since, or whose outcome was saved, is left alone. Runs
+        /// SQL directly, like the claim, so it is not audited.
+        /// </summary>
+        /// <param name="claims">Each claim's <c>StartedUtc</c> must have <see cref="DateTimeKind.Utc"/>.</param>
+        /// <returns>How many requests went back to Pending.</returns>
+        Task<int> ReturnClaimsToPendingAsync(IReadOnlyCollection<VerificationClaim> claims, CancellationToken ct = default);
 
         /// <summary>The request with <paramref name="id"/>, tracked, or null.</summary>
         Task<VerificationRequest?> GetByIdAsync(long id, CancellationToken ct = default);

@@ -169,6 +169,24 @@ public class VerificationDatasetCacheTests
     // one-line production fix itself is kept regardless -- it is cheap, correct by inspection, and
     // does not depend on the test working to be worth having.
 
+    [Fact]
+    public async Task HasCachedData_TracksALoadedDataset_ACachedFailure_AndRelease()
+    {
+        var cache = NewCache(new FakeTimeProvider(DateTimeOffset.UtcNow));
+        Assert.False(cache.HasCachedData);
+
+        await cache.GetAsync(_ => Task.FromResult("value"), default);
+        Assert.True(cache.HasCachedData);
+        cache.Release();
+        Assert.False(cache.HasCachedData);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => cache.GetAsync(_ => Task.FromException<string>(new InvalidOperationException("boom")), default));
+        Assert.True(cache.HasCachedData); // the failure is held for its cooldown
+        cache.Release();
+        Assert.False(cache.HasCachedData);
+    }
+
     // ── Failure cooldown (final fix wave, A) ─────────────────────────────────
 
     [Fact]

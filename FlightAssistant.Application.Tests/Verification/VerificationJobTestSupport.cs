@@ -34,14 +34,23 @@ internal sealed class FakeVerificationSource : IVerificationSource
     public List<VerificationSourceLookupKey> Lookups { get; } = new();
     public int ReleaseCount { get; private set; }
 
+    /// <summary>Like a real source: set by a lookup, cleared by a release. A test can set it to stand
+    /// for a dataset an earlier cycle loaded.</summary>
+    public bool HasCachedData { get; set; }
+
     public Task<VerificationSourceFetchResult> LookupAsync(
         VerificationEntityType entityType, VerificationSourceLookupKey key, CancellationToken ct = default)
     {
         Lookups.Add(key);
+        HasCachedData = true;
         return _lookup(key, ct);
     }
 
-    public void ReleaseCache() => ReleaseCount++;
+    public void ReleaseCache()
+    {
+        ReleaseCount++;
+        HasCachedData = false;
+    }
 }
 
 /// <summary>A registry over fixed sources, releasing like the real one and recording each call.</summary>
@@ -56,6 +65,7 @@ internal sealed class FakeVerificationSourceRegistry : IVerificationSourceRegist
     }
 
     public IReadOnlyCollection<IVerificationSource> Sources { get; }
+    public bool AnySourceHasCachedData => Sources.Any(s => s.HasCachedData);
     public List<IReadOnlyCollection<string>> ReleaseCalls { get; } = new();
 
     public IVerificationSource? TryGet(string name) => _byName.GetValueOrDefault(name);

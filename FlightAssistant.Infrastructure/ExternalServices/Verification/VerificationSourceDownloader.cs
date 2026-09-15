@@ -7,18 +7,27 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
     /// 1): send, map a non-success status/network failure/timeout to a <see cref="VerificationSourceFetchException"/>,
     /// then hand the response body to the source's own <c>parse</c> delegate under the same
     /// timeout. <see cref="OurAirportsVerificationSource"/> and <see cref="MledozeCountriesVerificationSource"/>
-    /// differ only in their client name, URL and parse step -- everything else (the error mapping
-    /// item 2 of the fix-round review found duplicated verbatim) lives here once.
+    /// differ only in their client name, URL, size cap and parse step -- everything else (the error
+    /// mapping item 2 of the fix-round review found duplicated verbatim) lives here once.
     ///
     /// <para>
     /// <b>Error text (final fix wave, C1).</b> A source error's message ends up in
     /// <c>verification_requests.error</c>, which admins see in every environment, Production
     /// included. So it is one of the fixed categories below plus facts this code controls (the
-    /// source name, an HTTP status code), <b>never</b> an upstream exception's message: a proxy or
-    /// socket error can name an internal address, and a CsvHelper or JSON error can quote raw
-    /// record content. The original exception stays attached as the
+    /// source name, an HTTP status code, the size cap), <b>never</b> an upstream exception's
+    /// message: a proxy or socket error can name an internal address, and a CsvHelper or JSON error
+    /// can quote raw record content. The original exception stays attached as the
     /// <see cref="Exception.InnerException"/>, and each source logs the whole exception with its
     /// name.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Size cap (final fix wave, C5).</b> Each source passes the most bytes it will read. A
+    /// declared <c>Content-Length</c> over it fails before any of the body is read, as
+    /// <c>GitHubCiRunProvider</c> checks its archive; a body with no declared length, or a wrong one,
+    /// is counted as it is read and fails as soon as it passes the cap. Unlike that provider's
+    /// <c>ReadBoundedAsync</c>, the body is not buffered into memory first: OurAirports parses its
+    /// CSV as it streams, and buffering up to the cap would defeat that.
     /// </para>
     /// </summary>
     internal static class VerificationSourceDownloader
@@ -32,6 +41,10 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
 
         /// <summary>The send failed, or the body could not be read in full.</summary>
         internal static string NetworkError(string sourceName) => $"Failed to download the {sourceName} dataset (network error)";
+
+        /// <summary>The body is larger than the source's download cap.</summary>
+        internal static string TooLargeError(string sourceName, long maxBytes) =>
+            $"The {sourceName} dataset is larger than the {maxBytes}-byte download limit";
 
         /// <summary>The body arrived but is not a dataset this source can read.</summary>
         internal static string ParseError(string sourceName) => $"Could not parse the {sourceName} dataset";
@@ -61,8 +74,8 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
         /// stream) that does not itself observe a per-read cancellation token promptly. When the
         /// linked token fires and <paramref name="ct"/> itself is <b>not</b> the reason (i.e. the
         /// deadline elapsed), every failure mode -- timeout, non-success status, network failure,
-        /// unparseable content -- becomes a <see cref="VerificationSourceFetchException"/>. When
-        /// <paramref name="ct"/> itself is cancelled, the resulting <see cref="OperationCanceledException"/>
+        /// oversized or unparseable content -- becomes a <see cref="VerificationSourceFetchException"/>.
+        /// When <paramref name="ct"/> itself is cancelled, the resulting <see cref="OperationCanceledException"/>
         /// is left to propagate: that is caller cancellation, not a source error.
         /// </para>
         ///
@@ -76,15 +89,20 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
         /// never fully arrived, the latter means they did but were not valid CSV/JSON.
         /// </para>
         /// </summary>
+        /// <param name="maxBytes">The most body bytes to read; a larger body is a
+        /// <see cref="TooLargeError"/>.</param>
         public static async Task<T> DownloadAsync<T>(
             IHttpClientFactory httpClientFactory,
             string clientName,
             string url,
             string sourceName,
             TimeSpan timeout,
+            long maxBytes,
             Func<Stream, CancellationToken, Task<T>> parse,
             CancellationToken ct)
         {
+            ArgumentOutOfRangeException.ThrowIfLessThan(maxBytes, 1);
+
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(timeout);
             var linkedCt = timeoutCts.Token;
@@ -115,6 +133,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                     throw new VerificationSourceFetchException(HttpStatusError(sourceName, response.StatusCode));
                 }
 
+                if (response.Content.Headers.ContentLength > maxBytes)
+                    throw new VerificationSourceFetchException(TooLargeError(sourceName, maxBytes));
+
                 Stream stream;
                 try
                 {
@@ -131,14 +152,15 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                     throw new VerificationSourceFetchException(NetworkError(sourceName), ex);
                 }
 
-                await using (stream.ConfigureAwait(false))
+                var body = new LimitedReadStream(stream, maxBytes);
+                await using (body.ConfigureAwait(false))
                 {
                     try
                     {
                         // `parse` is a plain delegate, not necessarily `async` -- calling it can
                         // itself throw synchronously (as several tests' inline `parse` functions
                         // do), so it stays inside this try, same as before.
-                        var parseTask = parse(stream, linkedCt);
+                        var parseTask = parse(body, linkedCt);
 
                         // Fix round 2, item 3b: if the WaitAsync race below abandons `parseTask`
                         // (the deadline wins), it keeps running in the background and nobody ever
@@ -157,6 +179,11 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                         // `parse` (or a pathological stream underneath it) never itself observes
                         // per-read cancellation promptly.
                         return await parseTask.WaitAsync(linkedCt).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (body.LimitExceeded)
+                    {
+                        // First: a parser may wrap the stream's exception in one of its own.
+                        throw new VerificationSourceFetchException(TooLargeError(sourceName, maxBytes), ex);
                     }
                     catch (VerificationSourceFetchException)
                     {
@@ -181,6 +208,66 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                         throw new VerificationSourceFetchException(ParseError(sourceName), ex);
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// A read-only pass-through over a response body that throws once more than
+        /// <paramref name="maxBytes"/> bytes have been read, and remembers that it did
+        /// (<see cref="LimitExceeded"/>), so the caller can tell the cap from a parse or network error
+        /// however the parser wraps the exception. Disposing it disposes the body.
+        /// </summary>
+        private sealed class LimitedReadStream(Stream inner, long maxBytes) : Stream
+        {
+            private long _bytesRead;
+
+            public bool LimitExceeded { get; private set; }
+
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => throw new NotSupportedException();
+
+            public override long Position
+            {
+                get => _bytesRead;
+                set => throw new NotSupportedException();
+            }
+
+            public override int Read(byte[] buffer, int offset, int count) => Count(inner.Read(buffer, offset, count));
+
+            public override int Read(Span<byte> buffer) => Count(inner.Read(buffer));
+
+            public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+                Count(await inner.ReadAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false));
+
+            public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+                Count(await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false));
+
+            public override void Flush()
+            {
+            }
+
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing) inner.Dispose();
+                base.Dispose(disposing);
+            }
+
+            private int Count(int read)
+            {
+                _bytesRead += read;
+                if (_bytesRead > maxBytes)
+                {
+                    LimitExceeded = true;
+                    throw new IOException($"The response body is larger than the {maxBytes}-byte limit.");
+                }
+
+                return read;
             }
         }
     }

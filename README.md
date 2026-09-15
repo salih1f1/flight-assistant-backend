@@ -42,6 +42,8 @@ ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://localhost:5100 FlightS
 
 `--no-launch-profile` is required: a launch profile's variables override the shell's, so without it the profile's `false` wins.
 
+**The reference-data verification job is off for local runs too.** `launchSettings.json` also sets `Verification__Enabled=false` in every profile: a local run would otherwise claim requests from the dev database's shared `verification_requests` queue alongside the deployed dev API, and write `system` verifications (audited) to its reference data. Turn it on for one run the same way, with `Verification__Enabled=true` and `--no-launch-profile`.
+
 **OpenAPI spec:** [`spec/openapi.json`](spec/openapi.json) is generated and committed — CI fails a PR if it drifts from the code. Regenerate with `scripts/generate-openapi.sh` (from the repo root) after any route or contract change.
 
 **HTTP Client:** Open `FlightAssistant.API/api.http` in VS Code (REST Client extension) or JetBrains Rider. Paste a B2C JWT into `@token` and run any request with one click.
