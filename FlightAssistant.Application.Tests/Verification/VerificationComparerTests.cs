@@ -48,6 +48,15 @@ public class VerificationComparerTests
     private static VerificationSourceResult NotFound(string sourceName) =>
         new(sourceName, VerificationSourceLookupResult.NotFound);
 
+    /// <summary>Removes <paramref name="key"/> entirely, as opposed to mapping it to
+    /// <c>null</c> -- the two are not written to be the same code path, so tests need to be able
+    /// to construct a record that's missing a key outright.</summary>
+    private static Dictionary<string, string?> WithoutKey(Dictionary<string, string?> values, string key)
+    {
+        values.Remove(key);
+        return values;
+    }
+
     // ---- Codes ---------------------------------------------------------------------------
 
     [Fact]
@@ -321,5 +330,145 @@ public class VerificationComparerTests
         var result = VerificationComparer.Compare(VerificationEntityType.Airport, ours, new[] { Found(OurAirports, source) });
 
         Assert.Equal($"Name, City differ ({OurAirports})", result.Summary);
+    }
+
+    // ---- Fix round 1 (#367 task 2 review): empty-sources contract ---------------------------
+
+    [Fact]
+    public void Compare_EmptySources_Throws()
+    {
+        var ours = AirportValues();
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            VerificationComparer.Compare(VerificationEntityType.Airport, ours, Array.Empty<VerificationSourceResult>()));
+
+        Assert.Equal("sources", exception.ParamName);
+    }
+
+    // ---- Fix round 1: malformed source values never throw, always mismatch ------------------
+
+    [Fact]
+    public void Compare_NumericCode_MalformedSourceValue_MismatchesWithoutThrowing()
+    {
+        var ours = CountryValues(numericCode: "4");
+        var source = CountryValues(numericCode: "abc");
+
+        var result = VerificationComparer.Compare(VerificationEntityType.Country, ours, new[] { Found(Mledoze, source) });
+
+        Assert.Equal(VerificationComparisonOutcome.Mismatch, result.Outcome);
+        Assert.Equal("NumericCode", Assert.Single(result.Differences).Column);
+    }
+
+    [Fact]
+    public void Compare_Coordinate_MalformedSourceValue_MismatchesWithoutThrowing()
+    {
+        var ours = AirportValues(latitude: "51.47");
+        var source = AirportValues(latitude: "north");
+
+        var result = VerificationComparer.Compare(VerificationEntityType.Airport, ours, new[] { Found(OurAirports, source) });
+
+        Assert.Equal(VerificationComparisonOutcome.Mismatch, result.Outcome);
+        Assert.Contains(result.Differences, d => d.Column == "Latitude");
+    }
+
+    [Fact]
+    public void Compare_Elevation_MalformedSourceValue_MismatchesWithoutThrowing()
+    {
+        var ours = AirportValues(elevationFt: "83");
+        var source = AirportValues(elevationFt: "12.5ft");
+
+        var result = VerificationComparer.Compare(VerificationEntityType.Airport, ours, new[] { Found(OurAirports, source) });
+
+        Assert.Equal(VerificationComparisonOutcome.Mismatch, result.Outcome);
+        Assert.Contains(result.Differences, d => d.Column == "ElevationFt");
+    }
+
+    // ---- Fix round 1: a checked column missing entirely, vs mapped to null ------------------
+
+    [Fact]
+    public void Compare_SourceOmitsCheckedColumnKeyEntirely_MismatchesAgainstOurNonEmptyValue()
+    {
+        var ours = AirportValues(city: "London");
+        var source = WithoutKey(AirportValues(), "City");
+
+        var result = VerificationComparer.Compare(VerificationEntityType.Airport, ours, new[] { Found(OurAirports, source) });
+
+        Assert.Equal(VerificationComparisonOutcome.Mismatch, result.Outcome);
+        Assert.Equal("City", Assert.Single(result.Differences).Column);
+    }
+
+    [Fact]
+    public void Compare_BothSidesOmitCheckedColumnKeyEntirely_Matches()
+    {
+        var ours = WithoutKey(AirportValues(), "Icao");
+        var source = WithoutKey(AirportValues(), "Icao");
+
+        var result = VerificationComparer.Compare(VerificationEntityType.Airport, ours, new[] { Found(OurAirports, source) });
+
+        Assert.Equal(VerificationComparisonOutcome.Verified, result.Outcome);
+    }
+
+    [Fact]
+    public void Compare_OurValuesOmitCheckedColumnKeyEntirely_MismatchesAgainstSourceNonEmptyValue()
+    {
+        var ours = WithoutKey(AirportValues(), "Iata");
+        var source = AirportValues(iata: "LHR");
+
+        var result = VerificationComparer.Compare(VerificationEntityType.Airport, ours, new[] { Found(OurAirports, source) });
+
+        Assert.Equal(VerificationComparisonOutcome.Mismatch, result.Outcome);
+        Assert.Equal("Iata", Assert.Single(result.Differences).Column);
+    }
+
+    // ---- Fix round 1 (minor, folded in): punctuation-only and digit-bearing text ------------
+
+    /// <summary>Two different punctuation-only values ("-" and an em dash) both normalise to the
+    /// empty string, so they compare equal through the ordinary text-equality path -- not through
+    /// the raw <c>IsEmpty</c> pre-check, since neither raw value is null/blank/whitespace. See the
+    /// report for why this can't be broken as a behaviour distinct from text equality itself.</summary>
+    [Fact]
+    public void Compare_TextColumn_PunctuationOnlyValues_BothNormaliseToEmpty_Matches()
+    {
+        var ours = AirportValues(name: "-");
+        var source = AirportValues(name: "—");
+
+        var result = VerificationComparer.Compare(VerificationEntityType.Airport, ours, new[] { Found(OurAirports, source) });
+
+        Assert.Equal(VerificationComparisonOutcome.Verified, result.Outcome);
+    }
+
+    [Fact]
+    public void Compare_TextColumn_PunctuationOnlyValue_MismatchesAgainstRealText()
+    {
+        var ours = AirportValues(name: "-");
+        var source = AirportValues(name: "Paris");
+
+        var result = VerificationComparer.Compare(VerificationEntityType.Airport, ours, new[] { Found(OurAirports, source) });
+
+        Assert.Equal(VerificationComparisonOutcome.Mismatch, result.Outcome);
+        Assert.Equal("Name", Assert.Single(result.Differences).Column);
+    }
+
+    [Fact]
+    public void Compare_TextColumn_DigitsPreserved_DifferentDigits_Mismatch()
+    {
+        var ours = AirportValues(name: "Terminal 2");
+        var source = AirportValues(name: "Terminal 3");
+
+        var result = VerificationComparer.Compare(VerificationEntityType.Airport, ours, new[] { Found(OurAirports, source) });
+
+        Assert.Equal(VerificationComparisonOutcome.Mismatch, result.Outcome);
+        Assert.Equal("Name", Assert.Single(result.Differences).Column);
+    }
+
+    [Fact]
+    public void Compare_TextColumn_DigitsPreserved_PunctuationVariant_Matches()
+    {
+        var ours = AirportValues(name: "Terminal-2");
+        var source = AirportValues(name: "terminal 2");
+
+        var result = VerificationComparer.Compare(VerificationEntityType.Airport, ours, new[] { Found(OurAirports, source) });
+
+        Assert.Equal(VerificationComparisonOutcome.Verified, result.Outcome);
     }
 }
