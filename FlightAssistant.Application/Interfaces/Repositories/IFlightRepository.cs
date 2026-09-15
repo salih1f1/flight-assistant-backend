@@ -60,5 +60,18 @@ namespace FlightAssistant.Application.Interfaces.Repositories
 
         /// <summary>Whether any traveler tracks the flight.</summary>
         Task<bool> IsFlightTrackedAsync(int flightId, CancellationToken ct = default);
+
+        /// <summary>
+        /// How many flights the traveler tracks that the status sync still polls as of
+        /// <paramref name="nowUtc"/> (#380): every tracked flight that <c>FlightSyncPlanner</c> would not
+        /// mark Stopped. A flight counts until <paramref name="stopAfterArrival"/> after an actual
+        /// arrival or a cancellation, and, when no arrival is reported, until
+        /// <paramref name="stopWithoutArrivalAfter"/> after its estimated (else scheduled) arrival.
+        /// Computed from times and status, not the stored sync mode, and counted in SQL, since
+        /// <c>traveler_flights</c> keeps every flight a traveler has ever tracked.
+        /// </summary>
+        Task<int> CountActiveTrackedFlightsAsync(
+            Guid travelerId, DateTime nowUtc, TimeSpan stopAfterArrival, TimeSpan stopWithoutArrivalAfter,
+            CancellationToken ct = default);
     }
 }

@@ -38,6 +38,7 @@ public class TrackFlightCommandHandlerTests
         public TimeSpan StopAfterArrival => TimeSpan.FromMinutes(20);
         public TimeSpan StopWithoutArrivalAfter => TimeSpan.FromHours(12);
         public TimeSpan ManualSyncCooldown => TimeSpan.FromMinutes(4);
+        public int MaxActiveTrackedFlightsPerTraveler => 3;
     }
 
     private sealed class WindowOptions : IFlightStatusWindowOptions
@@ -222,5 +223,80 @@ public class TrackFlightCommandHandlerTests
         await _handler.Handle(CommandDeparting(Now.AddHours(1)), CancellationToken.None);
 
         Assert.Null(existing.SyncMode);
+    }
+
+    // ── Cap on tracked flights that haven't finished (#380); the fake's cap is 3 ──
+
+    private static Flight ExistingFlight() => Flight.Create(
+        1, "BA123", 10, 20, DefaultCmd.ServiceDate, DefaultCmd.ScheduledDepartureUtc, DefaultCmd.ScheduledArrivalUtc);
+
+    [Fact]
+    public async Task AtTheCap_ANewFlight_Throws409_AndWritesNothing()
+    {
+        _flights.CountActiveTrackedFlightsAsync(DefaultCmd.TravelerId, Now, TimeSpan.FromMinutes(20), TimeSpan.FromHours(12), Arg.Any<CancellationToken>()).Returns(3);
+        _flights.GetByFlightNumberAndDateAsync(1, "BA123", DefaultCmd.ServiceDate, Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => _handler.Handle(DefaultCmd, CancellationToken.None));
+
+        Assert.Equal(409, ex.StatusCode);
+        Assert.Equal("You can track up to 3 flights at a time. Stop tracking one to add another.", ex.Message);
+        await _flights.DidNotReceive().GetOrCreateFlightAsync(Arg.Any<Flight>(), Arg.Any<CancellationToken>());
+        await _flights.DidNotReceive().AddTravelerFlightAsync(Arg.Any<TravelerFlight>(), Arg.Any<CancellationToken>());
+        await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task OneBelowTheCap_TracksTheFlight()
+    {
+        _flights.CountActiveTrackedFlightsAsync(DefaultCmd.TravelerId, Now, TimeSpan.FromMinutes(20), TimeSpan.FromHours(12), Arg.Any<CancellationToken>()).Returns(2);
+        _flights.GetOrCreateFlightAsync(Arg.Any<Flight>(), Arg.Any<CancellationToken>()).Returns(ci => ci.Arg<Flight>());
+        _flights.GetTravelerFlightAsync(DefaultCmd.TravelerId, Arg.Any<int>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        await _handler.Handle(DefaultCmd, CancellationToken.None);
+
+        await _flights.Received(1).AddTravelerFlightAsync(Arg.Any<TravelerFlight>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AtTheCap_AFlightTheTravelerAlreadyTracks_StillReturnsItsId_WithoutAddingTracking()
+    {
+        var existing = ExistingFlight();
+        _flights.CountActiveTrackedFlightsAsync(DefaultCmd.TravelerId, Now, TimeSpan.FromMinutes(20), TimeSpan.FromHours(12), Arg.Any<CancellationToken>()).Returns(3);
+        _flights.GetByFlightNumberAndDateAsync(1, "BA123", DefaultCmd.ServiceDate, Arg.Any<CancellationToken>()).Returns(existing);
+        _flights.GetOrCreateFlightAsync(Arg.Any<Flight>(), Arg.Any<CancellationToken>()).Returns(existing);
+        _flights.GetTravelerFlightAsync(DefaultCmd.TravelerId, existing.Id, Arg.Any<CancellationToken>())
+            .Returns(TravelerFlight.Create(DefaultCmd.TravelerId, existing.Id));
+
+        var flightId = await _handler.Handle(DefaultCmd, CancellationToken.None);
+
+        Assert.Equal(existing.Id, flightId);
+        await _flights.DidNotReceive().AddTravelerFlightAsync(Arg.Any<TravelerFlight>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AtTheCap_AnExistingFlightTheTravelerDoesNotTrack_Throws409()
+    {
+        var existing = ExistingFlight();
+        _flights.CountActiveTrackedFlightsAsync(DefaultCmd.TravelerId, Now, TimeSpan.FromMinutes(20), TimeSpan.FromHours(12), Arg.Any<CancellationToken>()).Returns(3);
+        _flights.GetByFlightNumberAndDateAsync(1, "BA123", DefaultCmd.ServiceDate, Arg.Any<CancellationToken>()).Returns(existing);
+        _flights.GetTravelerFlightAsync(DefaultCmd.TravelerId, existing.Id, Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => _handler.Handle(DefaultCmd, CancellationToken.None));
+
+        Assert.Equal(409, ex.StatusCode);
+        await _flights.DidNotReceive().AddTravelerFlightAsync(Arg.Any<TravelerFlight>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AtTheCap_AnUnknownAirline_IsStillA404()
+    {
+        _flights.CountActiveTrackedFlightsAsync(Arg.Any<Guid>(), Arg.Any<DateTime>(), Arg.Any<TimeSpan>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(3);
+
+        // "ZZ" has no stubbed airline, so the lookup finds nothing.
+        var ex = await Assert.ThrowsAsync<DomainException>(
+            () => _handler.Handle(DefaultCmd with { FlightNumber = "ZZ123" }, CancellationToken.None));
+
+        Assert.Equal(404, ex.StatusCode);
     }
 }

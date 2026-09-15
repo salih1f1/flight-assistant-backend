@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Contracts.Paging;
 using FlightAssistant.Contracts.Requests.Flights;
 using FlightAssistant.Contracts.Responses.Admin;
@@ -465,6 +466,29 @@ public class AdminTravelerEndpointTests(FlightAssistantWebApplicationFactory fac
         Assert.Equal(HttpStatusCode.Created, second.StatusCode);
         Assert.Equal(await FlightIdFromAsync(first), await FlightIdFromAsync(second));
         Assert.Single(await TrackingRowsForAsync(traveler.Id));
+    }
+
+    [Fact]
+    public async Task Track_Admin_AtTheCap_Returns409_AndTracksNothingMore()
+    {
+        // The real host: the configured cap reaches the handler, and the count runs against the database (#380).
+        var cap = factory.Services.GetRequiredService<IFlightSyncOptions>().MaxActiveTrackedFlightsPerTraveler;
+        Assert.Equal(3, cap); // appsettings.Testing.json: non-default (#308), so a hardcoded 20 can't pass
+        var traveler = await SeedTravelerAsync();
+        var client = factory.CreateAdminClient();
+        for (var i = 0; i < cap; i++)
+        {
+            var tracked = await client.PostAsJsonAsync($"admin/travelers/{traveler.Id}/flights", await SeedTrackableFlightAsync());
+            Assert.Equal(HttpStatusCode.Created, tracked.StatusCode);
+        }
+
+        var refused = await client.PostAsJsonAsync($"admin/travelers/{traveler.Id}/flights", await SeedTrackableFlightAsync());
+
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        var problem = await refused.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("You can track up to 3 flights at a time. Stop tracking one to add another.",
+            problem.GetProperty("title").GetString());
+        Assert.Equal(cap, (await TrackingRowsForAsync(traveler.Id)).Count);
     }
 
     [Fact]

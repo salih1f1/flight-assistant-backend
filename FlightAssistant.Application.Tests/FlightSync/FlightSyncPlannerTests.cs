@@ -208,6 +208,7 @@ public class FlightSyncPlannerTests
         public TimeSpan StopAfterArrival => TimeSpan.FromMinutes(5);
         public TimeSpan StopWithoutArrivalAfter => TimeSpan.FromMinutes(6);
         public TimeSpan ManualSyncCooldown => TimeSpan.FromMinutes(4);
+        public int MaxActiveTrackedFlightsPerTraveler => 3;
     }
 
     private sealed class WindowOptions : IFlightStatusWindowOptions

@@ -1,3 +1,4 @@
+using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Flights.Enums;
 using FlightAssistant.Domain.ReferenceData.Entities;
@@ -92,6 +93,27 @@ public class FlightRepositoryTests : PostgresTestBase
         EnsureTraveler(db, travelerId);
         db.TravelerFlights.Add(TravelerFlight.Create(travelerId, flight.Id));
         db.SaveChanges();
+    }
+
+    /// <summary>A saved flight scheduled to arrive at <paramref name="scheduledArrivalUtc"/>, tracked by
+    /// <paramref name="travelerId"/> when one is given.</summary>
+    private static Flight FlightArriving(FlightAssistantDbContext db, string flightNumber, DateTime scheduledArrivalUtc,
+        Guid? travelerId = null)
+    {
+        var (airlineId, departureAirportId, arrivalAirportId) = EnsureReferenceData(db);
+        var flight = Flight.Create(airlineId, flightNumber, departureAirportId, arrivalAirportId,
+            DateOnly.FromDateTime(scheduledArrivalUtc), scheduledArrivalUtc.AddHours(-3), scheduledArrivalUtc);
+        db.Flights.Add(flight);
+        db.SaveChanges();
+
+        if (travelerId is { } id)
+        {
+            EnsureTraveler(db, id);
+            db.TravelerFlights.Add(TravelerFlight.Create(id, flight.Id));
+            db.SaveChanges();
+        }
+
+        return flight;
     }
 
     [Fact]
@@ -196,5 +218,76 @@ public class FlightRepositoryTests : PostgresTestBase
 
         Assert.True(await repository.IsFlightTrackedAsync(tracked.Id));
         Assert.False(await repository.IsFlightTrackedAsync(untracked.Id));
+    }
+
+    // ── CountActiveTrackedFlightsAsync (#380) ──
+
+    // Non-default stop rules (#308): stop 20 min after arrival or cancellation, 12 h after an unreported arrival.
+    private static readonly FlightSyncPlanOptions StopRules = new(
+        FastInterval: TimeSpan.FromMinutes(3),
+        LiveInterval: TimeSpan.FromMinutes(7),
+        ScheduleCheckInterval: TimeSpan.FromHours(6),
+        FastWindowBeforeDeparture: TimeSpan.FromHours(3),
+        LiveWindowBeforeDeparture: TimeSpan.FromDays(1),
+        StopAfterArrival: TimeSpan.FromMinutes(20),
+        StopWithoutArrivalAfter: TimeSpan.FromHours(12));
+
+    private static Task<int> CountActive(FlightAssistantDbContext db, Guid travelerId) =>
+        Repository(db, ClockAt(SyncNow)).CountActiveTrackedFlightsAsync(
+            travelerId, SyncNow, StopRules.StopAfterArrival, StopRules.StopWithoutArrivalAfter);
+
+    /// <summary>How many of these flights the planner would still sync, so the count can be checked
+    /// against the planner's own Stopped rule rather than a second copy of it.</summary>
+    private static int PlannerStillSyncs(IEnumerable<Flight> flights) =>
+        flights.Count(f => FlightSyncPlanner.Plan(f, isTracked: true, SyncNow, StopRules).Mode != FlightSyncMode.Stopped);
+
+    [Fact]
+    public async Task CountActiveTrackedFlightsAsync_CountsTheTravelersFlightsThePlannerStillSyncs()
+    {
+        using var db = CreateContext();
+        var traveler = Guid.NewGuid();
+
+        var upcoming = FlightArriving(db, "TK10", SyncNow.AddHours(3), traveler);                  // counts
+        var landedRecently = FlightArriving(db, "TK11", SyncNow.AddHours(-1), traveler);           // counts: landed 5 min ago
+        landedRecently.ApplyStatusUpdate("ARR", null, null, SyncNow.AddHours(-4), SyncNow.AddMinutes(-5), null, SyncNow);
+        var landedLongAgo = FlightArriving(db, "TK12", SyncNow.AddHours(-1), traveler);            // doesn't: landed 25 min ago
+        landedLongAgo.ApplyStatusUpdate("ARR", null, null, SyncNow.AddHours(-4), SyncNow.AddMinutes(-25), null, SyncNow);
+        var cancelledRecently = FlightArriving(db, "TK13", SyncNow.AddHours(3), traveler);         // counts: cancelled 5 min ago
+        cancelledRecently.ApplyStatusUpdate("CAN", null, null, null, null, null, SyncNow.AddMinutes(-5));
+        var cancelledLongAgo = FlightArriving(db, "TK14", SyncNow.AddHours(3), traveler);          // doesn't: cancelled 25 min ago
+        cancelledLongAgo.ApplyStatusUpdate("CAN", null, null, null, null, null, SyncNow.AddMinutes(-25));
+        var unreported = FlightArriving(db, "TK15", SyncNow.AddHours(-11), traveler);              // counts: no arrival, 11 h past
+        var unreportedLongAgo = FlightArriving(db, "TK16", SyncNow.AddHours(-13), traveler);       // doesn't: no arrival, 13 h past
+        var estimateLater = FlightArriving(db, "TK17", SyncNow.AddHours(-13), traveler);           // counts: the estimate is 11 h past
+        estimateLater.ApplyStatusUpdate("DEP", null, SyncNow.AddHours(-11), SyncNow.AddHours(-14), null, null, SyncNow);
+        FlightArriving(db, "TK18", SyncNow.AddHours(3), Guid.NewGuid());                            // doesn't: another traveler's
+        FlightArriving(db, "TK19", SyncNow.AddHours(3));                                            // doesn't: untracked
+        db.SaveChanges();
+
+        var travelersFlights = new[] { upcoming, landedRecently, landedLongAgo, cancelledRecently, cancelledLongAgo, unreported, unreportedLongAgo, estimateLater };
+
+        Assert.Equal(5, await CountActive(db, traveler));
+        Assert.Equal(PlannerStillSyncs(travelersFlights), await CountActive(db, traveler));
+    }
+
+    [Fact]
+    public async Task CountActiveTrackedFlightsAsync_AFlightExactlyAtAStopBoundary_HasStopped()
+    {
+        using var db = CreateContext();
+        var traveler = Guid.NewGuid();
+
+        var landedAtBoundary = FlightArriving(db, "TK20", SyncNow.AddHours(-1), traveler);         // doesn't: landed exactly 20 min ago
+        landedAtBoundary.ApplyStatusUpdate("ARR", null, null, SyncNow.AddHours(-4), SyncNow.AddMinutes(-20), null, SyncNow);
+        var landedInside = FlightArriving(db, "TK21", SyncNow.AddHours(-1), traveler);             // counts: landed 19 min ago
+        landedInside.ApplyStatusUpdate("ARR", null, null, SyncNow.AddHours(-4), SyncNow.AddMinutes(-19), null, SyncNow);
+        var unreportedAtBoundary = FlightArriving(db, "TK22", SyncNow.AddHours(-12), traveler);    // doesn't: exactly 12 h past
+        var unreportedInside = FlightArriving(db, "TK23", SyncNow.AddHours(-12).AddMinutes(1), traveler); // counts
+
+        db.SaveChanges();
+
+        var travelersFlights = new[] { landedAtBoundary, landedInside, unreportedAtBoundary, unreportedInside };
+
+        Assert.Equal(2, await CountActive(db, traveler));
+        Assert.Equal(PlannerStillSyncs(travelersFlights), await CountActive(db, traveler));
     }
 }

@@ -33,6 +33,7 @@ public class FlightSyncOptionsTests
         Assert.Equal(TimeSpan.FromMinutes(30), options.StopAfterArrival);
         Assert.Equal(TimeSpan.FromDays(1), options.StopWithoutArrivalAfter);
         Assert.Equal(TimeSpan.FromMinutes(5), options.ManualSyncCooldown);
+        Assert.Equal(20, options.MaxActiveTrackedFlightsPerTraveler);
     }
 
     [Fact]
@@ -47,6 +48,7 @@ public class FlightSyncOptionsTests
             ["FlightSync:StopAfterArrival"] = "00:20:00",
             ["FlightSync:StopWithoutArrivalAfter"] = "12:00:00",
             ["FlightSync:ManualSyncCooldown"] = "00:02:00",
+            ["FlightSync:MaxActiveTrackedFlightsPerTraveler"] = "7",
         });
         var options = provider.GetRequiredService<IFlightSyncOptions>();
 
@@ -57,6 +59,7 @@ public class FlightSyncOptionsTests
         Assert.Equal(TimeSpan.FromMinutes(20), options.StopAfterArrival);
         Assert.Equal(TimeSpan.FromHours(12), options.StopWithoutArrivalAfter);
         Assert.Equal(TimeSpan.FromMinutes(2), options.ManualSyncCooldown);
+        Assert.Equal(7, options.MaxActiveTrackedFlightsPerTraveler);
     }
 
     [Fact]
@@ -78,6 +81,7 @@ public class FlightSyncOptionsTests
         Assert.Equal(defaults.StopAfterArrival, shipped.StopAfterArrival);
         Assert.Equal(defaults.StopWithoutArrivalAfter, shipped.StopWithoutArrivalAfter);
         Assert.Equal(defaults.ManualSyncCooldown, shipped.ManualSyncCooldown);
+        Assert.Equal(defaults.MaxActiveTrackedFlightsPerTraveler, shipped.MaxActiveTrackedFlightsPerTraveler);
     }
 
     /// <summary>The API project's own appsettings.json, found by walking up from the test output directory.</summary>
@@ -101,6 +105,8 @@ public class FlightSyncOptionsTests
     [InlineData("StopWithoutArrivalAfter", "00:00:00")]
     [InlineData("ManualSyncCooldown", "-00:01:00")]
     [InlineData("ManualSyncCooldown", "01:00:01")]
+    [InlineData("MaxActiveTrackedFlightsPerTraveler", "0")]
+    [InlineData("MaxActiveTrackedFlightsPerTraveler", "1001")]
     public void AnOutOfRangeValue_FailsOnStart(string key, string value)
     {
         using var provider = Build(new() { [$"FlightSync:{key}"] = value });

@@ -56,8 +56,24 @@ namespace FlightAssistant.Application.Commands.Flights
             var arrAirportId = await _refData.GetAirportIdByIataAsync(cmd.ArrivalAirportIata, ct)
                 ?? throw new DomainException($"Airport '{cmd.ArrivalAirportIata}' not found.", 404);
 
-            // Look up or create the Flight aggregate (race-safe via the unique ix_flight_lookup index)
             var flightNumber = cmd.FlightNumber.Trim().ToUpperInvariant();
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+
+            // A cap on flights the traveler tracks that the status sync still polls (#380). A flight holds
+            // its slot until the planner would stop it, so this bounds how many flights one account keeps
+            // polled; it isn't a rate limit. Checked after the airline and airport lookups (an unknown one
+            // is still a 404) and before the flight row exists, so a refused request writes nothing. A
+            // flight the traveler already tracks still succeeds, so tracking stays idempotent.
+            var cap = _syncOptions.MaxActiveTrackedFlightsPerTraveler;
+            if (await _flights.CountActiveTrackedFlightsAsync(
+                    cmd.TravelerId, now, _syncOptions.StopAfterArrival, _syncOptions.StopWithoutArrivalAfter, ct) >= cap
+                && !await AlreadyTracksAsync(cmd.TravelerId, airlineId, flightNumber, cmd.ServiceDate, ct))
+            {
+                throw new DomainException(
+                    $"You can track up to {cap} flights at a time. Stop tracking one to add another.", 409);
+            }
+
+            // Look up or create the Flight aggregate (race-safe via the unique ix_flight_lookup index)
             var candidate = Flight.Create(airlineId, flightNumber, depAirportId, arrAirportId, cmd.ServiceDate, cmd.ScheduledDepartureUtc, cmd.ScheduledArrivalUtc);
             var flight = await _flights.GetOrCreateFlightAsync(candidate, ct);
 
@@ -72,7 +88,6 @@ namespace FlightAssistant.Application.Commands.Flights
                 // due now, so the sync picks it up within a loop (#356, spec §2.5).
                 if (flight.SyncMode is null)
                 {
-                    var now = _timeProvider.GetUtcNow().UtcDateTime;
                     var plan = FlightSyncPlanner.Plan(flight, isTracked: true, now,
                         FlightSyncPlanOptions.From(_syncOptions, _windowOptions));
                     flight.ApplySyncPlan(plan.Mode, plan.Mode == FlightSyncMode.Stopped ? null : now);
@@ -82,6 +97,15 @@ namespace FlightAssistant.Application.Commands.Flights
             }
 
             return flight.Id;
+        }
+
+        /// <summary>Whether the traveler already tracks this flight, found the way
+        /// <c>GetOrCreateFlightAsync</c> would find its row.</summary>
+        private async Task<bool> AlreadyTracksAsync(
+            Guid travelerId, int airlineId, string flightNumber, DateOnly serviceDate, CancellationToken ct)
+        {
+            var flight = await _flights.GetByFlightNumberAndDateAsync(airlineId, flightNumber, serviceDate, ct);
+            return flight is not null && await _flights.GetTravelerFlightAsync(travelerId, flight.Id, ct) is not null;
         }
     }
 }

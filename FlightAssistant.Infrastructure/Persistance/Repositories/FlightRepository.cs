@@ -144,5 +144,22 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
 
         public Task<bool> IsFlightTrackedAsync(int flightId, CancellationToken ct = default) =>
             _db.TravelerFlights.AnyAsync(tf => tf.FlightId == flightId, ct);
+
+        public Task<int> CountActiveTrackedFlightsAsync(
+            Guid travelerId, DateTime nowUtc, TimeSpan stopAfterArrival, TimeSpan stopWithoutArrivalAfter,
+            CancellationToken ct = default)
+        {
+            // The negation of FlightSyncPlanner's Stopped rule; FlightRepositoryTests checks the two agree.
+            var stopBefore = nowUtc - stopAfterArrival;
+            var stopWithoutArrivalBefore = nowUtc - stopWithoutArrivalAfter;
+
+            return _db.TravelerFlights
+                .Where(tf => tf.TravelerId == travelerId)
+                .Join(_db.Flights, tf => tf.FlightId, f => f.Id, (tf, f) => f)
+                .CountAsync(f => (f.ActualArrivalUtc == null || f.ActualArrivalUtc > stopBefore)
+                                 && (f.CancelledAtUtc == null || f.CancelledAtUtc > stopBefore)
+                                 && (f.ActualArrivalUtc != null
+                                     || (f.EstimatedArrivalUtc ?? f.ScheduledArrivalUtc) > stopWithoutArrivalBefore), ct);
+        }
     }
 }

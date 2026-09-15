@@ -1,4 +1,5 @@
 using FlightAssistant.API.Authentication;
+using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Queries.Flights;
 using FlightAssistant.Application.Validators;
@@ -114,9 +115,13 @@ namespace FlightAssistant.API.Endpoints
                 "The airline is derived from the first two characters of FlightNumber (e.g. 'BA123' -> 'BA', '6E4120' -> '6E'); " +
                 "there is no separate airline field. " +
                 "Body fields: FlightNumber (e.g. 'BA123' or '6E4120'), ServiceDate (YYYY-MM-DD), " +
-                "DepartureAirportIata, ArrivalAirportIata, ScheduledDepartureUtc, ScheduledArrivalUtc.")
+                "DepartureAirportIata, ArrivalAirportIata, ScheduledDepartureUtc, ScheduledArrivalUtc. " +
+                $"A traveler can track up to {new FlightSyncOptions().MaxActiveTrackedFlightsPerTraveler} flights at a time by default. " +
+                "A flight counts until its status sync stops: by default 30 minutes after it lands or is cancelled, or a day after its arrival time if no landing is reported. " +
+                "Tracking another returns 409 and adds nothing; tracking a flight the traveler already tracks still returns 201.")
             .Produces(201)
-            .ProducesValidationProblem();
+            .ProducesValidationProblem()
+            .ProducesProblem(409);
 
             // DELETE /flights/{flightId} — stop tracking a flight
             group.MapDelete("{flightId:int}", async (HttpContext http, int flightId, IMediator mediator, CancellationToken ct) =>

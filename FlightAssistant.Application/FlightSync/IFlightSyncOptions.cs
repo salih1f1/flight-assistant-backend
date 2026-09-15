@@ -18,5 +18,9 @@ namespace FlightAssistant.Application.FlightSync
         /// <summary>A traveler's manual sync within this long of the flight's last sync, or of a
         /// traveler's attempted sync, makes no provider call (#369).</summary>
         TimeSpan ManualSyncCooldown { get; }
+
+        /// <summary>How many tracked flights the status sync still polls a traveler can have at once
+        /// (#380). Tracking another is refused with a 409.</summary>
+        int MaxActiveTrackedFlightsPerTraveler { get; }
     }
 }
