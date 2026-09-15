@@ -14,6 +14,7 @@ using FlightAssistant.Infrastructure.HealthChecks;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.ApplicationInsights.Extensibility;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -198,20 +199,42 @@ builder.Services.AddAuthorization(options =>
               .RequireRole("admin"));
 });
 
+// App Service terminates TLS and proxies every request, so without the forwarded headers
+// RemoteIpAddress and Scheme are its front end's, and every IP-partitioned rate limit puts all
+// callers in one bucket (#371). The front end's addresses aren't fixed, so there is no known-proxy
+// list; ForwardLimit = 1 reads only the rightmost X-Forwarded-For entry — the one the front end
+// appended — so a client can't choose its own address by sending the header itself.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardLimit = 1;
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
 // Rate limiting — fixed-window per policy; limits are configurable via appsettings.json
 builder.Services.AddRateLimiter(rl =>
 {
     rl.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
-    // Flight search — public, partition by client IP. Lowered from 20 to 8 (issue #282): now that
-    // AeroApiFlightSearchCachingDecorator absorbs repeated identical searches for free, this ceiling
-    // only bounds the number of *distinct* searches one IP can force upstream per window, so a lower
-    // number costs a legitimate user little while meaningfully cutting a scripted client's ability to
-    // burn through the $5/month metered AeroAPI tier by varying the search each time.
+    // Policies partition by caller: oid, then sub, then IP (#318's reasoning — IP alone
+    // would throttle everyone behind one NAT together and let a caller who rotates addresses dodge it).
+    static string CallerPartitionKey(HttpContext ctx) =>
+        ctx.User.FindFirst("oid")?.Value
+        ?? ctx.User.FindFirst("sub")?.Value
+        ?? ctx.Connection.RemoteIpAddress?.ToString()
+        ?? "unknown";
+
+    // Flight search — public, partition by caller (#371): a signed-in traveler or admin by identity, an
+    // anonymous caller by client IP (forwarded, see UseForwardedHeaders). Lowered from 20 to 8 (issue
+    // #282): now that AeroApiFlightSearchCachingDecorator absorbs repeated identical searches for free,
+    // this ceiling only bounds the number of *distinct* searches one caller can force upstream per
+    // window, so a lower number costs a legitimate user little while meaningfully cutting a scripted
+    // client's ability to burn through the $5/month metered AeroAPI tier by varying the search each time.
     var fsLimit = builder.Configuration.GetValue("RateLimiting:FlightSearch:PermitLimit", 8);
     var fsWindow = builder.Configuration.GetValue("RateLimiting:FlightSearch:WindowSeconds", 60);
     rl.AddPolicy("flight-search", ctx => RateLimitPartition.GetFixedWindowLimiter(
-        partitionKey: ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        partitionKey: CallerPartitionKey(ctx),
         factory: _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = fsLimit,
@@ -219,14 +242,6 @@ builder.Services.AddRateLimiter(rl =>
             QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
             QueueLimit = 0
         }));
-
-    // Authenticated policies partition by caller: oid, then sub, then IP (#318's reasoning — IP alone
-    // would throttle everyone behind one NAT together and let a caller who rotates addresses dodge it).
-    static string CallerPartitionKey(HttpContext ctx) =>
-        ctx.User.FindFirst("oid")?.Value
-        ?? ctx.User.FindFirst("sub")?.Value
-        ?? ctx.Connection.RemoteIpAddress?.ToString()
-        ?? "unknown";
 
     // Loyalty programs — authenticated, partition by user ID
     var loyaltyLimit = builder.Configuration.GetValue("RateLimiting:LoyaltyPrograms:PermitLimit", 60);
@@ -311,6 +326,13 @@ app.Services.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>()
 // ------------------------------------------------------------
 // 5. Middleware Pipeline
 // ------------------------------------------------------------
+// First: everything after it sees the client's address and scheme (#371). With
+// ASPNETCORE_FORWARDEDHEADERS_ENABLED=true the host runs this middleware itself, before this pipeline, and a
+// second run here would consume the front end's X-Forwarded-For entry and then trust the client's own. The
+// check is the host's own (ForwardedHeadersStartupFilter), so exactly one of the two adds it.
+if (!string.Equals("true", app.Configuration["ForwardedHeaders_Enabled"], StringComparison.OrdinalIgnoreCase))
+    app.UseForwardedHeaders();
+
 if (app.Environment.IsDevelopment() || app.Environment.IsStaging())
 {
     app.UseSwagger();
