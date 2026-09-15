@@ -7,13 +7,14 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     /// Configuration for the FlightAware AeroAPI client, bound from the <c>AeroApi</c> section.
     /// Registered with <c>ValidateDataAnnotations().ValidateOnStart()</c> so a missing/invalid
     /// value fails fast at startup rather than surfacing as a confusing runtime error on the
-    /// first search. Implements <see cref="IFlightSearchHorizonOptions"/> and
-    /// <see cref="IAeroApiBudgetOptions"/> so the Application-layer query validator and usage query
-    /// can read the real configured horizon and budget without this (Infrastructure) project being
-    /// referenced from Application — see the DI registration in
+    /// first search. Implements <see cref="IFlightSearchHorizonOptions"/>,
+    /// <see cref="IAeroApiBudgetOptions"/> and <see cref="IFlightStatusWindowOptions"/> so the
+    /// Application-layer query validator, usage query and <c>FlightSyncPlanner</c> can read the
+    /// real configured horizon, budget and status window without this (Infrastructure) project
+    /// being referenced from Application — see the DI registration in
     /// <c>FlightAssistant.Infrastructure.DependencyInjection</c>.
     /// </summary>
-    public sealed class AeroApiOptions : IFlightSearchHorizonOptions, IAeroApiBudgetOptions
+    public sealed class AeroApiOptions : IFlightSearchHorizonOptions, IAeroApiBudgetOptions, IFlightStatusWindowOptions
     {
         /// <summary>Sent as the <c>x-apikey</c> header on every request. Never logged.</summary>
         [Required]
@@ -73,10 +74,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         /// is 2 days future, which is also this property's <c>[Range]</c> ceiling.
         ///
         /// <para>
-        /// <see cref="FlightAssistant.Infrastructure.Persistance.Repositories.FlightRepository.GetActiveTrackedFlightsAsync"/>
-        /// uses this same value (padded by one extra day) to stop offering flights this provider
-        /// can never answer for as poll candidates in the first place — see that method for why the
-        /// pad exists and why the lower bound is left untouched.
+        /// <c>FlightSyncPlanner</c> reads the same value, through <c>IFlightStatusWindowOptions</c>, as
+        /// the moment a tracked flight enters Live sync: this many days before its scheduled
+        /// departure, the first moment this endpoint can answer for it (#343, #356).
         /// </para>
         /// </summary>
         [Range(1, 2)]

@@ -22,7 +22,8 @@ public abstract class PostgresTestBase : IAsyncLifetime
 
     public Task InitializeAsync() => _fixture.ResetAsync();
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    /// <summary>Virtual so a test that owns extra resources, like a scratch database, can clean them up.</summary>
+    public virtual Task DisposeAsync() => Task.CompletedTask;
 
     /// <summary>A fresh <see cref="FlightAssistantDbContext"/> bound to the shared container.
     /// Callers own disposal.</summary>

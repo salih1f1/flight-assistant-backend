@@ -112,11 +112,15 @@ namespace FlightAssistant.API.Endpoints.Admin
             // POST /admin/flights/{id}/sync
             group.MapPost("{id:int}/sync", async (int id, IMediator mediator, CancellationToken ct) =>
             {
-                var updated = await mediator.Send(new SyncFlightStatusCommand(null, id), ct);
+                var updated = await mediator.Send(new SyncFlightStatusCommand(null, id, SyncTrigger.Admin), ct);
                 return Results.Ok(new { updated });
             })
             .WithName("AdminSyncFlightStatus")
             .WithSummary("Sync flight status")
+            .WithDescription(
+                "Syncs the flight's status now. A flight not yet inside the provider's live-status window makes no provider call, " +
+                "and a flight no traveler tracks makes no call and has its sync plan cleared; both return { updated: false }. " +
+                "Otherwise returns { updated: true } if a new status was recorded.")
             .Produces(200);
         }
 

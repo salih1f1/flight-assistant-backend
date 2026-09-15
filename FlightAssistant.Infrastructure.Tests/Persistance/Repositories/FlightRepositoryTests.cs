@@ -1,18 +1,17 @@
 using FlightAssistant.Domain.Flights.Entities;
+using FlightAssistant.Domain.Flights.Enums;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
-using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using FlightAssistant.Infrastructure.Tests.TestSupport;
-using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 
 namespace FlightAssistant.Infrastructure.Tests.Persistance.Repositories;
 
 /// <summary>
-/// Drives <see cref="FlightRepository.GetActiveTrackedFlightsAsync"/> against real PostgreSQL
-/// (see #295) to prove the <see cref="DateOnly"/> range filter actually translates to SQL the way
+/// Drives <see cref="FlightRepository.GetDueTrackedFlightIdsAsync"/> against real PostgreSQL (see
+/// #295) to prove the <c>NextSyncDueUtc</c> filter and ordering actually translate to SQL the way
 /// the C# comparison logic implies. This used to run on <c>UseInMemoryDatabase</c>, which
 /// evaluates the <c>Where</c> clause client-side rather than translating it, so it proved the
 /// comparison logic but never proved the translation itself.
@@ -24,13 +23,7 @@ public class FlightRepositoryTests : PostgresTestBase
 
     private FlightAssistantDbContext CreateContext() => CreateDbContext();
 
-    private static FlightRepository Repository(
-        FlightAssistantDbContext db, TimeProvider clock, int statusWindowFutureDays = 2) =>
-        new(db, clock, Options.Create(new AeroApiOptions
-        {
-            ApiKey = "dummy",
-            StatusWindowFutureDays = statusWindowFutureDays
-        }));
+    private static FlightRepository Repository(FlightAssistantDbContext db, TimeProvider clock) => new(db, clock);
 
     /// <summary>
     /// Real PostgreSQL enforces the FK constraints <see cref="FlightConfiguration"/> and friends
@@ -71,183 +64,137 @@ public class FlightRepositoryTests : PostgresTestBase
         db.SaveChanges();
     }
 
-    private static Flight TrackedFlight(FlightAssistantDbContext db, Guid travelerId, DateOnly serviceDate, string flightNumber)
+    private static readonly DateTime SyncNow = new(2026, 9, 14, 12, 0, 0, DateTimeKind.Utc);
+
+    private static FakeTimeProvider ClockAt(DateTime utc) => new(new DateTimeOffset(utc));
+
+    /// <summary>A saved flight with the given sync plan, tracked by one new traveler unless
+    /// <paramref name="tracked"/> is false. A null <paramref name="mode"/> is a flight never planned.</summary>
+    private static Flight FlightDue(FlightAssistantDbContext db, string flightNumber, DateTime? nextSyncDueUtc,
+        bool tracked = true, FlightSyncMode? mode = FlightSyncMode.Fast)
     {
         var (airlineId, departureAirportId, arrivalAirportId) = EnsureReferenceData(db);
-        EnsureTraveler(db, travelerId);
-
-        var flight = Flight.Create(
-            airlineId: airlineId,
-            flightNumber: flightNumber,
-            departureAirportId: departureAirportId,
-            arrivalAirportId: arrivalAirportId,
-            serviceDate: serviceDate,
-            scheduledDepartureUtc: serviceDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
-            scheduledArrivalUtc: serviceDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc).AddHours(2));
-
+        var flight = Flight.Create(airlineId, flightNumber, departureAirportId, arrivalAirportId,
+            new DateOnly(2026, 9, 14), SyncNow.AddHours(1), SyncNow.AddHours(3));
+        flight.ApplySyncPlan(mode, nextSyncDueUtc);
         db.Flights.Add(flight);
         db.SaveChanges();
 
-        db.TravelerFlights.Add(TravelerFlight.Create(travelerId, flight.Id));
-        db.SaveChanges();
+        if (tracked)
+            AddTracker(db, flight);
 
         return flight;
     }
 
-    [Fact]
-    public async Task GetActiveTrackedFlightsAsync_ReturnsAFlight_InsideTheWindow()
+    private static void AddTracker(FlightAssistantDbContext db, Flight flight)
     {
-        using var db = CreateContext();
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 1, 8, 0, 0, TimeSpan.Zero));
         var travelerId = Guid.NewGuid();
-
-        TrackedFlight(db, travelerId, new DateOnly(2026, 9, 2), "TK1028");
-
-        var result = await Repository(db, clock).GetActiveTrackedFlightsAsync();
-
-        Assert.Single(result);
-    }
-
-    /// <summary>
-    /// The issue's own acceptance criterion: a flight tracked 6 months out must not be a poll
-    /// candidate at all, since AeroAPI's status endpoint can never answer for it.
-    /// </summary>
-    [Fact]
-    public async Task GetActiveTrackedFlightsAsync_ExcludesAFlightTrackedSixMonthsOut()
-    {
-        using var db = CreateContext();
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 1, 8, 0, 0, TimeSpan.Zero));
-        var travelerId = Guid.NewGuid();
-
-        TrackedFlight(db, travelerId, new DateOnly(2027, 3, 1), "TK1028");
-
-        var result = await Repository(db, clock).GetActiveTrackedFlightsAsync();
-
-        Assert.Empty(result);
-    }
-
-    [Fact]
-    public async Task GetActiveTrackedFlightsAsync_ExcludesAFlightOneDayPastThePaddedUpperBound()
-    {
-        using var db = CreateContext();
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 1, 8, 0, 0, TimeSpan.Zero));
-        var travelerId = Guid.NewGuid();
-
-        // StatusWindowFutureDays defaults to 2, padded by 1 => upper bound is today+3 (2026-09-04).
-        // One day past that is 2026-09-05.
-        TrackedFlight(db, travelerId, new DateOnly(2026, 9, 5), "TK1028");
-
-        var result = await Repository(db, clock).GetActiveTrackedFlightsAsync();
-
-        Assert.Empty(result);
-    }
-
-    [Fact]
-    public async Task GetActiveTrackedFlightsAsync_IncludesAFlightExactlyAtThePaddedUpperBound()
-    {
-        using var db = CreateContext();
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 1, 8, 0, 0, TimeSpan.Zero));
-        var travelerId = Guid.NewGuid();
-
-        // today (2026-09-01) + StatusWindowFutureDays (2) + 1 day pad = 2026-09-04, included.
-        TrackedFlight(db, travelerId, new DateOnly(2026, 9, 4), "TK1028");
-
-        var result = await Repository(db, clock).GetActiveTrackedFlightsAsync();
-
-        Assert.Single(result);
-    }
-
-    [Fact]
-    public async Task GetActiveTrackedFlightsAsync_IncludesAFlightScheduledForToday()
-    {
-        using var db = CreateContext();
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 1, 8, 0, 0, TimeSpan.Zero));
-        var travelerId = Guid.NewGuid();
-
-        TrackedFlight(db, travelerId, new DateOnly(2026, 9, 1), "TK1028");
-
-        var result = await Repository(db, clock).GetActiveTrackedFlightsAsync();
-
-        Assert.Single(result);
-    }
-
-    [Fact]
-    public async Task GetActiveTrackedFlightsAsync_ExcludesAFlightThatDepartedYesterday()
-    {
-        // The lower bound is deliberately left untouched by this issue — widening it would
-        // increase spend, the opposite of what #283 is for. Documents current behaviour, not an
-        // endorsement (see FlightRepository.GetActiveTrackedFlightsAsync's doc comment).
-        using var db = CreateContext();
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 1, 8, 0, 0, TimeSpan.Zero));
-        var travelerId = Guid.NewGuid();
-
-        TrackedFlight(db, travelerId, new DateOnly(2026, 8, 31), "TK1028");
-
-        var result = await Repository(db, clock).GetActiveTrackedFlightsAsync();
-
-        Assert.Empty(result);
-    }
-
-    [Fact]
-    public async Task GetActiveTrackedFlightsAsync_ExcludesAnUntrackedFlight_EvenInsideTheWindow()
-    {
-        using var db = CreateContext();
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 1, 8, 0, 0, TimeSpan.Zero));
-        var (airlineId, departureAirportId, arrivalAirportId) = EnsureReferenceData(db);
-
-        var flight = Flight.Create(
-            airlineId: airlineId,
-            flightNumber: "TK1028",
-            departureAirportId: departureAirportId,
-            arrivalAirportId: arrivalAirportId,
-            serviceDate: new DateOnly(2026, 9, 2),
-            scheduledDepartureUtc: new DateTime(2026, 9, 2, 0, 0, 0, DateTimeKind.Utc),
-            scheduledArrivalUtc: new DateTime(2026, 9, 2, 2, 0, 0, DateTimeKind.Utc));
-        db.Flights.Add(flight);
+        EnsureTraveler(db, travelerId);
+        db.TravelerFlights.Add(TravelerFlight.Create(travelerId, flight.Id));
         db.SaveChanges();
-        // Deliberately no TravelerFlight row.
-
-        var result = await Repository(db, clock).GetActiveTrackedFlightsAsync();
-
-        Assert.Empty(result);
     }
 
-    /// <summary>
-    /// The window is derived from <see cref="TimeProvider"/> on every call, not fixed at
-    /// construction — advancing the fake clock past a previously-excluded flight's service date
-    /// must bring it into range on the next call, from the very same repository instance.
-    /// </summary>
     [Fact]
-    public async Task GetActiveTrackedFlightsAsync_WindowMovesWithTheClock_NotFixedAtConstruction()
+    public async Task GetDueTrackedFlightIdsAsync_ReturnsDueFlights_OldestDueFirst()
     {
         using var db = CreateContext();
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 1, 8, 0, 0, TimeSpan.Zero));
-        var travelerId = Guid.NewGuid();
+        // Inserted out of due order, so only an ORDER BY can produce the expected order.
+        var dueAnHourAgo = FlightDue(db, "TK1", SyncNow.AddHours(-1));
+        var dueTenMinutesAgo = FlightDue(db, "TK2", SyncNow.AddMinutes(-10));
+        var dueHalfAnHourAgo = FlightDue(db, "TK3", SyncNow.AddMinutes(-30));
+
+        var ids = await Repository(db, ClockAt(SyncNow)).GetDueTrackedFlightIdsAsync();
+
+        Assert.Equal(new[] { dueAnHourAgo.Id, dueHalfAnHourAgo.Id, dueTenMinutesAgo.Id }, ids);
+    }
+
+    [Fact]
+    public async Task GetDueTrackedFlightIdsAsync_IncludesAFlightDueExactlyNow_ExcludesOneDueAMinuteLater()
+    {
+        using var db = CreateContext();
+        var dueNow = FlightDue(db, "TK1", SyncNow);
+        FlightDue(db, "TK2", SyncNow.AddMinutes(1));
+
+        var ids = await Repository(db, ClockAt(SyncNow)).GetDueTrackedFlightIdsAsync();
+
+        Assert.Equal(new[] { dueNow.Id }, ids);
+    }
+
+    [Fact]
+    public async Task GetDueTrackedFlightIdsAsync_ReturnsANeverPlannedFlight_AheadOfAnOverdueOne()
+    {
+        using var db = CreateContext();
+        // Inserted after the overdue flight, and PostgreSQL sorts a null due time last, so only an
+        // explicit "unplanned first" order puts it ahead.
+        var overdue = FlightDue(db, "TK1", SyncNow.AddHours(-1));
+        var unplanned = FlightDue(db, "TK2", nextSyncDueUtc: null, mode: null);
+
+        var ids = await Repository(db, ClockAt(SyncNow)).GetDueTrackedFlightIdsAsync();
+
+        Assert.Equal(new[] { unplanned.Id, overdue.Id }, ids);
+    }
+
+    [Fact]
+    public async Task GetDueTrackedFlightIdsAsync_ExcludesAnUntrackedNeverPlannedFlight()
+    {
+        using var db = CreateContext();
+        FlightDue(db, "TK1", nextSyncDueUtc: null, tracked: false, mode: null);
+
+        Assert.Empty(await Repository(db, ClockAt(SyncNow)).GetDueTrackedFlightIdsAsync());
+    }
+
+    [Fact]
+    public async Task GetDueTrackedFlightIdsAsync_ExcludesAStoppedFlight()
+    {
+        using var db = CreateContext();
+        FlightDue(db, "TK1", nextSyncDueUtc: null, mode: FlightSyncMode.Stopped);
+
+        Assert.Empty(await Repository(db, ClockAt(SyncNow)).GetDueTrackedFlightIdsAsync());
+    }
+
+    [Fact]
+    public async Task GetDueTrackedFlightIdsAsync_ExcludesAnUntrackedFlight_EvenWhenDue()
+    {
+        using var db = CreateContext();
+        FlightDue(db, "TK1", SyncNow.AddHours(-1), tracked: false);
+
+        Assert.Empty(await Repository(db, ClockAt(SyncNow)).GetDueTrackedFlightIdsAsync());
+    }
+
+    [Fact]
+    public async Task GetDueTrackedFlightIdsAsync_ReturnsAFlightOnce_WhenSeveralTravelersTrackIt()
+    {
+        using var db = CreateContext();
+        var flight = FlightDue(db, "TK1", SyncNow.AddHours(-1));
+        AddTracker(db, flight);
+
+        Assert.Equal(new[] { flight.Id }, await Repository(db, ClockAt(SyncNow)).GetDueTrackedFlightIdsAsync());
+    }
+
+    [Fact]
+    public async Task GetDueTrackedFlightIdsAsync_ReadsTheClockOnEveryCall()
+    {
+        using var db = CreateContext();
+        var clock = ClockAt(SyncNow);
         var repository = Repository(db, clock);
+        var flight = FlightDue(db, "TK1", SyncNow.AddMinutes(5));
 
-        TrackedFlight(db, travelerId, new DateOnly(2027, 3, 1), "TK1028");
+        Assert.Empty(await repository.GetDueTrackedFlightIdsAsync());
 
-        Assert.Empty(await repository.GetActiveTrackedFlightsAsync());
+        clock.Advance(TimeSpan.FromMinutes(5));
 
-        clock.SetUtcNow(new DateTimeOffset(2027, 2, 27, 8, 0, 0, TimeSpan.Zero));
-
-        Assert.Single(await repository.GetActiveTrackedFlightsAsync());
+        Assert.Equal(new[] { flight.Id }, await repository.GetDueTrackedFlightIdsAsync());
     }
 
     [Fact]
-    public async Task GetActiveTrackedFlightsAsync_UpperBound_ReflectsAConfiguredStatusWindowFutureDays()
+    public async Task IsFlightTrackedAsync_TrueOnlyForATrackedFlight()
     {
         using var db = CreateContext();
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 1, 8, 0, 0, TimeSpan.Zero));
-        var travelerId = Guid.NewGuid();
+        var tracked = FlightDue(db, "TK1", null);
+        var untracked = FlightDue(db, "TK2", null, tracked: false);
+        var repository = Repository(db, ClockAt(SyncNow));
 
-        // With StatusWindowFutureDays = 1, the padded upper bound is today+2 (2026-09-03).
-        TrackedFlight(db, travelerId, new DateOnly(2026, 9, 3), "TK1028");
-        TrackedFlight(db, travelerId, new DateOnly(2026, 9, 4), "TK1029");
-
-        var result = await Repository(db, clock, statusWindowFutureDays: 1).GetActiveTrackedFlightsAsync();
-
-        Assert.Single(result);
-        Assert.Equal("TK1028", result[0].FlightNumber);
+        Assert.True(await repository.IsFlightTrackedAsync(tracked.Id));
+        Assert.False(await repository.IsFlightTrackedAsync(untracked.Id));
     }
 }

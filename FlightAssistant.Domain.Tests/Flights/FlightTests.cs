@@ -1,9 +1,15 @@
 using FlightAssistant.Domain.Flights.Entities;
+using FlightAssistant.Domain.Flights.Enums;
 
 namespace FlightAssistant.Domain.Tests.Flights
 {
     public class FlightTests
     {
+        private static readonly DateTime Now = new(2026, 9, 14, 12, 0, 0, DateTimeKind.Utc);
+
+        private static Flight NewFlight() => Flight.Create(1, "TK1028", 1, 2, new DateOnly(2026, 9, 14),
+            Now.AddHours(1), Now.AddHours(4));
+
         [Fact]
         public void Create_NormalizesFlightNumber()
         {
@@ -28,11 +34,64 @@ namespace FlightAssistant.Domain.Tests.Flights
 
             var dep = DateTime.UtcNow;
             var arr = DateTime.UtcNow.AddHours(2);
-            flight.ApplyStatusUpdate("DLY", dep, arr, null, null, "B789");
+            flight.ApplyStatusUpdate("DLY", dep, arr, null, null, "B789", DateTime.UtcNow);
 
             Assert.Equal(dep, flight.EstimatedDepartureUtc);
             Assert.Equal(arr, flight.EstimatedArrivalUtc);
             Assert.Equal("B789", flight.EquipmentAircraftIcao);
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_Cancelled_SetsCancelledAtUtc()
+        {
+            var flight = NewFlight();
+            flight.ApplyStatusUpdate("CAN", null, null, null, null, null, Now);
+            Assert.Equal(Now, flight.CancelledAtUtc);
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_CancelledAgain_KeepsTheFirstCancellationTime()
+        {
+            // A later CAN update must not push the Stopped rule's 30-minute clock forward.
+            var flight = NewFlight();
+            flight.ApplyStatusUpdate("CAN", null, null, null, null, null, Now);
+            flight.ApplyStatusUpdate("CAN", null, null, null, null, null, Now.AddMinutes(20));
+            Assert.Equal(Now, flight.CancelledAtUtc);
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_OtherCodeAfterCancelled_ClearsCancelledAtUtc()
+        {
+            var flight = NewFlight();
+            flight.ApplyStatusUpdate("CAN", null, null, null, null, null, Now);
+            flight.ApplyStatusUpdate("SCH", null, null, null, null, null, Now.AddMinutes(5));
+            Assert.Null(flight.CancelledAtUtc);
+        }
+
+        [Fact]
+        public void MarkSynced_SetsLastSyncedUtc()
+        {
+            var flight = NewFlight();
+            flight.MarkSynced(Now);
+            Assert.Equal(Now, flight.LastSyncedUtc);
+        }
+
+        [Fact]
+        public void ApplySyncPlan_SetsModeAndNextDue()
+        {
+            var flight = NewFlight();
+            flight.ApplySyncPlan(FlightSyncMode.Live, Now.AddMinutes(10));
+            Assert.Equal(FlightSyncMode.Live, flight.SyncMode);
+            Assert.Equal(Now.AddMinutes(10), flight.NextSyncDueUtc);
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData(FlightSyncMode.Stopped)]
+        public void ApplySyncPlan_NotSyncedModeWithANextDueTime_Throws(FlightSyncMode? mode)
+        {
+            var flight = NewFlight();
+            Assert.Throws<ArgumentException>(() => flight.ApplySyncPlan(mode, Now));
         }
     }
 

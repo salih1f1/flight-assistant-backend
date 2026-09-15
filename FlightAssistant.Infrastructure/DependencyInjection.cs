@@ -65,6 +65,11 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<IAeroApiBudgetOptions>(sp =>
                 sp.GetRequiredService<IOptions<AeroApiOptions>>().Value);
 
+            // Same translation (#356): FlightSyncPlanner starts Live polling StatusWindowFutureDays
+            // before departure, the furthest ahead GET /flights/{ident} can answer.
+            services.AddScoped<IFlightStatusWindowOptions>(sp =>
+                sp.GetRequiredService<IOptions<AeroApiOptions>>().Value);
+
             // AeroApiThrottleGate's constructor requires a TimeProvider, and nothing else in this
             // solution (nor AddStandardResilienceHandler, nor the generic host) registers one —
             // TryAddSingleton so a real caller elsewhere in the app can still supply its own without

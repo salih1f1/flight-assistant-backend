@@ -1388,6 +1388,7 @@
           "Admin - Flights"
         ],
         "summary": "Sync flight status",
+        "description": "Syncs the flight's status now. A flight not yet inside the provider's live-status window makes no provider call, and a flight no traveler tracks makes no call and has its sync plan cleared; both return { updated: false }. Otherwise returns { updated: true } if a new status was recorded.",
         "operationId": "AdminSyncFlightStatus",
         "parameters": [
           {
@@ -3228,7 +3229,7 @@
           "Flights"
         ],
         "summary": "Manually sync flight status",
-        "description": "Triggers an on-demand status refresh for the specified flight by querying the external flight data provider. Returns { updated: true } if new status data was fetched and persisted, or { updated: false } if the data was already up to date. Route parameter: flightId — the numeric flight ID.",
+        "description": "Triggers an on-demand status refresh for the specified flight. Whether the external flight data provider is queried depends on the flight's sync mode: a flight not yet inside the provider's live-status window makes no provider call. Returns { updated: true } if a new status was recorded, or { updated: false } if nothing new was found or no call was made. Route parameter: flightId — the numeric flight ID.",
         "operationId": "SyncFlightStatus",
         "parameters": [
           {

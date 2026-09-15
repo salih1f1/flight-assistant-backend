@@ -169,19 +169,20 @@ namespace FlightAssistant.API.Endpoints
             .Produces<IEnumerable<FlightStatusEventDto>>(200)
             .ProducesProblem(404);
 
-            // POST /flights/{flightId}/sync — manually trigger a status refresh from external providers
+            // POST /flights/{flightId}/sync — manually trigger a status refresh; the flight's sync mode decides whether the provider is called
             group.MapPost("{flightId:int}/sync", async (HttpContext http, int flightId, IMediator mediator, CancellationToken ct) =>
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
-                var updated = await mediator.Send(new SyncFlightStatusCommand(travelerId, flightId), ct);
+                var updated = await mediator.Send(new SyncFlightStatusCommand(travelerId, flightId, SyncTrigger.Traveler), ct);
                 return Results.Ok(new { updated });
             })
             .WithName("SyncFlightStatus")
             .WithSummary("Manually sync flight status")
             .WithDescription(
-                "Triggers an on-demand status refresh for the specified flight by querying the external flight data provider. " +
-                "Returns { updated: true } if new status data was fetched and persisted, or { updated: false } if the data was already up to date. " +
+                "Triggers an on-demand status refresh for the specified flight. Whether the external flight data provider is queried depends on the flight's sync mode: " +
+                "a flight not yet inside the provider's live-status window makes no provider call. " +
+                "Returns { updated: true } if a new status was recorded, or { updated: false } if nothing new was found or no call was made. " +
                 "Route parameter: flightId — the numeric flight ID.")
             .Produces(200)
             .ProducesProblem(404);

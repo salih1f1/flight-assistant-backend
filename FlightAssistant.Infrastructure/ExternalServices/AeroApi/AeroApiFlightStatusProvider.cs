@@ -119,7 +119,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         /// two behaved identically when this was written (the recorded fixture that motivated this
         /// change spanned roughly the same −10/+2 days these defaults produce), but leaving the
         /// bound implicit meant it could silently drift out of step with
-        /// <c>FlightRepository.GetActiveTrackedFlightsAsync</c>'s own window, which is derived from
+        /// <c>FlightSyncPlanner</c>'s Live window, which is derived from
         /// the same <see cref="AeroApiOptions"/>.
         ///
         /// <para>
@@ -202,7 +202,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
             var estimatedOut = TryGetUtcDateTime(flight, "estimated_out");
             var estimatedIn = TryGetUtcDateTime(flight, "estimated_in");
             var actualOut = TryGetUtcDateTime(flight, "actual_out");
-            var actualIn = TryGetUtcDateTime(flight, "actual_in");
+            // Gate arrival, else runway arrival: AeroAPI often reports only actual_on, and without an
+            // actual arrival a landed flight never stops syncing (#345).
+            var actualArrival = TryGetUtcDateTime(flight, "actual_in") ?? TryGetUtcDateTime(flight, "actual_on");
             var scheduledOut = TryGetUtcDateTime(flight, "scheduled_out");
 
             var effectiveAt = actualOut ?? estimatedOut ?? scheduledOut ?? _timeProvider.GetUtcNow().UtcDateTime;
@@ -213,7 +215,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
                 EstimatedDepartureUtc: estimatedOut,
                 EstimatedArrivalUtc: estimatedIn,
                 ActualDepartureUtc: actualOut,
-                ActualArrivalUtc: actualIn,
+                ActualArrivalUtc: actualArrival,
                 Gate: TryGetString(flight, "gate_origin"),
                 Terminal: TryGetString(flight, "terminal_origin"),
                 BaggageClaim: TryGetString(flight, "baggage_claim"),

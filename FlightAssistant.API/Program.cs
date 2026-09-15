@@ -140,8 +140,7 @@ if (!string.IsNullOrWhiteSpace(redisConnStr))
 
 // Hosted services
 
-builder.Services.AddSingleton<FlightSyncHeartbeat>();
-builder.Services.AddHostedService<FlightStatusSyncBackgroundService>();
+builder.Services.AddFlightSync();
 
 // ------------------------------------------------------------
 // 3. Authentication & Authorization

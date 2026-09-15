@@ -1,6 +1,9 @@
+using FlightAssistant.Application.FlightSync;
+using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Flights.Entities;
+using FlightAssistant.Domain.Flights.Enums;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Flights
@@ -19,11 +22,22 @@ namespace FlightAssistant.Application.Commands.Flights
     {
         private readonly IFlightRepository _flights;
         private readonly IRefDataRepository _refData;
+        private readonly IFlightSyncOptions _syncOptions;
+        private readonly IFlightStatusWindowOptions _windowOptions;
+        private readonly TimeProvider _timeProvider;
 
-        public TrackFlightCommandHandler(IFlightRepository flights, IRefDataRepository refData)
+        public TrackFlightCommandHandler(
+            IFlightRepository flights,
+            IRefDataRepository refData,
+            IFlightSyncOptions syncOptions,
+            IFlightStatusWindowOptions windowOptions,
+            TimeProvider timeProvider)
         {
             _flights = flights;
             _refData = refData;
+            _syncOptions = syncOptions;
+            _windowOptions = windowOptions;
+            _timeProvider = timeProvider;
         }
 
         public async Task<int> Handle(TrackFlightCommand cmd, CancellationToken ct)
@@ -53,6 +67,17 @@ namespace FlightAssistant.Application.Commands.Flights
             {
                 var tf = TravelerFlight.Create(cmd.TravelerId, flight.Id);
                 await _flights.AddTravelerFlightAsync(tf, ct);
+
+                // First time anyone tracks it (or the first since the last untrack): plan it and make it
+                // due now, so the sync picks it up within a loop (#356, spec §2.5).
+                if (flight.SyncMode is null)
+                {
+                    var now = _timeProvider.GetUtcNow().UtcDateTime;
+                    var plan = FlightSyncPlanner.Plan(flight, isTracked: true, now,
+                        FlightSyncPlanOptions.From(_syncOptions, _windowOptions));
+                    flight.ApplySyncPlan(plan.Mode, plan.Mode == FlightSyncMode.Stopped ? null : now);
+                }
+
                 await _flights.SaveChangesAsync(ct);
             }
 

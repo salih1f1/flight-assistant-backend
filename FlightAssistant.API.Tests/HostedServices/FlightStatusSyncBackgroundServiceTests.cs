@@ -1,95 +1,199 @@
 using FlightAssistant.API.HostedServices;
+using FlightAssistant.Application.Commands.Flights;
+using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Domain.Common;
+using FlightAssistant.Domain.Flights.Entities;
+using FlightAssistant.Domain.Flights.Enums;
+using MediatR;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
+using NSubstitute;
+using NSubstitute.ReturnsExtensions;
 
 namespace FlightAssistant.API.Tests.HostedServices;
 
-/// <summary>
-/// Unit tests for <see cref="FlightStatusSyncBackgroundService.IsActiveForFastPoll"/>.
-///
-/// Regression test for #242: the fast-poll (2-minute) window used to be triggered by
-/// <c>(ScheduledDepartureUtc - now).TotalHours &lt;= 4</c>, which is also true for negative
-/// values — so a same-day flight that had already departed/landed kept the service in the
-/// fast-poll cycle indefinitely. The predicate now bounds the window to the genuinely-active
-/// period: from 4 hours before scheduled departure THROUGH arrival.
-/// </summary>
 public class FlightStatusSyncBackgroundServiceTests
 {
-    private static readonly DateTime Now = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime Now = new(2026, 9, 14, 12, 0, 0, DateTimeKind.Utc);
+
+    private readonly FakeTimeProvider _clock = new(new DateTimeOffset(Now));
+    private readonly IFlightRepository _flights = Substitute.For<IFlightRepository>();
+    private readonly IMediator _mediator = Substitute.For<IMediator>();
+    private readonly FlightSyncHeartbeat _heartbeat = new();
+    private int _mediatorScopes;
+
+    private FlightStatusSyncBackgroundService Service(FlightSyncOptions? options = null)
+    {
+        var services = new ServiceCollection();
+        services.AddScoped(_ => _flights);
+        // Counts how many scopes resolved a mediator: one per flight.
+        services.AddScoped(_ => { _mediatorScopes++; return _mediator; });
+
+        return new FlightStatusSyncBackgroundService(
+            services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(options ?? new FlightSyncOptions()),
+            _clock,
+            NullLogger<FlightStatusSyncBackgroundService>.Instance,
+            _heartbeat);
+    }
+
+    private void DueIds(params int[] ids) =>
+        _flights.GetDueTrackedFlightIdsAsync(Arg.Any<CancellationToken>()).Returns(ids.ToList());
+
+    private List<SyncFlightStatusCommand> Sent() => _mediator.ReceivedCalls()
+        .Select(c => c.GetArguments()[0]).OfType<SyncFlightStatusCommand>().ToList();
+
+    private static async Task WaitUntil(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline) throw new TimeoutException("Condition not met within 5 s.");
+            await Task.Delay(10);
+        }
+    }
+
+    // ── RunOnceAsync ──
 
     [Fact]
-    public void IsActiveForFastPoll_WellBeforeDeparture_ReturnsFalse()
+    public async Task RunOnce_SendsAScheduledSyncForEachDueFlight_InTheRepositorysOrder()
     {
-        // Departs in 6h, arrives in 8h — outside the 4h window.
-        var result = FlightStatusSyncBackgroundService.IsActiveForFastPoll(
-            scheduledDepartureUtc: Now.AddHours(6),
-            scheduledArrivalUtc: Now.AddHours(8),
-            actualArrivalUtc: null,
-            now: Now);
+        DueIds(3, 1, 2);
 
-        Assert.False(result);
+        var result = await Service().RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(new[] { 3, 1, 2 }, Sent().Select(c => c.FlightId));
+        Assert.All(Sent(), c =>
+        {
+            Assert.Equal(SyncTrigger.Scheduled, c.Trigger);
+            Assert.Null(c.TravelerId);
+        });
+        Assert.Equal(new FlightSyncRunResult(3, 0), result);
     }
 
     [Fact]
-    public void IsActiveForFastPoll_WithinFourHourWindow_ReturnsTrue()
+    public async Task RunOnce_NoDueFlights_SendsNothing()
     {
-        // Departs in 2h, arrives in 4h.
-        var result = FlightStatusSyncBackgroundService.IsActiveForFastPoll(
-            scheduledDepartureUtc: Now.AddHours(2),
-            scheduledArrivalUtc: Now.AddHours(4),
-            actualArrivalUtc: null,
-            now: Now);
+        DueIds();
 
-        Assert.True(result);
+        Assert.Equal(new FlightSyncRunResult(0, 0), await Service().RunOnceAsync(CancellationToken.None));
+        Assert.Empty(Sent());
     }
 
     [Fact]
-    public void IsActiveForFastPoll_InFlight_ReturnsTrue()
+    public async Task RunOnce_AFailingFlight_IsCounted_AndTheRestStillSync()
     {
-        // Departed 1h ago, arrives in 2h.
-        var result = FlightStatusSyncBackgroundService.IsActiveForFastPoll(
-            scheduledDepartureUtc: Now.AddHours(-1),
-            scheduledArrivalUtc: Now.AddHours(2),
-            actualArrivalUtc: null,
-            now: Now);
+        DueIds(1, 2, 3);
+        _mediator.Send(Arg.Is<SyncFlightStatusCommand>(c => c.FlightId == 1), Arg.Any<CancellationToken>())
+            .Returns<bool>(_ => throw new InvalidOperationException("boom"));
 
-        Assert.True(result);
+        var result = await Service().RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(new FlightSyncRunResult(3, 1), result);
+        Assert.Equal(new[] { 1, 2, 3 }, Sent().Select(c => c.FlightId));
     }
 
     [Fact]
-    public void IsActiveForFastPoll_AlreadyArrivedBySchedule_ReturnsFalse()
+    public async Task RunOnce_EachFlightSyncsInItsOwnScope()
     {
-        // Departed 5h ago, scheduled arrival 3h ago, no actual arrival recorded.
-        var result = FlightStatusSyncBackgroundService.IsActiveForFastPoll(
-            scheduledDepartureUtc: Now.AddHours(-5),
-            scheduledArrivalUtc: Now.AddHours(-3),
-            actualArrivalUtc: null,
-            now: Now);
+        // A shared DbContext would let one flight's failed, half-applied changes be saved by the next.
+        DueIds(1, 2, 3);
 
-        Assert.False(result);
+        await Service().RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(3, _mediatorScopes);
+    }
+
+    // ── ExecuteAsync ──
+
+    [Fact]
+    public async Task Disabled_NeverLooksForFlights_AndTheHeartbeatStaysNeverRun()
+    {
+        var service = Service(new FlightSyncOptions { Enabled = false });
+
+        await service.StartAsync(CancellationToken.None);
+        await service.ExecuteTask!;
+
+        await _flights.DidNotReceive().GetDueTrackedFlightIdsAsync(Arg.Any<CancellationToken>());
+        Assert.Equal(FlightSyncOutcome.NeverRun, _heartbeat.Current.LastOutcome);
     }
 
     [Fact]
-    public void IsActiveForFastPoll_AlreadyArrivedByActual_ReturnsFalse()
+    public async Task Enabled_RunsAtOnce_ThenOnEveryLoopInterval()
     {
-        // Actual arrival 1h ago even though scheduled arrival is still in the future.
-        var result = FlightStatusSyncBackgroundService.IsActiveForFastPoll(
-            scheduledDepartureUtc: Now.AddHours(-2),
-            scheduledArrivalUtc: Now.AddHours(1),
-            actualArrivalUtc: Now.AddHours(-1),
-            now: Now);
+        DueIds();
+        var service = Service(new FlightSyncOptions { LoopInterval = TimeSpan.FromSeconds(30) }); // non-default
 
-        Assert.False(result);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntil(() => _heartbeat.Current.LastOutcome == FlightSyncOutcome.Success);
+            Assert.Equal(Now.AddSeconds(30), _heartbeat.Current.NextRunDueUtc);
+            await _flights.Received(1).GetDueTrackedFlightIdsAsync(Arg.Any<CancellationToken>());
+
+            _clock.Advance(TimeSpan.FromSeconds(29));
+            await Task.Delay(100);
+            await _flights.Received(1).GetDueTrackedFlightIdsAsync(Arg.Any<CancellationToken>());
+
+            _clock.Advance(TimeSpan.FromSeconds(1));
+            await WaitUntil(() => _flights.ReceivedCalls().Count(c => c.GetMethodInfo().Name == nameof(IFlightRepository.GetDueTrackedFlightIdsAsync)) == 2);
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
+    }
+
+    // ── #344 end to end: real handler and planner, fake clock and repository ──
+
+    private static Flight WithId(Flight flight, int id)
+    {
+        typeof(BaseIntEntity).GetProperty(nameof(BaseIntEntity.Id))!.SetValue(flight, id);
+        return flight;
     }
 
     [Fact]
-    public void IsActiveForFastPoll_DeparturesExactlyFourHoursAway_ReturnsTrue()
+    public async Task OverTenMinutes_AFlightNearDeparture_DoesNotSpeedUpTheOthers()
     {
-        // Boundary: departs in exactly 4h, arrives later.
-        var result = FlightStatusSyncBackgroundService.IsActiveForFastPoll(
-            scheduledDepartureUtc: Now.AddHours(4),
-            scheduledArrivalUtc: Now.AddHours(6),
-            actualArrivalUtc: null,
-            now: Now);
+        // Non-default intervals (#308): Fast every 3 min, Live every 20 min; Fast window stays 4 h.
+        var options = new FlightSyncOptions { NearDepartureInterval = TimeSpan.FromMinutes(3), Interval = TimeSpan.FromMinutes(20) };
+        var fast = WithId(Flight.Create(1, "TK1", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(3), Now.AddHours(6)), 1);
+        var live = WithId(Flight.Create(1, "TK2", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(30), Now.AddHours(33)), 2);
+        var schedule = WithId(Flight.Create(1, "TK3", 10, 20, DateOnly.FromDateTime(Now.AddDays(20)), Now.AddDays(20), Now.AddDays(20).AddHours(3)), 3);
+        var all = new[] { fast, live, schedule };
+        foreach (var flight in all)
+            flight.ApplySyncPlan(FlightSyncMode.Live, Now); // due now, as the migration backfill leaves them
 
-        Assert.True(result);
+        _flights.GetDueTrackedFlightIdsAsync(Arg.Any<CancellationToken>()).Returns(_ => all
+            .Where(f => f.NextSyncDueUtc <= _clock.GetUtcNow().UtcDateTime)
+            .OrderBy(f => f.NextSyncDueUtc)
+            .Select(f => f.Id)
+            .ToList());
+        _flights.GetFlightByIdAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(ci => all.Single(f => f.Id == ci.ArgAt<int>(0)));
+        _flights.IsFlightTrackedAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
+
+        var provider = Substitute.For<IFlightStatusProvider>();
+        provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        var window = Substitute.For<IFlightStatusWindowOptions>();
+        window.StatusWindowFutureDays.Returns(2);
+        var handler = new SyncFlightStatusCommandHandler(_flights, provider, options, window, _clock,
+            NullLogger<SyncFlightStatusCommandHandler>.Instance);
+        _mediator.Send(Arg.Any<SyncFlightStatusCommand>(), Arg.Any<CancellationToken>())
+            .Returns(ci => handler.Handle(ci.ArgAt<SyncFlightStatusCommand>(0), CancellationToken.None).GetAwaiter().GetResult());
+
+        var service = Service(options);
+        for (var minute = 0; minute < 10; minute++)
+        {
+            await service.RunOnceAsync(CancellationToken.None);
+            _clock.Advance(TimeSpan.FromMinutes(1));
+        }
+
+        await provider.Received(4).GetStatusAsync("TK1", Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()); // minutes 0, 3, 6, 9
+        await provider.Received(1).GetStatusAsync("TK2", Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()); // minute 0 only
+        await provider.DidNotReceive().GetStatusAsync("TK3", Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        Assert.Single(Sent(), c => c.FlightId == 3); // planned once, next due when Live starts
     }
 }
