@@ -5,6 +5,8 @@ id,ident,type,name,latitude_deg,longitude_deg,elevation_ft,continent,country_nam
 111,DUP1,small_airport,"Dup Low",1,1,10,,,US,,,,"LowTown",no,,KDU1,DUP,,,,,5,2020-01-01
 113,EGZZ,small_airport,"Icao Only Field",3,3,30,,,GB,,,,"IcaoTown",no,EGZZ,EGZZ,,,,,,50,2020-01-01
 114,ELV1,small_airport,"Elevation Empty",4,4,,,,US,,,,"ElevTown",no,,KELV,ELV,,,,,10,2020-01-01
-115,KDPI,small_airport,"Dup Icao High",5,5,40,,,US,,,,"DpiHighTown",no,,KDPI,,,,,,8,2020-01-01
-116,KDPI,small_airport,"Dup Icao Low",6,6,45,,,US,,,,"DpiLowTown",no,,KDPI,,,,,,3,2020-01-01
+115,KDPI,small_airport,"Dup Icao Low",5,5,40,,,US,,,,"DpiLowTown",no,,KDPI,,,,,,3,2020-01-01
+116,KDPI,small_airport,"Dup Icao High",6,6,45,,,US,,,,"DpiHighTown",no,,KDPI,,,,,,8,2020-01-01
 117,KSAM,small_airport,"Sample Airport, Terminal 2",7,7,55,,,US,,,,"SampleTown",no,,KSAM,SAM,,,,,60,2020-01-01
+118,TRE1,small_airport,"Tre Low",8,8,65,,,US,,,,"TreLowTown",no,,KTR1,TRE,,,,,4,2020-01-01
+119,TRE2,small_airport,"Tre High",9,9,70,,,US,,,,"TreHighTown",no,,KTR2,TRE,,,,,11,2020-01-01

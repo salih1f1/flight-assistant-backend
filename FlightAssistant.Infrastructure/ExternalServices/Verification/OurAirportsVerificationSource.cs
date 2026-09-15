@@ -32,12 +32,17 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
     /// </para>
     ///
     /// <para>
-    /// <b>Empty or reshaped dataset (fix round 1, item 6).</b> A response that parses successfully
-    /// but yields zero indexed rows -- an empty body, a header-only CSV, or a real header whose
-    /// <c>iata_code</c>/<c>icao_code</c> columns were renamed -- is a source error, not "no data
-    /// found for anything". <c>NotFound</c> means the dataset loaded *and* has rows, just not this
-    /// one; Task 4 treats <c>NotFound</c> as terminal (it flags the entity for attention), so a
-    /// silently empty dataset must never be allowed to look like that for every single lookup.
+    /// <b>Empty dataset (fix round 1, item 6; wording corrected in fix round 2, item 7).</b> A
+    /// response that parses successfully but yields zero indexed rows -- an empty body, or a
+    /// syntactically valid header followed by no data rows -- is a source error, not "no data found
+    /// for anything". <c>NotFound</c> means the dataset loaded *and* has rows, just not this one;
+    /// Task 4 treats <c>NotFound</c> as terminal (it flags the entity for attention), so a silently
+    /// empty dataset must never be allowed to look like that for every single lookup.
+    /// A <i>renamed</i> <c>iata_code</c>/<c>icao_code</c> (or any other column this source reads) is
+    /// a <i>different</i> source error, caught earlier: <see cref="CsvRow"/>'s columns are required
+    /// (none are <c>Optional()</c>), so CsvHelper's own header validation throws before any row is
+    /// read at all, which the parse-failure catch below wraps as "Could not parse..." -- it never
+    /// reaches the zero-rows check.
     /// </para>
     /// </summary>
     public sealed class OurAirportsVerificationSource : IVerificationSource
@@ -144,8 +149,11 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                     KeepHighestScore(byIcao, row.Icao, row);
             }
 
-            // Fix round 1, item 6: an empty body, a header-only CSV, or a renamed iata_code/icao_code
-            // column all land here as zero indexed rows -- a source error, not "nothing matches".
+            // Fix round 1, item 6 (wording corrected in fix round 2, item 7): an empty body, or a
+            // syntactically valid header with zero data rows, lands here as zero indexed rows -- a
+            // source error, never treated as "nothing matches". A renamed iata_code/icao_code
+            // column is a *different* source error, caught earlier by CsvHelper's own header
+            // validation (see the class doc's "Empty dataset" remark) -- it never reaches this check.
             if (byIata.Count == 0 && byIcao.Count == 0)
                 throw new VerificationSourceFetchException($"The {SourceName} dataset had no usable rows.");
 

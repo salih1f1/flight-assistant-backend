@@ -27,13 +27,19 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
     /// </para>
     ///
     /// <para>
-    /// <b>Empty or reshaped dataset (fix round 1, item 6).</b> Zero indexed rows -- an empty body,
-    /// <c>[]</c>, or a renamed <c>cca2</c> field -- is a source error, never "not found" for every
-    /// country. A record missing <c>cca2</c> or <c>name.common</c> is treated the same way rather
-    /// than silently skipped: a field rename would otherwise make every single record on that field
-    /// "silently missing" and this source would quietly look like it just has no data for anyone,
-    /// which is exactly the false-NotFound Task 4 must never see (it flags the entity for
-    /// attention, and "attention" is not the right response to "our own parsing broke").
+    /// <b>Empty dataset vs. one bad record (fix round 1, item 6; revised in fix round 2, item 8).</b>
+    /// A dataset that yields <b>zero</b> indexed records -- an empty body, <c>[]</c>, or a renamed
+    /// <c>cca2</c>/<c>name.common</c> field on <i>every</i> record -- is a source error, never "not
+    /// found" for every country: <c>NotFound</c> means the dataset loaded and has records, just not
+    /// this one, and Task 4 treats <c>NotFound</c> as terminal (it flags the entity for attention),
+    /// so this source must not look like that for every single lookup just because parsing broke.
+    /// A <i>single</i> record missing <c>cca2</c> or <c>name.common</c>, by contrast, is
+    /// <b>skipped</b> (logged as a warning naming its index and <c>cca3</c>, if present) rather than
+    /// failing the whole dataset -- round 1 originally failed the whole dataset on one bad record,
+    /// which meant one malformed upstream record turned every country's verification into a source
+    /// error that keeps retrying (spec §4.2's backoff) and never clears. The skipped country instead
+    /// simply looks up as <c>NotFound</c>, which is visible to an admin and does not block every
+    /// other country.
     /// </para>
     /// </summary>
     public sealed class MledozeCountriesVerificationSource : IVerificationSource
@@ -111,20 +117,28 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             VerificationSourceDownloader.DownloadAsync(
                 _httpClientFactory, HttpClientName, DatasetUrl, SourceName, _downloadTimeout, ParseAsync, ct);
 
-        private static async Task<IReadOnlyDictionary<string, Row>> ParseAsync(Stream stream, CancellationToken ct)
+        /// <summary>Instance method (not static) so it can log a warning per skipped record via
+        /// <see cref="_logger"/> -- fix round 2, item 8.</summary>
+        private async Task<IReadOnlyDictionary<string, Row>> ParseAsync(Stream stream, CancellationToken ct)
         {
             var records = await JsonSerializer.DeserializeAsync<List<JsonRow>>(stream, JsonOptions, ct).ConfigureAwait(false)
                 ?? throw new JsonException("The mledoze dataset deserialized to null.");
 
             var byCode = new Dictionary<string, Row>(StringComparer.OrdinalIgnoreCase);
-            foreach (var record in records)
+            for (var index = 0; index < records.Count; index++)
             {
-                // Fix round 1, item 6: a record missing either field is a parse/source error, not a
-                // silent skip -- see the type's "Empty or reshaped dataset" remark.
+                var record = records[index];
+
+                // Fix round 2, item 8 (controller ruling): a record missing either field is
+                // skipped, not a whole-dataset failure -- see the type's "Empty dataset vs. one bad
+                // record" remark. Logged so the bad upstream record is visible, but the country
+                // just looks up as NotFound rather than blocking every other country.
                 if (string.IsNullOrWhiteSpace(record.Cca2) || string.IsNullOrWhiteSpace(record.Name?.Common))
                 {
-                    throw new VerificationSourceFetchException(
-                        $"A {SourceName} record is missing cca2 or name.common.");
+                    _logger.LogWarning(
+                        "Skipping a {SourceName} record missing cca2 or name.common (index {Index}, cca3 {Cca3}).",
+                        SourceName, index, record.Cca3 ?? "<none>");
+                    continue;
                 }
 
                 // Last one wins on a duplicate cca2 -- the real dataset does not contain any; this
@@ -132,6 +146,8 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                 byCode[record.Cca2] = new Row(record.Cca2, record.Name.Common, record.Cca3, record.Ccn3, record.Region, record.Subregion);
             }
 
+            // Zero *surviving* records -- an empty body, [], or every record being bad -- is the
+            // one case that is still a source error (see the type's class doc remark).
             if (byCode.Count == 0)
                 throw new VerificationSourceFetchException($"The {SourceName} dataset had no usable rows.");
 

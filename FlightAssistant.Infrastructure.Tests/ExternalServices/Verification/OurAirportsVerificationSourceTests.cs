@@ -196,12 +196,17 @@ public class OurAirportsVerificationSourceTests
     }
 
     [Fact]
-    public async Task LookupAsync_PicksTheHighestScore_AmongDuplicateIataRows()
+    public async Task LookupAsync_PicksTheHighestScore_AmongDuplicateIataRows_HigherScoreFirst()
     {
         // Fix round 1, item 3: the fixture lists the higher-score row ("Dup High", score 9) BEFORE
         // the lower one ("Dup Low", score 5) precisely so a "last one wins" bug (unconditional
-        // `index[key] = row`) would return "Dup Low" here -- distinguishing it from correct
-        // highest-score selection, which this arrangement could not do the other way around.
+        // `index[key] = row`) would return "Dup Low" here.
+        //
+        // Fix round 2, item 5: on its own this arrangement could NOT catch a "first one wins" bug
+        // (TryAdd) either -- both a correct implementation and a first-wins one return "Dup High"
+        // from this specific ordering, since the higher score also happens to be first. See
+        // LookupAsync_PicksTheHighestScore_AmongDuplicateIataRows_LowerScoreFirst below for the
+        // complementary ordering that catches first-wins instead.
         var source = Source(new StaticHandler(HttpStatusCode.OK, FixtureCsv));
 
         var result = await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("DUP", null));
@@ -211,10 +216,27 @@ public class OurAirportsVerificationSourceTests
     }
 
     [Fact]
+    public async Task LookupAsync_PicksTheHighestScore_AmongDuplicateIataRows_LowerScoreFirst()
+    {
+        // Fix round 2, item 5: the complementary ordering to the test above -- "Tre Low" (score 4)
+        // listed BEFORE "Tre High" (score 11), so a "first one wins" bug (Dictionary.TryAdd, or
+        // equivalent) would return "Tre Low" here. Together, the two IATA tests reject both a
+        // first-wins and a last-wins implementation without relying on the ICAO index at all.
+        var source = Source(new StaticHandler(HttpStatusCode.OK, FixtureCsv));
+
+        var result = await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("TRE", null));
+
+        Assert.True(result.Lookup!.IsFound);
+        Assert.Equal("Tre High", result.Lookup.Values!["Name"]);
+    }
+
+    [Fact]
     public async Task LookupAsync_PicksTheHighestScore_AmongDuplicateIcaoRows()
     {
-        // Same distinguishing arrangement as the IATA test above, but for the ICAO index, which has
-        // its own KeepHighestScore call site -- fix round 1, item 3's second break-proof.
+        // Fix round 2, item 5: the ICAO index's own KeepHighestScore call site, arranged
+        // low-score-first ("Dup Icao Low" score 3, then "Dup Icao High" score 8) -- the opposite
+        // order from the IATA "higher score first" test above, so between the two indices both a
+        // first-wins and a last-wins bug are rejected by at least one test.
         var source = Source(new StaticHandler(HttpStatusCode.OK, FixtureCsv));
 
         var result = await source.LookupAsync(VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport(null, "KDPI"));
@@ -336,10 +358,16 @@ public class OurAirportsVerificationSourceTests
     [Fact]
     public async Task LookupAsync_ReturnsASourceError_OnAHeaderOnlyCsv()
     {
-        // Fix round 1, item 6: a syntactically valid CSV with the real header but zero data rows --
-        // e.g. a renamed iata_code/icao_code column upstream -- parses without throwing, so only the
-        // "zero indexed rows" check catches it. Without that check this would incorrectly succeed
-        // with an empty (but "loaded") dataset, making every subsequent lookup a false NotFound.
+        // Fix round 1, item 6 (comment corrected in fix round 2, item 7): a syntactically valid CSV
+        // with the real header but zero data rows parses without throwing, so only the "zero
+        // indexed rows" check catches it. Without that check this would incorrectly succeed with an
+        // empty (but "loaded") dataset, making every subsequent lookup a false NotFound.
+        //
+        // This is NOT what a renamed iata_code/icao_code column looks like -- CsvHelper's own
+        // header validation rejects that before any row is read (every CsvRow column is required,
+        // none are Optional()), which the generic parse-failure catch wraps as "Could not parse the
+        // ourairports dataset: ...". LookupAsync_ReturnsASourceError_OnGarbageContent below exercises
+        // that same header-validation path (via a header that matches no required column).
         var headerOnly = FixtureCsv[..FixtureCsv.IndexOf('\n')] + "\n";
         var source = Source(new StaticHandler(HttpStatusCode.OK, headerOnly));
 

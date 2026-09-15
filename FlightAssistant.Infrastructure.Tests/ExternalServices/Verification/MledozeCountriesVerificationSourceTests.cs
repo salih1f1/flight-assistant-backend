@@ -251,9 +251,10 @@ public class MledozeCountriesVerificationSourceTests
     [Fact]
     public async Task LookupAsync_ReturnsASourceError_OnAnEmptyArray()
     {
-        // Fix round 1, item 6: syntactically valid, zero usable rows -- e.g. cca2 renamed upstream.
-        // Without the zero-rows check this would succeed with an empty "loaded" dataset, and every
-        // lookup would come back a false NotFound instead of flagging the real problem.
+        // A syntactically valid, genuinely empty dataset. Distinct from a renamed cca2/name.common
+        // field (fix round 2, item 8), which no longer fails the whole dataset -- each record
+        // missing one of those is skipped individually, and only zero *surviving* records (this
+        // case, or every record turning out bad) is a source error.
         var source = Source(new StaticHandler(HttpStatusCode.OK, "[]"));
 
         var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
@@ -263,19 +264,38 @@ public class MledozeCountriesVerificationSourceTests
     }
 
     [Fact]
-    public async Task LookupAsync_ReturnsASourceError_WhenARecordIsMissingCca2OrNameCommon()
+    public async Task LookupAsync_SkipsARecordMissingCca2OrNameCommon_LeavingOthersUsable()
     {
-        // A second, well-formed record (GB) alongside the malformed one (TR, no name.common) is
-        // what makes this distinguishing: a "silently skip the bad record" implementation would
-        // still leave a non-empty, successfully "loaded" dataset (GB alone), so the zero-rows check
-        // (a separate rule) would never fire and a TR lookup would quietly come back NotFound
-        // instead of the required source error.
+        // Fix round 2, item 8 (controller ruling -- reverses round 1's item 6 rule for mledoze): one
+        // malformed upstream record must not fail the whole dataset, or every country's
+        // verification becomes a source error that keeps retrying and never clears. GB survives and
+        // is found; the malformed TR record is simply absent from the index, so a TR lookup comes
+        // back NotFound (visible to an admin), not a source error.
         const string json = """
             [
               {"cca2":"TR","cca3":"TUR","ccn3":"792","region":"Asia","subregion":"Western Asia","name":{"official":"Republic of Türkiye"}},
               {"cca2":"GB","cca3":"GBR","ccn3":"826","region":"Europe","subregion":"Northern Europe","name":{"common":"United Kingdom","official":"United Kingdom of Great Britain and Northern Ireland"}}
             ]
             """;
+        var source = Source(new StaticHandler(HttpStatusCode.OK, json));
+
+        var gbResult = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("GB"));
+        var trResult = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
+
+        Assert.False(gbResult.IsError);
+        Assert.True(gbResult.Lookup!.IsFound);
+        Assert.Equal("United Kingdom", gbResult.Lookup.Values!["Name"]);
+
+        Assert.False(trResult.IsError);
+        Assert.False(trResult.Lookup!.IsFound); // skipped, not a source error
+    }
+
+    [Fact]
+    public async Task LookupAsync_ReturnsASourceError_WhenEveryRecordIsBad()
+    {
+        // Fix round 2, item 8: the one case where a bad record still ends in a source error -- when
+        // *nothing* survives (here, the only record has no cca2 at all).
+        const string json = """[{"cca3":"TUR","ccn3":"792","region":"Asia","subregion":"Western Asia","name":{"common":"Turkey"}}]""";
         var source = Source(new StaticHandler(HttpStatusCode.OK, json));
 
         var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
