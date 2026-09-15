@@ -290,4 +290,61 @@ public class FlightRepositoryTests : PostgresTestBase
         Assert.Equal(2, await CountActive(db, traveler));
         Assert.Equal(PlannerStillSyncs(travelersFlights), await CountActive(db, traveler));
     }
+
+    // ── Status events: the latest one, and ties on effective time (#351) ──
+
+    private static int StatusId(FlightAssistantDbContext db, string code) =>
+        db.FlightStatus.Where(s => s.Code == code).Select(s => s.Id).Single();
+
+    [Fact]
+    public async Task ADetailChange_PassesTheUniqueIndex_IsTheLatestEvent_AndIsListedAboveItsStatusEvent()
+    {
+        using var db = CreateContext();
+        var flight = FlightArriving(db, "TK30", SyncNow.AddHours(3));
+        var departed = StatusId(db, "DEP");
+
+        var status = FlightStatusEvent.Create(flight.Id, departed, SyncNow, "AeroAPI", "fa-1", "A1", "T5");
+        db.FlightStatusEvents.Add(status);
+        db.SaveChanges();
+        var gateChange = FlightStatusEvent.CreateDetailChange(flight.Id, departed, SyncNow, "AeroAPI", "fa-1", status.Id, "B7", "T5", null);
+        db.FlightStatusEvents.Add(gateChange);
+        db.SaveChanges(); // same flight, source, status and effective time: only the separate hash lets this through
+
+        var repo = Repository(db, ClockAt(SyncNow));
+
+        Assert.Equal(gateChange.Id, (await repo.GetLatestFlightStatusEventAsync(flight.Id))!.Id);
+        Assert.Equal(new[] { gateChange.Id, status.Id }, (await repo.GetFlightStatusEventsAsync(flight.Id)).Select(e => e.Id));
+        Assert.Equal(gateChange.Id, Assert.Single(await repo.GetRecentFlightStatusEventsAsync(flight.Id, limit: 1)).Id);
+    }
+
+    [Fact]
+    public async Task EventLists_PutTheMostRecentlyRecordedEventFirst_EvenWhenItsEffectiveTimeIsEarlier()
+    {
+        using var db = CreateContext();
+        var flight = FlightArriving(db, "TK32", SyncNow.AddHours(3));
+        var scheduled = StatusId(db, "SCH");
+
+        var first = FlightStatusEvent.Create(flight.Id, scheduled, SyncNow, "AeroAPI", "fa-2", "A1", "T5");
+        db.FlightStatusEvents.Add(first);
+        db.SaveChanges();
+        // The estimate moves earlier: recorded later, with an earlier effective time.
+        var second = FlightStatusEvent.Create(flight.Id, scheduled, SyncNow.AddMinutes(-5), "AeroAPI", "fa-2", "A1", "T5");
+        db.FlightStatusEvents.Add(second);
+        db.SaveChanges();
+
+        var repo = Repository(db, ClockAt(SyncNow));
+
+        Assert.Equal(new[] { second.Id, first.Id }, (await repo.GetFlightStatusEventsAsync(flight.Id)).Select(e => e.Id));
+        Assert.Equal(second.Id, Assert.Single(await repo.GetRecentFlightStatusEventsAsync(flight.Id, limit: 1)).Id);
+        Assert.Equal(second.Id, (await repo.GetLatestFlightStatusEventAsync(flight.Id))!.Id);
+    }
+
+    [Fact]
+    public async Task GetLatestFlightStatusEventAsync_AFlightWithNoEvents_ReturnsNull()
+    {
+        using var db = CreateContext();
+        var flight = FlightArriving(db, "TK31", SyncNow.AddHours(3));
+
+        Assert.Null(await Repository(db, ClockAt(SyncNow)).GetLatestFlightStatusEventAsync(flight.Id));
+    }
 }

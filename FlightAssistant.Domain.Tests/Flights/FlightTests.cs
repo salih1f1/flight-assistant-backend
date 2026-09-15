@@ -93,6 +93,71 @@ namespace FlightAssistant.Domain.Tests.Flights
             var flight = NewFlight();
             Assert.Throws<ArgumentException>(() => flight.ApplySyncPlan(mode, Now));
         }
+
+        [Fact]
+        public void ApplyProviderTimes_UpdatesTheTimes_RaisesNoEvent_AndLeavesCancelledAtUtc()
+        {
+            var flight = Flight.Create(1, "BA123", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(1), Now.AddHours(8));
+            flight.ApplyStatusUpdate("CAN", null, null, null, null, null, Now);
+            flight.ClearDomainEvents();
+
+            flight.ApplyProviderTimes(Now.AddHours(2), Now.AddHours(9), null, null, "A321", Now.AddMinutes(5));
+
+            Assert.Equal(Now.AddHours(2), flight.EstimatedDepartureUtc);
+            Assert.Equal(Now.AddHours(9), flight.EstimatedArrivalUtc);
+            Assert.Equal("A321", flight.EquipmentAircraftIcao);
+            Assert.Equal(Now, flight.CancelledAtUtc);
+            Assert.Equal(Now.AddMinutes(5), flight.UpdatedUtc);
+            Assert.Empty(flight.DomainEvents);
+        }
+
+        [Fact]
+        public void ApplyProviderTimes_NothingChanged_LeavesUpdatedUtc_AndAMissingAircraftTypeKeepsTheStoredOne()
+        {
+            var flight = Flight.Create(1, "BA123", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(1), Now.AddHours(8), "B789");
+            flight.ApplyStatusUpdate("DEP", Now.AddHours(1), Now.AddHours(8), Now.AddHours(1), null, "B789", Now);
+
+            flight.ApplyProviderTimes(Now.AddHours(1), Now.AddHours(8), Now.AddHours(1), null, null, Now.AddMinutes(5));
+
+            Assert.Equal(Now, flight.UpdatedUtc);
+            Assert.Equal("B789", flight.EquipmentAircraftIcao);
+        }
+
+        [Fact]
+        public void ApplyProviderTimes_AResponseWithoutActualTimes_KeepsTheStoredOnes()
+        {
+            var flight = Flight.Create(1, "BA123", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(-9), Now.AddHours(-1));
+            flight.ApplyStatusUpdate("ARR", null, null, Now.AddHours(-9), Now.AddMinutes(-50), null, Now);
+
+            flight.ApplyProviderTimes(null, null, null, null, null, Now.AddMinutes(5));
+
+            Assert.Equal(Now.AddHours(-9), flight.ActualDepartureUtc);
+            Assert.Equal(Now.AddMinutes(-50), flight.ActualArrivalUtc);
+            Assert.Equal(Now, flight.UpdatedUtc); // nothing changed
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_AResponseWithoutAnActualArrival_KeepsTheStoredOne()
+        {
+            var flight = Flight.Create(1, "BA123", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(-9), Now.AddHours(-1));
+            flight.ApplyStatusUpdate("ARR", null, null, Now.AddHours(-9), Now.AddMinutes(-50), null, Now);
+
+            flight.ApplyStatusUpdate("ARR", null, null, Now.AddHours(-9), null, null, Now.AddMinutes(5));
+
+            Assert.Equal(Now.AddMinutes(-50), flight.ActualArrivalUtc);
+        }
+
+        [Fact]
+        public void ApplyProviderTimes_ANewActualTime_ReplacesTheStoredOne()
+        {
+            var flight = Flight.Create(1, "BA123", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(-9), Now.AddHours(-1));
+            flight.ApplyStatusUpdate("ARR", null, null, Now.AddHours(-9), Now.AddMinutes(-50), null, Now);
+
+            flight.ApplyProviderTimes(null, null, Now.AddHours(-9), Now.AddMinutes(-45), null, Now.AddMinutes(5));
+
+            Assert.Equal(Now.AddMinutes(-45), flight.ActualArrivalUtc);
+            Assert.Equal(Now.AddMinutes(5), flight.UpdatedUtc);
+        }
     }
 
     public class TravelerFlightTests
@@ -159,6 +224,43 @@ namespace FlightAssistant.Domain.Tests.Flights
             var evt = FlightStatusEvent.Create(1, 2, at, "AeroAPI", "ext-1");
 
             Assert.Equal(evt.DedupHash, precheckHash);
+        }
+
+        [Fact]
+        public void ComputeDedupHash_FormulaIsUnchanged()
+        {
+            // Every stored hash depends on this formula (#351). Changing it would re-record, and push,
+            // every tracked flight's latest status on its next sync.
+            var at = new DateTime(2025, 6, 15, 10, 0, 0, DateTimeKind.Utc);
+
+            Assert.Equal("47E102A0F36D99F2", FlightStatusEvent.ComputeDedupHash(1, 2, at, "AeroAPI", "ext-1"));
+        }
+
+        [Fact]
+        public void CreateDetailChange_HashDiffersFromTheStatusHash_AndPerPreviousEvent()
+        {
+            // A gate that changes back must still get a new hash under the unique (FlightId, Source, DedupHash) index.
+            var at = new DateTime(2025, 6, 15, 10, 0, 0, DateTimeKind.Utc);
+            var status = FlightStatusEvent.Create(1, 2, at, "AeroAPI", "ext-1", "A1", "T5");
+            var toB7 = FlightStatusEvent.CreateDetailChange(1, 2, at, "AeroAPI", "ext-1", 10, "B7", "T5", null);
+            var backToA1 = FlightStatusEvent.CreateDetailChange(1, 2, at, "AeroAPI", "ext-1", 11, "A1", "T5", null);
+            var toB7Again = FlightStatusEvent.CreateDetailChange(1, 2, at, "AeroAPI", "ext-1", 12, "B7", "T5", null);
+
+            Assert.Equal(4, new[] { status.DedupHash, toB7.DedupHash, backToA1.DedupHash, toB7Again.DedupHash }.Distinct().Count());
+            Assert.Equal("B7", toB7.Gate);
+            Assert.Equal("T5", toB7.Terminal);
+            Assert.Equal(2, toB7.StatusId);
+            Assert.Equal(at, toB7.EffectiveAtUtc);
+        }
+
+        [Fact]
+        public void CreateDetailChange_StoresTheHashComputeDetailChangeHashGives()
+        {
+            var at = new DateTime(2025, 6, 15, 10, 0, 0, DateTimeKind.Utc);
+            var evt = FlightStatusEvent.CreateDetailChange(1, 2, at, "AeroAPI", "ext-1", 10, "B7", "T5", "7");
+
+            Assert.Equal(FlightStatusEvent.ComputeDetailChangeHash(1, 2, at, "AeroAPI", "ext-1", 10, "B7", "T5", "7"), evt.DedupHash);
+            Assert.Equal("7", evt.BaggageClaim);
         }
     }
 }

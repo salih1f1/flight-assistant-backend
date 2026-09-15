@@ -66,5 +66,51 @@ namespace FlightAssistant.Domain.Flights.Entities
             var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
             return Convert.ToHexString(bytes)[..16];
         }
+
+        /// <summary>
+        /// A new gate, terminal or baggage claim for a status the flight already has, recorded after
+        /// <paramref name="previousEventId"/> (#351). Its <see cref="DedupHash"/> comes from
+        /// <see cref="ComputeDetailChangeHash"/>, not <see cref="ComputeDedupHash"/>: that status hash is
+        /// already stored for the flight, and the unique (FlightId, Source, DedupHash) index would refuse it.
+        /// </summary>
+        public static FlightStatusEvent CreateDetailChange(
+            int flightId,
+            int statusId,
+            DateTime effectiveAtUtc,
+            string source,
+            string? externalId,
+            long previousEventId,
+            string? gate,
+            string? terminal,
+            string? baggageClaim,
+            string? rawPayloadJson = null)
+        {
+            var evt = Create(flightId, statusId, effectiveAtUtc, source, externalId, gate, terminal, baggageClaim,
+                rawPayloadJson: rawPayloadJson);
+            evt.DedupHash = ComputeDetailChangeHash(
+                flightId, statusId, effectiveAtUtc, source, externalId, previousEventId, gate, terminal, baggageClaim);
+            return evt;
+        }
+
+        /// <summary>
+        /// The hash of a detail change: the status identity, a <c>detail</c> marker, the event it follows,
+        /// and the details. The previous event keeps it unique when a gate changes back to an earlier value.
+        /// <see cref="ComputeDedupHash"/>'s formula stays unchanged, so every stored hash stays valid.
+        /// </summary>
+        public static string ComputeDetailChangeHash(
+            int flightId,
+            int statusId,
+            DateTime effectiveAt,
+            string source,
+            string? externalId,
+            long previousEventId,
+            string? gate,
+            string? terminal,
+            string? baggageClaim)
+        {
+            var raw = $"{flightId}|{statusId}|{effectiveAt:O}|{source}|{externalId}|detail|{previousEventId}|{gate}|{terminal}|{baggageClaim}";
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
+            return Convert.ToHexString(bytes)[..16];
+        }
     }
 }

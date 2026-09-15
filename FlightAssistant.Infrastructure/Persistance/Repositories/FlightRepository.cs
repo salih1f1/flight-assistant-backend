@@ -100,7 +100,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             await _db.FlightStatusEvents
                 .Where(e => e.FlightId == flightId)
                 .Include(e => e.Status)
-                .OrderByDescending(e => e.EffectiveAtUtc)
+                // Most recently recorded first (#351): the first row is the event GetLatestFlightStatusEventAsync
+                // returns, the one a sync compares details against. Effective time can move backwards (an
+                // estimate returning to an earlier value), so it doesn't say which event is current.
+                .OrderByDescending(e => e.Id)
                 .ToListAsync(ct);
 
         public async Task<IReadOnlyList<FlightStatusEvent>> GetRecentFlightStatusEventsAsync(int flightId, int limit, CancellationToken ct = default) =>
@@ -108,9 +111,19 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 .AsNoTracking()
                 .Where(e => e.FlightId == flightId)
                 .Include(e => e.Status)
-                .OrderByDescending(e => e.EffectiveAtUtc)
+                // Most recently recorded first (#351): the first row is the event GetLatestFlightStatusEventAsync
+                // returns, the one a sync compares details against. Effective time can move backwards (an
+                // estimate returning to an earlier value), so it doesn't say which event is current.
+                .OrderByDescending(e => e.Id)
                 .Take(limit)
                 .ToListAsync(ct);
+
+        public Task<FlightStatusEvent?> GetLatestFlightStatusEventAsync(int flightId, CancellationToken ct = default) =>
+            _db.FlightStatusEvents
+                .AsNoTracking()
+                .Where(e => e.FlightId == flightId)
+                .OrderByDescending(e => e.Id)
+                .FirstOrDefaultAsync(ct);
 
         public async Task AddFlightStatusEventAsync(FlightStatusEvent evt, CancellationToken ct = default) =>
             await _db.FlightStatusEvents.AddAsync(evt, ct);

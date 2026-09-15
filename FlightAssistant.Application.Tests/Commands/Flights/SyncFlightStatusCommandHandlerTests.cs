@@ -7,6 +7,7 @@ using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Flights.Enums;
+using FlightAssistant.Domain.Flights.Events;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -876,5 +877,122 @@ public class SyncFlightStatusCommandHandlerTests
         await Task.WhenAll(first, second);
 
         await _provider.Received(1).GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
+    }
+
+    // ── A status the flight already has (#351) ──
+
+    /// <summary>The provider reports <paramref name="reported"/> for a status already stored for the flight,
+    /// whose latest event (id 41, status <paramref name="latestStatusId"/>) has the given details.</summary>
+    private Flight GivenKnownStatus(FlightStatusResult reported, string? gate = "A1", string? terminal = "T5",
+        string? baggageClaim = null, DateTime? departureUtc = null, int latestStatusId = 2)
+    {
+        var flight = Given(Departing(departureUtc ?? Now.AddHours(1)));
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
+            .Returns(reported);
+        _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(true);
+        var latest = FlightStatusEvent.Create(flight.Id, latestStatusId, Now, "TestProvider", "ext-1", gate, terminal, baggageClaim);
+        typeof(FlightStatusEvent).GetProperty(nameof(FlightStatusEvent.Id))!.SetValue(latest, 41L);
+        _flights.GetLatestFlightStatusEventAsync(flight.Id, Arg.Any<CancellationToken>()).Returns(latest);
+        return flight;
+    }
+
+    [Fact]
+    public async Task NewStatus_StillRaisesFlightStatusChanged()
+    {
+        var flight = Given(Departing(Now.AddHours(1)));
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
+            .Returns(Status());
+
+        Assert.True(await Sync());
+
+        Assert.Single(flight.DomainEvents, e => e is FlightStatusChanged);
+    }
+
+    [Fact]
+    public async Task KnownStatus_ANewGate_RecordsADetailChange_WithNoPush()
+    {
+        var flight = GivenKnownStatus(Status() with { Gate = "B7" });
+
+        Assert.True(await Sync());
+
+        await _flights.Received(1).AddFlightStatusEventAsync(
+            Arg.Is<FlightStatusEvent>(e =>
+                e.Gate == "B7" && e.Terminal == "T5" && e.BaggageClaim == null
+                && e.StatusId == 2 && e.EffectiveAtUtc == Now && e.Source == "TestProvider"
+                && e.DedupHash == FlightStatusEvent.ComputeDetailChangeHash(flight.Id, 2, Now, "TestProvider", "ext-1", 41, "B7", "T5", null)),
+            Arg.Any<CancellationToken>());
+        Assert.DoesNotContain(flight.DomainEvents, e => e is FlightStatusChanged);
+        Assert.Equal(Now, flight.LastSyncedUtc);
+    }
+
+    [Fact]
+    public async Task KnownStatus_MatchingAnOlderEvent_ButNotTheLatestStatus_RecordsNothing()
+    {
+        // DEP is stored, but the latest event is CAN (id 5): a new gate on DEP must not relabel the current status.
+        GivenKnownStatus(Status() with { Gate = "B7" }, latestStatusId: 5);
+
+        Assert.False(await Sync());
+
+        await _flights.DidNotReceive().AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task KnownStatus_ABaggageClaimReportedLater_IsRecorded_KeepingDetailsNoLongerReported()
+    {
+        var flight = GivenKnownStatus(Status() with { Gate = null, BaggageClaim = "7" });
+
+        Assert.True(await Sync());
+
+        await _flights.Received(1).AddFlightStatusEventAsync(
+            Arg.Is<FlightStatusEvent>(e => e.Gate == "A1" && e.Terminal == "T5" && e.BaggageClaim == "7"),
+            Arg.Any<CancellationToken>());
+        Assert.DoesNotContain(flight.DomainEvents, e => e is FlightStatusChanged);
+    }
+
+    [Fact]
+    public async Task KnownStatus_ADetailNoLongerReported_RecordsNothing()
+    {
+        GivenKnownStatus(Status() with { Gate = null });
+
+        Assert.False(await Sync());
+
+        await _flights.DidNotReceive().AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task KnownStatus_AnIdenticalResponse_RecordsNothing_AndLeavesTheFlightUnchanged()
+    {
+        var flight = GivenKnownStatus(Status() with { EquipmentIcao = null });
+        var updatedBefore = flight.UpdatedUtc;
+
+        Assert.False(await Sync());
+
+        await _flights.DidNotReceive().AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
+        Assert.Equal(updatedBefore, flight.UpdatedUtc);
+        Assert.Empty(flight.DomainEvents);
+    }
+
+    [Fact]
+    public async Task KnownStatus_ANewEstimatedArrival_UpdatesTheFlight_WithNoEventOrPush()
+    {
+        var flight = GivenKnownStatus(Status() with { EstimatedArrivalUtc = Now.AddHours(9) });
+
+        Assert.False(await Sync());
+
+        Assert.Equal(Now.AddHours(9), flight.EstimatedArrivalUtc);
+        await _flights.DidNotReceive().AddFlightStatusEventAsync(Arg.Any<FlightStatusEvent>(), Arg.Any<CancellationToken>());
+        Assert.Empty(flight.DomainEvents);
+    }
+
+    [Fact]
+    public async Task KnownStatus_ANewEstimatedDeparture_IsPlannedFromTheNewTime()
+    {
+        // Live before the call; the estimate moves departure inside the 3 h Fast window, with no new status.
+        var flight = GivenKnownStatus(Status() with { EstimatedDepartureUtc = Now.AddHours(2) }, departureUtc: Now.AddHours(10));
+
+        await Sync();
+
+        Assert.Equal(FlightSyncMode.Fast, flight.SyncMode);
+        Assert.Equal(Now.AddMinutes(3), flight.NextSyncDueUtc);
     }
 }

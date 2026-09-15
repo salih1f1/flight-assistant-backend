@@ -37,7 +37,7 @@ namespace FlightAssistant.Application.Interfaces.Repositories
 
         /// <summary>
         /// The <paramref name="limit"/> most recent <see cref="FlightStatusEvent"/> rows for the
-        /// flight, newest first, capped server-side (a <c>LIMIT</c> in the generated SQL, not a
+        /// flight, most recently recorded first (#351), capped server-side (a <c>LIMIT</c> in the generated SQL, not a
         /// client-side <c>Take</c> after loading everything) — for the admin flight drill-down
         /// (#322). Unlike <see cref="GetFlightStatusEventsAsync"/>, which returns the full,
         /// unbounded history: a flight tracked for weeks and polled every couple of minutes
@@ -45,6 +45,10 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// show the recent ones.
         /// </summary>
         Task<IReadOnlyList<FlightStatusEvent>> GetRecentFlightStatusEventsAsync(int flightId, int limit, CancellationToken ct = default);
+
+        /// <summary>The flight's most recently recorded status event (the highest id), or null when it has
+        /// none (#351). Read-only (not tracked).</summary>
+        Task<FlightStatusEvent?> GetLatestFlightStatusEventAsync(int flightId, CancellationToken ct = default);
 
         Task AddFlightStatusEventAsync(FlightStatusEvent evt, CancellationToken ct = default);
         Task<bool> FlightStatusEventExistsAsync(string dedupHash, CancellationToken ct = default);
