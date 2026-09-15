@@ -102,6 +102,20 @@ public class FlightSearchRateLimitTests(FlightAssistantWebApplicationFactory fac
         Assert.Equal(HttpStatusCode.BadRequest, otherClient.StatusCode);
     }
 
+    [Fact]
+    public async Task AnonymousSearch_SameClientOnDifferentPorts_SharesABucket()
+    {
+        // App Service sends the client as IP:port, and the port changes with every connection. The limit
+        // counts the address, not the connection.
+        var client = factory.CreateClient();
+        var address = $"203.0.113.{Random.Shared.Next(1, 255)}";
+
+        await SpendAllPermitsAsync(client, "flights/search", $"{address}:1111");
+
+        var otherPort = await client.SendAsync(RejectedSearch("flights/search", $"{address}:2222"));
+        Assert.Equal(HttpStatusCode.TooManyRequests, otherPort.StatusCode);
+    }
+
     // ── Partitioned by caller (#371) ──
 
     [Fact]
