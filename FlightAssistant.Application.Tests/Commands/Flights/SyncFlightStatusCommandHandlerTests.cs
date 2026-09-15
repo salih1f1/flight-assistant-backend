@@ -953,6 +953,37 @@ public class SyncFlightStatusCommandHandlerTests
     }
 
     [Fact]
+    public async Task ADelayBouncingAroundTheThreshold_ThroughASilentScheduled_PushesOnce()
+    {
+        // 16 min late (push) → 14 min (SCH, silent) → 17 min: the delay hasn't grown 15 min past the pushed one.
+        var flight = Given(Departing(Now.AddHours(1)));
+        var departure = flight.ScheduledDepartureUtc;
+        _flights.GetFlightStatusIdByCodeAsync("DLY", Arg.Any<CancellationToken>()).Returns(4);
+
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
+            .Returns(Status("DLY", effectiveAtUtc: departure.AddMinutes(16), estimatedDepartureUtc: departure.AddMinutes(16)));
+        _flights.GetLatestFlightStatusEventAsync(flight.Id, Arg.Any<CancellationToken>()).ReturnsNull();
+        await Sync(SyncTrigger.Admin);
+        Assert.True(Assert.IsType<FlightStatusChanged>(Assert.Single(flight.DomainEvents)).ShouldNotify);
+        flight.ClearDomainEvents();
+
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
+            .Returns(Status("SCH", effectiveAtUtc: departure.AddMinutes(14), estimatedDepartureUtc: departure.AddMinutes(14)));
+        _flights.GetLatestFlightStatusEventAsync(flight.Id, Arg.Any<CancellationToken>())
+            .Returns(FlightStatusEvent.Create(flight.Id, 4, departure.AddMinutes(16), "TestProvider", "ext-1"));
+        await Sync(SyncTrigger.Admin);
+        flight.ClearDomainEvents();
+
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>())
+            .Returns(Status("DLY", effectiveAtUtc: departure.AddMinutes(17), estimatedDepartureUtc: departure.AddMinutes(17)));
+        _flights.GetLatestFlightStatusEventAsync(flight.Id, Arg.Any<CancellationToken>())
+            .Returns(FlightStatusEvent.Create(flight.Id, 1, departure.AddMinutes(14), "TestProvider", "ext-1"));
+        await Sync(SyncTrigger.Admin);
+
+        Assert.False(Assert.IsType<FlightStatusChanged>(Assert.Single(flight.DomainEvents)).ShouldNotify);
+    }
+
+    [Fact]
     public async Task KnownStatus_ANewGate_RecordsADetailChange_WithNoPush()
     {
         var flight = GivenKnownStatus(Status() with { Gate = "B7" });

@@ -45,10 +45,10 @@ namespace FlightAssistant.Domain.Flights.Entities
         /// <c>Flight</c> doesn't store its current status, and the Stopped rule needs this.</summary>
         public DateTime? CancelledAtUtc { get; private set; }
 
-        /// <summary>The estimated departure the last delay push went out for (#352). A flight that stays
-        /// delayed is pushed again only when its estimate moves at least <see cref="DelayThreshold"/> later
-        /// than this, so small slips add up. Never cleared: a return to delayed is a status change and pushes
-        /// anyway.</summary>
+        /// <summary>The estimated departure the last delay push went out for (#352). A delayed flight is pushed
+        /// again only when its estimate moves at least <see cref="DelayThreshold"/> later than this, so small
+        /// slips add up. Cleared by a departure, landing, cancellation or diversion; a silent SCH or UNK in
+        /// between keeps it. Set even when nobody received the push: it belongs to the flight, not a traveler.</summary>
         public DateTime? DelayNotifiedDepartureUtc { get; private set; }
 
         public Airline Airline { get; private set; } = default!;
@@ -85,9 +85,10 @@ namespace FlightAssistant.Domain.Flights.Entities
 
         /// <summary>
         /// Records a new status from the provider and raises <see cref="FlightStatusChanged"/>, which the
-        /// push handler acts on. The event says whether a push should go out (#352): when the status
-        /// changed (<paramref name="statusChanged"/>), or, for a flight that stays delayed, once its
-        /// estimated departure is at least <see cref="DelayThreshold"/> later than the last delay push's.
+        /// push handler acts on. The event says whether a push should go out (#352). For a delay with an
+        /// estimate: when there was no delay push yet, or the estimate is at least <see cref="DelayThreshold"/>
+        /// later than the last one's, whether or not the status changed. For any other status: when it
+        /// changed (<paramref name="statusChanged"/>).
         /// A correction to an existing status (a revised actual departure, a small slip) records the event
         /// without a push. For a delay, the event carries how many minutes the estimate is after the
         /// provider's reported schedule.
@@ -117,16 +118,30 @@ namespace FlightAssistant.Domain.Flights.Entities
                 if (estimate > scheduled)
                     delayMinutes = (int)Math.Round((estimate - scheduled).TotalMinutes);
 
-                shouldNotify = shouldNotify
-                               || DelayNotifiedDepartureUtc is null
+                // Only the remembered estimate decides, not whether the status changed: SCH and UNK send no
+                // push, so a delay bouncing around the threshold through one of them would otherwise push on
+                // every return to DLY (#352).
+                shouldNotify = DelayNotifiedDepartureUtc is null
                                || estimate >= DelayNotifiedDepartureUtc.Value + DelayThreshold;
 
                 if (shouldNotify)
                     DelayNotifiedDepartureUtc = estimate;
             }
+            else if (IsAnnouncedToTravelers(statusCode))
+            {
+                // A departure, landing, cancellation or diversion was news to travelers, so a later delay (a
+                // reinstated flight) starts fresh.
+                DelayNotifiedDepartureUtc = null;
+            }
 
             Raise(new FlightStatusChanged(Id, FlightNumber, ServiceDateUtc, statusCode, nowUtc, shouldNotify, delayMinutes));
         }
+
+        /// <summary>The statuses, besides a delay, that travelers are pushed about. <c>SCH</c> and <c>UNK</c>
+        /// send no push, so a delay's remembered estimate survives them. Keep in step with the push handler's
+        /// messages.</summary>
+        private static bool IsAnnouncedToTravelers(string statusCode) =>
+            statusCode is "DEP" or "ARR" or CancelledStatusCode or "DIV";
 
         /// <summary>
         /// Takes the provider's times (#351). Estimates are taken as reported, so a missing one clears the

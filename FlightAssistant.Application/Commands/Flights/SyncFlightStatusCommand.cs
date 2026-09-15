@@ -248,7 +248,7 @@ namespace FlightAssistant.Application.Commands.Flights
         }
 
         /// <summary>
-        /// Fetches the live status and records it. A new status becomes an event and raises the push; a
+        /// Fetches the live status and records it. A new status becomes an event, and the flight decides whether it pushes (#352); a
         /// status the flight already has goes to <see cref="ApplyKnownStatusAsync"/> (#351). Changes the
         /// flight only after every step that can throw, so a failure leaves nothing half-applied for the
         /// deferral to save.
@@ -286,9 +286,10 @@ namespace FlightAssistant.Application.Commands.Flights
             if (await _flights.FlightStatusEventExistsAsync(dedupHash, ct))
                 return await ApplyKnownStatusAsync(flight, statusId.Value, result, now, ct);
 
-            // The flight's current status is its most recently recorded event (#351). A push goes out only
-            // when the status changes, or a delay grows (#352): a corrected actual departure, or a delay
-            // slipping a few minutes, records the event without another push. Read before the flight changes.
+            // The flight's current status is its most recently recorded event (#351). Whether the status changed
+            // is one input to the push decision the flight makes (#352): a corrected actual departure, or a delay
+            // that hasn't grown 15 minutes past the last delay push, records the event without a push. Read
+            // before the flight changes.
             var latest = await _flights.GetLatestFlightStatusEventAsync(flight.Id, ct);
 
             var evt = FlightStatusEvent.Create(

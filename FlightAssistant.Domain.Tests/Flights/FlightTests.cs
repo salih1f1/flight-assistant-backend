@@ -285,9 +285,9 @@ namespace FlightAssistant.Domain.Tests.Flights
         }
 
         [Fact]
-        public void ApplyStatusUpdate_ReturningToDelayed_Notifies_EvenWithinTheThreshold()
+        public void ApplyStatusUpdate_ReturningToDelayedFromASilentStatus_PushesOnlyWhenTheDelayGrew()
         {
-            // DLY (40) → SCH → DLY (45): back to DLY is a status change, so it pushes.
+            // DLY (40) → SCH → DLY (45): SCH sent nothing and the delay grew only 5 min, so no push.
             var flight = NewFlight();
             flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(40), null, null, null, null, Now, statusChanged: true);
             flight.ApplyStatusUpdate("SCH", Now.AddHours(1), null, null, null, null, Now.AddMinutes(5), statusChanged: true);
@@ -295,8 +295,32 @@ namespace FlightAssistant.Domain.Tests.Flights
 
             flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(45), null, null, null, null, Now.AddMinutes(10), statusChanged: true);
 
+            Assert.False(SingleEvent(flight).ShouldNotify);
+            Assert.Equal(Now.AddHours(1).AddMinutes(40), flight.DelayNotifiedDepartureUtc);
+            flight.ClearDomainEvents();
+
+            // → DLY (55): 15 min past the last delay push.
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(55), null, null, null, null, Now.AddMinutes(15), statusChanged: false);
+
             Assert.True(SingleEvent(flight).ShouldNotify);
-            Assert.Equal(Now.AddHours(1).AddMinutes(45), flight.DelayNotifiedDepartureUtc);
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_AStatusTravelersHear_ForgetsTheLastDelayPush()
+        {
+            // DLY (40) → CAN → reinstated SCH → DLY (20): the cancellation was pushed, so the new delay is news.
+            var flight = NewFlight();
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(40), null, null, null, null, Now, statusChanged: true);
+            flight.ApplyStatusUpdate("CAN", null, null, null, null, null, Now.AddMinutes(5), statusChanged: true);
+            Assert.Null(flight.DelayNotifiedDepartureUtc);
+            flight.ApplyStatusUpdate("SCH", Now.AddHours(1), null, null, null, null, Now.AddMinutes(10), statusChanged: true);
+            flight.ClearDomainEvents();
+
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(20), null, null, null, null, Now.AddMinutes(15), statusChanged: true);
+
+            var evt = SingleEvent(flight);
+            Assert.True(evt.ShouldNotify);
+            Assert.Equal(20, evt.DelayMinutes);
         }
     }
 
