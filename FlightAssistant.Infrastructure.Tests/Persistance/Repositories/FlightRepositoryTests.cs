@@ -68,15 +68,15 @@ public class FlightRepositoryTests : PostgresTestBase
 
     private static FakeTimeProvider ClockAt(DateTime utc) => new(new DateTimeOffset(utc));
 
-    /// <summary>A saved flight with the given next sync time, tracked by one new traveler unless
-    /// <paramref name="tracked"/> is false.</summary>
-    private static Flight FlightDue(FlightAssistantDbContext db, string flightNumber, DateTime? nextSyncDueUtc, bool tracked = true)
+    /// <summary>A saved flight with the given sync plan, tracked by one new traveler unless
+    /// <paramref name="tracked"/> is false. A null <paramref name="mode"/> is a flight never planned.</summary>
+    private static Flight FlightDue(FlightAssistantDbContext db, string flightNumber, DateTime? nextSyncDueUtc,
+        bool tracked = true, FlightSyncMode? mode = FlightSyncMode.Fast)
     {
         var (airlineId, departureAirportId, arrivalAirportId) = EnsureReferenceData(db);
         var flight = Flight.Create(airlineId, flightNumber, departureAirportId, arrivalAirportId,
             new DateOnly(2026, 9, 14), SyncNow.AddHours(1), SyncNow.AddHours(3));
-        if (nextSyncDueUtc is not null)
-            flight.ApplySyncPlan(FlightSyncMode.Fast, nextSyncDueUtc);
+        flight.ApplySyncPlan(mode, nextSyncDueUtc);
         db.Flights.Add(flight);
         db.SaveChanges();
 
@@ -121,10 +121,33 @@ public class FlightRepositoryTests : PostgresTestBase
     }
 
     [Fact]
-    public async Task GetDueTrackedFlightIdsAsync_ExcludesAFlightWithNoNextSync()
+    public async Task GetDueTrackedFlightIdsAsync_ReturnsANeverPlannedFlight_AheadOfAnOverdueOne()
     {
         using var db = CreateContext();
-        FlightDue(db, "TK1", nextSyncDueUtc: null);
+        // Inserted after the overdue flight, and PostgreSQL sorts a null due time last, so only an
+        // explicit "unplanned first" order puts it ahead.
+        var overdue = FlightDue(db, "TK1", SyncNow.AddHours(-1));
+        var unplanned = FlightDue(db, "TK2", nextSyncDueUtc: null, mode: null);
+
+        var ids = await Repository(db, ClockAt(SyncNow)).GetDueTrackedFlightIdsAsync();
+
+        Assert.Equal(new[] { unplanned.Id, overdue.Id }, ids);
+    }
+
+    [Fact]
+    public async Task GetDueTrackedFlightIdsAsync_ExcludesAnUntrackedNeverPlannedFlight()
+    {
+        using var db = CreateContext();
+        FlightDue(db, "TK1", nextSyncDueUtc: null, tracked: false, mode: null);
+
+        Assert.Empty(await Repository(db, ClockAt(SyncNow)).GetDueTrackedFlightIdsAsync());
+    }
+
+    [Fact]
+    public async Task GetDueTrackedFlightIdsAsync_ExcludesAStoppedFlight()
+    {
+        using var db = CreateContext();
+        FlightDue(db, "TK1", nextSyncDueUtc: null, mode: FlightSyncMode.Stopped);
 
         Assert.Empty(await Repository(db, ClockAt(SyncNow)).GetDueTrackedFlightIdsAsync());
     }

@@ -128,12 +128,15 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         {
             var now = _timeProvider.GetUtcNow().UtcDateTime;
 
-            // Any(), not a join: a flight tracked by several travelers is synced once.
+            // Any(), not a join: a flight tracked by several travelers is synced once. A tracked flight
+            // with no mode was never planned (tracked by an older build, or a track racing the last
+            // untrack) and would otherwise never be synced. PostgreSQL sorts nulls last, so
+            // "unplanned first" is an explicit key.
             return await _db.Flights
-                .Where(f => f.NextSyncDueUtc != null &&
-                            f.NextSyncDueUtc <= now &&
+                .Where(f => (f.SyncMode == null || f.NextSyncDueUtc <= now) &&
                             _db.TravelerFlights.Any(tf => tf.FlightId == f.Id))
-                .OrderBy(f => f.NextSyncDueUtc)
+                .OrderBy(f => f.SyncMode == null ? 0 : 1)
+                .ThenBy(f => f.NextSyncDueUtc)
                 .ThenBy(f => f.Id)
                 .Select(f => f.Id)
                 .ToListAsync(ct);

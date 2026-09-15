@@ -51,9 +51,10 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         Task<int?> GetFlightStatusIdByCodeAsync(string code, CancellationToken ct = default);
 
         /// <summary>
-        /// Ids of tracked flights whose <see cref="Flight.NextSyncDueUtc"/> is now or earlier, oldest
-        /// due first, for <c>FlightStatusSyncBackgroundService</c> (#356). "Now" comes from the
-        /// repository's <see cref="TimeProvider"/> on every call.
+        /// Ids of tracked flights whose <see cref="Flight.NextSyncDueUtc"/> is now or earlier, or that
+        /// have no <see cref="Flight.SyncMode"/> (never planned), for
+        /// <c>FlightStatusSyncBackgroundService</c> (#356). Unplanned flights come first, then oldest
+        /// due. "Now" comes from the repository's <see cref="TimeProvider"/> on every call.
         /// </summary>
         Task<IReadOnlyList<int>> GetDueTrackedFlightIdsAsync(CancellationToken ct = default);
 

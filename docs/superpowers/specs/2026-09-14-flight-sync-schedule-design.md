@@ -103,7 +103,7 @@ All five are added to the `flights` browsable table's column list, so the raw gr
 `FlightStatusSyncBackgroundService`:
 
 1. Wakes every `FlightSync:LoopInterval` (1 minute).
-2. Loads tracked flights with `NextSyncDueUtc ≤ now`, oldest due first (`GetDueTrackedFlightIdsAsync`, replacing `GetActiveTrackedFlightsAsync`).
+2. Loads tracked flights with `NextSyncDueUtc ≤ now` or no `SyncMode` (never planned, e.g. tracked by the previous build between the migration and the app deploy), unplanned first, then oldest due (`GetDueTrackedFlightIdsAsync`, replacing `GetActiveTrackedFlightsAsync`).
 3. Sends `SyncFlightStatusCommand(TravelerId: null, FlightId, Trigger: Scheduled)` for each, catching and counting failures as today.
 4. The heartbeat is unchanged, except `NextRunDueUtc` becomes the next loop tick.
 
@@ -266,7 +266,7 @@ Compared with today:
 - `SyncFlightStatusCommandHandler`: each outcome; `LastSyncedUtc` set on an empty live response; loop skips a Stopped flight with no provider call; admin sync of a Stopped flight still calls; AeroAPI failure moves a loop sync's next sync one interval on and saves nothing for an admin or traveler sync; `CancelledAtUtc` set and cleared.
 - Schedule check: times changed, unchanged, flight missing then found again (clears the flag), match requires the same departure airport.
 - `FlightStatusSyncBackgroundService`: only due flights are synced; with one Fast and one Schedule flight over 10 minutes, the Schedule flight is synced once (#344).
-- `GetDueTrackedFlightIdsAsync` (integration): tracked and due only, oldest due first.
+- `GetDueTrackedFlightIdsAsync` (integration): tracked only, due or never planned; unplanned first, then oldest due; a Stopped flight isn't returned.
 - Track and untrack: first tracker plans the flight; last untrack clears the mode.
 - Endpoints (integration): admin sync response shape; public sync still returns `{ updated }`.
 
