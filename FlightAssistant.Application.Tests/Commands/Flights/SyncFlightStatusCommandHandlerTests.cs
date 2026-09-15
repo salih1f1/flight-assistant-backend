@@ -271,6 +271,33 @@ public class SyncFlightStatusCommandHandlerTests
         Assert.Null(flight.NextSyncDueUtc);
     }
 
+    [Fact]
+    public async Task ScheduledSync_OfAFlightNoLongerDue_MakesNoCallAndSavesNothing()
+    {
+        // The loop lists due flights, then syncs them 12 s apart; a manual sync in between has
+        // already moved this one's next sync on.
+        var flight = Given(Departing(Now.AddHours(1)));
+        flight.ApplySyncPlan(FlightSyncMode.Fast, Now.AddMinutes(1));
+
+        Assert.False(await Sync(SyncTrigger.Scheduled));
+
+        await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+        Assert.Equal(Now.AddMinutes(1), flight.NextSyncDueUtc);
+    }
+
+    [Fact]
+    public async Task AdminSync_OfAFlightNotYetDue_StillCallsTheProvider()
+    {
+        var flight = Given(Departing(Now.AddHours(1)));
+        flight.ApplySyncPlan(FlightSyncMode.Fast, Now.AddMinutes(1));
+        _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        await Sync(SyncTrigger.Admin);
+
+        await _provider.Received(1).GetStatusAsync("BA123", flight.ServiceDateUtc, Arg.Any<CancellationToken>());
+    }
+
     [Theory]
     [InlineData(SyncTrigger.Scheduled)]
     [InlineData(SyncTrigger.Admin)]
@@ -452,7 +479,8 @@ public class SyncFlightStatusCommandHandlerTests
 
         var first = await Sync();
 
-        // Second call: different effective time → different hash → also not a dedup
+        // Second call, once the flight is due again: different effective time → different hash → also not a dedup
+        _clock.Advance(new SyncOptions().NearDepartureInterval);
         var laterStatus = Status() with { EffectiveAtUtc = Now.AddMinutes(30) };
         _provider.GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
             .Returns(laterStatus);

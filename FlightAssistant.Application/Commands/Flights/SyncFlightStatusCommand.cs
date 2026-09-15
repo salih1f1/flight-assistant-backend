@@ -68,6 +68,12 @@ namespace FlightAssistant.Application.Commands.Flights
                 ?? throw new DomainException($"Flight {cmd.FlightId} not found.", 404);
 
             var now = _timeProvider.GetUtcNow().UtcDateTime;
+
+            // The loop lists due flights, then syncs them 12 s apart; a manual sync in between may have
+            // moved this one's next sync on, and the loop's call would be wasted.
+            if (cmd.Trigger == SyncTrigger.Scheduled && flight.SyncMode is not null && flight.NextSyncDueUtc > now)
+                return false;
+
             var options = FlightSyncPlanOptions.From(_syncOptions, _windowOptions);
             var isTracked = cmd.TravelerId is not null || await _flights.IsFlightTrackedAsync(flight.Id, ct);
             var plan = FlightSyncPlanner.Plan(flight, isTracked, now, options);

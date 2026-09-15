@@ -69,6 +69,16 @@ public class FlightSyncPlannerTests
     }
 
     [Fact]
+    public void ArrivedRecently_ButCancelledLongerThanStopAfterArrivalAgo_IsStopped()
+    {
+        // The rule is an OR: a recent arrival doesn't keep an old cancellation syncing.
+        var flight = Departing(Now.AddHours(-4));
+        flight.ApplyStatusUpdate("CAN", null, null, null, null, null, Now - Options.StopAfterArrival - OneMinute);
+        flight.ApplyStatusUpdate("CAN", null, null, Now.AddHours(-4), Now.AddMinutes(-5), null, Now.AddMinutes(-5));
+        Assert.Equal(new FlightSyncPlan(FlightSyncMode.Stopped, null), Plan(flight));
+    }
+
+    [Fact]
     public void NoArrivalReported_ScheduledArrivalExactlyStopWithoutArrivalAgo_IsStopped()
     {
         var arrival = Now - Options.StopWithoutArrivalAfter;

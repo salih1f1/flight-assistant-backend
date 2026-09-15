@@ -59,15 +59,14 @@ namespace FlightAssistant.Application.FlightSync
         private static bool IsStopped(Flight flight, DateTime nowUtc, FlightSyncPlanOptions options)
         {
             // Keep syncing for a while after arrival or cancellation, so the final status, gate and
-            // baggage claim are still recorded (#345).
-            if (flight.ActualArrivalUtc is { } arrived)
-                return arrived <= nowUtc - options.StopAfterArrival;
-
-            if (flight.CancelledAtUtc is { } cancelled && cancelled <= nowUtc - options.StopAfterArrival)
+            // baggage claim are still recorded (#345). Either one on its own stops the flight.
+            var stopBefore = nowUtc - options.StopAfterArrival;
+            if (flight.ActualArrivalUtc <= stopBefore || flight.CancelledAtUtc <= stopBefore)
                 return true;
 
             // A flight that never reports an arrival.
-            return (flight.EstimatedArrivalUtc ?? flight.ScheduledArrivalUtc) <= nowUtc - options.StopWithoutArrivalAfter;
+            return flight.ActualArrivalUtc is null &&
+                   (flight.EstimatedArrivalUtc ?? flight.ScheduledArrivalUtc) <= nowUtc - options.StopWithoutArrivalAfter;
         }
 
         private static DateTime Earliest(DateTime a, DateTime b) => a <= b ? a : b;
