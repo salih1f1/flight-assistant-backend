@@ -44,7 +44,7 @@ public class GetVerificationRequestsQueryTests
         Assert.Equal(request.Id, result.Id);
         Assert.Equal(VerificationEntityType.Airport, result.EntityType);
         Assert.Equal("42", result.EntityKey);
-        Assert.Equal("ourairports", result.Sources);
+        Assert.Equal(new[] { "ourairports" }, result.Sources);
         Assert.Equal(VerificationTrigger.Admin, result.Trigger);
         Assert.Equal(VerificationRequestStatus.Mismatch, result.Status);
         Assert.Equal(0, result.Attempts);
@@ -59,6 +59,21 @@ public class GetVerificationRequestsQueryTests
         Assert.Equal(T0, result.RequestedUtc);
         Assert.Null(result.StartedUtc);
         Assert.Equal(T0.AddMinutes(1), result.CompletedUtc);
+    }
+
+    /// <summary>#385, Task 2, F1: <see cref="VerificationRequestResult.Sources"/> is the parsed source
+    /// name list, in request order, not the stored comma-joined string.</summary>
+    [Fact]
+    public async Task Handle_MultipleSources_ComesBackAsTheParsedSourceNameList_InRequestOrder()
+    {
+        var request = VerificationRequest.Create(
+            VerificationEntityType.Airport, "42", new[] { "ourairports", "mledoze" }, VerificationTrigger.Admin, "admin-oid", 0m, T0);
+        _repository.GetRecentForEntityAsync(VerificationEntityType.Airport, "42", GetVerificationRequestsQuery.DefaultLimit, Arg.Any<CancellationToken>())
+            .Returns(new List<VerificationRequest> { request });
+
+        var result = Assert.Single(await Handle());
+
+        Assert.Equal(new[] { "ourairports", "mledoze" }, result.Sources);
     }
 
     [Fact]

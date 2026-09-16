@@ -24,13 +24,14 @@ namespace FlightAssistant.Application.Queries.Admin.Verification
         public const int MaxLimit = 50;
     }
 
-    /// <summary>One verification check of one entity, with its stored <c>differences</c>/<c>source_values</c>
-    /// already deserialised (R2) rather than handed back as the raw JSON strings.</summary>
+    /// <summary>One verification check of one entity, with its stored <c>sources</c>/<c>differences</c>/
+    /// <c>source_values</c> already parsed (R2; Task 2 F1 for <see cref="Sources"/>) rather than handed
+    /// back as the raw comma-joined or JSON strings.</summary>
     public sealed record VerificationRequestResult(
         long Id,
         VerificationEntityType EntityType,
         string EntityKey,
-        string Sources,
+        IReadOnlyList<string> Sources,
         VerificationTrigger Trigger,
         VerificationRequestStatus Status,
         int Attempts,
@@ -100,7 +101,7 @@ namespace FlightAssistant.Application.Queries.Admin.Verification
             r.Id,
             r.EntityType,
             r.EntityKey,
-            r.Sources,
+            r.SourceNames,
             r.Trigger,
             r.Status,
             r.Attempts,

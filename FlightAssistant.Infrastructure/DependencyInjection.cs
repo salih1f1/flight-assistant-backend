@@ -54,6 +54,10 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<IVerificationQueue, VerificationRequestRepository>();
             services.AddScoped<IVerificationRequestRepository, VerificationRequestRepository>();
 
+            // Needs-attention counts (#385, Task 2): reads Airport/Airline/Country directly, so it is
+            // its own port rather than living on IRefDataRepository or IVerificationRequestRepository.
+            services.AddScoped<IVerificationNeedsAttentionRepository, VerificationNeedsAttentionRepository>();
+
             // Verification sources (#367 task 3): the two free outside datasets an automated check
             // can name. Both hold no credentials — OurAirports and mledoze's raw GitHub file are
             // public, unauthenticated URLs — so, unlike the GitHub clients below, following a

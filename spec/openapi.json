@@ -2971,13 +2971,38 @@
         }
       }
     },
+    "/admin/verification-needs-attention": {
+      "get": {
+        "tags": [
+          "Admin - Verification"
+        ],
+        "summary": "Counts of reference-data rows that need attention",
+        "description": "One entry per VerificationEntityType (Airport, Airline, Country), always all three, in enum order, with a count of 0 rather than an omitted entry. A row needs attention when its most recent automated check found a problem: IsVerified is false and VerificationIssue is set -- the state only the verification job's mismatch and not-found paths leave behind. A row that has simply never been checked (IsVerified false, no issue) does not count. No parameters.",
+        "operationId": "AdminGetVerificationNeedsAttention",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VerificationNeedsAttentionDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/verification-requests": {
       "get": {
         "tags": [
           "Admin - Verification"
         ],
         "summary": "An entity's most recent verification checks",
-        "description": "The entity's checks, newest first, at most 'limit' (default 5, range 1-50). Not a page: no total, and the full history stays browsable at GET /admin/data/verification-requests. Each row's differences and source values come back typed, not as the stored JSON strings: differences is { column, ours, source, sourceName } per differing column; sourceValues is keyed by source name, each value a map of column name to what that source reported. 'entityType' is required and must be exactly Airport, Airline or Country; 'entityKey' is required and canonicalised before matching, so a lower-case country code finds the upper-case row. An entity with no checks yet is an empty list, never a 404.",
+        "description": "The entity's checks, newest first, at most 'limit' (default 5, range 1-50). Not a page: no total, and the full history stays browsable at GET /admin/data/verification-requests. Each row's sources, differences and source values come back typed, not as the stored comma-joined or JSON strings: sources is the list of source names checked; differences is { column, ours, source, sourceName } per differing column; sourceValues is keyed by source name, each value a map of column name to what that source reported. 'entityType' is required and must be exactly Airport, Airline or Country; 'entityKey' is required and canonicalised before matching, so a lower-case country code finds the upper-case row. An entity with no checks yet is an empty list, never a 404.",
         "operationId": "AdminListVerificationRequests",
         "parameters": [
           {
@@ -6360,6 +6385,20 @@
         },
         "additionalProperties": false
       },
+      "VerificationNeedsAttentionDto": {
+        "type": "object",
+        "properties": {
+          "entityType": {
+            "type": "string",
+            "nullable": true
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
       "VerificationRequestDifferenceDto": {
         "type": "object",
         "properties": {
@@ -6398,7 +6437,10 @@
             "nullable": true
           },
           "sources": {
-            "type": "string",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
             "nullable": true
           },
           "trigger": {

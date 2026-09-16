@@ -56,10 +56,15 @@ public class VerificationRequestLookupPostgresTests : PostgresTestBase
     /// <summary>
     /// Two requests for the same entity share <c>T0</c> exactly. The row inserted <em>first</em>
     /// (the lower id) is deliberately the one that must come back <em>second</em>: a bare
-    /// "ORDER BY requested_utc DESC" with no id tiebreaker returns ties from a freshly-inserted,
-    /// never-updated table in physical (insertion) order on real PostgreSQL -- the opposite of what
-    /// "descending id" requires here. Dropping the tiebreaker therefore fails this test by
-    /// construction (insertion order opposes id order), not by luck of an unordered tie.
+    /// "ORDER BY requested_utc DESC" with no id tiebreaker has been <em>observed</em> to return ties
+    /// from a freshly-inserted, never-updated table in physical (insertion) order on real PostgreSQL --
+    /// the opposite of what "descending id" requires here -- but PostgreSQL makes no such ordering
+    /// guarantee for ties, so this is not one either. Dropping the tiebreaker is therefore expected to
+    /// fail this test by construction (insertion order opposes id order) rather than by luck of an
+    /// unordered tie, but if a future PostgreSQL version, plan, or storage layout ever makes it pass
+    /// without the tiebreaker, re-run the break (drop the <c>ThenByDescending(r => r.Id)</c> in
+    /// <see cref="VerificationRequestRepository.GetRecentForEntityAsync"/> and confirm this test still
+    /// fails) before trusting it again.
     /// </summary>
     [Fact]
     public async Task GetRecentForEntityAsync_TwoRequestsSharingARequestedUtc_ComeBackByDescendingId()
