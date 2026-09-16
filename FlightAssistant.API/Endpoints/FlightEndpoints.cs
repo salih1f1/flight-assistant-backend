@@ -131,9 +131,11 @@ namespace FlightAssistant.API.Endpoints
                 "and how many slots are in use as activeTrackedFlights (#397). " +
                 "A flight counts until its status sync stops: by default 30 minutes after it lands or is cancelled, or a day after its arrival time if no landing is reported. " +
                 "Tracking another returns 409 and adds nothing; tracking a flight the traveler already tracks still returns 201. " +
-                "Rate-limited per traveler: too many tracking requests return 429 with a Retry-After header.")
+                "Rate-limited per traveler: too many tracking requests return 429 with a Retry-After header. " +
+                "Returns 404 if the airline or either airport in the request is not known to the system. ")
             .Produces(201)
             .ProducesValidationProblem()
+            .ProducesProblem(404)
             .ProducesProblem(409)
             .RequireRateLimiting("flight-track");
 
@@ -149,9 +151,10 @@ namespace FlightAssistant.API.Endpoints
             .WithSummary("Stop tracking a flight")
             .WithDescription(
                 "Removes the specified flight from the authenticated traveler's tracking list. " +
-                "Route parameter: flightId — the numeric ID returned when the flight was tracked.")
+                "Route parameter: flightId — the numeric ID returned when the flight was tracked. " +
+                "Idempotent: untracking a flight the traveler does not track also returns 204, so there is no 404. ")
             .Produces(204)
-            .ProducesProblem(404);
+            .ProducesValidationProblem();
 
             // PATCH /flights/{flightId}/notify — toggle push notifications for a flight
             group.MapPatch("{flightId:int}/notify", async (HttpContext http, int flightId, [FromBody] ToggleNotifyRequest request, IMediator mediator, CancellationToken ct) =>
@@ -167,8 +170,10 @@ namespace FlightAssistant.API.Endpoints
                 "Enables or disables push notifications for a tracked flight. " +
                 "Route parameter: flightId — the numeric flight ID. " +
                 "Body: { \"notify\": true } (true to enable, false to disable). " +
-                "Notifications are delivered via APNs to device tokens registered for the traveler.")
+                "Notifications are delivered via APNs to device tokens registered for the traveler. " +
+                "Returns 404 if the traveler does not track this flight — unlike DELETE /flights/{flightId}, which is idempotent and returns 204 either way. ")
             .Produces(204)
+            .ProducesValidationProblem()
             .ProducesProblem(404);
 
             // GET /flights/{flightId}/status — get flight status event history
@@ -187,9 +192,12 @@ namespace FlightAssistant.API.Endpoints
                 "The order is the order events were recorded (by event id), not effectiveAtUtc, which can move backwards when an estimate " +
                 "returns to an earlier value; so the first row is the flight's current status. " +
                 "Each event captures the status code, gate/terminal info, baggage claim, and the time it became effective. " +
-                "Route parameter: flightId — the numeric flight ID.")
+                "Route parameter: flightId — the numeric flight ID. " +
+                "Returns 403 if the authenticated traveler does not track this flight — including when no flight with that id exists, " +
+                "so the response does not reveal whether a flight id is real to someone who does not track it. There is no 404. ")
             .Produces<IEnumerable<FlightStatusEventDto>>(200)
-            .ProducesProblem(404);
+            .ProducesValidationProblem()
+            .ProducesProblem(403);
 
             // POST /flights/{flightId}/sync — manually trigger a status refresh; the flight's sync mode decides whether the provider is called
             group.MapPost("{flightId:int}/sync", async (HttpContext http, int flightId, IMediator mediator, CancellationToken ct) =>
@@ -206,14 +214,21 @@ namespace FlightAssistant.API.Endpoints
                 "a flight not yet inside the provider's live-status window makes no provider call. " +
                 "A flight synced within the manual-sync cooldown (5 minutes by default) makes no call either. " +
                 "Once this month's flight data budget is used up, only a flight in its near-departure window (by default, from 4 hours before departure until 30 minutes after it lands) is refreshed; any other returns 503. " +
+                "503 also covers the flight data provider throttling requests, not only the monthly budget; " +
+                "502 is returned when the provider is unreachable or answers unexpectedly, and 500 for a provider configuration problem. " +
                 "Returns { updated: true } when an event was recorded — a new status, a revised time for the status the flight already has, " +
                 "or a gate, terminal or baggage-claim change on the current status — and { updated: false } when none was: no call was made, " +
                 "or the response repeated what was already recorded. { updated: false } still does not mean nothing changed: a revised " +
                 "estimated arrival updates the flight and is visible immediately on GET /flights. " +
                 "Rate-limited per traveler: too many sync requests return 429 with a Retry-After header. " +
-                "Route parameter: flightId — the numeric flight ID.")
+                "Route parameter: flightId — the numeric flight ID. " +
+                "Returns 403 if the authenticated traveler does not track this flight — including when no flight with that id exists, " +
+                "so the response does not reveal whether a flight id is real to someone who does not track it. ")
             .Produces(200)
-            .ProducesProblem(404)
+            .ProducesValidationProblem()
+            .ProducesProblem(403)
+            .ProducesProblem(500)
+            .ProducesProblem(502)
             .ProducesProblem(503)
             .RequireRateLimiting("flight-sync");
         }

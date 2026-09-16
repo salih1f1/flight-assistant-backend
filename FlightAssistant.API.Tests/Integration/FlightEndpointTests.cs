@@ -300,4 +300,51 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
 
         Assert.Equal(HttpStatusCode.Created, (await clientB.PostAsJsonAsync("flights", bodyB)).StatusCode);
     }
+
+    [Fact]
+    public async Task GetFlightStatus_NotTracking_Returns403_Not404()
+    {
+        // 403 even for a flight id that does not exist: the API does not reveal whether an id is
+        // real to a traveler who does not track it (#405). The declared 404 was unreachable.
+        var client = factory.CreateUserClient();
+        var response = await client.GetAsync("flights/999999/status");
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UntrackFlight_NotTracking_Returns204_Idempotently()
+    {
+        // Deleting what is already absent succeeds (#405); the declared 404 was unreachable.
+        var client = factory.CreateUserClient();
+        var response = await client.DeleteAsync("flights/999999");
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ToggleNotifications_NotTracking_Returns404()
+    {
+        // The neighbour of the DELETE above, and deliberately different: patching an absent
+        // resource is an error. Pinned so the asymmetry is a decision, not an accident.
+        var client = factory.CreateUserClient();
+        var response = await client.PatchAsJsonAsync("flights/999999/notify", new { notify = true });
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task TrackFlight_UnknownAirline_Returns404()
+    {
+        // Undeclared before #405. One POST only: the Testing profile allows 2 before a 429.
+        var client = factory.CreateUserClient();
+        var tomorrow = DateTime.UtcNow.AddDays(1);
+        var response = await client.PostAsJsonAsync("flights", new
+        {
+            flightNumber = "QQ123",
+            serviceDate = DateOnly.FromDateTime(tomorrow).ToString("yyyy-MM-dd"),
+            departureAirportIata = "LHR",
+            arrivalAirportIata = "JFK",
+            scheduledDepartureUtc = tomorrow.AddHours(9),
+            scheduledArrivalUtc = tomorrow.AddHours(18)
+        });
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
 }
