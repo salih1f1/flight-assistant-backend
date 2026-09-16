@@ -5,6 +5,7 @@ using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Flights.Enums;
+using FlightAssistant.Domain.Flights.Events;
 using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
 using NSubstitute.ReturnsExtensions;
@@ -111,7 +112,50 @@ public class TrackFlightCommandHandlerTests
         await _handler.Handle(DefaultCmd, CancellationToken.None);
 
         await _flights.DidNotReceive().AddTravelerFlightAsync(Arg.Any<TravelerFlight>(), Arg.Any<CancellationToken>());
-        await _flights.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    // ── FlightTracked (#410, R1/R2): raised on every track request, ids only ──
+
+    [Fact]
+    public async Task HappyPath_RaisesFlightTracked_OnTheFlightTheCommandReturns_WithTheRightIds()
+    {
+        Flight? flight = null;
+        _flights.GetOrCreateFlightAsync(Arg.Any<Flight>(), Arg.Any<CancellationToken>())
+            .Returns(ci => flight = ci.Arg<Flight>());
+        _flights.GetTravelerFlightAsync(DefaultCmd.TravelerId, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .ReturnsNull();
+
+        var flightId = await _handler.Handle(DefaultCmd, CancellationToken.None);
+
+        // Raised on flight (the same object GetOrCreateFlightAsync returned) whose Id is what the
+        // command returned -- not some other aggregate the handler happened to touch.
+        var evt = Assert.IsType<FlightTracked>(Assert.Single(flight!.DomainEvents));
+        Assert.Equal(flightId, evt.FlightId);
+        Assert.Equal(1, evt.AirlineId);             // "BA" stubbed to airline id 1
+        Assert.Equal(10, evt.DepartureAirportId);   // "LHR" stubbed to 10
+        Assert.Equal(20, evt.ArrivalAirportId);     // "JFK" stubbed to 20
+    }
+
+    [Fact]
+    public async Task AlreadyTracking_StillRaisesFlightTracked_AndSavesUnconditionally()
+    {
+        // R1: a repeat track (the traveler already tracks this flight) still raises the event and
+        // still saves, because the interceptor only dispatches events collected at SaveChanges time --
+        // a save with nothing new to write is what makes the event go out at all here.
+        var existingFlight = Flight.Create(1, "BA123", 10, 20, DefaultCmd.ServiceDate,
+            DefaultCmd.ScheduledDepartureUtc, DefaultCmd.ScheduledArrivalUtc);
+        var existingTracking = TravelerFlight.Create(DefaultCmd.TravelerId, existingFlight.Id);
+
+        _flights.GetOrCreateFlightAsync(Arg.Any<Flight>(), Arg.Any<CancellationToken>())
+            .Returns(existingFlight);
+        _flights.GetTravelerFlightAsync(DefaultCmd.TravelerId, existingFlight.Id, Arg.Any<CancellationToken>())
+            .Returns(existingTracking);
+
+        await _handler.Handle(DefaultCmd, CancellationToken.None);
+
+        await _flights.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+        var evt = Assert.IsType<FlightTracked>(Assert.Single(existingFlight.DomainEvents));
+        Assert.Equal(existingFlight.Id, evt.FlightId);
     }
 
     [Fact]

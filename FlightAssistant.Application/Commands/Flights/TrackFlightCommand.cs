@@ -92,9 +92,14 @@ namespace FlightAssistant.Application.Commands.Flights
                         FlightSyncPlanOptions.From(_syncOptions, _windowOptions));
                     flight.ApplySyncPlan(plan.Mode, plan.Mode == FlightSyncMode.Stopped ? null : now);
                 }
-
-                await _flights.SaveChangesAsync(ct);
             }
+
+            // Raised on every track request, new or repeat (#410, R1): the airline or an airport may
+            // have gone stale since the last time this flight was tracked. The save is unconditional so
+            // the event dispatches even when nothing else changed -- the flight is EF-tracked either
+            // way, so this save is cheap when there's nothing new to write.
+            flight.MarkTracked(now);
+            await _flights.SaveChangesAsync(ct);
 
             return flight.Id;
         }

@@ -204,6 +204,15 @@ namespace FlightAssistant.Domain.Flights.Entities
         public void MarkSynced(DateTime syncedUtc) => LastSyncedUtc = syncedUtc;
 
         /// <summary>
+        /// Raises <see cref="FlightTracked"/>: called on every track request, whether the tracking
+        /// link is new or the traveler already tracked this flight (#410, R1), since a repeat track
+        /// can still find the airline or an airport newly unverified or stale. Stores no state of its
+        /// own — the handler that reacts to the event owns every verification decision (R2).
+        /// </summary>
+        public void MarkTracked(DateTime nowUtc) =>
+            Raise(new FlightTracked(Id, AirlineId, DepartureAirportId, ArrivalAirportId, nowUtc));
+
+        /// <summary>
         /// Stores the planner's mode and next due time. Leaves <see cref="UpdatedUtc"/> alone: this
         /// changes every few minutes and isn't a change to the flight.
         /// </summary>
