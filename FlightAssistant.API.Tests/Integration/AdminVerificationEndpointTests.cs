@@ -17,7 +17,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace FlightAssistant.API.Tests.Integration;
 
 /// <summary>
-/// The four admin verification endpoints (#378) and <c>GET /admin/data/verification-requests</c>. They map
+/// The six admin verification endpoints (#378, #385) and <c>GET /admin/data/verification-requests</c>. They map
 /// each handler's outcome onto a status; the rules themselves are covered by the Application handler tests,
 /// and the audit row and unique-collision refusal by <c>AcceptVerificationSourcePostgresTests</c>, since this
 /// host runs on InMemory with the audit interceptor stripped.

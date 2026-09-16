@@ -458,12 +458,26 @@ public class AdminHealthEndpointTests(FlightAssistantWebApplicationFactory facto
         var response = await client.GetAsync("admin/health");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var dto = await response.Content.ReadFromJsonAsync<AdminHealthDto>();
+
+        // Read as a raw string first (#385 D4): deserialising straight into AdminHealthDto below
+        // would still pass even if StuckAbandoned/FailuresUnrecorded were renamed in
+        // AdminHealthVerificationDto, since the C# round trip renames both ends together. Reading
+        // the raw body and asserting on the literal camelCase JSON names is what actually pins them
+        // — otherwise they're pinned only by the generated spec.
+        var body = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(body);
+        var verification = doc.RootElement.GetProperty("verification");
+        Assert.Equal(0, verification.GetProperty("stuckAbandoned").GetInt32());
+        Assert.Equal(0, verification.GetProperty("failuresUnrecorded").GetInt32());
+
+        var dto = JsonSerializer.Deserialize<AdminHealthDto>(body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.NotNull(dto);
         Assert.True(dto!.Verification.Enabled);
         Assert.Equal("NeverRun", dto.Verification.LastOutcome);
         Assert.Null(dto.Verification.LastRunStartedUtc);
         Assert.NotNull(dto.Verification.PendingCount);
+        Assert.Equal(0, dto.Verification.StuckAbandoned);
+        Assert.Equal(0, dto.Verification.FailuresUnrecorded);
     }
 
     [Fact]

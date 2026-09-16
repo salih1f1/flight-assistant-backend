@@ -203,7 +203,7 @@ Each cycle:
 
 The job's scope sets `IAdminContext` to a `system` actor, so its writes to the entities it checks — `Verify` / `MarkVerificationFailed` — are audited like an admin's. **`verification_requests` itself is never audited:** it is its own history (every status change is already a row in it), and auditing it under the job's `system` actor would add an `Update` row per status change of every request in the queue.
 
-**Health report.** `/admin/health` has a verification section (`AdminHealthVerificationDto`), shaped from one heartbeat snapshot like the flight-sync section: `Enabled`, `LastRunStartedUtc`, `LastRunCompletedUtc`, `LastOutcome` (`NeverRun`, `Running`, `Success` or `Failed`; `Failed` means the cycle itself failed, not a request in it), `RequestsProcessed` and `RequestsFailed` for the last completed cycle, `NextRunDueUtc`, `LastError` and `PendingCount`. Two fields degrade instead of failing the report. `PendingCount` (requests in `Pending`, due or waiting to retry) is `null` when the count query throws, meaning "cannot tell", not zero, and the rest of the report still renders. `LastError` follows the `DiagnosticDetail` convention: rendered outside Production only, always `null` in Production. With `Enabled` false the timestamps stay `null`: disabled, not broken.
+**Health report.** `/admin/health` has a verification section (`AdminHealthVerificationDto`), shaped from one heartbeat snapshot like the flight-sync section: `Enabled`, `LastRunStartedUtc`, `LastRunCompletedUtc`, `LastOutcome` (`NeverRun`, `Running`, `Success` or `Failed`; `Failed` means the cycle itself failed, not a request in it), `RequestsProcessed`, `RequestsFailed`, `StuckAbandoned` and `FailuresUnrecorded` (#385; the last two from step 1's stuck-request reset and the "even recording a failure fails" case above) for the last completed cycle, `NextRunDueUtc`, `LastError` and `PendingCount`. All four counts are set together by `MarkRunSucceeded` and by the batch-aware `MarkRunFailed` overload; the plain `MarkRunFailed(ex, next)` — a cycle that failed before it finished a batch — leaves the previous cycle's four counts as they were rather than zeroing them. Two fields degrade instead of failing the report. `PendingCount` (requests in `Pending`, due or waiting to retry) is `null` when the count query throws, meaning "cannot tell", not zero, and the rest of the report still renders. `LastError` follows the `DiagnosticDetail` convention: rendered outside Production only, always `null` in Production. With `Enabled` false the timestamps stay `null`: disabled, not broken.
 
 ### 4.3 Sources — only when needed
 
@@ -291,6 +291,42 @@ Queuing goes through one interface (`IVerificationQueue`), so a message signal c
 
 Validated on start like `AeroApiOptions`. **`Enabled`** (controller ruling, for parity with `FlightSync:Enabled`) gates the whole background service. Every source list — each `DefaultSources` entry, and every request's own `sources` column — follows the same one rule (`VerificationRequest.TryJoinSources`, shared by the domain and this options validation): at least one name; none blank or containing whitespace, `,` or `+`; duplicates dropped; the joined form fitting the `sources` column — so a configured default is always guaranteed to be a queueable request.
 
+### 4.7 Reading verification state for the panel (#385)
+
+Landed ahead of step 8 so the panel work in §9 has something to read against: an entity's own check history, dashboard counts, and a grid filter for "needs attention" rows. None of these write anything, so none is audited (R6).
+
+```
+GET /admin/verification-requests?entityType=Airport&entityKey=123&limit=5
+     → 200 [{ "id": 42, "entityType": "Airport", "entityKey": "123", "sources": ["ourairports"],
+               "trigger": "Admin", "status": "Mismatch", "attempts": 1, "nextAttemptUtc": null,
+               "differences": [{ "column": "Name", "ours": "…", "source": "…", "sourceName": "ourairports" }],
+               "sourceValues": { "ourairports": { "Name": "…" } }, "error": null,
+               "estimatedCostUsd": 0, "requestedBy": "admin-1", "requestedUtc": "…",
+               "startedUtc": "…", "completedUtc": "…" }, …]
+     → 400 when entityType isn't exactly Airport, Airline or Country; entityKey doesn't canonicalise
+       for that type (same rule the queue uses, §2.3); or limit is outside 1-50
+     // A "latest few", not a page (R1): newest first (requestedUtc descending, then id descending as
+     // the tiebreaker), at most limit (default 5). No total, no PagedResult — the full history stays
+     // browsable at GET /admin/data/verification-requests. differences and sourceValues come back
+     // typed (R2, via VerificationJson), not as the stored comma-joined or JSON strings. An entity
+     // with no checks yet is an empty 200, never a 404.
+
+GET /admin/verification-needs-attention
+     → 200 [{ "entityType": "Airport", "count": 3 }, { "entityType": "Airline", "count": 0 },
+             { "entityType": "Country", "count": 1 }]
+     // One entry per VerificationEntityType, always all three, in enum order, count 0 rather than an
+     // omitted entry (R3). A row needs attention when it is unverified with a non-blank
+     // VerificationIssue — the state only the job's mismatch and not-found paths leave; a row simply
+     // never checked (IsVerified false, no issue) doesn't count. No parameters.
+
+GET /admin/data/verification-requests?filter=VerificationIssue:*
+     // Not a new route: {column}:* on a string column of any browsable table (R4) means "has a
+     // value" — non-null and non-blank after trimming — alongside the filter's existing forms: exact
+     // match for a non-string column, and column:>=value for "on or after" on a date column. Added for
+     // this grid link (the dashboard card's drill-in, §5 item 4), but the rule lives in the
+     // general-purpose BrowsableDataRepository.ApplyFilter, so it works on any exposed string column.
+```
+
 ---
 
 ## 5. Panel
@@ -350,7 +386,7 @@ One issue → branch → PR per step; wait for review after each.
 | 5 | backend | `verification_requests`, comparer, job, `ourairports` and `mledoze` sources |
 | 6 | backend | Admin endpoints: queue, sources, accept-source, retry; `verification_requests` browsable |
 | 7 | panel | Row selection and Verify dialog |
-| 8 | panel | Needs attention on detail page; dashboard card; health row |
+| 8 | panel | Needs attention on detail page; dashboard card; health row — the reads it needs (§4.7, §4.2) landed backend-side in #385 |
 | 9 | backend | `aeroapi` sources and budget check |
 | 10 | backend | Flight-tracking trigger |
 
@@ -358,6 +394,6 @@ Steps 1–4 stand alone: countries become verifiable and imports work for moving
 
 **Carried into later steps**, noted during step 5's implementation and review:
 
-- **Step 8:** show the health report's `StuckAbandoned` and `FailuresUnrecorded` counts (§4.2) alongside the heartbeat's processed/pending counts, which already ship. Also: verifying a row through the queue doesn't refresh `/admin/stats` counts.
+- **Step 8, done ahead of the panel work (#385):** the health report's `StuckAbandoned` and `FailuresUnrecorded` counts (§4.2), the entity check-history read (`GET /admin/verification-requests`, §4.7), and the needs-attention counts (`GET /admin/verification-needs-attention`, §4.7) all landed backend-side so step 8 has something to read against. §5 item 5 (History) is folded into step 8 too, not a step of its own: `verification_requests`' sidebar table is served entirely by the existing data browser (A4) plus the `{column}:*` "has a value" filter (§4.7), so it needed no dedicated backend work beyond what's listed here. Still open: verifying a row through the queue doesn't refresh `/admin/stats` counts.
 - **Step 9:** add a `ForAirline` lookup-key factory alongside `ForAirport`/`ForCountry`. Also: `started_utc` is stamped once per claimed *batch*, not per request; with several job instances and a throttled source (`aeroapi`, this step's own addition), a slow batch could push a claim past the 10-minute stuck cutoff before it finishes — revisit per-request stamping, or the cutoff length, once a throttled source exists to actually trigger it.
 - **Step 10:** the flight-tracking trigger must handle an imported row's future `VerifiedAt` in its staleness check, treat `import` as weaker evidence than an automated check when deciding whether to re-queue, and enqueue only *after* its own `TrackFlightCommand` save completes (§2.3's `EnqueueAsync` note).
