@@ -78,7 +78,15 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// </summary>
         /// <param name="batchSize">At least 1.</param>
         /// <param name="nowUtc">Must have <see cref="DateTimeKind.Utc"/>.</param>
-        Task<IReadOnlyList<VerificationRequest>> ClaimBatchAsync(int batchSize, DateTime nowUtc, CancellationToken ct = default);
+        /// <param name="excludeIds">Ids never claimed by this call, however otherwise eligible. Null
+        /// or empty excludes nothing. Exists so a cycle that paused some requests for the AeroAPI
+        /// budget (#401 final fix G1) can claim a replacement batch that skips straight past them --
+        /// unchanged <c>requested_utc</c>/<c>id</c> would otherwise put a paused request back at the
+        /// head of the claim order, where it would be claimed, paused and excluded again next cycle,
+        /// starving every free-source request behind it until the budget resets. R5 still forbids
+        /// touching <c>next_attempt_utc</c>, <c>attempts</c> or <c>error</c> to solve this instead.</param>
+        Task<IReadOnlyList<VerificationRequest>> ClaimBatchAsync(
+            int batchSize, DateTime nowUtc, IReadOnlyCollection<long>? excludeIds = null, CancellationToken ct = default);
 
         /// <summary>How many requests are <c>Pending</c> (due or not). Running requests are not counted.</summary>
         Task<int> CountPendingAsync(CancellationToken ct = default);

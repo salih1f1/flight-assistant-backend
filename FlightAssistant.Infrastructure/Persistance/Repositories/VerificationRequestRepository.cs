@@ -135,7 +135,8 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 Abandoned: reset.Count(r => r.Status == VerificationRequestStatus.Error));
         }
 
-        public async Task<IReadOnlyList<VerificationRequest>> ClaimBatchAsync(int batchSize, DateTime nowUtc, CancellationToken ct = default)
+        public async Task<IReadOnlyList<VerificationRequest>> ClaimBatchAsync(
+            int batchSize, DateTime nowUtc, IReadOnlyCollection<long>? excludeIds = null, CancellationToken ct = default)
         {
             ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
             EnsureUtc(nowUtc, nameof(nowUtc));
@@ -143,6 +144,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             var pending = nameof(VerificationRequestStatus.Pending);
             var running = nameof(VerificationRequestStatus.Running);
             var flight = VerificationRequestConfiguration.FlightTriggerValue;
+
+            // Always a concrete array, never null: ANY(NULL::bigint[]) is NULL, not false, which
+            // would make "NOT (id = ANY(...))" NULL too and silently exclude every row.
+            var exclude = excludeIds?.ToArray() ?? Array.Empty<long>();
 
             // One statement, so choosing rows and marking them Running cannot be separated by another
             // claimer. The CTE picks at most batchSize ids exactly once; an IN (subquery) form can be
@@ -158,6 +163,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                         FROM "verification_requests"
                         WHERE "status" = {pending}
                           AND ("next_attempt_utc" IS NULL OR "next_attempt_utc" <= {nowUtc})
+                          AND NOT ("id" = ANY({exclude}))
                         ORDER BY ("trigger" = {flight}) DESC, "requested_utc", "id"
                         LIMIT {batchSize}
                         FOR UPDATE SKIP LOCKED
