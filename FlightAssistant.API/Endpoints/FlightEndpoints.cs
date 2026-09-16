@@ -1,5 +1,4 @@
 using FlightAssistant.API.Authentication;
-using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Queries.Flights;
 using FlightAssistant.Application.Validators;
@@ -128,7 +127,8 @@ namespace FlightAssistant.API.Endpoints
                 "there is no separate airline field. " +
                 "Body fields: FlightNumber (e.g. 'BA123' or '6E4120'), ServiceDate (YYYY-MM-DD), " +
                 "DepartureAirportIata, ArrivalAirportIata, ScheduledDepartureUtc, ScheduledArrivalUtc. " +
-                $"A traveler can track up to {new FlightSyncOptions().MaxActiveTrackedFlightsPerTraveler} flights at a time by default. " +
+                "A traveler can track a limited number of flights at a time. GET /flights reports the limit in force as trackingCap, " +
+                "and how many slots are in use as activeTrackedFlights (#397). " +
                 "A flight counts until its status sync stops: by default 30 minutes after it lands or is cancelled, or a day after its arrival time if no landing is reported. " +
                 "Tracking another returns 409 and adds nothing; tracking a flight the traveler already tracks still returns 201. " +
                 "Rate-limited per traveler: too many tracking requests return 429 with a Retry-After header.")
@@ -183,7 +183,9 @@ namespace FlightAssistant.API.Endpoints
             .WithName("GetFlightStatus")
             .WithSummary("Get flight status history")
             .WithDescription(
-                "Returns the ordered list of status events recorded for the flight. " +
+                "Returns the flight's full status-event history — every event, not a page — most recently recorded first. " +
+                "The order is the order events were recorded (by event id), not effectiveAtUtc, which can move backwards when an estimate " +
+                "returns to an earlier value; so the first row is the flight's current status. " +
                 "Each event captures the status code, gate/terminal info, baggage claim, and the time it became effective. " +
                 "Route parameter: flightId — the numeric flight ID.")
             .Produces<IEnumerable<FlightStatusEventDto>>(200)
