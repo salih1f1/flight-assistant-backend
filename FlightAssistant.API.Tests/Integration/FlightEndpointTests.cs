@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -6,6 +7,7 @@ using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Contracts.Requests.Flights;
+using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Flights.Enums;
 using FlightAssistant.Domain.ReferenceData.Entities;
@@ -380,19 +382,34 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
             }));
 
         // Seed through the same scopedFactory the request will use, so there's no question of
-        // whether the seed and the request land on the same in-memory database. Fresh IATA codes
-        // (not used by any other test in this shared-DB collection) and a never-verified row --
-        // Airline.Create/Airport.Create leave IsVerified false -- so the handler actually reaches
-        // EnqueueAsync rather than skipping a freshly-verified row.
+        // whether the seed and the request land on the same in-memory database. "ZX"/"ZXA"/"ZXB":
+        // grepped for `"Z[A-Z]{1,2}"` across FlightAssistant.API.Tests and confirmed unclaimed --
+        // AdminVerificationEndpointTests already owns ZVA-ZVF (its class doc names this shared-DB
+        // convention), which this test collided with under its previous ZV/ZVA/ZVB codes without
+        // being caught, because the guard below reused the existing row on the collision instead
+        // of failing on it. Seeded unconditionally now, not existence-guarded: a genuine collision
+        // must fail loudly on the Airports.Iata unique index rather than silently attach this
+        // test's assertions to another test's row.
+        //
+        // The airline is seeded already verified (a real, non-import source) while both airports
+        // are left unverified. FlightTrackedVerificationEventHandler queues the airline before the
+        // airports (R7), inside the one try/catch that makes R5's swallow work, and throwingQueue
+        // throws unconditionally for every call regardless of entity type -- so an unverified
+        // airline would queue first, throw immediately, and the airport branch below it would
+        // never run at all. Verifying the airline is what makes the airport EnqueueAsync call
+        // (asserted below) the one that actually fires and throws.
+        Airport departureAirport;
+        Airport arrivalAirport;
         using (var scope = scopedFactory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
-            if (!db.Airlines.Any(a => a.Iata == "ZV"))
-                db.Airlines.Add(Airline.Create("ZV", null, "Verify Trigger Air", "GB"));
-            if (!db.Airports.Any(a => a.Iata == "ZVA"))
-                db.Airports.Add(Airport.Create("ZVA", null, "Verify Trigger Origin", "Origin", "GB"));
-            if (!db.Airports.Any(a => a.Iata == "ZVB"))
-                db.Airports.Add(Airport.Create("ZVB", null, "Verify Trigger Destination", "Destination", "US"));
+            var airline = Airline.Create("ZX", null, "Verify Trigger Air", "GB");
+            airline.Verify("admin", VerificationSources.Manual);
+            db.Airlines.Add(airline);
+            departureAirport = Airport.Create("ZXA", null, "Verify Trigger Origin", "Origin", "GB");
+            arrivalAirport = Airport.Create("ZXB", null, "Verify Trigger Destination", "Destination", "US");
+            db.Airports.Add(departureAirport);
+            db.Airports.Add(arrivalAirport);
             await db.SaveChangesAsync();
         }
 
@@ -403,7 +420,7 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
 
         var serviceDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30));
         var body = new TrackFlightRequest(
-            $"ZV{Random.Shared.Next(1000, 9999)}", serviceDate, "ZVA", "ZVB",
+            $"ZX{Random.Shared.Next(1000, 9999)}", serviceDate, "ZXA", "ZXB",
             serviceDate.ToDateTime(new TimeOnly(9, 0), DateTimeKind.Utc),
             serviceDate.ToDateTime(new TimeOnly(12, 0), DateTimeKind.Utc));
 
@@ -412,9 +429,16 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         // Proves the failure was actually reached -- a 201 alone can't tell "caught" apart from
         // "the handler never ran" (e.g. a DI wiring break), which is exactly what this test exists
-        // to rule out.
+        // to rule out. Pinned to VerificationEntityType.Airport with both seeded airports' row ids,
+        // not Arg.Any<VerificationEntityType>(): the always-fresh airline alone satisfies a looser
+        // assertion even if the airport leg of the handler never ran, which is what let the
+        // ZV/ZVA/ZVB collision above go unnoticed.
         await throwingQueue.Received().EnqueueAsync(
-            Arg.Any<VerificationEntityType>(), Arg.Any<IReadOnlyCollection<string>>(),
+            VerificationEntityType.Airport,
+            Arg.Is<IReadOnlyCollection<string>>(keys =>
+                keys.Count == 2 &&
+                keys.Contains(departureAirport.Id.ToString(CultureInfo.InvariantCulture)) &&
+                keys.Contains(arrivalAirport.Id.ToString(CultureInfo.InvariantCulture))),
             Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<VerificationTrigger>(),
             Arg.Any<string>(), Arg.Any<decimal>(), Arg.Any<CancellationToken>());
     }
