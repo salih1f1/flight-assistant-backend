@@ -407,7 +407,7 @@ namespace FlightAssistant.Domain.Tests.Verification
         [Fact]
         public void RecordSourceError_WithASource_SetsFailedSourceOnARetry()
         {
-            var request = NewRequest();
+            var request = NewRequest("aeroapi");
 
             request.RecordSourceError("HTTP 503", NowUtc, maxAttempts: 3, backoff: TimeSpan.FromMinutes(1), failedSource: "aeroapi");
 
@@ -418,7 +418,7 @@ namespace FlightAssistant.Domain.Tests.Verification
         [Fact]
         public void RecordSourceError_WithASource_StillSetsFailedSourceWhenItCompletesAsError()
         {
-            var request = NewRequest();
+            var request = NewRequest("aeroapi");
             request.RecordSourceError("HTTP 503", RequestedUtc.AddMinutes(1), maxAttempts: 2, backoff: TimeSpan.FromMinutes(1), failedSource: "aeroapi");
 
             request.RecordSourceError("HTTP 429", RequestedUtc.AddMinutes(3), maxAttempts: 2, backoff: TimeSpan.FromMinutes(1), failedSource: "aeroapi");
@@ -441,7 +441,7 @@ namespace FlightAssistant.Domain.Tests.Verification
         [Fact]
         public void RecordSourceError_ANewSourceOnARetry_ReplacesTheEarlierOne()
         {
-            var request = NewRequest();
+            var request = NewRequest("aeroapi", "ourairports");
             request.RecordSourceError("HTTP 503", RequestedUtc.AddMinutes(1), maxAttempts: 3, backoff: TimeSpan.FromMinutes(1), failedSource: "aeroapi");
             Assert.Equal("aeroapi", request.FailedSource);
 
@@ -481,10 +481,29 @@ namespace FlightAssistant.Domain.Tests.Verification
             Assert.Equal("failedSource", ex.ParamName);
         }
 
+        /// <summary>#424 review: a well-formed <c>failedSource</c> is still rejected when it names a
+        /// source this request never asked for. Break-proof: commenting out the
+        /// <c>SourceNames.Contains</c> check in <c>EnsureValidFailedSource</c> makes this pass
+        /// spuriously and fail this test (see task-2-report.md for the actual failure output).</summary>
+        [Fact]
+        public void RecordSourceError_FailedSourceNotAmongTheRequestsOwnSources_ThrowsNamingTheParameterAndChangesNothing()
+        {
+            var request = NewRequest("ourairports"); // never named "aeroapi"
+
+            var ex = Assert.Throws<ArgumentException>(() =>
+                request.RecordSourceError("HTTP 503", NowUtc, maxAttempts: 3, backoff: TimeSpan.FromMinutes(1), failedSource: "aeroapi"));
+
+            Assert.Equal("failedSource", ex.ParamName);
+            Assert.Contains("aeroapi", ex.Message);
+            Assert.Equal(0, request.Attempts);
+            Assert.Null(request.Error);
+            Assert.Null(request.FailedSource);
+        }
+
         [Fact]
         public void MarkError_WithASource_SetsFailedSource()
         {
-            var request = NewRequest();
+            var request = NewRequest("aeroapi");
 
             request.MarkError("aeroapi: HTTP 503", NowUtc, failedSource: "aeroapi");
 
@@ -505,8 +524,8 @@ namespace FlightAssistant.Domain.Tests.Verification
         [Fact]
         public void MarkError_FailedSourceExactlyAtTheLimit_IsAccepted()
         {
-            var request = NewRequest();
             var name = new string('s', VerificationRequest.MaxFailedSourceLength);
+            var request = NewRequest(name); // the request's only source, so it's a valid attribution
 
             request.MarkError("boom", NowUtc, failedSource: name);
 
@@ -522,6 +541,24 @@ namespace FlightAssistant.Domain.Tests.Verification
                 request.MarkError("boom", NowUtc, failedSource: new string('s', VerificationRequest.MaxFailedSourceLength + 1)));
 
             Assert.Equal("failedSource", ex.ParamName);
+        }
+
+        /// <summary>#424 review: same guard as <see cref="RecordSourceError"/>'s, proved independently
+        /// for <see cref="VerificationRequest.MarkError"/> since it validates through the same private
+        /// helper but is a separate call site.</summary>
+        [Fact]
+        public void MarkError_FailedSourceNotAmongTheRequestsOwnSources_ThrowsNamingTheParameterAndChangesNothing()
+        {
+            var request = NewRequest("ourairports"); // never named "aeroapi"
+
+            var ex = Assert.Throws<ArgumentException>(() =>
+                request.MarkError("boom", NowUtc, failedSource: "aeroapi"));
+
+            Assert.Equal("failedSource", ex.ParamName);
+            Assert.Contains("aeroapi", ex.Message);
+            Assert.Equal(VerificationRequestStatus.Pending, request.Status);
+            Assert.Null(request.Error);
+            Assert.Null(request.FailedSource);
         }
 
         public static IEnumerable<object[]> SuccessOutcomes()
@@ -542,7 +579,7 @@ namespace FlightAssistant.Domain.Tests.Verification
         public void SuccessOutcome_AfterASourceErrorNamedASource_ClearsFailedSource(string label, Action<VerificationRequest, DateTime> apply)
         {
             Assert.NotEmpty(label); // theory label, asserted so the parameter isn't flagged unused
-            var request = NewRequest();
+            var request = NewRequest("aeroapi");
             request.RecordSourceError("HTTP 503", RequestedUtc, maxAttempts: 3, backoff: TimeSpan.FromMinutes(1), failedSource: "aeroapi");
             Assert.Equal("aeroapi", request.FailedSource); // sanity check before the outcome clears it
 

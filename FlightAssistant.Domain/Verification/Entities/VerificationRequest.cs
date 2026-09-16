@@ -230,8 +230,9 @@ namespace FlightAssistant.Domain.Verification.Entities
         /// <paramref name="nowUtc"/> + <paramref name="backoff"/> and <see cref="StartedUtc"/> cleared.
         /// </summary>
         /// <param name="failedSource">The source this failure is attributable to, or null when it
-        /// isn't attributable to one named source (an unexpected exception). Not yet enforced against
-        /// the request's own <see cref="Sources"/> — the caller names a source it actually queried.</param>
+        /// isn't attributable to one named source (an unexpected exception). When given, must be one
+        /// of this request's own <see cref="SourceNames"/> — enforced by
+        /// <see cref="EnsureValidFailedSource"/> before any mutation.</param>
         /// <exception cref="InvalidOperationException">The request is already completed.</exception>
         public void RecordSourceError(string error, DateTime nowUtc, int maxAttempts, TimeSpan backoff, string? failedSource = null)
         {
@@ -439,10 +440,14 @@ namespace FlightAssistant.Domain.Verification.Entities
         /// <summary>
         /// Validates an optional <c>failedSource</c> argument against the same shape
         /// <see cref="TryJoinSources"/> requires of every name in <see cref="Sources"/> — no blank,
-        /// no whitespace, <see cref="SourceSeparator"/> or <c>+</c> — plus <see cref="MaxFailedSourceLength"/>.
-        /// A null <paramref name="failedSource"/> (no attributable source) is always valid.
+        /// no whitespace, <see cref="SourceSeparator"/> or <c>+</c> — plus <see cref="MaxFailedSourceLength"/>,
+        /// and (#424 review) that it names one of this request's own <see cref="SourceNames"/>: every
+        /// caller that attributes a failure to a source resolves that name from
+        /// <see cref="SourceNames"/> in the first place, so a mismatch here means a caller is naming a
+        /// source this request never asked for. A null <paramref name="failedSource"/> (no
+        /// attributable source) is always valid.
         /// </summary>
-        private static void EnsureValidFailedSource(string? failedSource, string paramName)
+        private void EnsureValidFailedSource(string? failedSource, string paramName)
         {
             if (failedSource is null) return;
 
@@ -453,6 +458,10 @@ namespace FlightAssistant.Domain.Verification.Entities
                     $"Failed source '{failedSource}' cannot contain whitespace, '{SourceSeparator}' or '+'.", paramName);
 
             EnsureMaxLength(failedSource, MaxFailedSourceLength, paramName);
+
+            if (!SourceNames.Contains(failedSource, StringComparer.Ordinal))
+                throw new ArgumentException(
+                    $"Failed source '{failedSource}' is not one of this request's sources ({Sources}).", paramName);
         }
 
         private static void EnsureMaxLength(string value, int maxLength, string paramName)
