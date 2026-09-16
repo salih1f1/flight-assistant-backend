@@ -638,6 +638,27 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     }
 
     /// <summary>
+    /// Pins the window's inclusive boundary (M-1, final review): <c>CompletedUtc &gt;= cutoffUtc</c>
+    /// in <c>EnqueueAsync</c>, not <c>&gt;</c>. An error completing at exactly the cutoff instant
+    /// still cools -- eligibility begins strictly after it, not at it.
+    /// </summary>
+    [Fact]
+    public async Task EnqueueAsync_FlightTrigger_SkipsAKeyWhoseLastCheckErroredExactlyAtTheCooldownCutoff()
+    {
+        await SeedErroredKeyAsync("1", completedUtc: T0);
+
+        // now = T0+6h, cooldown 6h -> cutoff = T0 exactly. The error completed at T0: on the boundary.
+        VerificationEnqueueResult result;
+        await using (var db = CreateDbContext())
+        {
+            result = await Repository(db, now: T0.AddHours(6), errorCooldown: Cooldown).EnqueueAsync(
+                VerificationEntityType.Airport, new[] { "1" }, OurAirports, VerificationTrigger.Flight, "system", 0m);
+        }
+
+        Assert.Equal(new VerificationEnqueueResult(Queued: 0, Skipped: 1), result);
+    }
+
+    /// <summary>
     /// R2: a cooldown skip must never reach an admin call, since <c>RetryVerificationRequestCommandHandler</c>
     /// turns any <c>Skipped &gt; 0</c> into a 409 claiming an open request exists -- a cooldown skip
     /// there would make that 409 lie. Proves both the result (queued despite the error) and the query
