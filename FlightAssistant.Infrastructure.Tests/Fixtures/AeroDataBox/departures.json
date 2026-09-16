@@ -66,6 +66,20 @@
         "scheduledTime": { "utc": "2026-09-29T22:20:00Z", "local": "2026-09-30T01:20:00+03:00" }
       },
       "aircraft": { "model": "Airbus A321", "reg": "TC-JSW" }
+    },
+    {
+      "number": "TK 1026",
+      "codeshareStatus": "IsOperator",
+      "departure": {
+        "airport": { "iata": "SOF" },
+        "scheduledTime": { "utc": "2026-09-28T20:40:00Z", "local": "2026-09-28T23:40:00+03:00" },
+        "revisedTime":   { "utc": "2026-09-28T21:30:00Z", "local": "2026-09-29T00:30:00+03:00" }
+      },
+      "arrival": {
+        "airport": { "iata": "IST" },
+        "scheduledTime": { "utc": "2026-09-28T22:10:00Z", "local": "2026-09-29T01:10:00+03:00" }
+      },
+      "aircraft": { "model": "Airbus A321", "reg": "TC-JSX" }
     }
   ]
 }

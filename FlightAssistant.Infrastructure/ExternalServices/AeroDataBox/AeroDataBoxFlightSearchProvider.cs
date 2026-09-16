@@ -30,18 +30,30 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
     /// </para>
     ///
     /// <para>
-    /// <b>The revised-time window gotcha (measured, 2026-09-16 spike).</b> AeroDataBox's own window
-    /// filter tests a flight's <i>revised</i> departure time, not its scheduled one: a flight
-    /// scheduled 09:35 local but revised to 10:01 was absent from a 09:00–10:00 query and present in
-    /// 09:00–11:00. A narrow window would therefore silently drop delayed flights. This provider
-    /// always queries the origin's whole local day (<c>T00:00</c>–<c>T23:59</c>, as the removed
-    /// pre-#269 AeroDataBox provider did) to absorb an ordinary delay, then applies its own date
-    /// filter afterward using each row's own <i>revised</i> local time when present — falling back
-    /// to its scheduled local time otherwise — against the requested
-    /// <see cref="FlightSearchCriteria.Date"/>. A row merely delayed within the requested day
-    /// survives that filter; one revised across midnight into a different calendar day does not,
-    /// because it no longer belongs to the requested service date. A flight revised far enough to
-    /// leave the whole-day window entirely is not recoverable here — an accepted cost, not a defect.
+    /// <b>Why the query window is a whole local day, and why the keeper test is not.</b> AeroDataBox's
+    /// own departures window filters each row on its <i>revised</i> departure time, not its scheduled
+    /// one (measured, 2026-09-16 spike): a flight scheduled 09:35 local but revised to 10:01 was
+    /// absent from a 09:00–10:00 query and present in 09:00–11:00. A narrow window would therefore
+    /// silently drop delayed flights, so this provider always requests the origin's whole local day
+    /// (<c>T00:00</c>–<c>T23:59</c>, as the removed pre-#269 AeroDataBox provider did) — wide enough
+    /// that the server's revised-time filter cannot exclude a flight that still belongs to the
+    /// requested day. The client-side filter this provider applies afterward is deliberately the
+    /// opposite: it keeps a row on its own <i>scheduled</i> local date only, never its revised one.
+    /// <see cref="FlightSearchResult.ServiceDate"/> is the origin-local date of the SCHEDULED
+    /// departure system-wide (CLAUDE.md), and <c>AeroApiFlightStatusProvider</c> matches its status
+    /// syncs against <c>scheduled_out</c> converted to origin-local — never a revised or estimated
+    /// time. Filtering here on revised time would reassign a delayed flight to a service date its own
+    /// status syncs can never match: a flight scheduled late one day and revised past local midnight
+    /// would be stamped with the next day's <c>ServiceDate</c> while its own <c>scheduled_out</c>
+    /// still falls on the day before, so every later status sync would compare the wrong date and the
+    /// tracked flight would silently stop updating. Filtering on the scheduled date instead makes
+    /// <c>ToResult</c>'s <c>ServiceDate: criteria.Date</c> true by construction, not by assumption —
+    /// every row this method keeps has its own scheduled local date equal to the requested date. The
+    /// accepted residual cost: a flight delayed past local midnight, whose revised time falls outside
+    /// the whole-day window entirely, is not returned at all — that flight never appears in the
+    /// response for this provider to filter in the first place. Widening the query window further
+    /// could recover it, but no spike has measured whether AeroDataBox accepts a window longer than 24
+    /// hours, so that stays a deferred follow-up, not something this change attempts.
     /// </para>
     ///
     /// <para>
@@ -207,13 +219,16 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
             var scheduledInUtc = TryGetTimeUtc(arrival, "scheduledTime");
             if (scheduledOutUtc is null || scheduledInUtc is null) return null;
 
-            // The gotcha: prefer the REVISED local date over the scheduled one. A row merely
-            // delayed within the requested day keeps its scheduled date either way; one revised
-            // across midnight into a different calendar day is excluded here, because it no longer
-            // belongs to the requested service date.
-            var effectiveLocalDate =
-                TryGetLocalDate(departure, "revisedTime") ?? TryGetLocalDate(departure, "scheduledTime");
-            if (effectiveLocalDate is null || effectiveLocalDate.Value != requestedDate) return null;
+            // Keep on the row's own SCHEDULED local date — the revised time plays no part in this
+            // filter. ServiceDate is the origin-local date of the SCHEDULED departure system-wide
+            // (CLAUDE.md), and AeroApiFlightStatusProvider matches its status syncs against
+            // scheduled_out converted to origin-local, never a revised or estimated time. Filtering
+            // here on revised time would reassign a delayed flight to a service date its own status
+            // syncs can never match — see the class remarks. This also makes ToResult's
+            // `ServiceDate: criteria.Date` true by construction: every row this method returns has
+            // its own scheduled local date equal to requestedDate.
+            var scheduledLocalDate = TryGetLocalDate(departure, "scheduledTime");
+            if (scheduledLocalDate is null || scheduledLocalDate.Value != requestedDate) return null;
 
             // AeroDataBox's "number" is space-separated ("TK 1028"); every other provider and the
             // domain's own FlightNumberFormat use no space ("TK1028").

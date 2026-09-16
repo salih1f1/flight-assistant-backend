@@ -14,7 +14,9 @@ namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroDataBox;
 /// <c>FlightAssistant.Infrastructure.Tests/Fixtures/AeroDataBox/departures.json</c>), mirroring
 /// <c>AeroApiFlightSearchProviderTests</c>'s scripted-handler-plus-fixture approach. No live call
 /// is ever made and the configured key here is always a dummy value that must never appear in any
-/// assertion or log output.
+/// assertion or log output. Each fixture row's <c>aircraft</c> object is shape-filler only — its
+/// <c>model</c>/<c>reg</c> sub-fields were not recorded from the spike and nothing in the mapping
+/// reads them.
 /// </summary>
 public class AeroDataBoxFlightSearchProviderTests
 {
@@ -200,16 +202,33 @@ public class AeroDataBoxFlightSearchProviderTests
     }
 
     [Fact]
-    public async Task SearchAsync_ExcludesARowRevisedOntoADifferentCalendarDay()
+    public async Task SearchAsync_KeepsARowScheduledOnTheRequestedDay_EvenWhenRevisedPastLocalMidnight()
     {
-        // TK 1032: scheduled 23:50 local on the 29th, revised to 00:20 local on the 30th — a
-        // different day from the requested 2026-09-29, so it is dropped even though it is present
-        // in the (whole-local-day) response.
+        // TK 1032: scheduled 23:50 local on the 29th, revised to 00:20 local on the 30th. It is a
+        // 29th service because it is SCHEDULED on the 29th — whatever its delay does. Kept, with
+        // ServiceDate and ScheduledDepartureUtc following the scheduled time, not the revised one.
+        var (provider, _) = Provider(HttpStatusCode.OK, ReadFixture("departures.json"));
+
+        var results = await provider.SearchAsync(SofToIst);
+        var tk1032 = Assert.Single(results, r => r.FlightNumber == "TK1032");
+
+        Assert.Equal(new DateOnly(2026, 9, 29), tk1032.ServiceDate);
+        Assert.Equal(new DateTime(2026, 9, 29, 20, 50, 0, DateTimeKind.Utc), tk1032.ScheduledDepartureUtc);
+    }
+
+    [Fact]
+    public async Task SearchAsync_ExcludesARowScheduledOnThePreviousDay_ThatRevisedIntoTheRequestedDay()
+    {
+        // TK 1026: scheduled 23:40 local on the 28th, revised to 00:30 local on the 29th. This is
+        // the real contaminant — AeroDataBox's server-side window filters on revised time, so a row
+        // like this genuinely leaks into a day-29 query even though it is a 28th service. Its
+        // scheduled local date is the 28th, so it is excluded despite its revised time (and hence
+        // its presence in the response) landing on the requested day.
         var (provider, _) = Provider(HttpStatusCode.OK, ReadFixture("departures.json"));
 
         var results = await provider.SearchAsync(SofToIst);
 
-        Assert.DoesNotContain(results, r => r.FlightNumber == "TK1032");
+        Assert.DoesNotContain(results, r => r.FlightNumber == "TK1026");
     }
 
     // ------------------------------------------------------------------
