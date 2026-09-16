@@ -102,9 +102,11 @@ namespace FlightAssistant.API.Endpoints
             .WithDescription(
                 "Replaces the account number, tier, and expiry dates for the specified membership. " +
                 "Route parameter: id — the membership ID returned when it was added. " +
-                "Only the authenticated traveler's own memberships can be updated.")
+                "Only the authenticated traveler's own memberships can be updated. " +
+                "Returns 404 if no membership with that id exists, and 403 if it belongs to another traveler.")
             .Produces(204)
             .ProducesValidationProblem()
+            .ProducesProblem(403)
             .ProducesProblem(404);
 
             // DELETE /loyalty/memberships/{id}
@@ -119,9 +121,12 @@ namespace FlightAssistant.API.Endpoints
             .WithSummary("Remove a loyalty membership")
             .WithDescription(
                 "Deletes a loyalty membership from the authenticated traveler's profile. " +
-                "Route parameter: id — the membership ID to remove.")
+                "Route parameter: id — the membership ID to remove. " +
+                "Idempotent: removing a membership that does not exist also returns 204, so there is no 404. " +
+                "Returns 403 if the membership belongs to another traveler.")
             .Produces(204)
-            .ProducesProblem(404);
+            .ProducesValidationProblem()
+            .ProducesProblem(403);
         }
 
     }

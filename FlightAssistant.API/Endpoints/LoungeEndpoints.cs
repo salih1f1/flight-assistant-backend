@@ -33,9 +33,11 @@ namespace FlightAssistant.API.Endpoints
             .WithDescription(
                 "Returns all lounges at the specified airport, each annotated with whether the authenticated traveler is eligible to access it. " +
                 "Eligibility is computed from the traveler's loyalty memberships and tier benefits. " +
-                "Query parameter: airportIata — the IATA airport code (e.g. 'LHR', 'JFK').")
+                "Query parameter: airportIata — the IATA airport code (e.g. 'LHR', 'JFK'). " +
+                "An airport with no lounges is an empty list, not a 404 — this route never reports one. " +
+                "Returns 400 if airportIata is missing or is not a 3-letter IATA code. ")
             .Produces<IEnumerable<LoungeDto>>(200)
-            .ProducesProblem(404);
+            .ProducesValidationProblem();
         }
 
     }

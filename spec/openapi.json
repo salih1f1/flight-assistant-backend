@@ -1388,7 +1388,7 @@
           "Admin - Flights"
         ],
         "summary": "Sync flight status",
-        "description": "Syncs the flight's status now. A flight not yet inside the provider's live-status window makes no provider call, and a flight no traveler tracks makes no call and has its sync plan cleared; both return { updated: false }. Otherwise { updated: true } means an event was recorded — a new status, a revised time for the status the flight already has, or a gate, terminal or baggage-claim change on the current status — and { updated: false } means none was, which still allows a revised estimated arrival or aircraft type to have been saved. Once this month's flight data budget is used up, only a flight in its near-departure window (by default, from 4 hours before departure until 30 minutes after it lands) makes a call; any other returns 503.",
+        "description": "Syncs the flight's status now. A flight not yet inside the provider's live-status window makes no provider call, and a flight no traveler tracks makes no call and has its sync plan cleared; both return { updated: false }. Otherwise { updated: true } means an event was recorded — a new status, a revised time for the status the flight already has, or a gate, terminal or baggage-claim change on the current status — and { updated: false } means none was, which still allows a revised estimated arrival or aircraft type to have been saved. Once this month's flight data budget is used up, only a flight in its near-departure window (by default, from 4 hours before departure until 30 minutes after it lands) makes a call; any other returns 503. Returns 404 if no flight with that id exists — unlike the traveler route, which answers 403 because it checks the tracking link first. 503 also covers the flight data provider throttling requests, not only the monthly budget; 502 is returned when the provider is unreachable or answers unexpectedly, and 500 for a provider configuration problem. Like every /admin route, an unauthenticated caller gets 401 and a caller without the admin role gets 403; neither is declared per-route because both are identical across the whole admin surface. ",
         "operationId": "AdminSyncFlightStatus",
         "parameters": [
           {
@@ -1404,6 +1404,46 @@
         "responses": {
           "200": {
             "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "503": {
             "description": "Service Unavailable",
@@ -3662,7 +3702,7 @@
           "Lounges"
         ],
         "summary": "List lounges at an airport",
-        "description": "Returns all lounges at the specified airport, each annotated with whether the authenticated traveler is eligible to access it. Eligibility is computed from the traveler's loyalty memberships and tier benefits. Query parameter: airportIata — the IATA airport code (e.g. 'LHR', 'JFK').",
+        "description": "Returns all lounges at the specified airport, each annotated with whether the authenticated traveler is eligible to access it. Eligibility is computed from the traveler's loyalty memberships and tier benefits. Query parameter: airportIata — the IATA airport code (e.g. 'LHR', 'JFK'). An airport with no lounges is an empty list, not a 404 — this route never reports one. Returns 400 if airportIata is missing or is not a 3-letter IATA code. ",
         "operationId": "GetLoungesAtAirport",
         "parameters": [
           {
@@ -3688,12 +3728,12 @@
               }
             }
           },
-          "404": {
-            "description": "Not Found",
+          "400": {
+            "description": "Bad Request",
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
                 }
               }
             }
@@ -3885,7 +3925,7 @@
           "Loyalty"
         ],
         "summary": "Update a loyalty membership",
-        "description": "Replaces the account number, tier, and expiry dates for the specified membership. Route parameter: id — the membership ID returned when it was added. Only the authenticated traveler's own memberships can be updated.",
+        "description": "Replaces the account number, tier, and expiry dates for the specified membership. Route parameter: id — the membership ID returned when it was added. Only the authenticated traveler's own memberships can be updated. Returns 404 if no membership with that id exists, and 403 if it belongs to another traveler.",
         "operationId": "UpdateMembership",
         "parameters": [
           {
@@ -3922,6 +3962,16 @@
               }
             }
           },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not Found",
             "content": {
@@ -3939,7 +3989,7 @@
           "Loyalty"
         ],
         "summary": "Remove a loyalty membership",
-        "description": "Deletes a loyalty membership from the authenticated traveler's profile. Route parameter: id — the membership ID to remove.",
+        "description": "Deletes a loyalty membership from the authenticated traveler's profile. Route parameter: id — the membership ID to remove. Idempotent: removing a membership that does not exist also returns 204, so there is no 404. Returns 403 if the membership belongs to another traveler.",
         "operationId": "RemoveMembership",
         "parameters": [
           {
@@ -3956,8 +4006,18 @@
           "204": {
             "description": "No Content"
           },
-          "404": {
-            "description": "Not Found",
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -4156,7 +4216,7 @@
           "Travelers"
         ],
         "summary": "Remove device token",
-        "description": "Removes a previously registered push notification device token. Use this when a user logs out or when the OS invalidates the token. Route parameter: deviceTokenId — the ID of the device token to remove.",
+        "description": "Removes a previously registered push notification device token. Use this when a user logs out or when the OS invalidates the token. Route parameter: deviceTokenId — the ID of the device token to remove. Idempotent in the token: removing one that is already gone returns 204. The 404 means the traveler is not registered — call POST /travelers first. ",
         "operationId": "RemoveDeviceToken",
         "parameters": [
           {

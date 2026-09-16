@@ -94,7 +94,9 @@ namespace FlightAssistant.API.Endpoints
             .WithDescription(
                 "Removes a previously registered push notification device token. " +
                 "Use this when a user logs out or when the OS invalidates the token. " +
-                "Route parameter: deviceTokenId — the ID of the device token to remove.")
+                "Route parameter: deviceTokenId — the ID of the device token to remove. " +
+                "Idempotent in the token: removing one that is already gone returns 204. " +
+                "The 404 means the traveler is not registered — call POST /travelers first. ")
             .Produces(204)
             .ProducesProblem(404);
         }
