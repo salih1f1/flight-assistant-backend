@@ -56,7 +56,14 @@ namespace FlightAssistant.Application.FlightSync
         public static DateTime LiveStartsAtUtc(Flight flight, FlightSyncPlanOptions options) =>
             flight.ScheduledDepartureUtc - options.LiveWindowBeforeDeparture;
 
-        private static bool IsStopped(Flight flight, DateTime nowUtc, FlightSyncPlanOptions options)
+        /// <summary>
+        /// Whether the status sync has stopped polling this flight — the rule that decides whether it still
+        /// occupies a slot against <c>FlightSync:MaxActiveTrackedFlightsPerTraveler</c> (#380). Public because
+        /// <c>GET /flights</c> reports it per flight (#396): the SQL predicate in
+        /// <c>CountActiveTrackedFlightsAsync</c> is the same rule expressed for the database, and
+        /// <c>FlightRepositoryTests</c> pins the two together — a third copy would be one too many.
+        /// </summary>
+        public static bool IsStopped(Flight flight, DateTime nowUtc, FlightSyncPlanOptions options)
         {
             // Keep syncing for a while after arrival or cancellation, so the final status, gate and
             // baggage claim are still recorded (#345). Either one on its own stops the flight.

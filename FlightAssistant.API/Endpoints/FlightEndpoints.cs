@@ -79,13 +79,17 @@ namespace FlightAssistant.API.Endpoints
                     r.ScheduledDepartureUtc, r.ScheduledArrivalUtc,
                     r.EstimatedDepartureUtc, r.EstimatedArrivalUtc,
                     r.ActualDepartureUtc, r.ActualArrivalUtc,
-                    null, r.Notify)).ToList();
+                    null, r.Notify, r.CountsTowardCap)).ToList();
 
                 return Results.Ok(new PagedResult<FlightDto>(dtos, result.Total, result.Page, result.PageSize));
             })
             .WithName("GetTrackedFlights")
             .WithSummary("List tracked flights")
-            .WithDescription("Returns a paginated list of flights the authenticated traveler is tracking. Supports ?page and ?pageSize (default 50, max 200).")
+            .WithDescription(
+                "Returns a paginated list of flights the authenticated traveler is tracking. Supports ?page and ?pageSize (default 50, max 200). " +
+                "countsTowardCap is true while the status sync still polls the flight, which is what occupies a slot against the tracking cap " +
+                "POST /flights enforces; it turns false once the flight has landed or been cancelled for long enough, or its arrival time passed " +
+                "without a landing being reported. Note it reflects this page only — a traveler's remaining slots cannot be counted from one page of a paginated list.")
             .Produces<PagedResult<FlightDto>>(200)
             .ProducesValidationProblem();
 

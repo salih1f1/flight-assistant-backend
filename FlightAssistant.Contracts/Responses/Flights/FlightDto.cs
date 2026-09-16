@@ -14,6 +14,7 @@ namespace FlightAssistant.Contracts.Responses.Flights
         DateTime? ActualDepartureUtc,
         DateTime? ActualArrivalUtc,
         string? LatestStatusCode,
-        bool Notify
+        bool Notify,
+        bool CountsTowardCap
     );
 }
