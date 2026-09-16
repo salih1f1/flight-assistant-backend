@@ -290,10 +290,15 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
 
         /// <summary>
         /// Exact match for a non-string column; case-insensitive <c>contains</c> for a string
-        /// column, unless the raw value is exactly <c>*</c> — the "has a value" sentinel (#385):
-        /// matches a non-null, non-empty string, and only the literal whole-value <c>*</c> means
-        /// this, so <c>*</c> as part of a longer value (e.g. <c>Gold*</c>) is still a literal
-        /// substring to find; "on or after" for a date column whose value starts with <c>&gt;=</c>
+        /// column, unless the raw value is exactly <c>*</c> — the "has a value" sentinel (#385,
+        /// R4 amended): matches a non-null string that is non-empty after trimming whitespace —
+        /// "not null, and not blank" — and only the literal whole-value <c>*</c> means this, so
+        /// <c>*</c> as part of a longer value (e.g. <c>Gold*</c>) is still a literal substring to
+        /// find. The trim matters because Task 2's needs-attention count
+        /// (<c>VerificationIssue.Trim() != ""</c>) and this filter meet at exactly one place — the
+        /// admin dashboard's card links to the grid filtered on <c>VerificationIssue:*</c> — and a
+        /// whitespace-only value must be excluded by both or the count and the list disagree; "on
+        /// or after" for a date column whose value starts with <c>&gt;=</c>
         /// (#334), where a null date never matches. On a string column a leading <c>&gt;=</c> is
         /// just text to find. Unlike <see cref="PropertyKeySelector{TEntity}"/>, this resolves the column's
         /// real CLR type via reflection and calls <c>EF.Property&lt;TProperty&gt;</c> with that
@@ -302,12 +307,12 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         /// correctly-typed constant instead of an opaque boxed <see cref="object"/> (which would
         /// either fail to translate or translate to the wrong SQL type). Every string-branch
         /// predicate — the <c>*</c> sentinel included — composes entirely out of translatable calls
-        /// (<see cref="string.ToLower()"/>, <see cref="string.Contains(string)"/>, equality against
-        /// <see cref="string.Empty"/>) with no client-evaluated step, so it becomes real SQL rather
-        /// than pulling the table into memory first — the usual way this pattern goes wrong. On a
-        /// non-string column <c>*</c> is not special-cased at all: it reaches
-        /// <see cref="ConvertFilterValue"/> like any other value and fails to parse there, a 400
-        /// like any other unparseable filter.
+        /// (<see cref="string.ToLower()"/>, <see cref="string.Contains(string)"/>,
+        /// <see cref="string.Trim()"/>, equality against <see cref="string.Empty"/>) with no
+        /// client-evaluated step, so it becomes real SQL rather than pulling the table into memory
+        /// first — the usual way this pattern goes wrong. On a non-string column <c>*</c> is not
+        /// special-cased at all: it reaches <see cref="ConvertFilterValue"/> like any other value
+        /// and fails to parse there, a 400 like any other unparseable filter.
         /// </summary>
         private static IQueryable<TEntity> ApplyFilter<TEntity>(IQueryable<TEntity> query, string columnName, string rawValue)
             where TEntity : class
@@ -330,11 +335,15 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
 
                 if (rawValue == "*")
                 {
-                    // "Has a value" (#385/R4): non-null and not the empty string. Deliberately not
-                    // "not blank" — a whitespace-only value is neither null nor empty, so it still
-                    // counts as having a value; R4 names exactly these two exclusions, nothing more.
-                    var notEmpty = Expression.NotEqual(propertyAccess, Expression.Constant(string.Empty, typeof(string)));
-                    body = Expression.AndAlso(notNull, notEmpty);
+                    // "Has a value" (#385/R4, amended): non-null and non-empty after trimming —
+                    // "not null, and not blank". A whitespace-only value is excluded, matching Task
+                    // 2's needs-attention count (VerificationIssue.Trim() != "") exactly, since the
+                    // dashboard's count and the VerificationIssue:* grid it links to must agree on
+                    // whether a whitespace-only issue counts. .Trim() translates to Postgres's
+                    // btrim(), so this stays a database-side comparison, not a client-evaluated one.
+                    var trimCall = Expression.Call(propertyAccess, typeof(string).GetMethod(nameof(string.Trim), Type.EmptyTypes)!);
+                    var notBlank = Expression.NotEqual(trimCall, Expression.Constant(string.Empty, typeof(string)));
+                    body = Expression.AndAlso(notNull, notBlank);
                 }
                 else
                 {

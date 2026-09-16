@@ -119,14 +119,16 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
     // ── "Has a value" (#385 Task 3 / R4): a string filter of exactly "*" ────────
 
     /// <summary>
-    /// The whole-value sentinel <c>*</c> matches non-null, non-empty — and, deliberately, nothing
-    /// stricter than that: a whitespace-only value is neither null nor the empty string, so R4
-    /// still counts it as "has a value" even though it renders blank. Seeds all four cases (null,
-    /// empty, whitespace-only, a real value) in one table so the exclusions and the inclusions are
-    /// proven side by side, not in isolation.
+    /// The whole-value sentinel <c>*</c> means "not null, and not blank" (R4, amended): a
+    /// whitespace-only value is excluded alongside null and empty, matching Task 2's
+    /// needs-attention count (<c>VerificationIssue.Trim() != ""</c>) exactly — the admin
+    /// dashboard's count and the <c>VerificationIssue:*</c> grid it links to must never disagree
+    /// over whether a whitespace-only value counts. Seeds all four cases (null, empty,
+    /// whitespace-only, a real value) in one table so the three exclusions and the one inclusion
+    /// are proven side by side, not in isolation.
     /// </summary>
     [Fact]
-    public async Task QueryAsync_StringFilter_Star_MatchesNonNullNonEmptyValues_ExcludingNullAndEmpty()
+    public async Task QueryAsync_StringFilter_Star_MatchesNonBlankValues_ExcludingNullEmptyAndWhitespace()
     {
         await using var db = CreateDbContext();
         var nullDisplay = NewTraveler();
@@ -145,10 +147,8 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
             TravelersTable, 1, 50, sortColumn: null, sortDescending: false,
             filterColumn: nameof(Traveler.DisplayName), filterValue: "*");
 
-        Assert.Equal(2, total);
-        var displayNames = items.Select(i => (string?)i[nameof(Traveler.DisplayName)]).ToList();
-        Assert.Contains("   ", displayNames);
-        Assert.Contains("Ada Lovelace", displayNames);
+        Assert.Equal(1, total);
+        Assert.Equal("Ada Lovelace", Assert.Single(items)[nameof(Traveler.DisplayName)]);
     }
 
     /// <summary>
@@ -177,9 +177,10 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
     /// R4's SQL-translation requirement, the same proof <see cref="ApplyFilter_StringContains_TranslatesToSql"/>
     /// gives the contains branch, extended to the "has a value" branch (task brief: "whatever
     /// existing test proves a filter translates to SQL rather than running in memory, extend it to
-    /// this branch"). Built entirely from <c>IS NOT NULL</c> / <c>&lt;&gt; ''</c> comparisons with
-    /// no client-evaluated step, proven against the exact query <see cref="BrowsableDataRepository.QueryAsync"/>
-    /// composes (via the internal <c>BuildQueryString</c> seam), not a hand-rebuilt stand-in.
+    /// this branch"). Built entirely from an <c>IS NOT NULL</c> comparison plus a trim-then-compare
+    /// (<c>.Trim()</c> translates to Postgres's <c>btrim()</c>) with no client-evaluated step,
+    /// proven against the exact query <see cref="BrowsableDataRepository.QueryAsync"/> composes
+    /// (via the internal <c>BuildQueryString</c> seam), not a hand-rebuilt stand-in.
     /// </summary>
     [Fact]
     public void ApplyFilter_StringHasValue_TranslatesToSql()
@@ -195,6 +196,9 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
         Assert.Contains("WHERE", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("DisplayName", sql, StringComparison.Ordinal);
         Assert.Contains("IS NOT NULL", sql, StringComparison.OrdinalIgnoreCase);
+        // The trim is what makes a whitespace-only value fail the filter in the database itself —
+        // Postgres's btrim(), not string.Trim() evaluated after the rows are pulled into memory.
+        Assert.Contains("btrim(", sql, StringComparison.OrdinalIgnoreCase);
         Assert.True(
             sql.Contains("<> ''", StringComparison.Ordinal) || sql.Contains("!= ''", StringComparison.Ordinal),
             $"Expected the generated SQL to compare against an empty string in the database, got:\n{sql}");

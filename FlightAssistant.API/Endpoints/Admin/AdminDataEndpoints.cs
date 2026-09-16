@@ -70,9 +70,10 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "exact match for a non-string column, case-insensitive contains for a string " +
                 "column, split on the first ':' only so a value such as an ISO-8601 timestamp can " +
                 "itself contain colons. On a string column, a value of exactly '*' means 'has a " +
-                "value' — non-null and not the empty string; '*' anywhere else in the value is " +
-                "still a literal character to find by contains. On a non-string column '*' is not " +
-                "special-cased and is simply an unparseable value, a 400. Both 'sort' and 'filter' column names are matched " +
+                "value' — not null, and not blank (non-empty after trimming whitespace); '*' " +
+                "anywhere else in the value is still a literal character to find by contains. On a " +
+                "non-string column '*' is not special-cased and is simply an unparseable value, a " +
+                "400. Both 'sort' and 'filter' column names are matched " +
                 "case-sensitively (e.g. 'CreatedUtc', not 'createdUtc') against the table's " +
                 "exposed-column whitelist and rejected with 400 if unknown, wrong-case or " +
                 "sensitive — a sensitive column would otherwise let a filter be used to guess a " +
