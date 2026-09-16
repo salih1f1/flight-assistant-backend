@@ -21,6 +21,15 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Verification
         public const string ClaimIndexName = "ix_verification_requests_claim";
 
         /// <summary>
+        /// The error-cooldown lookup's supporting index (#418): for a batch of entity keys, which
+        /// ones have an <see cref="VerificationRequestStatus.Error"/> request that completed at or
+        /// after some cutoff. Partial like <see cref="OpenRequestIndexName"/> — <c>verification_requests</c>
+        /// is never purged, so an unfiltered index would keep costing more every day even though only
+        /// the <c>Error</c> rows are ever consulted this way.
+        /// </summary>
+        public const string ErrorCooldownIndexName = "ix_verification_requests_error_cooldown";
+
+        /// <summary>
         /// Shadow property mapped to PostgreSQL's <c>xmin</c> system column: the row's concurrency
         /// token. The claim SQL has to return <c>xmin</c> explicitly, because <c>RETURNING *</c>
         /// never includes system columns.
@@ -91,6 +100,15 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Verification
 
             b.HasIndex(x => new { x.Status, x.NextAttemptUtc })
                 .HasDatabaseName(ClaimIndexName);
+
+            // EntityType first (every lookup names exactly one), then EntityKey (the batch's keys are
+            // matched with an IN, i.e. one equality per key), then CompletedUtc last so Postgres can
+            // apply the cutoff as an index condition within each per-key scan rather than a filter
+            // after the fact. Status itself is not a column: the partial filter already restricts the
+            // index to Error rows, so repeating it as a column would only add width for no selectivity.
+            b.HasIndex(x => new { x.EntityType, x.EntityKey, x.CompletedUtc })
+                .HasFilter($"\"status\" = '{nameof(VerificationRequestStatus.Error)}'")
+                .HasDatabaseName(ErrorCooldownIndexName);
         }
 
         /// <summary>The stored value for <paramref name="trigger"/>.</summary>

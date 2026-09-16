@@ -42,6 +42,7 @@ public class VerificationOptionsTests
         Assert.Equal(3, options.MaxAttempts);
         Assert.Equal(180, options.StaleAfterDays);
         Assert.Equal(TimeSpan.FromMinutes(30), options.IdleRelease);
+        Assert.Equal(TimeSpan.FromHours(6), options.ErrorCooldown);
         Assert.Equal(new[] { "ourairports" }, options.DefaultSources.For(VerificationEntityType.Airport));
         Assert.Equal(new[] { "aeroapi" }, options.DefaultSources.For(VerificationEntityType.Airline));
         Assert.Equal(new[] { "mledoze" }, options.DefaultSources.For(VerificationEntityType.Country));
@@ -50,17 +51,19 @@ public class VerificationOptionsTests
         Assert.Same(options, provider.GetRequiredService<IVerificationJobOptions>());
     }
 
-    /// <summary>The widened port (#410): <see cref="IVerificationJobOptions.StaleAfterDays"/> and
-    /// <see cref="IVerificationJobOptions.DefaultSourcesFor"/> report the same configured values
-    /// through the interface that <see cref="VerificationOptions"/>'s own properties do -- proving
-    /// the delegation, not just that the concrete class holds the values.</summary>
+    /// <summary>The widened port (#410, #418): <see cref="IVerificationJobOptions.StaleAfterDays"/>,
+    /// <see cref="IVerificationJobOptions.DefaultSourcesFor"/> and
+    /// <see cref="IVerificationJobOptions.ErrorCooldown"/> report the same configured values through
+    /// the interface that <see cref="VerificationOptions"/>'s own properties do -- proving the
+    /// delegation, not just that the concrete class holds the values.</summary>
     [Fact]
-    public void IVerificationJobOptions_ReportsStaleAfterDaysAndDefaultSources()
+    public void IVerificationJobOptions_ReportsStaleAfterDaysDefaultSourcesAndErrorCooldown()
     {
         using var provider = Build(new Dictionary<string, string?>
         {
             ["Verification:StaleAfterDays"] = "45",
-            ["Verification:DefaultSources:Airline"] = "aeroapi,ourairports"
+            ["Verification:DefaultSources:Airline"] = "aeroapi,ourairports",
+            ["Verification:ErrorCooldown"] = "03:00:00"
         });
 
         ValidateOnStart(provider);
@@ -70,6 +73,7 @@ public class VerificationOptionsTests
         Assert.Equal(new[] { "ourairports" }, options.DefaultSourcesFor(VerificationEntityType.Airport));
         Assert.Equal(new[] { "aeroapi", "ourairports" }, options.DefaultSourcesFor(VerificationEntityType.Airline));
         Assert.Equal(new[] { "mledoze" }, options.DefaultSourcesFor(VerificationEntityType.Country));
+        Assert.Equal(TimeSpan.FromHours(3), options.ErrorCooldown);
     }
 
     [Fact]
@@ -83,6 +87,7 @@ public class VerificationOptionsTests
             ["Verification:MaxAttempts"] = "5",
             ["Verification:StaleAfterDays"] = "30",
             ["Verification:IdleRelease"] = "00:05:00",
+            ["Verification:ErrorCooldown"] = "12:00:00",
             ["Verification:DefaultSources:Airport"] = "ourairports,aeroapi"
         });
 
@@ -95,6 +100,7 @@ public class VerificationOptionsTests
         Assert.Equal(5, options.MaxAttempts);
         Assert.Equal(30, options.StaleAfterDays);
         Assert.Equal(TimeSpan.FromMinutes(5), options.IdleRelease);
+        Assert.Equal(TimeSpan.FromHours(12), options.ErrorCooldown);
         Assert.Equal(new[] { "ourairports", "aeroapi" }, options.DefaultSources.For(VerificationEntityType.Airport));
         Assert.Equal(new[] { "mledoze" }, options.DefaultSources.For(VerificationEntityType.Country));
     }
@@ -110,6 +116,8 @@ public class VerificationOptionsTests
     [InlineData("StaleAfterDays", "3651")]
     [InlineData("IdleRelease", "-00:00:01")]
     [InlineData("IdleRelease", "1.00:00:01")]
+    [InlineData("ErrorCooldown", "-00:00:01")]
+    [InlineData("ErrorCooldown", "7.00:00:01")]
     [InlineData("DefaultSources:Airport", "")]
     [InlineData("DefaultSources:Airline", "aero api")]
     [InlineData("DefaultSources:Country", "mledoze,")]
@@ -134,6 +142,8 @@ public class VerificationOptionsTests
     [InlineData("StaleAfterDays", "3650")]
     [InlineData("IdleRelease", "00:00:00")]
     [InlineData("IdleRelease", "1.00:00:00")]
+    [InlineData("ErrorCooldown", "00:00:00")]
+    [InlineData("ErrorCooldown", "7.00:00:00")]
     public void TheBoundaryValues_PassValidationOnStart(string key, string value)
     {
         using var provider = Build(new Dictionary<string, string?> { [$"Verification:{key}"] = value });

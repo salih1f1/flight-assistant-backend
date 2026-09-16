@@ -580,8 +580,9 @@ public class VerificationCyclePostgresTests : PostgresTestBase
 
     /// <summary>Job settings for a test. <see cref="DefaultSourcesFor"/> mirrors
     /// <c>VerificationOptions</c>'s own defaults: no test in this file is about the flight-tracking
-    /// trigger (#410) that reads it.</summary>
-    private sealed record JobOptions(int BatchSize, int MaxAttempts, TimeSpan IdleRelease, int StaleAfterDays = 180)
+    /// trigger (#410/#418) that reads <see cref="DefaultSourcesFor"/> or <see cref="ErrorCooldown"/>.</summary>
+    private sealed record JobOptions(
+        int BatchSize, int MaxAttempts, TimeSpan IdleRelease, int StaleAfterDays = 180, TimeSpan ErrorCooldown = default)
         : IVerificationJobOptions
     {
         public IReadOnlyList<string> DefaultSourcesFor(VerificationEntityType entityType) => entityType switch

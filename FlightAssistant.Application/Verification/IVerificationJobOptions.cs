@@ -26,6 +26,13 @@ namespace FlightAssistant.Application.Verification
         /// (#410). Not read by the job itself, which uses each request's own sources.</summary>
         int StaleAfterDays { get; }
 
+        /// <summary>How long an entity whose most recent completed check was <c>Error</c> is left
+        /// alone before the flight-tracking trigger re-queues it (#418) — read by
+        /// <c>VerificationRequestRepository.EnqueueAsync</c> for the flight trigger only.
+        /// <see cref="TimeSpan.Zero"/> disables the cooldown. Not read by the job itself, which
+        /// claims whatever is <c>Pending</c> regardless of any prior <c>Error</c> outcome.</summary>
+        TimeSpan ErrorCooldown { get; }
+
         /// <summary>The source names a check for <paramref name="entityType"/> uses when a caller
         /// names none — read by the flight-tracking trigger (#410) to build its own
         /// <c>EnqueueAsync</c> call. Not read by the job itself, which uses each request's own

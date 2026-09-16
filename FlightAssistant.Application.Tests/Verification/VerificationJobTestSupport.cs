@@ -8,9 +8,11 @@ namespace FlightAssistant.Application.Tests.Verification;
 
 /// <summary>Job settings for a test. <see cref="IdleRelease"/> defaults to zero: release at once.
 /// <see cref="DefaultSourcesFor"/> mirrors <c>VerificationOptions</c>'s own defaults, since no test in
-/// this file is about the flight-tracking trigger (#410) that reads it.</summary>
+/// this file is about the flight-tracking trigger (#410/#418) that reads <see cref="DefaultSourcesFor"/>
+/// or <see cref="ErrorCooldown"/>.</summary>
 internal sealed record FakeJobOptions(
-    int BatchSize = 10, int MaxAttempts = 3, TimeSpan IdleRelease = default, int StaleAfterDays = 180)
+    int BatchSize = 10, int MaxAttempts = 3, TimeSpan IdleRelease = default, int StaleAfterDays = 180,
+    TimeSpan ErrorCooldown = default)
     : IVerificationJobOptions
 {
     public IReadOnlyList<string> DefaultSourcesFor(VerificationEntityType entityType) => entityType switch
