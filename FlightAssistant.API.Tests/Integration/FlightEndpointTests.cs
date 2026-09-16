@@ -318,6 +318,18 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
     }
 
     [Fact]
+    public async Task AnErrorResponse_IsProblemJson()
+    {
+        // End-to-end: a DomainException through GlobalExceptionHandler must carry the media type
+        // the spec declares (#415). Framework-produced problems already did; handler-produced
+        // ones did not.
+        var response = await factory.CreateUserClient().GetAsync("flights/999999/status");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
     public async Task UntrackFlight_NotTracking_Returns204_Idempotently()
     {
         // Deleting what is already absent succeeds (#405); the declared 404 was unreachable.

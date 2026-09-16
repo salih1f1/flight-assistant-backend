@@ -103,7 +103,19 @@ namespace FlightAssistant.API.Middleware
                 ?? Activity.Current?.Id
                 ?? ctx.TraceIdentifier;
             ctx.Response.StatusCode = statusCode;
-            return ctx.Response.WriteAsJsonAsync(problem, problem.GetType(), options: null, contentType: null, ct);
+
+            // RFC 9457: a problem document is application/problem+json, which is what every
+            // .Produces*/.ProducesProblem declaration already publishes for these responses (#415).
+            // Passing null here sent application/json instead, so handler-produced problems
+            // contradicted the spec while the framework's own (model binding, Results.NotFound())
+            // matched it. Not routed through IProblemDetailsService deliberately, for two measured
+            // reasons — neither of them Title, which that service leaves alone (it applies Title ??=):
+            // it overwrites the traceId extension with Activity.Current?.Id ?? TraceIdentifier,
+            // regressing #319's correlation id in the one place a caller can read it, and it declines
+            // to write at all when the request's Accept excludes JSON, which would turn a handler
+            // problem into a bodyless response. It would also fill Type, changing every problem body.
+            return ctx.Response.WriteAsJsonAsync(
+                problem, problem.GetType(), options: null, contentType: "application/problem+json", ct);
         }
     }
 }
