@@ -199,4 +199,13 @@ public class AdminFlightEndpointTests(FlightAssistantWebApplicationFactory facto
         var response = await factory.CreateAdminClient().PostAsync("admin/flights/999999999/sync", content: null);
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
+
+    [Fact]
+    public async Task PostSync_Admin_NonPositiveId_Returns400()
+    {
+        // Pins the validator's 400 this branch declared (#407): {id:int} matches 0 and negatives,
+        // and SyncFlightStatusCommandValidator requires FlightId > 0.
+        var response = await factory.CreateAdminClient().PostAsync("admin/flights/0/sync", content: null);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
 }

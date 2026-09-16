@@ -128,7 +128,9 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "a revised estimated arrival or aircraft type to have been saved. " +
                 "Once this month's flight data budget is used up, only a flight in its near-departure window (by default, from 4 hours before departure until 30 minutes after it lands) makes a call; any other returns 503. " +
                 "Returns 404 if no flight with that id exists — unlike the traveler route, which answers 403 because it checks the tracking link first. " +
-                "503 also covers the flight data provider throttling requests, not only the monthly budget; 502 is returned when the provider is unreachable or answers unexpectedly, and 500 for a provider configuration problem.")
+                "503 also covers the flight data provider throttling requests, not only the monthly budget; 502 is returned when the provider is unreachable or answers unexpectedly, and 500 for a provider configuration problem. " +
+                "Like every /admin route, an unauthenticated caller gets 401 and a caller without the admin role gets 403; " +
+                "neither is declared per-route because both are identical across the whole admin surface. ")
             .Produces(200)
             .ProducesValidationProblem()
             .ProducesProblem(404)

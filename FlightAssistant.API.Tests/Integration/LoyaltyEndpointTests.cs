@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 
 namespace FlightAssistant.API.Tests.Integration;
 
@@ -89,5 +90,56 @@ public class LoyaltyEndpointTests(FlightAssistantWebApplicationFactory factory)
     {
         var response = await factory.CreateUserClient().DeleteAsync($"loyalty/memberships/{Guid.Empty}");
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    private async Task<Guid> AddMembershipAsAsync(HttpClient client)
+    {
+        var response = await client.PostAsJsonAsync("loyalty/memberships", new
+        {
+            programId = 1,
+            accountNumber = "ACC123",
+            tierId = (int?)null,
+            tierExpiryDate = (string?)null,
+            pointsExpiryDate = (string?)null
+        });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        return body.GetProperty("id").GetGuid();
+    }
+
+    [Fact]
+    public async Task UpdateMembership_AnotherTravelersMembership_Returns403()
+    {
+        // Pins the 403 this branch declared (#407): without this test, a repository scoped by
+        // traveler — the obvious refactor of GetMembershipByIdAsync — would silently turn this
+        // into a 404 with the suite still green.
+        var owner = factory.CreateUserClient();
+        var membershipId = await AddMembershipAsAsync(owner);
+
+        var other = factory.CreateUserClient();
+        var response = await other.PutAsJsonAsync($"loyalty/memberships/{membershipId}", new
+        {
+            accountNumber = "ACC999",
+            tierId = (int?)null,
+            tierExpiryDate = (string?)null,
+            pointsExpiryDate = (string?)null
+        });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task RemoveMembership_AnotherTravelersMembership_Returns403()
+    {
+        // Pins the 403 this branch declared (#407): without this test, a repository scoped by
+        // traveler — the obvious refactor of GetMembershipByIdAsync — would silently turn this
+        // into a 204 with the suite still green.
+        var owner = factory.CreateUserClient();
+        var membershipId = await AddMembershipAsAsync(owner);
+
+        var other = factory.CreateUserClient();
+        var response = await other.DeleteAsync($"loyalty/memberships/{membershipId}");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 }
