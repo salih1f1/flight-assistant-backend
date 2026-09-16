@@ -88,7 +88,8 @@ namespace FlightAssistant.Application.FlightSync
                 result.EquipmentIcao,
                 nowUtc,
                 statusChanged: latest?.StatusId != statusId.Value,
-                reportedScheduledDepartureUtc: result.ScheduledDepartureUtc);
+                reportedScheduledDepartureUtc: result.ScheduledDepartureUtc,
+                reportedScheduledArrivalUtc: result.ScheduledArrivalUtc);
 
             await _flights.AddFlightStatusEventAsync(evt, ct);
             return true;
@@ -108,7 +109,9 @@ namespace FlightAssistant.Application.FlightSync
             var latest = await _flights.GetLatestFlightStatusEventAsync(flight.Id, ct);
 
             flight.ApplyProviderTimes(result.EstimatedDepartureUtc, result.EstimatedArrivalUtc,
-                result.ActualDepartureUtc, result.ActualArrivalUtc, result.EquipmentIcao, nowUtc);
+                result.ActualDepartureUtc, result.ActualArrivalUtc, result.EquipmentIcao, nowUtc,
+                reportedScheduledDepartureUtc: result.ScheduledDepartureUtc,
+                reportedScheduledArrivalUtc: result.ScheduledArrivalUtc);
 
             // Only on top of the same status as the latest event. A response whose status matches an older
             // event but not the latest (a status that returned, or an out-of-order response) records nothing,

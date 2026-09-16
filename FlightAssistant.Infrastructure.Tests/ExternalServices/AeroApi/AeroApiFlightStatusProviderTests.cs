@@ -446,6 +446,16 @@ public class AeroApiFlightStatusProviderTests
     }
 
     [Fact]
+    public async Task GetStatusAsync_ReportsTheScheduledArrival()
+    {
+        var handler = new StubHttpMessageHandler(SingleFlightBody(status: "Scheduled"));
+
+        var result = await Provider(handler).GetStatusAsync("TK1028", new DateOnly(2026, 8, 30), StatusCallKind.Interactive);
+
+        Assert.Equal(new DateTime(2026, 8, 30, 8, 5, 0, DateTimeKind.Utc), result!.ScheduledArrivalUtc);
+    }
+
+    [Fact]
     public void ProviderName_IsTheSharedConstant_WithItsStoredValue()
     {
         // Recorded in flight_status_events.Source and hashed into every stored dedup hash (#351). Changing

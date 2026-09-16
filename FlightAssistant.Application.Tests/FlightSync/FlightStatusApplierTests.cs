@@ -129,6 +129,24 @@ public class FlightStatusApplierTests
     }
 
     [Fact]
+    public async Task AStatusTheFlightAlreadyHas_WithALaterScheduledDeparture_UpdatesTheStoredSchedule()
+    {
+        // The known-status path records no new event, but the flight's stored schedule must still be
+        // refreshed from a retime (#399) — the sync planner reads it directly.
+        var flight = AFlight();
+        _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(true);
+        _flights.GetLatestFlightStatusEventAsync(flight.Id, Arg.Any<CancellationToken>())
+            .Returns(FlightStatusEvent.Create(flight.Id, 2, Now, Source, "ext-1", "A1", "T5"));
+
+        var retimedDeparture = Now.AddHours(2);
+        var result = Status() with { ScheduledDepartureUtc = retimedDeparture };
+
+        Assert.False(await Apply(flight, result));
+
+        Assert.Equal(retimedDeparture, flight.ScheduledDepartureUtc);
+    }
+
+    [Fact]
     public async Task TheSourceReachesTheEventAndItsHash()
     {
         var flight = AFlight();
