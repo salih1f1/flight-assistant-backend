@@ -16,16 +16,17 @@
 - **Flight-number search stays on AeroAPI.** AeroDataBox resolves a marketing number to its operator (`6E4120` → `TK 1028`), which would change what a traveler sees. Decided on #422; do not "simplify" by routing everything to one provider.
 - **The selector must mirror the existing guard exactly**, not approximately: a flight number counts only when `!string.IsNullOrWhiteSpace(fn) && fn.Trim().Length >= 2` (`AeroApiFlightSearchProvider.HasUsableFlightNumber`). Reuse that rule; do not restate it with different wording.
 - **Never wrap AeroDataBox in `AeroApiFlightSearchBudgetDecorator`.** It throws 503 based on *AeroAPI* spend. Gating a free provider on it would refuse free searches for no reason.
-- **No metered AeroAPI calls, and no live AeroDataBox calls in tests.** Tests drive the provider through a scripted `HttpMessageHandler` against recorded fixtures, exactly as `AeroApiFlightSearchProviderTests` does.
+- **No metered AeroAPI calls, and no live AeroDataBox calls in tests.** Tests drive the provider through a scripted `HttpMessageHandler` against hand-authored fixtures, exactly as `AeroApiFlightSearchProviderTests` does.
 - The build stays warning-free; commits use explicit paths; nothing pushed.
 
 ## Amendments during execution (2026-09-17)
 
-Three statements in this plan were wrong as first written. They are corrected in place below.
+Four statements in this plan were wrong as first written. They are corrected in place below.
 
-- **The query window.** Step 2 originally said to query the whole local day, `T00:00`–`T23:59`, "as the removed provider did". AeroDataBox rejects any window longer than **12 hours**: issue #267 quotes the parameter documentation, and `f89f95e` records the removed provider failing every request with HTTP 400. That failure went unseen because the provider swallowed errors into an empty list. The day is now two sequential ≤12h windows, so an uncached route search costs **2 calls**.
-- **The date filter.** Steps 2 and 4 originally described filtering on a row's revised time. Rows are kept on their **scheduled** local date instead. That is what `ServiceDate` means everywhere in this system, and it is what `AeroApiFlightStatusProvider` matches status syncs on.
-- **The error buckets.** Step 3 originally sent every unclassified status to 502. Any other 4xx now maps to **500**, because it means this provider built a bad request, which is our bug rather than an upstream outage.
+- **The query window.** Step 2 originally said to query the whole local day, `T00:00`–`T23:59`, "as the removed provider did". AeroDataBox rejects any window longer than **12 hours**: issue #267 quotes the parameter documentation, and `f89f95e` records the removed provider failing every request with HTTP 400. That failure went unseen because the provider swallowed errors into an empty list. The day is now two sequential ≤12h windows, so an uncached route search makes **up to 2 calls**.
+- **The date filter.** Step 2 originally said to filter "using the row's own local time" without saying which time, and Step 4 described excluding a row by its revised time. Rows are kept on their **scheduled** local date instead. That is what `ServiceDate` means everywhere in this system, and it is what `AeroApiFlightStatusProvider` matches status syncs on.
+- **The error buckets.** Step 3 originally sent every unclassified status to 502. Any other 4xx now maps to **500**. A 4xx cannot be told apart from a malformed request of ours, such as the 12-hour cap above, and a 500 keeps a systematic defect loud; #267's 400 was silent for that provider's whole life. Whether AeroDataBox also answers well-formed but unknown input, such as an unknown airport or an out-of-range date, with a 4xx is unmeasured. If it does, that surfaces as a 500 too.
+- **The fixture.** The constraints and Step 4 called it "recorded". No raw spike payload was kept: `departures.json` is hand-authored in the shape the spike returned.
 
 ---
 
@@ -85,11 +86,11 @@ Filter each row to the requested `ArrivalIata` client-side (AeroDataBox has no d
 
 - [ ] **Step 3: Failure handling**
 
-Follow `AeroApiResponse.ReadOrThrowAsync`'s *shape* — a `DomainException` whose status distinguishes our problem from theirs — but **do not reuse the AeroAPI type**; it names AeroAPI in its messages. 401/403 → 500 (our key or plan), 429 → 503 with `Retry-After`, any other 4xx → 500 (the request we built is wrong), 5xx/unreachable/timeout/unparseable → 502. A successful response with no matching rows, including a 204 or an empty body, is an **empty list**, not an error. *(Amended; see Amendments above.)*
+Follow `AeroApiResponse.ReadOrThrowAsync`'s *shape* — a `DomainException` whose status distinguishes our problem from theirs — but **do not reuse the AeroAPI type**; it names AeroAPI in its messages. 401/403 → 500 (our key or plan), 429 → 503 with `Retry-After`, any other 4xx → 500 (indistinguishable from a malformed request of ours; see Amendments), and everything else, including 5xx, unreachable, timeout and unparseable responses, → 502. A 204, or a successful response with no matching rows, is an **empty list**, not an error. A 200 with an empty body is unparseable, so it is a 502. *(Amended; see Amendments above.)*
 
 - [ ] **Step 4: Tests**
 
-Mirror `AeroApiFlightSearchProviderTests`: a scripted `HttpMessageHandler`, a recorded fixture, and assertions on the **request URL** as well as the mapped results. Record `departures.json` from the shape the spike returned (number, `codeshareStatus`, departure/arrival with `scheduledTime` `utc`+`local`, airport `iata`, aircraft). Cover at minimum:
+Mirror `AeroApiFlightSearchProviderTests`: a scripted `HttpMessageHandler`, a hand-authored fixture, and assertions on the **request URL** as well as the mapped results. Write `departures.json` by hand in the shape the spike returned (number, `codeshareStatus`, departure/arrival with `scheduledTime` `utc`+`local`, airport `iata`, aircraft). Cover at minimum:
 
 - `IncludeCodeshares: false` → `withCodeshared=false` in the URL; `true` → `withCodeshared=true`.
 - Rows for other destinations are filtered out.
