@@ -18,6 +18,19 @@ namespace FlightAssistant.Application.Interfaces.ExternalServices
         DateTime? ScheduledDepartureUtc = null
     );
 
+    /// <summary>
+    /// The provider names recorded in <c>flight_status_events.Source</c>. Every path that records a status
+    /// must pass the same string: it is hashed into the event's dedup hash (#351), so a caller spelling it
+    /// differently would match no stored hash and record a second copy of every status.
+    /// </summary>
+    public static class FlightStatusSources
+    {
+        /// <summary>FlightAware AeroAPI. <b>Never change this value</b> — it is `"AeroAPI"`, not the
+        /// `"AeroApi"` spelling used for the config section and the named HTTP client, and every stored hash
+        /// was computed from it.</summary>
+        public const string AeroApi = "AeroAPI";
+    }
+
     /// <summary>Who a status call is for (#375). A scheduled poll isn't retried on a transient
     /// failure, because AeroAPI bills failed calls and the sync loop's next due sync is the retry. A call a
     /// person is waiting on keeps the provider's retries.</summary>

@@ -446,6 +446,17 @@ public class AeroApiFlightStatusProviderTests
     }
 
     [Fact]
+    public void ProviderName_IsTheSharedConstant_WithItsStoredValue()
+    {
+        // Recorded in flight_status_events.Source and hashed into every stored dedup hash (#351). Changing
+        // the string — including "correcting" it to the "AeroApi" spelling used elsewhere — would stop every
+        // stored hash matching, so each tracked flight would re-record and re-push its current status.
+        // Phase 2's alert path must pass this same constant (#386).
+        Assert.Equal("AeroAPI", FlightStatusSources.AeroApi);
+        Assert.Equal(FlightStatusSources.AeroApi, Provider(new StubHttpMessageHandler("{}")).ProviderName);
+    }
+
+    [Fact]
     public async Task GetStatusAsync_CancelledFlag_WinsOverStatusText_RegardlessOfStatusString()
     {
         // "Scheduled" text but cancelled=true — the boolean is authoritative.
