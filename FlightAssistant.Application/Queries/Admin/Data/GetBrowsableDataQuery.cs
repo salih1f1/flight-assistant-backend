@@ -167,27 +167,39 @@ namespace FlightAssistant.Application.Queries.Admin.Data
                 filter?.Value,
                 ct);
 
-            // Masking ships here, not in the repository: every column the repository handed back
-            // is checked against SensitiveProperties.IsSensitive before this method returns, so the
-            // full value of a sensitive column never leaves the API from this endpoint. The
-            // repository stays ignorant of redaction entirely — it is a generic paginated reader,
-            // nothing about it is admin-data-browser-specific.
-            var items = rows.Select(row => Mask(table, row)).ToList();
+            // Masking and enum rendering ship here, not in the repository: every column the repository
+            // handed back is checked against SensitiveProperties.IsSensitive before this method returns,
+            // so the full value of a sensitive column never leaves the API from this endpoint, and an
+            // enum renders as its name rather than its underlying number (#392). The repository stays
+            // ignorant of both — it is a generic paginated reader, nothing about it is
+            // admin-data-browser-specific.
+            var items = rows.Select(row => Project(table, row)).ToList();
 
             return new PagedResult<Dictionary<string, object?>>(items, total, request.Paging.Page, request.Paging.PageSize);
         }
 
-        private static Dictionary<string, object?> Mask(BrowsableTable table, IReadOnlyDictionary<string, object?> row)
+        /// <summary>
+        /// Shapes one row for the response: masks sensitive columns, and renders enum values as their
+        /// names (#392). An enum property arrives boxed from the repository's reflection projection, and
+        /// <c>System.Text.Json</c> writes a boxed enum as its underlying number — so <c>SyncMode</c> read
+        /// as <c>1</c> and audit <c>Action</c> as <c>2</c>, while every other admin surface
+        /// (<c>AdminAuditEndpoints</c>, the health report, the verification endpoints) exposes the name.
+        /// The browser's own filter already parses names, so the number was the odd one out in its own
+        /// endpoint. Masking is checked first: a sensitive column renders as the placeholder whether or
+        /// not it is an enum.
+        /// </summary>
+        private static Dictionary<string, object?> Project(BrowsableTable table, IReadOnlyDictionary<string, object?> row)
         {
-            var masked = new Dictionary<string, object?>(row.Count);
+            var projected = new Dictionary<string, object?>(row.Count);
             foreach (var (column, value) in row)
             {
-                masked[column] = SensitiveProperties.IsSensitive(table.EntityType, column)
+                projected[column] = SensitiveProperties.IsSensitive(table.EntityType, column)
                     ? SensitiveProperties.RedactedPlaceholder
+                    : value is Enum enumValue ? enumValue.ToString()
                     : value;
             }
 
-            return masked;
+            return projected;
         }
     }
 }
