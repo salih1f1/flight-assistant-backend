@@ -178,9 +178,9 @@ namespace FlightAssistant.Application.Verification
             {
                 var source = _registry.TryGet(name);
                 if (source is null)
-                    return await CompleteAsErrorAsync(request, $"Source '{name}' is not registered.", ct);
+                    return await CompleteAsErrorAsync(request, $"Source '{name}' is not registered.", ct, name);
                 if (!source.SupportedEntityTypes.Contains(request.EntityType))
-                    return await CompleteAsErrorAsync(request, $"Source '{name}' does not support {request.EntityType}.", ct);
+                    return await CompleteAsErrorAsync(request, $"Source '{name}' does not support {request.EntityType}.", ct, name);
                 sources.Add(source);
             }
 
@@ -200,7 +200,7 @@ namespace FlightAssistant.Application.Verification
             {
                 var fetched = await source.LookupAsync(request.EntityType, entity.LookupKey, ct);
                 if (fetched.IsError)
-                    return await RecordSourceErrorAsync(request, $"{source.Name}: {fetched.Error}", ct);
+                    return await RecordSourceErrorAsync(request, $"{source.Name}: {fetched.Error}", ct, source.Name);
 
                 results.Add(new VerificationSourceResult(source.Name, fetched.Lookup!));
             }
@@ -253,6 +253,15 @@ namespace FlightAssistant.Application.Verification
         /// key values, and <c>verification_requests.error</c> is shown to admins in every environment,
         /// Production included. The caller logs the full exception with the request id and the
         /// cycle's correlation id.
+        /// </para>
+        ///
+        /// <para>
+        /// <b>Deliberately unattributed (#424 R2/R3).</b> This travels through
+        /// <see cref="RecordSourceErrorAsync"/> -- the same private helper the genuine upstream
+        /// failure at the end of <see cref="ProcessAsync"/> uses -- but passes no
+        /// <c>failedSource</c>. An exception here is a crash in the processor itself (a bug, a
+        /// database outage), not a fact about any one of <paramref name="claim"/>'s sources; naming
+        /// one anyway would blame a healthy provider for a failure that wasn't its fault.
         /// </para>
         /// </summary>
         public async Task<VerificationProcessOutcome> RecordUnexpectedFailureAsync(
@@ -330,21 +339,21 @@ namespace FlightAssistant.Application.Verification
             int.Parse(request.EntityKey, NumberStyles.None, CultureInfo.InvariantCulture);
 
         private Task<VerificationProcessOutcome> CompleteAsErrorAsync(
-            VerificationRequest request, string error, CancellationToken ct)
+            VerificationRequest request, string error, CancellationToken ct, string? failedSource = null)
         {
             _logger.LogWarning(
                 "Verification request {RequestId} ({EntityType} {EntityKey}) failed without retry: {Error}",
                 request.Id, request.EntityType, request.EntityKey, error);
 
-            request.MarkError(error, UtcNow());
+            request.MarkError(error, UtcNow(), failedSource);
             return SaveAsync(request, VerificationProcessOutcome.Error, ct);
         }
 
         private Task<VerificationProcessOutcome> RecordSourceErrorAsync(
-            VerificationRequest request, string error, CancellationToken ct)
+            VerificationRequest request, string error, CancellationToken ct, string? failedSource = null)
         {
             var backoff = VerificationRetryBackoff.After(request.Attempts + 1);
-            request.RecordSourceError(error, UtcNow(), _options.MaxAttempts, backoff);
+            request.RecordSourceError(error, UtcNow(), _options.MaxAttempts, backoff, failedSource);
 
             var outcome = request.Status == VerificationRequestStatus.Error
                 ? VerificationProcessOutcome.Error

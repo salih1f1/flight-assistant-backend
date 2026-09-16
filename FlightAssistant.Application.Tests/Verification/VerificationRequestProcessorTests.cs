@@ -215,6 +215,7 @@ public class VerificationRequestProcessorTests
         Assert.Equal(1, request.Attempts);
         Assert.Equal(Now.AddMinutes(1), request.NextAttemptUtc);
         Assert.Equal("ourairports: HTTP 503", request.Error);
+        Assert.Equal("ourairports", request.FailedSource); // #424: the upstream failure names its source
         Assert.Null(request.CompletedUtc);
 
         AssertStillManuallyVerified(airport, verifiedAt);
@@ -269,6 +270,7 @@ public class VerificationRequestProcessorTests
         Assert.Equal(VerificationRequestStatus.Error, request.Status);
         Assert.Equal(3, request.Attempts);
         Assert.Equal("ourairports: HTTP 500", request.Error);
+        Assert.Equal("ourairports", request.FailedSource); // #424: still attributed once it gives up
         Assert.Equal(Now, request.CompletedUtc);
         Assert.Null(request.NextAttemptUtc);
 
@@ -479,6 +481,7 @@ public class VerificationRequestProcessorTests
         Assert.Equal(VerificationProcessOutcome.Error, outcome);
         Assert.Equal(VerificationRequestStatus.Error, request.Status);
         Assert.Equal("Entity no longer exists", request.Error);
+        Assert.Null(request.FailedSource); // #424: a deleted entity isn't any source's fault
         Assert.Equal(0, request.Attempts);
         Assert.Equal(Now, request.CompletedUtc);
         Assert.Empty(ourAirports.Lookups);
@@ -500,6 +503,7 @@ public class VerificationRequestProcessorTests
         Assert.Equal(VerificationProcessOutcome.Error, outcome);
         Assert.Equal(VerificationRequestStatus.Error, request.Status);
         Assert.Equal("Source 'aeroapi' is not registered.", request.Error);
+        Assert.Equal("aeroapi", request.FailedSource); // #424: names the unregistered source itself
         Assert.Equal(0, request.Attempts);
         Assert.Null(request.NextAttemptUtc);
         Assert.Equal(Now, request.CompletedUtc);
@@ -521,6 +525,7 @@ public class VerificationRequestProcessorTests
 
         Assert.Equal(VerificationProcessOutcome.Error, outcome);
         Assert.Equal("Source 'ourairports' does not support Country.", request.Error);
+        Assert.Equal("ourairports", request.FailedSource); // #424: names the unsupported source
         Assert.Equal(0, request.Attempts);
         Assert.Empty(ourAirports.Lookups);
         await _countries.DidNotReceiveWithAnyArgs().FindByCodeAsync(default!, default);
@@ -585,7 +590,31 @@ public class VerificationRequestProcessorTests
         Assert.Equal(1, request.Attempts);
         Assert.Equal(Now.AddMinutes(1), request.NextAttemptUtc);
         Assert.Equal("Unexpected error (InvalidOperationException); see logs", request.Error);
+        Assert.Null(request.FailedSource); // #424: not attributable to a source
         await _requests.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// #424: <see cref="VerificationRequestProcessor.RecordUnexpectedFailureAsync"/> travels through
+    /// the same private <c>RecordSourceErrorAsync</c> helper the genuine upstream failure (the
+    /// request's own source, faulted while fetching) uses -- so it would be very easy to thread the
+    /// claimed request's source through by mistake and blame a healthy provider for a processor
+    /// crash. The claimed request here names two sources precisely so an accidental "use the first
+    /// (or only) source name" shortcut would still be caught by this assertion. Break-proof: passing
+    /// any non-null source at the <c>RecordSourceErrorAsync</c> call inside
+    /// <c>RecordUnexpectedFailureAsync</c> makes this fail (see task-2-report.md for the actual
+    /// failure output).
+    /// </summary>
+    [Fact]
+    public async Task RecordUnexpectedFailureAsync_NamesNoSource_EvenThoughTheRequestNamesTwo()
+    {
+        var request = ClaimedAirportRequest(new[] { "ourairports", "aeroapi" });
+
+        var outcome = await Processor(new FakeVerificationSourceRegistry())
+            .RecordUnexpectedFailureAsync(Claim, new InvalidOperationException("boom"));
+
+        Assert.Equal(VerificationProcessOutcome.RetryScheduled, outcome);
+        Assert.Null(request.FailedSource);
     }
 
     /// <summary>
