@@ -16,12 +16,12 @@ using NSubstitute.ExceptionExtensions;
 namespace FlightAssistant.Application.Tests.EventHandlers;
 
 /// <summary>
-/// <see cref="FlightTrackedVerificationHandler"/> (#410 task 2). Every row starts, via the
+/// <see cref="FlightTrackedVerificationEventHandler"/> (#410 task 2). Every row starts, via the
 /// constructor's baseline, freshly verified by a real source so a test only has to unsettle the one
 /// row it is about -- an assertion that nothing else was queued is then a real assertion, not an
 /// accident of an empty fixture.
 /// </summary>
-public class FlightTrackedVerificationHandlerTests
+public class FlightTrackedVerificationEventHandlerTests
 {
     private const int AirlineId = 1;
     private const int DepartureAirportId = 2;
@@ -45,7 +45,7 @@ public class FlightTrackedVerificationHandlerTests
         TestSources.Source("aeroapi", 0.015m, VerificationEntityType.Airline),
         TestSources.Source("mledoze", 0m, VerificationEntityType.Country));
 
-    public FlightTrackedVerificationHandlerTests()
+    public FlightTrackedVerificationEventHandlerTests()
     {
         // Baseline: airline, both airports and both their countries all freshly verified by a real
         // source -- nothing here should be queued unless a test deliberately unsettles it.
@@ -75,9 +75,9 @@ public class FlightTrackedVerificationHandlerTests
             .Returns(new VerificationEnqueueResult(Queued: 1, Skipped: 0));
     }
 
-    private FlightTrackedVerificationHandler Handler() => new(
+    private FlightTrackedVerificationEventHandler Handler() => new(
         _airlines, _airports, _countries, _queue, _registry, _options, _clock,
-        NullLogger<FlightTrackedVerificationHandler>.Instance);
+        NullLogger<FlightTrackedVerificationEventHandler>.Instance);
 
     private static FlightTracked Event() =>
         new(FlightId, AirlineId, DepartureAirportId, ArrivalAirportId, Now);

@@ -40,7 +40,7 @@ namespace FlightAssistant.Application.EventHandlers
     /// them, and must never roll anything back (there is nothing left to roll back).
     /// </para>
     /// </summary>
-    public sealed class FlightTrackedVerificationHandler : INotificationHandler<FlightTracked>
+    public sealed class FlightTrackedVerificationEventHandler : INotificationHandler<FlightTracked>
     {
         private readonly IAirlineRepository _airlines;
         private readonly IAirportRepository _airports;
@@ -49,9 +49,9 @@ namespace FlightAssistant.Application.EventHandlers
         private readonly IVerificationSourceRegistry _registry;
         private readonly IVerificationJobOptions _options;
         private readonly TimeProvider _timeProvider;
-        private readonly ILogger<FlightTrackedVerificationHandler> _logger;
+        private readonly ILogger<FlightTrackedVerificationEventHandler> _logger;
 
-        public FlightTrackedVerificationHandler(
+        public FlightTrackedVerificationEventHandler(
             IAirlineRepository airlines,
             IAirportRepository airports,
             ICountryRepository countries,
@@ -59,7 +59,7 @@ namespace FlightAssistant.Application.EventHandlers
             IVerificationSourceRegistry registry,
             IVerificationJobOptions options,
             TimeProvider timeProvider,
-            ILogger<FlightTrackedVerificationHandler> logger)
+            ILogger<FlightTrackedVerificationEventHandler> logger)
         {
             _airlines = airlines;
             _airports = airports;
