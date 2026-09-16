@@ -506,7 +506,9 @@ public class AdminVerificationEndpointTests(FlightAssistantWebApplicationFactory
         var ids = mismatches.Items.Select(r => r[nameof(VerificationRequest.Id)].GetInt64()).ToList();
         Assert.Equal(new[] { secondMismatch, firstMismatch }, ids.Where(id => id == firstMismatch || id == secondMismatch));
         Assert.DoesNotContain(pending, ids);
-        Assert.All(mismatches.Items, r => Assert.Equal((int)VerificationRequestStatus.Mismatch, r[nameof(VerificationRequest.Status)].GetInt32()));
+        // #392: the browser now renders an enum column as its name, not its underlying number —
+        // Status is one of the seven affected columns, so this reads the name post-fix.
+        Assert.All(mismatches.Items, r => Assert.Equal(nameof(VerificationRequestStatus.Mismatch), r[nameof(VerificationRequest.Status)].GetString()));
         Assert.Equal(ids.OrderDescending(), ids);
 
         // Oldest first would put this test's rows past the first page once the shared database holds more

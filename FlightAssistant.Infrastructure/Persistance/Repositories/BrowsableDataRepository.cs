@@ -160,10 +160,11 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             // Exactly one column is ever read off the entity here — this is what makes
             // GetValueAsync safe to call for a reveal (#318 final review, finding 4: this used to
             // project every column table.Columns exposes into a whole-row dictionary, materializing
-            // far more than the one value a reveal ever wants). Never masked: masking is applied by
-            // every other consumer of this repository (GetBrowsableDataQueryHandler.Mask); the
-            // reveal handler is the one caller allowed to see a raw value, and only for the single
-            // column it has already confirmed is both exposed and sensitive.
+            // far more than the one value a reveal ever wants). Never masked or enum-rendered: both
+            // are applied by every other consumer of this repository
+            // (GetBrowsableDataQueryHandler.Project, #392); the reveal handler is the one caller
+            // allowed to see a raw value, and only for the single column it has already confirmed
+            // is both exposed and sensitive.
             var property = typeof(TEntity).GetProperty(column)
                 ?? throw new InvalidOperationException(
                     $"BrowsableTables registers column '{column}' for '{table.Slug}' but {typeof(TEntity).Name} has no such property.");

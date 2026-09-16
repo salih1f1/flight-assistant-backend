@@ -7,6 +7,8 @@ using FlightAssistant.Contracts.Requests.Admin;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.Administration.Enums;
+using FlightAssistant.Domain.Flights.Entities;
+using FlightAssistant.Domain.Flights.Enums;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
 using FlightAssistant.Infrastructure.Persistance;
@@ -335,6 +337,109 @@ public class AdminDataEndpointTests(FlightAssistantWebApplicationFactory factory
         var row = Assert.Single(result!.Items);
         Assert.Equal("<redacted>", row[nameof(TravelerLoyaltyMembership.AccountNumber)].GetString());
         Assert.Equal(7, row[nameof(TravelerLoyaltyMembership.TierId)].GetInt32());
+    }
+
+    // ── Enum columns render as names, not numbers (#392) ────────────────────────
+
+    /// <summary>
+    /// Seeds a bare, valid flight — the InMemory provider doesn't enforce the FK constraints to
+    /// <c>airlines</c>/<c>airports</c>, so arbitrary ids are fine here, mirroring
+    /// <c>AdminFlightEndpointTests.SeedFlightAsync</c>. <paramref name="syncMode"/> is applied via
+    /// <see cref="Flight.ApplySyncPlan"/> when given, left <c>null</c> (the factory's own default)
+    /// otherwise — that's the nullable case #392 also has to get right.
+    /// </summary>
+    private async Task<Flight> SeedFlightAsync(string flightNumber, FlightSyncMode? syncMode)
+    {
+        var flight = Flight.Create(1, flightNumber, 10, 20,
+            new DateOnly(2026, 9, 20), DateTime.UtcNow, DateTime.UtcNow.AddHours(3));
+        if (syncMode is not null) flight.ApplySyncPlan(syncMode, null);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        db.Flights.Add(flight);
+        await db.SaveChangesAsync();
+        return flight;
+    }
+
+    private static async Task<PagedResult<Dictionary<string, JsonElement>>> GetTableDataAsync(HttpClient client, string url)
+    {
+        var body = await GetRawBodyAsync(client, url);
+        var result = JsonSerializer.Deserialize<PagedResult<Dictionary<string, JsonElement>>>(
+            body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(result);
+        return result!;
+    }
+
+    /// <summary><see cref="Flight.SyncMode"/> (<c>FlightSyncMode?</c>) renders as its name, not the
+    /// underlying number a boxed enum would otherwise write. Filtered by <c>Id</c> — the primary
+    /// key — rather than a marker column, since it's the one filter guaranteed unique regardless
+    /// of what other tests in this shared-database collection have seeded.</summary>
+    [Fact]
+    public async Task GetTableData_EnumColumn_RendersTheName()
+    {
+        var flight = await SeedFlightAsync($"Z9{Marker()[..6]}", FlightSyncMode.Fast);
+
+        var result = await GetTableDataAsync(factory.CreateAdminClient(), $"admin/data/flights?filter=Id:{flight.Id}");
+
+        var row = Assert.Single(result.Items);
+        Assert.Equal(JsonValueKind.String, row[nameof(Flight.SyncMode)].ValueKind);
+        Assert.Equal(nameof(FlightSyncMode.Fast), row[nameof(Flight.SyncMode)].GetString());
+    }
+
+    /// <summary>A flight with no sync plan has a <c>null</c> <c>SyncMode</c> — the <c>value is
+    /// Enum</c> pattern in <c>Project</c> must leave that null exactly as it is, not stringify it
+    /// to <c>"0"</c> (or any other value).</summary>
+    [Fact]
+    public async Task GetTableData_NullEnumColumn_StaysNull()
+    {
+        var flight = await SeedFlightAsync($"Z9{Marker()[..6]}", syncMode: null);
+
+        var result = await GetTableDataAsync(factory.CreateAdminClient(), $"admin/data/flights?filter=Id:{flight.Id}");
+
+        var row = Assert.Single(result.Items);
+        Assert.Equal(JsonValueKind.Null, row[nameof(Flight.SyncMode)].ValueKind);
+    }
+
+    /// <summary>The guard against "stringify everything": on the same row as the enum assertion,
+    /// an integer column is still a JSON number and a string column is still a JSON string.</summary>
+    [Fact]
+    public async Task GetTableData_NonEnumColumns_AreUnchanged()
+    {
+        var flightNumber = $"Z9{Marker()[..6]}";
+        var flight = await SeedFlightAsync(flightNumber, FlightSyncMode.Fast);
+
+        var result = await GetTableDataAsync(factory.CreateAdminClient(), $"admin/data/flights?filter=Id:{flight.Id}");
+
+        var row = Assert.Single(result.Items);
+        Assert.Equal(JsonValueKind.Number, row[nameof(Flight.Id)].ValueKind);
+        Assert.Equal(JsonValueKind.String, row[nameof(Flight.FlightNumber)].ValueKind);
+        Assert.Equal(flight.FlightNumber, row[nameof(Flight.FlightNumber)].GetString());
+    }
+
+    /// <summary>
+    /// <c>ConvertFilterValue</c> already parses an enum filter value by name (<c>Enum.Parse(...,
+    /// ignoreCase: true)</c>) — this proves the display now agrees with what the filter always
+    /// accepted. Asserted with <c>Contains</c> rather than <c>Single</c>: this filter, unlike the
+    /// others in this section, is not scoped to one row's primary key, so it must tolerate other
+    /// <c>Fast</c>-mode flights this shared-database collection may also contain.
+    /// </summary>
+    [Fact]
+    public async Task GetTableData_EnumColumn_StillFilterableByItsName()
+    {
+        var flight = await SeedFlightAsync($"Z9{Marker()[..6]}", FlightSyncMode.Fast);
+
+        // sort=-Id&pageSize=200: unscoped, this relies on the seeded row landing inside the
+        // default 50-row page under the ascending primary-key tiebreaker, which puts the newest
+        // row last in a database shared across the whole Integration collection — the same shape
+        // of latent flake fixed on #353. Newest-first plus a generous page makes this row's
+        // presence independent of how many other Fast-mode flights the collection accumulates.
+        var result = await GetTableDataAsync(
+            factory.CreateAdminClient(), "admin/data/flights?filter=SyncMode:Fast&sort=-Id&pageSize=200");
+
+        // Flight.Create upper-cases the flight number, so match against the normalized value the
+        // handler actually stored, not the pre-normalization local.
+        var row = Assert.Single(result.Items, r => r[nameof(Flight.FlightNumber)].GetString() == flight.FlightNumber);
+        Assert.Equal(nameof(FlightSyncMode.Fast), row[nameof(Flight.SyncMode)].GetString());
     }
 
     // ── POST /admin/data/{table}/{id}/reveal (#318) ─────────────────────────────
