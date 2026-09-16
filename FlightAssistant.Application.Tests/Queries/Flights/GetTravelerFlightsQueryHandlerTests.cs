@@ -162,11 +162,13 @@ public class GetTravelerFlightsQueryHandlerTests
     public async Task AFlightTheSyncHasStopped_DoesNotCountTowardTheCap()
     {
         var travelerId = Guid.NewGuid();
-        // ActualArrivalUtc older than StopAfterArrival (20 min): the planner has stopped polling it.
+        // ActualArrivalUtc older than the stub's StopAfterArrival (20 min) but newer than the
+        // production default (30 min), so a handler that ignored its injected options and used
+        // the defaults would judge this flight still polling and this test would catch it.
         var flight = Flight.Create(1, "BA123", 10, 20,
             DateOnly.FromDateTime(Now.AddHours(-9)),
             Now.AddHours(-9), Now.AddHours(-1));
-        flight.ApplyStatusUpdate("ARR", null, null, Now.AddHours(-9), Now.AddMinutes(-30), null, Now.AddMinutes(-30));
+        flight.ApplyStatusUpdate("ARR", null, null, Now.AddHours(-9), Now.AddMinutes(-25), null, Now.AddMinutes(-25));
 
         var tracking = TravelerFlight.Create(travelerId, flight.Id);
 
