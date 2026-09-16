@@ -8,6 +8,8 @@ namespace FlightAssistant.API.HostedServices
         VerificationJobOutcome LastOutcome,
         int RequestsProcessed,
         int RequestsFailed,
+        int StuckAbandoned,
+        int FailuresUnrecorded,
         DateTime? NextRunDueUtc,
         string? LastError);
 
@@ -29,6 +31,8 @@ namespace FlightAssistant.API.HostedServices
             LastOutcome: VerificationJobOutcome.NeverRun,
             RequestsProcessed: 0,
             RequestsFailed: 0,
+            StuckAbandoned: 0,
+            FailuresUnrecorded: 0,
             NextRunDueUtc: null,
             LastError: null);
 
@@ -70,7 +74,12 @@ namespace FlightAssistant.API.HostedServices
         /// </summary>
         /// <param name="processed">Requests the cycle claimed and worked through.</param>
         /// <param name="failed">The subset that ended in a source error or <c>Error</c>.</param>
-        public void MarkRunSucceeded(int processed, int failed, DateTime nextRunDueUtc)
+        /// <param name="stuckAbandoned">Stuck <c>Running</c> requests this cycle's reset gave up on,
+        /// completing them as <c>Error</c> because they had no attempts left.</param>
+        /// <param name="failuresUnrecorded">The subset of <paramref name="failed"/> whose failure
+        /// couldn't even be recorded: still <c>Running</c>, with no attempt counted until the next
+        /// stuck-request reset.</param>
+        public void MarkRunSucceeded(int processed, int failed, int stuckAbandoned, int failuresUnrecorded, DateTime nextRunDueUtc)
         {
             lock (_lock)
             {
@@ -80,6 +89,8 @@ namespace FlightAssistant.API.HostedServices
                     LastOutcome = VerificationJobOutcome.Success,
                     RequestsProcessed = processed,
                     RequestsFailed = failed,
+                    StuckAbandoned = stuckAbandoned,
+                    FailuresUnrecorded = failuresUnrecorded,
                     NextRunDueUtc = nextRunDueUtc,
                     LastError = null,
                 };
@@ -110,7 +121,7 @@ namespace FlightAssistant.API.HostedServices
         /// working through its batch (releasing source caches threw): the batch's counts replace the
         /// previous cycle's, since they describe work this cycle really did.
         /// </summary>
-        public void MarkRunFailed(Exception ex, DateTime nextRunDueUtc, int processed, int failed)
+        public void MarkRunFailed(Exception ex, DateTime nextRunDueUtc, int processed, int failed, int stuckAbandoned, int failuresUnrecorded)
         {
             lock (_lock)
             {
@@ -120,6 +131,8 @@ namespace FlightAssistant.API.HostedServices
                     LastOutcome = VerificationJobOutcome.Failed,
                     RequestsProcessed = processed,
                     RequestsFailed = failed,
+                    StuckAbandoned = stuckAbandoned,
+                    FailuresUnrecorded = failuresUnrecorded,
                     NextRunDueUtc = nextRunDueUtc,
                     LastError = $"{ex.GetType().Name}: {ex.Message}",
                 };

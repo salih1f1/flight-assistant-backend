@@ -51,7 +51,8 @@ namespace FlightAssistant.API.HostedServices
                 try
                 {
                     var result = await RunCycleAsync(stoppingToken);
-                    _heartbeat.MarkRunSucceeded(result.RequestsProcessed, result.RequestsFailed, NextRunDueUtc());
+                    _heartbeat.MarkRunSucceeded(
+                        result.RequestsProcessed, result.RequestsFailed, result.StuckAbandoned, result.FailuresUnrecorded, NextRunDueUtc());
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -65,7 +66,10 @@ namespace FlightAssistant.API.HostedServices
                     _log.LogError(cause,
                         "Reference verification cycle failed after processing {Processed} request(s). Retrying in {PollInterval}.",
                         ex.CompletedWork.RequestsProcessed, _options.PollInterval);
-                    _heartbeat.MarkRunFailed(cause, NextRunDueUtc(), ex.CompletedWork.RequestsProcessed, ex.CompletedWork.RequestsFailed);
+                    _heartbeat.MarkRunFailed(
+                        cause, NextRunDueUtc(),
+                        ex.CompletedWork.RequestsProcessed, ex.CompletedWork.RequestsFailed,
+                        ex.CompletedWork.StuckAbandoned, ex.CompletedWork.FailuresUnrecorded);
                 }
                 catch (Exception ex)
                 {

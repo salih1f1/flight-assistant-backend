@@ -19,7 +19,7 @@ public class VerificationJobHeartbeatTests
         var snapshot = new VerificationJobHeartbeat(_time).Current;
 
         Assert.Equal(
-            new VerificationJobSnapshot(null, null, VerificationJobOutcome.NeverRun, 0, 0, null, null),
+            new VerificationJobSnapshot(null, null, VerificationJobOutcome.NeverRun, 0, 0, 0, 0, null, null),
             snapshot);
     }
 
@@ -28,7 +28,7 @@ public class VerificationJobHeartbeatTests
     {
         var heartbeat = new VerificationJobHeartbeat(_time);
         heartbeat.MarkRunStarted();
-        heartbeat.MarkRunSucceeded(processed: 8, failed: 2, nextRunDueUtc: T0.AddSeconds(30));
+        heartbeat.MarkRunSucceeded(processed: 8, failed: 2, stuckAbandoned: 1, failuresUnrecorded: 1, nextRunDueUtc: T0.AddSeconds(30));
 
         _time.Advance(TimeSpan.FromSeconds(30));
         heartbeat.MarkRunStarted();
@@ -39,8 +39,12 @@ public class VerificationJobHeartbeatTests
         Assert.Equal(T0, snapshot.LastRunCompletedUtc);
         Assert.Equal(8, snapshot.RequestsProcessed);
         Assert.Equal(2, snapshot.RequestsFailed);
+        Assert.Equal(1, snapshot.StuckAbandoned);
+        Assert.Equal(1, snapshot.FailuresUnrecorded);
     }
 
+    /// <summary>A successful cycle records both new counts, exactly as it does
+    /// <c>RequestsProcessed</c>/<c>RequestsFailed</c> (R5).</summary>
     [Fact]
     public void MarkRunSucceeded_WithSomeRequestsFailed_IsStillSuccess_WithCountsNextDueAndNoError()
     {
@@ -49,10 +53,10 @@ public class VerificationJobHeartbeatTests
         heartbeat.MarkRunFailed(new InvalidOperationException("earlier"), T0.AddSeconds(30));
 
         _time.Advance(TimeSpan.FromSeconds(5));
-        heartbeat.MarkRunSucceeded(processed: 10, failed: 3, nextRunDueUtc: T0.AddSeconds(35));
+        heartbeat.MarkRunSucceeded(processed: 10, failed: 3, stuckAbandoned: 2, failuresUnrecorded: 1, nextRunDueUtc: T0.AddSeconds(35));
 
         Assert.Equal(
-            new VerificationJobSnapshot(T0, T0.AddSeconds(5), VerificationJobOutcome.Success, 10, 3, T0.AddSeconds(35), null),
+            new VerificationJobSnapshot(T0, T0.AddSeconds(5), VerificationJobOutcome.Success, 10, 3, 2, 1, T0.AddSeconds(35), null),
             heartbeat.Current);
     }
 
@@ -80,27 +84,34 @@ public class VerificationJobHeartbeatTests
         Assert.Equal(T0, snapshot.LastRunCompletedUtc);
     }
 
+    /// <summary>The plain overload — a cycle that failed before it finished its batch — leaves every
+    /// one of the previous cycle's counts in place, new fields included (R5).</summary>
     [Fact]
     public void MarkRunFailed_BeforeTheBatchFinished_KeepsThePreviousCyclesCounts()
     {
         var heartbeat = new VerificationJobHeartbeat(_time);
-        heartbeat.MarkRunSucceeded(processed: 9, failed: 4, nextRunDueUtc: T0.AddSeconds(30));
+        heartbeat.MarkRunSucceeded(processed: 9, failed: 4, stuckAbandoned: 3, failuresUnrecorded: 2, nextRunDueUtc: T0.AddSeconds(30));
 
         heartbeat.MarkRunFailed(new TimeoutException("claim timed out"), T0.AddSeconds(60));
 
-        Assert.Equal((9, 4), (heartbeat.Current.RequestsProcessed, heartbeat.Current.RequestsFailed));
+        var snapshot = heartbeat.Current;
+        Assert.Equal((9, 4, 3, 2), (snapshot.RequestsProcessed, snapshot.RequestsFailed, snapshot.StuckAbandoned, snapshot.FailuresUnrecorded));
     }
 
+    /// <summary>The batch-aware overload replaces every count, new fields included, with the failed
+    /// cycle's own — never the previous cycle's (R5).</summary>
     [Fact]
     public void MarkRunFailed_AfterTheBatchWasProcessed_ReplacesTheCountsWithThatBatchs()
     {
         var heartbeat = new VerificationJobHeartbeat(_time);
-        heartbeat.MarkRunSucceeded(processed: 9, failed: 4, nextRunDueUtc: T0.AddSeconds(30));
+        heartbeat.MarkRunSucceeded(processed: 9, failed: 4, stuckAbandoned: 3, failuresUnrecorded: 2, nextRunDueUtc: T0.AddSeconds(30));
 
-        heartbeat.MarkRunFailed(new InvalidOperationException("release boom"), T0.AddSeconds(60), processed: 5, failed: 2);
+        heartbeat.MarkRunFailed(
+            new InvalidOperationException("release boom"), T0.AddSeconds(60),
+            processed: 5, failed: 2, stuckAbandoned: 1, failuresUnrecorded: 0);
 
         Assert.Equal(
-            new VerificationJobSnapshot(null, T0, VerificationJobOutcome.Failed, 5, 2, T0.AddSeconds(60), "InvalidOperationException: release boom"),
+            new VerificationJobSnapshot(null, T0, VerificationJobOutcome.Failed, 5, 2, 1, 0, T0.AddSeconds(60), "InvalidOperationException: release boom"),
             heartbeat.Current);
     }
 }

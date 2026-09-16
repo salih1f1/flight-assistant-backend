@@ -132,6 +132,14 @@ namespace FlightAssistant.Contracts.Responses.Admin
     /// <param name="RequestsFailed">The subset of <see cref="RequestsProcessed"/> that hit a source
     /// error (retrying, or out of attempts) or completed as an error without a retry (deleted entity,
     /// unusable source). A mismatch or not-found result is a completed check, not a failure.</param>
+    /// <param name="StuckAbandoned">Claims the stuck-request reset gave up on in the last completed
+    /// cycle: requests stuck <c>Running</c> that had no attempts left, so the reset completed them as
+    /// <c>Error</c> instead of returning them to <c>Pending</c>. Describes the last completed cycle,
+    /// exactly like <see cref="RequestsProcessed"/>.</param>
+    /// <param name="FailuresUnrecorded">The subset of <see cref="RequestsFailed"/> in the last
+    /// completed cycle that the job couldn't even record: those requests stayed <c>Running</c>, with
+    /// no attempt counted until the next stuck-request reset picks them up. Describes the last
+    /// completed cycle, exactly like <see cref="RequestsProcessed"/>.</param>
     /// <param name="LastError">Rendered outside Production only; always <c>null</c> in
     /// Production.</param>
     /// <param name="PendingCount">Requests in <c>Pending</c>, due now or waiting to retry. <c>null</c>
@@ -144,6 +152,8 @@ namespace FlightAssistant.Contracts.Responses.Admin
         string LastOutcome,
         int RequestsProcessed,
         int RequestsFailed,
+        int StuckAbandoned,
+        int FailuresUnrecorded,
         DateTime? NextRunDueUtc,
         string? LastError,
         int? PendingCount
