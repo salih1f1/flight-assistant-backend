@@ -238,6 +238,20 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         public Task<VerificationRequest?> GetByIdAsync(long id, CancellationToken ct = default) =>
             _db.VerificationRequests.FirstOrDefaultAsync(r => r.Id == id, ct);
 
+        public async Task<IReadOnlyList<VerificationRequest>> GetRecentForEntityAsync(
+            VerificationEntityType entityType, string entityKey, int limit, CancellationToken ct = default)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+
+            return await _db.VerificationRequests
+                .AsNoTracking()
+                .Where(r => r.EntityType == entityType && r.EntityKey == entityKey)
+                .OrderByDescending(r => r.RequestedUtc)
+                .ThenByDescending(r => r.Id)
+                .Take(limit)
+                .ToListAsync(ct);
+        }
+
         public async Task SaveChangesAsync(CancellationToken ct = default)
         {
             try

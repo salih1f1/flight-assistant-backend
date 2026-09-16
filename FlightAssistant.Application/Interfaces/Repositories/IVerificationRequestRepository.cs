@@ -113,6 +113,19 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         Task<VerificationRequest?> GetByIdAsync(long id, CancellationToken ct = default);
 
         /// <summary>
+        /// The entity's most recent requests, newest first (<c>RequestedUtc</c> descending, then
+        /// <c>Id</c> descending as the tiebreaker -- the database gives no order for free to two
+        /// requests sharing a timestamp), at most <paramref name="limit"/> (#385, Task 1). A "latest
+        /// few" read for the admin panel's record page, not a page: no total, and the full history
+        /// stays browsable at <c>GET /admin/data/verification-requests</c>. Read-only:
+        /// <c>AsNoTracking</c>, and not audited (a read).
+        /// </summary>
+        /// <param name="entityKey">Canonical, as a stored request's <c>EntityKey</c> is.</param>
+        /// <param name="limit">At least 1.</param>
+        Task<IReadOnlyList<VerificationRequest>> GetRecentForEntityAsync(
+            VerificationEntityType entityType, string entityKey, int limit, CancellationToken ct = default);
+
+        /// <summary>
         /// Saves tracked changes, e.g. an outcome applied to a claimed request, in one transaction.
         /// Throws <see cref="VerificationClaimLostException"/> when a tracked request changed in the
         /// database since it was read, and then nothing from this save is written. Treat that as

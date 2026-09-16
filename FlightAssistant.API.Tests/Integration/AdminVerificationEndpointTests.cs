@@ -106,6 +106,48 @@ public class AdminVerificationEndpointTests(FlightAssistantWebApplicationFactory
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    // ══════════════ GET /admin/verification-requests ══════════════
+
+    [Fact]
+    public async Task ListRequests_ReturnsTheEntitysChecks_WithTypedDifferencesAndSourceValues()
+    {
+        var airport = await SeedAirportAsync("ZVE", "List Test Airport");
+        var key = airport.Id.ToString(CultureInfo.InvariantCulture);
+        var mismatchId = await SeedMismatchAsync(airport, nameof(Airport.Name), "List Test Airport", "List Source Name");
+
+        var response = await factory.CreateAdminClient().GetAsync($"admin/verification-requests?entityType=Airport&entityKey={key}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var rows = await response.Content.ReadFromJsonAsync<List<VerificationRequestDto>>();
+        var row = Assert.Single(rows!, r => r.Id == mismatchId);
+        Assert.Equal("Airport", row.EntityType);
+        Assert.Equal(key, row.EntityKey);
+        Assert.Equal("Mismatch", row.Status);
+        var difference = Assert.Single(row.Differences);
+        Assert.Equal(nameof(Airport.Name), difference.Column);
+        Assert.Equal("List Test Airport", difference.Ours);
+        Assert.Equal("List Source Name", difference.Source);
+        Assert.Equal("ourairports", difference.SourceName);
+        Assert.Equal("List Source Name", row.SourceValues["ourairports"][nameof(Airport.Name)]);
+    }
+
+    [Fact]
+    public async Task ListRequests_AnEntityWithNoChecksYet_Returns200_Empty()
+    {
+        var response = await factory.CreateAdminClient().GetAsync($"admin/verification-requests?entityType=Airport&entityKey={NextKey()}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Empty((await response.Content.ReadFromJsonAsync<List<VerificationRequestDto>>())!);
+    }
+
+    [Fact]
+    public async Task ListRequests_ABadEntityType_Returns400()
+    {
+        var response = await factory.CreateAdminClient().GetAsync("admin/verification-requests?entityType=Airports&entityKey=1");
+
+        await AssertValidationErrorsAsync(response, ("EntityType", "EntityType must be one of Airport, Airline, Country."));
+    }
+
     // ══════════════ POST /admin/verification-requests ══════════════
 
     [Fact]

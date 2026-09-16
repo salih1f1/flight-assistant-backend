@@ -2,6 +2,7 @@ using System.Security.Claims;
 using FlightAssistant.API.Authentication;
 using FlightAssistant.Application.Commands.Admin.Verification;
 using FlightAssistant.Application.Queries.Admin.Verification;
+using FlightAssistant.Application.Verification;
 using FlightAssistant.Contracts.Requests.Admin;
 using FlightAssistant.Contracts.Responses.Admin;
 using MediatR;
@@ -38,6 +39,27 @@ namespace FlightAssistant.API.Endpoints.Admin
             .ProducesValidationProblem();
 
             var requests = admin.MapGroup("verification-requests").WithTags(Tag);
+
+            // GET /admin/verification-requests?entityType=Airport&entityKey=1&limit=5
+            requests.MapGet("", async (
+                string? entityType, string? entityKey, int? limit, IMediator mediator, CancellationToken ct) =>
+            {
+                var results = await mediator.Send(new GetVerificationRequestsQuery(entityType, entityKey, limit), ct);
+                return Results.Ok(results.Select(ToDto).ToList());
+            })
+            .WithName("AdminListVerificationRequests")
+            .WithSummary("An entity's most recent verification checks")
+            .WithDescription(
+                "The entity's checks, newest first, at most 'limit' (default 5, range 1-50). Not a page: no " +
+                "total, and the full history stays browsable at GET /admin/data/verification-requests. Each " +
+                "row's differences and source values come back typed, not as the stored JSON strings: " +
+                "differences is { column, ours, source, sourceName } per differing column; sourceValues is " +
+                "keyed by source name, each value a map of column name to what that source reported. " +
+                "'entityType' is required and must be exactly Airport, Airline or Country; 'entityKey' is " +
+                "required and canonicalised before matching, so a lower-case country code finds the " +
+                "upper-case row. An entity with no checks yet is an empty list, never a 404.")
+            .Produces<List<VerificationRequestDto>>(200)
+            .ProducesValidationProblem();
 
             // POST /admin/verification-requests
             requests.MapPost("", async (
@@ -108,5 +130,23 @@ namespace FlightAssistant.API.Endpoints.Admin
             .ProducesProblem(404)
             .ProducesProblem(409);
         }
+
+        private static VerificationRequestDto ToDto(VerificationRequestResult r) => new(
+            r.Id,
+            r.EntityType.ToString(),
+            r.EntityKey,
+            r.Sources,
+            r.Trigger.ToString(),
+            r.Status.ToString(),
+            r.Attempts,
+            r.NextAttemptUtc,
+            r.Differences.Select(d => new VerificationRequestDifferenceDto(d.Column, d.Ours, d.Source, d.SourceName)).ToList(),
+            r.SourceValues,
+            r.Error,
+            r.EstimatedCostUsd,
+            r.RequestedBy,
+            r.RequestedUtc,
+            r.StartedUtc,
+            r.CompletedUtc);
     }
 }
