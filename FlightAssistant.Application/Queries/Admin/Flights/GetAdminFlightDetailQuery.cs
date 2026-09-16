@@ -23,7 +23,8 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
         string Source);
 
     /// <summary>
-    /// The flight with its current status and recent status-event history, newest first. Backs
+    /// The flight with its current status and recent status-event history, most recently recorded
+    /// first (by id, #351 — not by effective time, which can move backwards). Backs
     /// <c>GET /admin/flights/{id}/detail</c>. <c>CurrentStatus</c> is simply
     /// <c>StatusHistory[0]</c> (null when the flight has no recorded events yet) — a flight has no
     /// separate "current status" column of its own; it is always derived from the newest event.

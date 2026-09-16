@@ -29,9 +29,11 @@ dotnet test
 dotnet test FlightAssistant.Domain.Tests/FlightAssistant.Domain.Tests.csproj
 dotnet test FlightAssistant.Application.Tests/FlightAssistant.Application.Tests.csproj
 
-# Run a specific test class or test
-dotnet test FlightAssistant.Domain.Tests/FlightAssistant.Domain.Tests.csproj --filter "ClassName=FlightTests"
-dotnet test FlightAssistant.Domain.Tests/FlightAssistant.Domain.Tests.csproj --filter "Name~Create_NormalizesFlightNumber"
+# Run a specific test class or test. FullyQualifiedName is the only matcher that works here —
+# ClassName= and Name~ match nothing, run zero tests, and report no failure, so a filtered run
+# with a typo (or either of those forms) looks exactly like a passing run.
+dotnet test FlightAssistant.Domain.Tests/FlightAssistant.Domain.Tests.csproj --filter "FullyQualifiedName~FlightTests"
+dotnet test FlightAssistant.Domain.Tests/FlightAssistant.Domain.Tests.csproj --filter "FullyQualifiedName~Create_NormalizesFlightNumber"
 
 # EF Core migrations
 dotnet ef migrations add <MigrationName> --project FlightAssistant.Infrastructure --startup-project FlightAssistant.API

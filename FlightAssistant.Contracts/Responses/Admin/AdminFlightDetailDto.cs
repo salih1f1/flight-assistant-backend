@@ -13,7 +13,8 @@ namespace FlightAssistant.Contracts.Responses.Admin
         DateTime RecordedAtUtc,
         string Source);
 
-    /// <summary>The flight with its current status and recent status-event history, newest first.
+    /// <summary>The flight with its current status and recent status-event history, most recently
+    /// recorded first (by id, #351 — not by effective time, which can move backwards).
     /// Backs <c>GET /admin/flights/{id}/detail</c>. <c>StatusHistory</c> is capped, not the full
     /// history — see the endpoint's Swagger description for the limit. <c>StatusHistoryTruncated</c>
     /// is true when the cap actually cut rows off; when it is, the full history is available via
