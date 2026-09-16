@@ -123,7 +123,9 @@ public class VerificationRequestProcessorTests
 
         Assert.Equal(VerificationProcessOutcome.Verified, outcome);
         Assert.True(airline.IsVerified);
-        Assert.Equal(VerificationSourceLookupKey.ForAirport("BA", "BAW"), Assert.Single(source.Lookups));
+        // ForAirline, not ForAirport (#401) -- the processor now builds an airline's lookup key
+        // through its own factory, even though the fields (and so the record equality) are identical.
+        Assert.Equal(VerificationSourceLookupKey.ForAirline("BA", "BAW"), Assert.Single(source.Lookups));
     }
 
     // ── Mismatch and not found ──────────────────────────────────────────────

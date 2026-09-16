@@ -23,10 +23,14 @@ namespace FlightAssistant.API.Tests.Integration;
 /// host runs on InMemory with the audit interceptor stripped.
 ///
 /// <para>
-/// The host's real source registry is used: <c>ourairports</c> (Airport) and <c>mledoze</c> (Country). None of
-/// these routes downloads a dataset: only the verification job calls <c>LookupAsync</c>, and the factory strips
-/// the job; as a backstop, the factory also makes both source clients' transport throw
-/// (<see cref="SourceHttpClients_RefuseToSend"/>). The InMemory database is shared by the whole "Integration" collection, so every test uses its own
+/// The host's real source registry is used: <c>ourairports</c> (Airport), <c>mledoze</c> (Country) and
+/// <c>aeroapi</c> (Airport, Airline, #401). None of these routes downloads a dataset or otherwise calls
+/// <c>LookupAsync</c> -- this endpoint only reads each source's static <c>Name</c>/<c>CostPerRowUsd</c>/
+/// <c>SupportedEntityTypes</c> -- but the verification job itself is stripped along with every other
+/// hosted service, and as a backstop the two free sources' dedicated clients' transport throws
+/// (<see cref="SourceHttpClients_RefuseToSend"/>). <c>aeroapi</c> reuses the shared <c>"AeroApi"</c> client
+/// rather than a dedicated one, so it has no equivalent backstop here -- unnecessary for this endpoint,
+/// which never calls it. The InMemory database is shared by the whole "Integration" collection, so every test uses its own
 /// entity keys (<see cref="NextKey"/>) and airport codes, and asserts on its own rows.
 /// </para>
 /// </summary>
@@ -61,22 +65,27 @@ public class AdminVerificationEndpointTests(FlightAssistantWebApplicationFactory
     // ══════════════ GET /admin/verification-sources ══════════════
 
     [Fact]
-    public async Task GetSources_Airport_Returns200_WithTheRegisteredAirportSourceAndItsCost()
+    public async Task GetSources_Airport_Returns200_WithTheRegisteredAirportSourcesAndTheirCost_OrderedByName()
     {
         var response = await factory.CreateAdminClient().GetAsync("admin/verification-sources?entityType=Airport");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var sources = await response.Content.ReadFromJsonAsync<List<VerificationSourceDto>>();
-        Assert.Equal(new[] { new VerificationSourceDto("ourairports", 0m) }, sources);
+        // Ordered by name (Ordinal): "aeroapi" before "ourairports".
+        Assert.Equal(
+            new[] { new VerificationSourceDto("aeroapi", 0.015m), new VerificationSourceDto("ourairports", 0m) },
+            sources);
     }
 
     [Fact]
-    public async Task GetSources_Airline_Returns200_Empty()
+    public async Task GetSources_Airline_Returns200_WithTheRegisteredAirlineSourceAndItsCost()
     {
         var response = await factory.CreateAdminClient().GetAsync("admin/verification-sources?entityType=Airline");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Empty((await response.Content.ReadFromJsonAsync<List<VerificationSourceDto>>())!);
+        var sources = await response.Content.ReadFromJsonAsync<List<VerificationSourceDto>>();
+        // #401: aeroapi is the first source to check Airline at all.
+        Assert.Equal(new[] { new VerificationSourceDto("aeroapi", 0.015m) }, sources);
     }
 
     [Theory]

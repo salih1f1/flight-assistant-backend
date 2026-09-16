@@ -22,12 +22,15 @@ public class VerificationCheckedColumnsTests
     }
 
     [Fact]
-    public void GetColumns_Airline_ListsExactlyTheSpecCheckedColumns_AllianceCodeExcluded()
+    public void GetColumns_Airline_ListsExactlyTheSpecCheckedColumns_AllianceCodeAndCountryCodeExcluded()
     {
         var names = VerificationCheckedColumns.GetColumns(VerificationEntityType.Airline).Select(c => c.Name).ToList();
 
-        Assert.Equal(new[] { "Iata", "Icao", "Name", "CountryCode" }, names);
+        Assert.Equal(new[] { "Iata", "Icao", "Name" }, names);
         Assert.DoesNotContain("AllianceCode", names);
+        // #401, R1: aeroapi (the airline source) reports an operator's country as a name, never a
+        // code, and nothing in the app reads an airline's own country.
+        Assert.DoesNotContain("CountryCode", names);
     }
 
     [Fact]
@@ -76,7 +79,7 @@ public class VerificationCheckedColumnsTests
     }
 
     [Fact]
-    public void Project_Airline_ProducesExactlyTheCheckedColumnKeys_AllianceCodeNotProjected()
+    public void Project_Airline_ProducesExactlyTheCheckedColumnKeys_AllianceCodeAndCountryCodeNotProjected()
     {
         var airline = Airline.Create("BA", "BAW", "British Airways", "gb", "OW");
 
@@ -88,7 +91,7 @@ public class VerificationCheckedColumnsTests
         Assert.Equal("BA", values["Iata"]);
         Assert.Equal("BAW", values["Icao"]);
         Assert.Equal("British Airways", values["Name"]);
-        Assert.Equal("GB", values["CountryCode"]);
+        Assert.DoesNotContain("CountryCode", values.Keys);
     }
 
     [Fact]

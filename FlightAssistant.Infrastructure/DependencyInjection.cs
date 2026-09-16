@@ -106,6 +106,21 @@ namespace FlightAssistant.Infrastructure
                 sp.GetRequiredService<ILogger<MledozeCountriesVerificationSource>>()));
             services.AddSingleton<IVerificationSource>(sp => sp.GetRequiredService<MledozeCountriesVerificationSource>());
 
+            // aeroapi (#401): airports and airlines, metered, against AeroAPI itself rather than a
+            // downloaded dataset. Registered a singleton for the same reason as the two sources
+            // above (IVerificationSourceRegistry resolves IEnumerable<IVerificationSource> once, at
+            // its own singleton construction), even though this source holds no dataset to persist —
+            // it still takes IHttpClientFactory, not a captured HttpClient, calling CreateClient
+            // fresh per lookup. It reuses the shared "AeroApi" named client registered below (auth,
+            // resilience, AeroApiThrottleGate) rather than a dedicated client of its own, so a
+            // verification lookup is throttled exactly like every other AeroAPI call.
+            services.AddSingleton(sp => new AeroApiVerificationSource(
+                sp.GetRequiredService<IHttpClientFactory>(),
+                sp.GetRequiredService<ICacheService>(),
+                sp.GetRequiredService<IOptions<AeroApiOptions>>(),
+                sp.GetRequiredService<ILogger<AeroApiVerificationSource>>()));
+            services.AddSingleton<IVerificationSource>(sp => sp.GetRequiredService<AeroApiVerificationSource>());
+
             services.AddSingleton<IVerificationSourceRegistry, VerificationSourceRegistry>();
 
             // AeroAPI — the sole flight data provider (issue #280). This wires the HTTP

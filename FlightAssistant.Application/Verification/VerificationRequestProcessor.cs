@@ -253,7 +253,7 @@ namespace FlightAssistant.Application.Verification
                     var airline = await _airlines.GetByIdAsync(ParseId(request), ct);
                     return airline is null
                         ? null
-                        : new LoadedEntity(airline, VerificationSourceLookupKey.ForAirport(airline.Iata, airline.Icao),
+                        : new LoadedEntity(airline, VerificationSourceLookupKey.ForAirline(airline.Iata, airline.Icao),
                             VerificationCheckedColumns.Project(airline));
                 }
 
