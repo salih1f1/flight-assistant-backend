@@ -15,7 +15,12 @@ public class GetTravelerFlightsQueryHandlerTests
 
     private readonly IFlightRepository _flights = Substitute.For<IFlightRepository>();
     private readonly IRefDataRepository _refData = Substitute.For<IRefDataRepository>();
-    private readonly FakeTimeProvider _clock = new(new DateTimeOffset(Now));
+    // Auto-advancing on every read is what makes TheSlotCountUsesTheSameClockAndWindowsAsTheRowFlags
+    // falsifiable: the handler reads the clock exactly once, so the first read is still Now, but a
+    // second read anywhere in the handler returns a different instant and fails that test's
+    // Received(1) match. With a fixed clock the two are indistinguishable and the test proved only
+    // half of what its name claims (#397).
+    private readonly FakeTimeProvider _clock = new(new DateTimeOffset(Now)) { AutoAdvanceAmount = TimeSpan.FromSeconds(1) };
     private readonly GetTravelerFlightsQueryHandler _handler;
 
     // Non-default values, so the handler can't pass with the planner's defaults hardcoded.

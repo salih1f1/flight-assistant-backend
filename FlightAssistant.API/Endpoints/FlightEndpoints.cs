@@ -93,7 +93,10 @@ namespace FlightAssistant.API.Endpoints
                 "POST /flights enforces; it turns false once the flight has landed or been cancelled for long enough, or its arrival time passed " +
                 "a day ago without a landing being reported. " +
                 "activeTrackedFlights counts every flight of this traveler that still occupies a slot, across all pages, and trackingCap is the configured limit — " +
-                "so remaining capacity is trackingCap minus activeTrackedFlights, without paging through the list. " +
+                "so remaining capacity is trackingCap minus activeTrackedFlights, floored at zero, without paging through the list. " +
+                "A traveler grandfathered above the cap, or one whose cap was later lowered in configuration, reports more active flights than the cap. " +
+                "Both numbers are as of this response: tracking can still be refused if capacity is used in the meantime. " +
+                "total is a different number — it counts every flight the traveler tracks, including ones that no longer occupy a slot. " +
                 "Tracking a flight the traveler already tracks still succeeds at the cap.")
             .Produces<TrackedFlightsDto>(200)
             .ProducesValidationProblem();

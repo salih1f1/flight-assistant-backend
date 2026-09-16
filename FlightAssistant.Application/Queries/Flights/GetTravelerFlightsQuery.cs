@@ -33,7 +33,7 @@ namespace FlightAssistant.Application.Queries.Flights
     /// from one page — future-dated cancelled flights sort first, so page 1 can be entirely
     /// non-counting while the slot-holding flights sit on page 2.
     /// </summary>
-    public record TravelerFlightsPage(
+    public record TravelerFlightsResult(
         IReadOnlyList<TravelerFlightResult> Items,
         int Total,
         int Page,
@@ -45,7 +45,7 @@ namespace FlightAssistant.Application.Queries.Flights
         int TrackingCap
     );
 
-    public record GetTravelerFlightsQuery(Guid TravelerId, PagedRequest Paging) : IRequest<TravelerFlightsPage>;
+    public record GetTravelerFlightsQuery(Guid TravelerId, PagedRequest Paging) : IRequest<TravelerFlightsResult>;
 
     public class GetTravelerFlightsQueryValidator : AbstractValidator<GetTravelerFlightsQuery>
     {
@@ -55,7 +55,7 @@ namespace FlightAssistant.Application.Queries.Flights
         }
     }
 
-    public sealed class GetTravelerFlightsQueryHandler : IRequestHandler<GetTravelerFlightsQuery, TravelerFlightsPage>
+    public sealed class GetTravelerFlightsQueryHandler : IRequestHandler<GetTravelerFlightsQuery, TravelerFlightsResult>
     {
         private readonly IFlightRepository _flights;
         private readonly IRefDataRepository _refData;
@@ -77,7 +77,7 @@ namespace FlightAssistant.Application.Queries.Flights
             _timeProvider = timeProvider;
         }
 
-        public async Task<TravelerFlightsPage> Handle(GetTravelerFlightsQuery query, CancellationToken ct)
+        public async Task<TravelerFlightsResult> Handle(GetTravelerFlightsQuery query, CancellationToken ct)
         {
             var (rows, total) = await _flights.GetTravelerFlightsAsync(query.TravelerId, query.Paging.Page, query.Paging.PageSize, ct);
 
@@ -121,11 +121,13 @@ namespace FlightAssistant.Application.Queries.Flights
 
             // The traveler's slot usage across every page, not just this one (#397). Deliberately the
             // same method TrackFlightCommand enforces its 409 with, called with the same clock reading
-            // as the per-row flags above, so the count can never contradict the flags beside it.
+            // as the per-row flags above, so the count cannot contradict those flags by rule or by
+            // clock. It is still two queries with no snapshot between them: a concurrent untrack from
+            // another device can land in the gap, leaving a flagged row the count no longer includes.
             var activeTrackedFlights = await _flights.CountActiveTrackedFlightsAsync(
                 query.TravelerId, now, _syncOptions.StopAfterArrival, _syncOptions.StopWithoutArrivalAfter, ct);
 
-            return new TravelerFlightsPage(
+            return new TravelerFlightsResult(
                 results, total, query.Paging.Page, query.Paging.PageSize,
                 activeTrackedFlights, _syncOptions.MaxActiveTrackedFlightsPerTraveler);
         }
