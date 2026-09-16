@@ -178,4 +178,40 @@ public class GlobalExceptionHandlerTests
         Assert.Equal(503, ctx.Response.StatusCode);
         Assert.Equal("60", ctx.Response.Headers.RetryAfter);
     }
+
+    [Fact]
+    public async Task EveryProblemResponse_IsProblemJson()
+    {
+        // The spec declares application/problem+json on 122 responses; before #415 this handler
+        // sent application/json, so handler-produced problems contradicted it while the
+        // framework's own matched. All four arms funnel through one helper.
+        var (handler, ctx) = Sut(Environments.Development);
+        await handler.TryHandleAsync(ctx, PlanRestriction(), default);
+
+        Assert.StartsWith("application/problem+json", ctx.Response.ContentType);
+    }
+
+    [Fact]
+    public async Task ValidationArm_IsProblemJson()
+    {
+        var (handler, ctx) = Sut(Environments.Development);
+        var ex = new FluentValidation.ValidationException(
+        [
+            new FluentValidation.Results.ValidationFailure("DepartureIata", "must be 3 letters")
+        ]);
+
+        await handler.TryHandleAsync(ctx, ex, default);
+
+        Assert.StartsWith("application/problem+json", ctx.Response.ContentType);
+    }
+
+    [Fact]
+    public async Task UnhandledArm_IsProblemJson()
+    {
+        var (handler, ctx) = Sut(Environments.Development);
+
+        await handler.TryHandleAsync(ctx, new InvalidOperationException("boom"), default);
+
+        Assert.StartsWith("application/problem+json", ctx.Response.ContentType);
+    }
 }
