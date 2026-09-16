@@ -19,6 +19,14 @@
 - **No metered AeroAPI calls, and no live AeroDataBox calls in tests.** Tests drive the provider through a scripted `HttpMessageHandler` against recorded fixtures, exactly as `AeroApiFlightSearchProviderTests` does.
 - The build stays warning-free; commits use explicit paths; nothing pushed.
 
+## Amendments during execution (2026-09-17)
+
+Three statements in this plan were wrong as first written. They are corrected in place below.
+
+- **The query window.** Step 2 originally said to query the whole local day, `T00:00`–`T23:59`, "as the removed provider did". AeroDataBox rejects any window longer than **12 hours**: issue #267 quotes the parameter documentation, and `f89f95e` records the removed provider failing every request with HTTP 400. That failure went unseen because the provider swallowed errors into an empty list. The day is now two sequential ≤12h windows, so an uncached route search costs **2 calls**.
+- **The date filter.** Steps 2 and 4 originally described filtering on a row's revised time. Rows are kept on their **scheduled** local date instead. That is what `ServiceDate` means everywhere in this system, and it is what `AeroApiFlightStatusProvider` matches status syncs on.
+- **The error buckets.** Step 3 originally sent every unclassified status to 502. Any other 4xx now maps to **500**, because it means this provider built a bad request, which is our bug rather than an upstream outage.
+
 ---
 
 ## File Structure
@@ -70,14 +78,14 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
 Three things measured during the spike that the implementation must honour:
 
 1. **`withCodeshared` maps directly onto `IncludeCodeshares`** — `true` adds `IsCodeshared` rows alongside the `IsOperator` ones (FRA, one hour: 42 rows → 158). Pass the flag through; do not filter client-side.
-2. **The window filters on *revised* time, not scheduled.** A flight scheduled 09:35 but revised to 10:01 is **absent** from a 09:00–10:00 window. So query a **widened** window and filter to the requested service date afterwards, using the row's own local time. Use the whole local day (`T00:00`–`T23:59`) as the removed provider did, then filter.
+2. **The window filters on *revised* time, not scheduled.** A flight scheduled 09:35 but revised to 10:01 is **absent** from a 09:00–10:00 window. So query the whole local day, then keep each row on its own **scheduled** local date. The endpoint rejects a window longer than 12 hours, so the day is two sequential windows, `T00:00`–`T11:59` and `T12:00`–`T23:59`, merged and deduped by flight number plus scheduled UTC. *(Amended; see Amendments above.)*
 3. **Rows carry both UTC and local times with the IANA zone inline**, so this provider needs **no timezone lookup** — none of `AeroApiAirportTimezoneLookup`'s machinery, and no `/airports/{id}` call.
 
 Filter each row to the requested `ArrivalIata` client-side (AeroDataBox has no destination filter) and map to `FlightSearchResult`. Read the response's `departures` array; return an empty list when it is missing or not an array.
 
 - [ ] **Step 3: Failure handling**
 
-Follow `AeroApiResponse.ReadOrThrowAsync`'s *shape* — a `DomainException` whose status distinguishes our problem from theirs — but **do not reuse the AeroAPI type**; it names AeroAPI in its messages. 401/403 → 500 (our key or plan), 429 → 503 with `Retry-After`, anything else/unreachable/unparseable → 502. A successful response with no matching rows is an **empty list**, not an error.
+Follow `AeroApiResponse.ReadOrThrowAsync`'s *shape* — a `DomainException` whose status distinguishes our problem from theirs — but **do not reuse the AeroAPI type**; it names AeroAPI in its messages. 401/403 → 500 (our key or plan), 429 → 503 with `Retry-After`, any other 4xx → 500 (the request we built is wrong), 5xx/unreachable/timeout/unparseable → 502. A successful response with no matching rows, including a 204 or an empty body, is an **empty list**, not an error. *(Amended; see Amendments above.)*
 
 - [ ] **Step 4: Tests**
 
@@ -85,7 +93,7 @@ Mirror `AeroApiFlightSearchProviderTests`: a scripted `HttpMessageHandler`, a re
 
 - `IncludeCodeshares: false` → `withCodeshared=false` in the URL; `true` → `withCodeshared=true`.
 - Rows for other destinations are filtered out.
-- A row whose revised time falls outside the requested day is excluded, and one merely *delayed* within it is **kept** — the gotcha from Step 2.
+- Rows are kept or excluded on their **scheduled** local date. One merely *delayed* within the day is kept; one scheduled the previous day but revised into this one is excluded. Every issued window is ≤ 12 hours. *(Amended; see Amendments above.)*
 - 401 → 500, 429 → 503, malformed body → 502, empty `departures` → empty list.
 
 ---
@@ -135,7 +143,7 @@ client.DefaultRequestHeaders.Add("X-RapidAPI-Host", AeroDataBoxOptions.RapidApiH
 
 - [ ] **Step 7: Document it**
 
-Add a CLAUDE.md paragraph covering: the split and why flight-number search stays on AeroAPI; that AeroDataBox needs no timezone lookup; the revised-time window gotcha; that the key is optional and its absence falls back to AeroAPI; and that the budget decorator deliberately wraps only the AeroAPI path.
+Add a CLAUDE.md paragraph covering: the split and why flight-number search stays on AeroAPI; that AeroDataBox needs no timezone lookup; the two ≤12h windows and the scheduled-date keeper (the server's window filters on revised time; rows are kept on scheduled local date); the error buckets; that the key is optional and its absence falls back to AeroAPI; and that the budget decorator deliberately wraps only the AeroAPI path.
 
 State only what this change makes true. **Do not write "every search…" or "all searches…"** — that class of sentence has been wrong four times in this repository's recent history.
 
