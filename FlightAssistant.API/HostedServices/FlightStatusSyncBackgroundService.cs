@@ -63,12 +63,13 @@ namespace FlightAssistant.API.HostedServices
         private async Task RunAndRecordAsync(CancellationToken ct)
         {
             _heartbeat.MarkRunStarted();
-            var nextRunDueUtc = _timeProvider.GetUtcNow().UtcDateTime + _options.LoopInterval;
+            var startedUtc = _timeProvider.GetUtcNow();
+            var nextRunDueUtc = startedUtc.UtcDateTime + _options.LoopInterval;
 
             try
             {
                 var result = await RunOnceAsync(ct);
-                _heartbeat.MarkRunSucceeded(result.Processed, result.Failed, nextRunDueUtc);
+                _heartbeat.MarkRunSucceeded(result.Processed, result.Failed, nextRunDueUtc, Elapsed(startedUtc));
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -77,8 +78,25 @@ namespace FlightAssistant.API.HostedServices
             catch (Exception ex)
             {
                 _log.LogError(ex, "Flight status sync run failed. Retrying in {Interval}.", _options.LoopInterval);
-                _heartbeat.MarkRunFailed(ex, nextRunDueUtc);
+                _heartbeat.MarkRunFailed(ex, nextRunDueUtc, Elapsed(startedUtc));
             }
+        }
+
+        /// <summary>
+        /// How long the run took, by the injected clock rather than a <c>Stopwatch</c>, so a test on a
+        /// <c>FakeTimeProvider</c> can assert an exact value (#353). A run longer than the loop interval is
+        /// not an error — <c>PeriodicTimer</c> simply starts the next one immediately — but it means each
+        /// flight is polled less often than the interval suggests, which is invisible without this warning.
+        /// </summary>
+        private TimeSpan Elapsed(DateTimeOffset startedUtc)
+        {
+            var elapsed = _timeProvider.GetUtcNow() - startedUtc;
+            if (elapsed > _options.LoopInterval)
+                _log.LogWarning(
+                    "Flight status sync run took {Duration}, longer than the {Interval} loop interval; the next run starts immediately.",
+                    elapsed, _options.LoopInterval);
+
+            return elapsed;
         }
 
         /// <summary>

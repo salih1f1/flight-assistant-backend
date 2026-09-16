@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.FlightSync;
@@ -10,6 +11,7 @@ using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Flights.Enums;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -28,7 +30,8 @@ public class FlightStatusSyncBackgroundServiceTests
     private readonly FlightSyncHeartbeat _heartbeat = new();
     private int _mediatorScopes;
 
-    private FlightStatusSyncBackgroundService Service(FlightSyncOptions? options = null)
+    private FlightStatusSyncBackgroundService Service(
+        FlightSyncOptions? options = null, ILogger<FlightStatusSyncBackgroundService>? logger = null)
     {
         var services = new ServiceCollection();
         services.AddScoped(_ => _flights);
@@ -39,8 +42,33 @@ public class FlightStatusSyncBackgroundServiceTests
             services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
             Options.Create(options ?? new FlightSyncOptions()),
             _clock,
-            NullLogger<FlightStatusSyncBackgroundService>.Instance,
+            logger ?? NullLogger<FlightStatusSyncBackgroundService>.Instance,
             _heartbeat);
+    }
+
+    /// <summary>
+    /// Records every log call, so a test can assert a warning was actually emitted. A
+    /// <see cref="ConcurrentQueue{T}"/> rather than a plain list — a run that overruns the loop
+    /// interval has the next one start immediately (by design), so the background loop can still be
+    /// writing here when the test thread reads <see cref="Entries"/> after only the first success.
+    /// </summary>
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public ConcurrentQueue<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Entries.Enqueue((logLevel, formatter(state, exception)));
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+            public void Dispose() { }
+        }
     }
 
     private void DueIds(params int[] ids) =>
@@ -143,6 +171,51 @@ public class FlightStatusSyncBackgroundServiceTests
 
             _clock.Advance(TimeSpan.FromSeconds(1));
             await WaitUntil(() => _flights.ReceivedCalls().Count(c => c.GetMethodInfo().Name == nameof(IFlightRepository.GetDueTrackedFlightIdsAsync)) == 2);
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task ARun_RecordsHowLongItTook()
+    {
+        // The stub advances the fake clock while the run is in flight, so the recorded duration is
+        // exactly what the clock moved — no wall-clock timing in the assertion.
+        DueIds(1);
+        _mediator
+            .Send(Arg.Any<SyncFlightStatusCommand>(), Arg.Any<CancellationToken>())
+            .Returns(_ => { _clock.Advance(TimeSpan.FromSeconds(20)); return true; });
+
+        var service = Service();
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntil(() => _heartbeat.Current.LastOutcome == FlightSyncOutcome.Success);
+            Assert.Equal(TimeSpan.FromSeconds(20), _heartbeat.Current.LastRunDuration);
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task ARunLongerThanTheLoopInterval_LogsAWarning()
+    {
+        DueIds(1);
+        _mediator
+            .Send(Arg.Any<SyncFlightStatusCommand>(), Arg.Any<CancellationToken>())
+            .Returns(_ => { _clock.Advance(TimeSpan.FromMinutes(5)); return true; });
+
+        var logger = new CapturingLogger<FlightStatusSyncBackgroundService>();
+        var service = Service(logger: logger);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntil(() => _heartbeat.Current.LastOutcome == FlightSyncOutcome.Success);
+            Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("longer than"));
         }
         finally
         {

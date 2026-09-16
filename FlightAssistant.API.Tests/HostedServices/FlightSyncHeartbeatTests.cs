@@ -114,6 +114,37 @@ public class FlightSyncHeartbeatTests
         Assert.NotNull(snapshot.LastRunCompletedUtc);
     }
 
+    [Fact]
+    public void MarkRunSucceeded_RecordsTheRunDuration()
+    {
+        var heartbeat = new FlightSyncHeartbeat();
+
+        heartbeat.MarkRunStarted();
+        heartbeat.MarkRunSucceeded(processed: 4, failed: 0, nextRunDueUtc: DateTime.UtcNow.AddMinutes(1),
+            duration: TimeSpan.FromSeconds(90));
+
+        Assert.Equal(TimeSpan.FromSeconds(90), heartbeat.Current.LastRunDuration);
+    }
+
+    [Fact]
+    public void MarkRunFailed_RecordsTheRunDuration()
+    {
+        var heartbeat = new FlightSyncHeartbeat();
+
+        heartbeat.MarkRunStarted();
+        heartbeat.MarkRunFailed(new InvalidOperationException("boom"), DateTime.UtcNow.AddMinutes(1),
+            duration: TimeSpan.FromSeconds(12));
+
+        Assert.Equal(TimeSpan.FromSeconds(12), heartbeat.Current.LastRunDuration);
+    }
+
+    [Fact]
+    public void Current_BeforeAnyRun_HasNoDuration()
+    {
+        // Null, not zero: a run that has never completed must not read as an instant one.
+        Assert.Null(new FlightSyncHeartbeat().Current.LastRunDuration);
+    }
+
     [Fact(Timeout = 10_000)]
     public async Task Current_NeverExposesFieldsMixedFromDifferentWriters_RegressionGuardForImmutableSnapshotDesign()
     {
