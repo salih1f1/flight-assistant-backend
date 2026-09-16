@@ -204,10 +204,24 @@ public class FlightStatusSyncBackgroundServiceTests
     [Fact]
     public async Task ARunLongerThanTheLoopInterval_LogsAWarning()
     {
+        // Advances the clock past LoopInterval exactly once. If every Send kept advancing it, the
+        // loop would never go back to blocking on WaitForNextTickAsync — it would free-run on the
+        // fake clock and starve the thread pool, making WaitUntil's own polling an unreliable race
+        // rather than a deterministic wait (this is what made the test flaky before: ~16% of runs
+        // timed out, never observing Success within WaitUntil's real-time deadline).
         DueIds(1);
+        var advanced = false;
         _mediator
             .Send(Arg.Any<SyncFlightStatusCommand>(), Arg.Any<CancellationToken>())
-            .Returns(_ => { _clock.Advance(TimeSpan.FromMinutes(5)); return true; });
+            .Returns(_ =>
+            {
+                if (!advanced)
+                {
+                    advanced = true;
+                    _clock.Advance(TimeSpan.FromMinutes(5));
+                }
+                return true;
+            });
 
         var logger = new CapturingLogger<FlightStatusSyncBackgroundService>();
         var service = Service(logger: logger);
