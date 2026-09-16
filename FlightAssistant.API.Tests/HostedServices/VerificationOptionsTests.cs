@@ -50,6 +50,28 @@ public class VerificationOptionsTests
         Assert.Same(options, provider.GetRequiredService<IVerificationJobOptions>());
     }
 
+    /// <summary>The widened port (#410): <see cref="IVerificationJobOptions.StaleAfterDays"/> and
+    /// <see cref="IVerificationJobOptions.DefaultSourcesFor"/> report the same configured values
+    /// through the interface that <see cref="VerificationOptions"/>'s own properties do -- proving
+    /// the delegation, not just that the concrete class holds the values.</summary>
+    [Fact]
+    public void IVerificationJobOptions_ReportsStaleAfterDaysAndDefaultSources()
+    {
+        using var provider = Build(new Dictionary<string, string?>
+        {
+            ["Verification:StaleAfterDays"] = "45",
+            ["Verification:DefaultSources:Airline"] = "aeroapi,ourairports"
+        });
+
+        ValidateOnStart(provider);
+        var options = provider.GetRequiredService<IVerificationJobOptions>();
+
+        Assert.Equal(45, options.StaleAfterDays);
+        Assert.Equal(new[] { "ourairports" }, options.DefaultSourcesFor(VerificationEntityType.Airport));
+        Assert.Equal(new[] { "aeroapi", "ourairports" }, options.DefaultSourcesFor(VerificationEntityType.Airline));
+        Assert.Equal(new[] { "mledoze" }, options.DefaultSourcesFor(VerificationEntityType.Country));
+    }
+
     [Fact]
     public void ConfiguredValues_Bind()
     {

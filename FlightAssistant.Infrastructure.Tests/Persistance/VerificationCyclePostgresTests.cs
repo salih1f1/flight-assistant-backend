@@ -578,7 +578,20 @@ public class VerificationCyclePostgresTests : PostgresTestBase
     private static VerificationSourceFetchResult Found(IReadOnlyDictionary<string, string?> values) =>
         VerificationSourceFetchResult.Found(values);
 
-    private sealed record JobOptions(int BatchSize, int MaxAttempts, TimeSpan IdleRelease) : IVerificationJobOptions;
+    /// <summary>Job settings for a test. <see cref="DefaultSourcesFor"/> mirrors
+    /// <c>VerificationOptions</c>'s own defaults: no test in this file is about the flight-tracking
+    /// trigger (#410) that reads it.</summary>
+    private sealed record JobOptions(int BatchSize, int MaxAttempts, TimeSpan IdleRelease, int StaleAfterDays = 180)
+        : IVerificationJobOptions
+    {
+        public IReadOnlyList<string> DefaultSourcesFor(VerificationEntityType entityType) => entityType switch
+        {
+            VerificationEntityType.Airport => new[] { "ourairports" },
+            VerificationEntityType.Airline => new[] { "aeroapi" },
+            VerificationEntityType.Country => new[] { "mledoze" },
+            _ => throw new ArgumentOutOfRangeException(nameof(entityType), entityType, "Unknown entity type.")
+        };
+    }
 
     /// <summary>A budget guard that always reports the same state -- these tests are not about the
     /// budget gate (#401 task 2), just its DI dependency on <c>VerificationRequestProcessor</c>.</summary>

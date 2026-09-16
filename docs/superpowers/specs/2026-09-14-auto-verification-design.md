@@ -106,7 +106,7 @@ void MarkVerificationFailed(string issue);        // IsVerified = false, Verifie
 
 **Concurrency.** Each row also carries PostgreSQL's own `xmin` system column as an optimistic-concurrency token — no extra column needed. A save against a stale token (typically a request that was reset as stuck and reclaimed by another cycle since it was loaded) throws; the job treats that as "claim lost": nothing is written and no attempt is counted for it. §4.2 covers how the claim and the processor use this token together.
 
-**`EnqueueAsync`** takes a caller-supplied `estimatedCostUsd` — the sum of the requested sources' `CostPerRowUsd` from the source registry — which keeps a source that is not registered yet (e.g. `aeroapi` before step 9) enqueueable, and it saves the whole `DbContext` in one call. The flight-tracking trigger (step 10) must therefore enqueue *after* its own `TrackFlightCommand` save, not before. A unique-index violation from a concurrent insert racing the pre-check is caught and counted as skipped, not surfaced as an error.
+**`EnqueueAsync`** takes a caller-supplied `estimatedCostUsd` — the sum of the requested sources' `CostPerRowUsd` from the source registry — which keeps a source that is not registered yet (e.g. `aeroapi` before step 9) enqueueable, and it saves the whole `DbContext` in one call. The flight-tracking trigger (step 10) enqueues *after* its own `TrackFlightCommand` save, not before — as built, this falls out for free, since the event it reacts to is dispatched by `DomainEventDispatchInterceptor` only post-commit (§4.1). A unique-index violation from a concurrent insert racing the pre-check is caught and counted as skipped, not surfaced as an error.
 
 ---
 
@@ -163,16 +163,16 @@ POST /admin/verification-requests
      // ("Entity no longer exists") when the job claims it.
 ```
 
-**Flight-started**
+**Flight-started (#410, step 10 — as built; §9 notes where the original version of this section disagreed with it)**
 
-After `TrackFlightCommand` saves, a domain event (dispatched post-commit by `DomainEventDispatchInterceptor`) is handled by a handler that:
+`Flight.MarkTracked` raises a new domain event, `FlightTracked` (carrying only the flight, airline and both airport ids), on **every** track request — a new tracking link or a repeat — and `TrackFlightCommandHandler` now calls `SaveChangesAsync` unconditionally so the event dispatches even when the traveler already tracked the flight and nothing else changed. `DomainEventDispatchInterceptor` dispatches it post-commit, to `FlightTrackedVerificationEventHandler` (Application), which:
 
-1. Loads the airline, departure and arrival airports, and the countries of all three.
-2. For each: queues a check with the default source if `IsVerified = false` or `VerifiedAt < now − StaleAfterDays`.
-3. Skips rows with a `VerificationIssue` (waiting on an admin) and rows with an open request.
-4. Catches and logs any failure. Tracking never fails because of verification.
+1. Loads the airline and both airports by id (one read apiece, never in a loop), then resolves the distinct country codes among all three (so the same country behind two or three rows costs one read, not several).
+2. For each row: queues a check with the entity type's default source(s) when `IsVerified` is false, `VerifiedAt` is null, `VerifiedAt` is older than `StaleAfterDays`, `VerifiedAt` is in the **future** (an imported row keeps the file's own timestamp — §6 — and must not read as fresh forever), or `VerificationSource` is `import` (weaker evidence than an automated check, since a hand-built CSV is stamped the same way).
+3. Skips a row outright when it carries a non-blank `VerificationIssue`, even if it also looks stale by rule 2 — an admin is already looking at it. The open-request skip is `EnqueueAsync`'s own behaviour (§2.3), not this handler's: it passes every key it decided on straight through.
+4. Queues at most three `EnqueueAsync` calls — one per entity type, keys batched, not one call per row — and wraps the whole body in one `try`/`catch`: any failure is logged with the flight id and swallowed. Tracking must never fail because of verification: the dispatch is post-commit, not post-response (this runs synchronously inside the command's own `SaveChangesAsync`, before the endpoint builds its response), so an uncaught exception here would turn an already-committed tracking write into a 500 with nothing left to roll back.
 
-Default sources: airport → `ourairports`, airline → `aeroapi`, country → `mledoze`.
+Default sources: airport → `ourairports`, airline → `aeroapi`, country → `mledoze` (`Verification:DefaultSources`).
 
 ### 4.2 The job — `ReferenceVerificationBackgroundService`
 
@@ -400,10 +400,12 @@ One issue → branch → PR per step; wait for review after each.
 | 9 | backend | `aeroapi` sources and budget check |
 | 10 | backend | Flight-tracking trigger |
 
+**All ten steps are now landed.** #410 (step 10, the flight-tracking trigger) was the last; §4.1 above is the as-built shape.
+
 Steps 1–4 stand alone: countries become verifiable and imports work for moving data between environments. AeroAPI comes late so the free sources prove the approach first.
 
 **Carried into later steps**, noted during step 5's implementation and review:
 
 - **Step 8, done ahead of the panel work (#385):** the health report's `StuckAbandoned` and `FailuresUnrecorded` counts (§4.2), the entity check-history read (`GET /admin/verification-requests`, §4.7), and the needs-attention counts (`GET /admin/verification-needs-attention`, §4.7) all landed backend-side so step 8 has something to read against. §5 item 5 (History) is folded into step 8 too, not a step of its own: `verification_requests`' sidebar table is served entirely by the existing data browser (A4) plus the `{column}:*` "has a value" filter (§4.7), so it needed no dedicated backend work beyond what's listed here. Still open: verifying a row through the queue doesn't refresh `/admin/stats` counts.
 - **Step 9:** add a `ForAirline` lookup-key factory alongside `ForAirport`/`ForCountry`. Also: `started_utc` is stamped once per claimed *batch*, not per request; with several job instances and a throttled source (`aeroapi`, this step's own addition), a slow batch could push a claim past the 10-minute stuck cutoff before it finishes — revisit per-request stamping, or the cutoff length, once a throttled source exists to actually trigger it.
-- **Step 10:** the flight-tracking trigger must handle an imported row's future `VerifiedAt` in its staleness check, treat `import` as weaker evidence than an automated check when deciding whether to re-queue, and enqueue only *after* its own `TrackFlightCommand` save completes (§2.3's `EnqueueAsync` note).
+- **Step 10, and where it disagreed with the plan above:** the flight-tracking trigger handles an imported row's future `VerifiedAt` in its staleness check and treats `import` as weaker evidence than an automated check, both as planned. Two things this section originally assumed didn't hold once built: (1) it described the trigger as reacting to "a domain event," implying flight-tracking already raised one the way deletion and status-sync do — it didn't, so #410 added `FlightTracked` (Domain) rather than calling `IVerificationQueue` straight from `TrackFlightCommandHandler`, keeping the event/handler layering the rest of this design uses. (2) it described the handler as running "after `TrackFlightCommand` saves," implying every track request already reached `SaveChangesAsync` — it didn't: a repeat track that found the traveler already tracking the flight had nothing to write and skipped the save. #410 made the save (and the new event) unconditional, since a repeat track is exactly the case most likely to find a reference row gone stale since the last one.

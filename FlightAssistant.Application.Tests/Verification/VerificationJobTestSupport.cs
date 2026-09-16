@@ -6,8 +6,21 @@ using FlightAssistant.Domain.Verification.Enums;
 
 namespace FlightAssistant.Application.Tests.Verification;
 
-/// <summary>Job settings for a test. <see cref="IdleRelease"/> defaults to zero: release at once.</summary>
-internal sealed record FakeJobOptions(int BatchSize = 10, int MaxAttempts = 3, TimeSpan IdleRelease = default) : IVerificationJobOptions;
+/// <summary>Job settings for a test. <see cref="IdleRelease"/> defaults to zero: release at once.
+/// <see cref="DefaultSourcesFor"/> mirrors <c>VerificationOptions</c>'s own defaults, since no test in
+/// this file is about the flight-tracking trigger (#410) that reads it.</summary>
+internal sealed record FakeJobOptions(
+    int BatchSize = 10, int MaxAttempts = 3, TimeSpan IdleRelease = default, int StaleAfterDays = 180)
+    : IVerificationJobOptions
+{
+    public IReadOnlyList<string> DefaultSourcesFor(VerificationEntityType entityType) => entityType switch
+    {
+        VerificationEntityType.Airport => new[] { "ourairports" },
+        VerificationEntityType.Airline => new[] { "aeroapi" },
+        VerificationEntityType.Country => new[] { "mledoze" },
+        _ => throw new ArgumentOutOfRangeException(nameof(entityType), entityType, "Unknown entity type.")
+    };
+}
 
 /// <summary>A budget guard whose <see cref="State"/> a test sets directly, defaulting to
 /// <see cref="ProviderBudgetState.Normal"/> like the real guard's fail-open behaviour. Counts every

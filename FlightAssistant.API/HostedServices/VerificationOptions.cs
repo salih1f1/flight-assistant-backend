@@ -48,6 +48,10 @@ namespace FlightAssistant.API.HostedServices
         /// the job itself, which reads each request's own sources.</summary>
         public VerificationDefaultSources DefaultSources { get; set; } = new();
 
+        /// <summary>The <see cref="IVerificationJobOptions"/> view of <see cref="DefaultSources"/>.</summary>
+        public IReadOnlyList<string> DefaultSourcesFor(VerificationEntityType entityType) =>
+            DefaultSources.For(entityType);
+
         // ValidateDataAnnotations does not descend into DefaultSources, so its values are checked here.
         public IEnumerable<ValidationResult> Validate(ValidationContext validationContext) =>
             DefaultSources.Validate(nameof(DefaultSources));

@@ -1,3 +1,5 @@
+using FlightAssistant.Domain.Verification.Enums;
+
 namespace FlightAssistant.Application.Verification
 {
     /// <summary>
@@ -19,5 +21,15 @@ namespace FlightAssistant.Application.Verification
         /// request uses the source (#378). <see cref="TimeSpan.Zero"/> releases it as soon as none
         /// does. Never extends the 24-hour maximum age, and a cached failure keeps only its cooldown.</summary>
         TimeSpan IdleRelease { get; }
+
+        /// <summary>How old a verification may be before a tracked flight re-queues the entity
+        /// (#410). Not read by the job itself, which uses each request's own sources.</summary>
+        int StaleAfterDays { get; }
+
+        /// <summary>The source names a check for <paramref name="entityType"/> uses when a caller
+        /// names none — read by the flight-tracking trigger (#410) to build its own
+        /// <c>EnqueueAsync</c> call. Not read by the job itself, which uses each request's own
+        /// sources.</summary>
+        IReadOnlyList<string> DefaultSourcesFor(VerificationEntityType entityType);
     }
 }

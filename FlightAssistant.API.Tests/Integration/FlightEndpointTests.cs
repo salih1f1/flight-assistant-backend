@@ -1,17 +1,23 @@
+using System.Globalization;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Contracts.Requests.Flights;
+using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Flights.Enums;
 using FlightAssistant.Domain.ReferenceData.Entities;
+using FlightAssistant.Domain.Verification.Enums;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 
 namespace FlightAssistant.API.Tests.Integration;
 
@@ -328,6 +334,119 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
         var client = factory.CreateUserClient();
         var response = await client.PatchAsJsonAsync("flights/999999/notify", new { notify = true });
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    /// <summary>
+    /// FlightTrackedVerificationEventHandler (#410) reacts to FlightTracked by queuing checks for
+    /// the newly tracked flight's airline and airports; R5 requires it to swallow any failure so
+    /// tracking itself never fails. Only an end-to-end test through the real MediatR pipeline can
+    /// prove the exception is actually caught -- a unit test on the handler proves the same catch,
+    /// but not that MediatR discovers and wires the handler at all, nor that the endpoint still
+    /// answers 201 once the event has fired from inside the command's own SaveChangesAsync call.
+    /// </summary>
+    [Fact]
+    public async Task TrackFlight_VerificationQueueThrows_StillReturns201()
+    {
+        var throwingQueue = Substitute.For<IVerificationQueue>();
+        throwingQueue.EnqueueAsync(
+                Arg.Any<VerificationEntityType>(), Arg.Any<IReadOnlyCollection<string>>(),
+                Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<VerificationTrigger>(),
+                Arg.Any<string>(), Arg.Any<decimal>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("boom"));
+
+        using var scopedFactory = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+            {
+                services.AddScoped<IVerificationQueue>(_ => throwingQueue);
+
+                // FlightAssistantWebApplicationFactory replaces FlightAssistantDbContext with a bare
+                // InMemory provider and attaches no SaveChangesInterceptor at all (see its own comment,
+                // and CLAUDE.md's #319 note that it "strips the interceptor entirely") -- without
+                // DomainEventDispatchInterceptor, FlightTracked would never dispatch here and this test
+                // would pass for the wrong reason (the event never firing, not the handler catching its
+                // failure). Every other API test relies on interceptors being absent by default, so this
+                // re-attaches one for this test's own host only, using the same strip-and-re-add pattern
+                // the base factory itself uses to swap providers.
+                var efCoreAssemblyPrefixes = new[] { "Microsoft.EntityFrameworkCore", "Npgsql.EntityFrameworkCore" };
+                var toRemove = services.Where(d =>
+                        d.ServiceType == typeof(FlightAssistantDbContext) ||
+                        (d.ServiceType.Assembly.GetName().Name is { } n && efCoreAssemblyPrefixes.Any(n.StartsWith)))
+                    .ToList();
+                foreach (var d in toRemove) services.Remove(d);
+
+                services.AddDbContext<FlightAssistantDbContext>((sp, opt) =>
+                {
+                    opt.UseInMemoryDatabase("FlightAssistantIntegrationTests");
+                    opt.AddInterceptors(sp.GetRequiredService<DomainEventDispatchInterceptor>());
+                });
+            }));
+
+        // Seed through the same scopedFactory the request will use, so there's no question of
+        // whether the seed and the request land on the same in-memory database. "ZX"/"ZXA"/"ZXB":
+        // grepped for `"Z[A-Z]{1,2}"` across FlightAssistant.API.Tests and confirmed unclaimed --
+        // AdminVerificationEndpointTests already owns ZVA-ZVF (its class doc names this shared-DB
+        // convention), which this test collided with under its previous ZV/ZVA/ZVB codes without
+        // being caught, because the guard below reused the existing row on the collision instead
+        // of failing on it. Seeded unconditionally now, not existence-guarded -- but EF Core
+        // InMemory does not enforce unique indexes (confirmed directly: a model with
+        // HasIndex(...).IsUnique() happily accepts a duplicate insert), so a future collision on
+        // these codes would not throw at all. Both rows would simply persist in the shared
+        // "FlightAssistantIntegrationTests" database, and a lookup by IATA code
+        // (RefDataRepository.GetAirportIdByIataAsync) would return whichever one the provider
+        // happened to enumerate first -- silently binding this test's assertions to an arbitrary
+        // row instead of the one it just seeded. That is exactly why these codes were picked for
+        // being unclaimed rather than relying on any constraint to catch a clash.
+        //
+        // The airline is seeded already verified (a real, non-import source) while both airports
+        // are left unverified. FlightTrackedVerificationEventHandler queues the airline before the
+        // airports (R7), inside the one try/catch that makes R5's swallow work, and throwingQueue
+        // throws unconditionally for every call regardless of entity type -- so an unverified
+        // airline would queue first, throw immediately, and the airport branch below it would
+        // never run at all. Verifying the airline is what makes the airport EnqueueAsync call
+        // (asserted below) the one that actually fires and throws.
+        Airport departureAirport;
+        Airport arrivalAirport;
+        using (var scope = scopedFactory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+            var airline = Airline.Create("ZX", null, "Verify Trigger Air", "GB");
+            airline.Verify("admin", VerificationSources.Manual);
+            db.Airlines.Add(airline);
+            departureAirport = Airport.Create("ZXA", null, "Verify Trigger Origin", "Origin", "GB");
+            arrivalAirport = Airport.Create("ZXB", null, "Verify Trigger Destination", "Destination", "US");
+            db.Airports.Add(departureAirport);
+            db.Airports.Add(arrivalAirport);
+            await db.SaveChangesAsync();
+        }
+
+        var userId = Guid.NewGuid();
+        var client = scopedFactory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", $"test-{userId}");
+        await client.PostAsJsonAsync("travelers", new { email = $"{userId}@example.com", displayName = "Test", countryCode = (string?)null });
+
+        var serviceDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30));
+        var body = new TrackFlightRequest(
+            $"ZX{Random.Shared.Next(1000, 9999)}", serviceDate, "ZXA", "ZXB",
+            serviceDate.ToDateTime(new TimeOnly(9, 0), DateTimeKind.Utc),
+            serviceDate.ToDateTime(new TimeOnly(12, 0), DateTimeKind.Utc));
+
+        var response = await client.PostAsJsonAsync("flights", body);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        // Proves the failure was actually reached -- a 201 alone can't tell "caught" apart from
+        // "the handler never ran" (e.g. a DI wiring break), which is exactly what this test exists
+        // to rule out. Pinned to VerificationEntityType.Airport with both seeded airports' row ids,
+        // not Arg.Any<VerificationEntityType>(): the always-fresh airline alone satisfies a looser
+        // assertion even if the airport leg of the handler never ran, which is what let the
+        // ZV/ZVA/ZVB collision above go unnoticed.
+        await throwingQueue.Received().EnqueueAsync(
+            VerificationEntityType.Airport,
+            Arg.Is<IReadOnlyCollection<string>>(keys =>
+                keys.Count == 2 &&
+                keys.Contains(departureAirport.Id.ToString(CultureInfo.InvariantCulture)) &&
+                keys.Contains(arrivalAirport.Id.ToString(CultureInfo.InvariantCulture))),
+            Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<VerificationTrigger>(),
+            Arg.Any<string>(), Arg.Any<decimal>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
