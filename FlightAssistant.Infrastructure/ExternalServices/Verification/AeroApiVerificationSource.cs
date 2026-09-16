@@ -9,6 +9,7 @@ using FlightAssistant.Domain.Verification.Enums;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Polly.Timeout;
 
 namespace FlightAssistant.Infrastructure.ExternalServices.Verification
 {
@@ -144,6 +145,15 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 // The resilience pipeline's own attempt/total timeout fired, not this call's ct.
+                _logger.LogWarning("Timed out calling {SourceName} for {Operation} {Code}", SourceName, operation, code);
+                return VerificationSourceFetchResult.SourceError(TimedOutError);
+            }
+            catch (TimeoutRejectedException)
+            {
+                // Final fix G3: the same timeout, a different shape. The standard resilience
+                // handler's own timeout strategy throws Polly.Timeout.TimeoutRejectedException
+                // directly -- it does not derive from OperationCanceledException, so without this
+                // catch it fell into the generic one below and was misreported as a network error.
                 _logger.LogWarning("Timed out calling {SourceName} for {Operation} {Code}", SourceName, operation, code);
                 return VerificationSourceFetchResult.SourceError(TimedOutError);
             }

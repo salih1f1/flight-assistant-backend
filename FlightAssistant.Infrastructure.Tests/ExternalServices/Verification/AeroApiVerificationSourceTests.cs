@@ -10,6 +10,7 @@ using FlightAssistant.Infrastructure.ExternalServices.Verification;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
+using Polly.Timeout;
 
 namespace FlightAssistant.Infrastructure.Tests.ExternalServices.Verification;
 
@@ -228,12 +229,22 @@ public class AeroApiVerificationSourceTests
         Assert.Equal(AeroApiVerificationSource.ParseError, result.Error);
     }
 
-    [Fact]
-    public async Task LookupAsync_ATimeout_IsASourceError_WithNoUpstreamMessage()
+    public static TheoryData<Exception> TimeoutShapes => new()
     {
-        // Simulates the resilience pipeline's own attempt/total timeout firing (not the caller's own
-        // ct): a TaskCanceledException while ct itself was never cancelled.
-        var handler = new ThrowingHttpMessageHandler(new TaskCanceledException("attempt timeout"));
+        // A TaskCanceledException while ct itself was never cancelled -- one shape the resilience
+        // pipeline's own attempt/total timeout can fire as.
+        new TaskCanceledException("attempt timeout"),
+        // Final fix G3: Polly.Timeout.TimeoutRejectedException is the shape the standard resilience
+        // handler's own timeout strategy actually throws -- it does not derive from
+        // OperationCanceledException, so it needs its own catch, not just this pattern-matched one.
+        new TimeoutRejectedException(),
+    };
+
+    [Theory]
+    [MemberData(nameof(TimeoutShapes))]
+    public async Task LookupAsync_ATimeout_IsASourceError_WithNoUpstreamMessage(Exception timeout)
+    {
+        var handler = new ThrowingHttpMessageHandler(timeout);
 
         var result = await Source(handler).LookupAsync(
             VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("SOF", "LBSF"));
@@ -289,6 +300,44 @@ public class AeroApiVerificationSourceTests
         Assert.Equal("23.406167", values[nameof(Airport.Longitude)]);
         // Feet, unconverted -- AeroAPI's `elevation` is already feet.
         Assert.Equal("1742", values[nameof(Airport.ElevationFt)]);
+    }
+
+    /// <summary>
+    /// Final fix G2: this source's own <c>GetString</c>/<c>GetRawNumber</c> already read an absent,
+    /// null or wrong-typed field as null (see their doc), and <c>VerificationComparer</c>'s
+    /// empty-values rule already treats "one side empty, the other not" as never a match -- but
+    /// nothing before this pinned the two together for a real, sparsely-populated AeroAPI row. A
+    /// gap in AeroAPI's own data (no <c>city</c> key at all, an explicit <c>elevation: null</c>)
+    /// must surface as an admin-visible <c>Mismatch</c> naming exactly those columns, not silently
+    /// pass (which would hide a real drift) and not silently drop the columns (which would hide
+    /// AeroAPI's own gap as if it were agreement).
+    /// </summary>
+    [Fact]
+    public async Task LookupAsync_ASparseAirportResponse_ComparedAgainstAPopulatedRow_IsAMismatch_NamingTheMissingColumns()
+    {
+        var handler = new StubHttpMessageHandler(HttpStatusCode.OK, ReadFixture("airport-sparse.json"));
+
+        var result = await Source(handler).LookupAsync(
+            VerificationEntityType.Airport, VerificationSourceLookupKey.ForAirport("SOF", "LBSF"));
+
+        Assert.True(result.Lookup!.IsFound);
+        var values = result.Lookup!.Values!;
+        Assert.Null(values[nameof(Airport.City)]);
+        Assert.Null(values[nameof(Airport.ElevationFt)]);
+        // Everything else the fixture does carry still maps normally -- the gap is isolated to the
+        // two fields AeroAPI's own response actually omits.
+        Assert.Equal("SOF", values[nameof(Airport.Iata)]);
+        Assert.Equal("BG", values[nameof(Airport.CountryCode)]);
+
+        var ours = VerificationCheckedColumns.Project(
+            Airport.Create("SOF", "LBSF", "Sofia Airport", "Sofia", "BG", 42.695194, 23.406167, 1742));
+        var comparison = VerificationComparer.Compare(
+            VerificationEntityType.Airport, ours, new[] { new VerificationSourceResult("aeroapi", result.Lookup!) });
+
+        Assert.Equal(VerificationComparisonOutcome.Mismatch, comparison.Outcome);
+        Assert.Equal(
+            new[] { nameof(Airport.City), nameof(Airport.ElevationFt) },
+            comparison.Differences.Select(d => d.Column).Order());
     }
 
     [Fact]
