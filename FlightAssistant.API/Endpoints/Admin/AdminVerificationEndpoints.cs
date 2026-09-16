@@ -93,7 +93,8 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "Queues one Pending request per key, checked against every selected source, with trigger 'admin', " +
                 "the caller as requested_by, and the selected sources' summed per-row cost as the estimated cost. " +
                 "Keys are not checked for existence: a missing entity completes as Error when the job runs it. " +
-                "A repeated key, or an entity that already has an open request, is counted as skipped. " +
+                "A repeated key, or an entity that already has an open request, is counted as skipped -- never " +
+                "the #418 error cooldown, which gates only the flight-tracking trigger, not this route. " +
                 "400 when entityType is not Airport, Airline or Country; keys or sources are empty; there are more " +
                 "than 1000 keys; a key is malformed for the entity type (the error names it, e.g. 'Keys[1]'); or a " +
                 "source is unknown or does not support the entity type. Queue rows are not audited; requested_by " +
@@ -141,7 +142,9 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "Queues a new Pending request for the same entity type, key and sources, with trigger 'admin', the " +
                 "caller as requested_by, and the sources' current cost. The earlier request is left as it is. " +
                 "400 when one of its sources is no longer registered or no longer supports the entity type. " +
-                "404 when the request does not exist. 409 when the entity already has an open request.")
+                "404 when the request does not exist. 409 when the entity already has an open request -- never " +
+                "the #418 error cooldown, which gates only the flight-tracking trigger: an admin retry always " +
+                "queues regardless of it.")
             .Produces<VerificationEnqueueDto>(202)
             // As on accept-source: the one 400 entry must stay ValidationProblemDetails.
             .ProducesValidationProblem()
