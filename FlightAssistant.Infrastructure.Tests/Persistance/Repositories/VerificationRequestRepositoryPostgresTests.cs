@@ -436,6 +436,81 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         Assert.Empty(await laterRepository.GetSourceNamesInUseAsync());
     }
 
+    /// <summary>
+    /// #424: the reset's abandoned-claim branch (attempts reach <c>maxAttempts</c>) nulls
+    /// <c>failed_source</c> even though the request's last recorded failure was attributed to a real
+    /// source -- abandonment is the final cause, not the source. Break-proof: dropping the
+    /// <c>failed_source</c> <c>CASE</c> from the SQL (so it stays unchanged on both branches) makes
+    /// this fail (see task-2-report.md for the actual output).
+    /// </summary>
+    [Fact]
+    public async Task ResetStuckRunningAsync_ReachingMaxAttempts_NullsFailedSource()
+    {
+        var now = T0.AddHours(1);
+        await SeedEachAsync(Request("1", sources: new[] { "aeroapi" }));
+
+        // Two claims ended in recorded source errors attributed to aeroapi, each due again at once...
+        for (var i = 0; i < 2; i++)
+        {
+            var at = now.AddMinutes(-40 + i);
+            await using var db = CreateDbContext();
+            var repository = Repository(db);
+            Assert.Single(await repository.ClaimBatchAsync(1, at))
+                .RecordSourceError("HTTP 503", at, maxAttempts: 3, backoff: TimeSpan.Zero, failedSource: "aeroapi");
+            await repository.SaveChangesAsync();
+        }
+        // ...and a third claim recorded nothing.
+        await using (var db = CreateDbContext())
+            Assert.Single(await Repository(db).ClaimBatchAsync(1, now.AddMinutes(-11)));
+
+        VerificationStuckResetResult reset;
+        await using (var db = CreateDbContext())
+            reset = await Repository(db).ResetStuckRunningAsync(now - TimeSpan.FromMinutes(10), maxAttempts: 3, now);
+
+        Assert.Equal(new VerificationStuckResetResult(ReturnedToPending: 0, Abandoned: 1), reset);
+        await using var verify = CreateDbContext();
+        var row = await verify.VerificationRequests.AsNoTracking().SingleAsync();
+        Assert.Equal(VerificationRequestStatus.Error, row.Status);
+        Assert.Equal("Claim abandoned: no result recorded after 3 attempts", row.Error);
+        Assert.Null(row.FailedSource);
+    }
+
+    /// <summary>
+    /// #424: the reset's other branch (attempts still below <c>maxAttempts</c>, request returns to
+    /// Pending) leaves <c>failed_source</c> exactly as it leaves <c>error</c> -- unchanged, still
+    /// mirroring the request's last recorded failure. Break-proof: nulling <c>failed_source</c>
+    /// unconditionally in the SQL makes this fail (see task-2-report.md for the actual output).
+    /// </summary>
+    [Fact]
+    public async Task ResetStuckRunningAsync_BelowMaxAttempts_LeavesFailedSourceUnchanged()
+    {
+        var now = T0.AddHours(1);
+        await SeedEachAsync(Request("1", sources: new[] { "aeroapi" }));
+
+        // One recorded source error attributed to aeroapi, leaving attempts to spare...
+        await using (var db = CreateDbContext())
+        {
+            var repository = Repository(db);
+            Assert.Single(await repository.ClaimBatchAsync(1, now.AddMinutes(-40)))
+                .RecordSourceError("HTTP 503", now.AddMinutes(-40), maxAttempts: 5, backoff: TimeSpan.Zero, failedSource: "aeroapi");
+            await repository.SaveChangesAsync();
+        }
+        // ...then a second claim gets stuck without recording anything.
+        await using (var db = CreateDbContext())
+            Assert.Single(await Repository(db).ClaimBatchAsync(1, now.AddMinutes(-11)));
+
+        VerificationStuckResetResult reset;
+        await using (var db = CreateDbContext())
+            reset = await Repository(db).ResetStuckRunningAsync(now - TimeSpan.FromMinutes(10), maxAttempts: 5, now);
+
+        Assert.Equal(new VerificationStuckResetResult(ReturnedToPending: 1, Abandoned: 0), reset);
+        await using var verify = CreateDbContext();
+        var row = await verify.VerificationRequests.AsNoTracking().SingleAsync();
+        Assert.Equal(VerificationRequestStatus.Pending, row.Status);
+        Assert.Equal("HTTP 503", row.Error); // left unchanged by the reset's Pending branch
+        Assert.Equal("aeroapi", row.FailedSource); // mirrors error: unchanged on this branch too
+    }
+
     /// <summary>Starts from a claimed request, whose <c>StartedUtc</c> is set, so clearing it is
     /// what is exercised. A request fresh from <c>Create</c> has it null already.</summary>
     [Fact]

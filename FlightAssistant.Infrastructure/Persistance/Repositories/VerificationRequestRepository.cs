@@ -159,6 +159,11 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             // same pre-increment attempts. RETURNING reports what each row became; AsNoTracking keeps
             // the rows out of this context (it composes no SQL). xmin is returned explicitly because
             // RETURNING v.* never includes system columns. Every value is a parameter.
+            //
+            // failed_source (#424): nulled on the same branch that overwrites error with the
+            // abandoned-claim text -- abandonment is the final cause, not the source. Left unchanged
+            // (v."failed_source", like v."error" beside it) on the branch that returns to Pending,
+            // so it keeps mirroring error rather than drifting from it.
             var reset = await _db.VerificationRequests
                 .FromSql($"""
                     UPDATE "verification_requests" AS v
@@ -167,6 +172,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                         "error" = CASE WHEN v."attempts" + 1 >= {maxAttempts}
                             THEN {abandonedPrefix} || (v."attempts" + 1) || {abandonedSuffix}
                             ELSE v."error" END,
+                        "failed_source" = CASE WHEN v."attempts" + 1 >= {maxAttempts} THEN NULL ELSE v."failed_source" END,
                         "completed_utc" = CASE WHEN v."attempts" + 1 >= {maxAttempts} THEN {nowUtc} ELSE v."completed_utc" END,
                         "next_attempt_utc" = CASE WHEN v."attempts" + 1 >= {maxAttempts} THEN NULL ELSE v."next_attempt_utc" END,
                         "started_utc" = NULL
