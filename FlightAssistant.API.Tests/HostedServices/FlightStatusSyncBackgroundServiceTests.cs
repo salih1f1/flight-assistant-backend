@@ -1,5 +1,6 @@
 using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Commands.Flights;
+using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
@@ -188,7 +189,9 @@ public class FlightStatusSyncBackgroundServiceTests
         window.StatusWindowFutureDays.Returns(2);
         var budget = Substitute.For<IProviderBudgetGuard>();
         budget.GetStateAsync(Arg.Any<CancellationToken>()).Returns(budgetState);
-        var handler = new SyncFlightStatusCommandHandler(_flights, provider, budget, Substitute.For<ICacheService>(), options, window, _clock,
+        var handler = new SyncFlightStatusCommandHandler(_flights, provider,
+            new FlightStatusApplier(_flights, NullLogger<FlightStatusApplier>.Instance), budget,
+            Substitute.For<ICacheService>(), options, window, _clock,
             NullLogger<SyncFlightStatusCommandHandler>.Instance);
         _mediator.Send(Arg.Any<SyncFlightStatusCommand>(), Arg.Any<CancellationToken>())
             .Returns(ci => handler.Handle(ci.ArgAt<SyncFlightStatusCommand>(0), CancellationToken.None).GetAwaiter().GetResult());

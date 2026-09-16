@@ -124,8 +124,10 @@ public class SyncFlightStatusCommandHandlerTests
 
     private SyncFlightStatusCommandHandler Handler(
         ILogger<SyncFlightStatusCommandHandler>? logger = null, IFlightSyncOptions? syncOptions = null,
-        ICacheService? cache = null) =>
-        new(_flights, _provider, _budget, cache ?? _cache, syncOptions ?? new SyncOptions(), new WindowOptions(), _clock,
+        ICacheService? cache = null, ILogger<FlightStatusApplier>? applierLogger = null) =>
+        new(_flights, _provider,
+            new FlightStatusApplier(_flights, applierLogger ?? NullLogger<FlightStatusApplier>.Instance),
+            _budget, cache ?? _cache, syncOptions ?? new SyncOptions(), new WindowOptions(), _clock,
             logger ?? NullLogger<SyncFlightStatusCommandHandler>.Instance);
 
     public SyncFlightStatusCommandHandlerTests()
@@ -661,8 +663,9 @@ public class SyncFlightStatusCommandHandlerTests
         _flights.GetFlightStatusIdByCodeAsync("UNK", Arg.Any<CancellationToken>()).Returns(7);
         _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(false);
 
-        var logger = new CapturingLogger<SyncFlightStatusCommandHandler>();
-        var handler = Handler(logger);
+        // The fallback warning is the applier's now (#386); the assertion below is unchanged.
+        var logger = new CapturingLogger<FlightStatusApplier>();
+        var handler = Handler(applierLogger: logger);
 
         var result = await handler.Handle(new SyncFlightStatusCommand(null, 1, SyncTrigger.Scheduled), CancellationToken.None);
 

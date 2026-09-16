@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
@@ -258,6 +259,10 @@ namespace FlightAssistant.Infrastructure
             // The budget guard (#303) reads this month's spend from the same cached usage report the
             // admin gauge uses. Flight search and status sync ask it before a call they can hold back.
             services.AddScoped<IProviderBudgetGuard, ProviderBudgetGuard>();
+
+            // Shared by the status sync and, from Phase 2 of #364, the alert webhook (#386). Scoped: it
+            // writes through the request's own IFlightRepository and never saves.
+            services.AddScoped<IFlightStatusApplier, FlightStatusApplier>();
 
             // CI results (issue #332): the admin tests page reads the CI workflow's runs and its
             // test-results artifact through the API, so the panel never holds a GitHub token.
