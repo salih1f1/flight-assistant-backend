@@ -428,7 +428,13 @@ public class AdminDataEndpointTests(FlightAssistantWebApplicationFactory factory
     {
         var flight = await SeedFlightAsync($"Z9{Marker()[..6]}", FlightSyncMode.Fast);
 
-        var result = await GetTableDataAsync(factory.CreateAdminClient(), "admin/data/flights?filter=SyncMode:Fast");
+        // sort=-Id&pageSize=200: unscoped, this relies on the seeded row landing inside the
+        // default 50-row page under the ascending primary-key tiebreaker, which puts the newest
+        // row last in a database shared across the whole Integration collection — the same shape
+        // of latent flake fixed on #353. Newest-first plus a generous page makes this row's
+        // presence independent of how many other Fast-mode flights the collection accumulates.
+        var result = await GetTableDataAsync(
+            factory.CreateAdminClient(), "admin/data/flights?filter=SyncMode:Fast&sort=-Id&pageSize=200");
 
         // Flight.Create upper-cases the flight number, so match against the normalized value the
         // handler actually stored, not the pre-normalization local.
