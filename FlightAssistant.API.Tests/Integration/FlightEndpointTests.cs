@@ -302,7 +302,7 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
     }
 
     [Fact]
-    public async Task GetFlightStatus_NotTracking_Returns403_NotFound404()
+    public async Task GetFlightStatus_NotTracking_Returns403_Not404()
     {
         // 403 even for a flight id that does not exist: the API does not reveal whether an id is
         // real to a traveler who does not track it (#405). The declared 404 was unreachable.
