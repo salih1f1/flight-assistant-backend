@@ -192,7 +192,9 @@ namespace FlightAssistant.API.Endpoints
                 "a flight not yet inside the provider's live-status window makes no provider call. " +
                 "A flight synced within the manual-sync cooldown (5 minutes by default) makes no call either. " +
                 "Once this month's flight data budget is used up, only a flight in its near-departure window (by default, from 4 hours before departure until 30 minutes after it lands) is refreshed; any other returns 503. " +
-                "Returns { updated: true } if a new status was recorded, or { updated: false } if nothing new was found or no call was made. " +
+                "Returns { updated: true } when an event was recorded — a new status, or a gate, terminal or baggage-claim change on the current status — " +
+                "and { updated: false } when none was: no call was made, nothing new was found, or the response carried only time changes. " +
+                "{ updated: false } does not mean nothing changed: a moved estimated departure or arrival updates the flight and is visible immediately on GET /flights. " +
                 "Rate-limited per traveler: too many sync requests return 429 with a Retry-After header. " +
                 "Route parameter: flightId — the numeric flight ID.")
             .Produces(200)
