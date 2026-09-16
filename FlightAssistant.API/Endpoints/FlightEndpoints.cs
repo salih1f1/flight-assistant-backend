@@ -81,7 +81,9 @@ namespace FlightAssistant.API.Endpoints
                     r.ActualDepartureUtc, r.ActualArrivalUtc,
                     null, r.Notify, r.CountsTowardCap)).ToList();
 
-                return Results.Ok(new PagedResult<FlightDto>(dtos, result.Total, result.Page, result.PageSize));
+                return Results.Ok(new TrackedFlightsDto(
+                    dtos, result.Total, result.Page, result.PageSize,
+                    result.ActiveTrackedFlights, result.TrackingCap));
             })
             .WithName("GetTrackedFlights")
             .WithSummary("List tracked flights")
@@ -89,8 +91,14 @@ namespace FlightAssistant.API.Endpoints
                 "Returns a paginated list of flights the authenticated traveler is tracking. Supports ?page and ?pageSize (default 50, max 200). " +
                 "countsTowardCap is true while the status sync still polls the flight, which is what occupies a slot against the tracking cap " +
                 "POST /flights enforces; it turns false once the flight has landed or been cancelled for long enough, or its arrival time passed " +
-                "a day ago without a landing being reported. Note it reflects this page only — a traveler's remaining slots cannot be counted from one page of a paginated list.")
-            .Produces<PagedResult<FlightDto>>(200)
+                "a day ago without a landing being reported. " +
+                "activeTrackedFlights counts every flight of this traveler that still occupies a slot, across all pages, and trackingCap is the configured limit — " +
+                "so remaining capacity is trackingCap minus activeTrackedFlights, floored at zero, without paging through the list. " +
+                "A traveler grandfathered above the cap, or one whose cap was later lowered in configuration, reports more active flights than the cap. " +
+                "Both numbers are as of this response: tracking can still be refused if capacity is used in the meantime. " +
+                "total is a different number — it counts every flight the traveler tracks, including ones that no longer occupy a slot. " +
+                "Tracking a flight the traveler already tracks still succeeds at the cap.")
+            .Produces<TrackedFlightsDto>(200)
             .ProducesValidationProblem();
 
             // POST /flights — track a flight
