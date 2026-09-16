@@ -1209,7 +1209,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
 
                     b.HasIndex("EntityType", "EntityKey", "CompletedUtc")
                         .HasDatabaseName("ix_verification_requests_error_cooldown")
-                        .HasFilter("\"status\" = 'Error'");
+                        .HasFilter("\"completed_utc\" IS NOT NULL");
 
                     b.ToTable("verification_requests", (string)null);
                 });

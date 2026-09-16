@@ -14,7 +14,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                 name: "ix_verification_requests_error_cooldown",
                 table: "verification_requests",
                 columns: new[] { "entity_type", "entity_key", "completed_utc" },
-                filter: "\"status\" = 'Error'");
+                filter: "\"completed_utc\" IS NOT NULL");
         }
 
         /// <inheritdoc />

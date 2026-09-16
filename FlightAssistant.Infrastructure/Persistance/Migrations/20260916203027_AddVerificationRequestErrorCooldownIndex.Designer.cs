@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FlightAssistant.Infrastructure.Persistance.Migrations
 {
     [DbContext(typeof(FlightAssistantDbContext))]
-    [Migration("20260916194314_AddVerificationRequestErrorCooldownIndex")]
+    [Migration("20260916203027_AddVerificationRequestErrorCooldownIndex")]
     partial class AddVerificationRequestErrorCooldownIndex
     {
         /// <inheritdoc />
@@ -1212,7 +1212,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
 
                     b.HasIndex("EntityType", "EntityKey", "CompletedUtc")
                         .HasDatabaseName("ix_verification_requests_error_cooldown")
-                        .HasFilter("\"status\" = 'Error'");
+                        .HasFilter("\"completed_utc\" IS NOT NULL");
 
                     b.ToTable("verification_requests", (string)null);
                 });
