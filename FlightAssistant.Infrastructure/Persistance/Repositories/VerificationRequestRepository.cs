@@ -78,7 +78,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 // an older Error, since the most recent outcome is what counts. Mirrors alreadyOpen
                 // above: one round trip, AsNoTracking, projecting just the keys into a HashSet -- the
                 // shape ix_verification_requests_error_cooldown (entity_type, entity_key,
-                // completed_utc, filtered to status = Error) exists to answer.
+                // completed_utc, filtered to completed_utc IS NOT NULL, not status = Error --
+                // fix round 1) exists to answer: the filter has to cover every completed row, not
+                // only Error ones, because this query's second half (below) asks "is there a newer
+                // completion of any status", which a status='Error' partial index cannot serve.
                 var cooling = (await _db.VerificationRequests
                         .AsNoTracking()
                         .Where(r => r.EntityType == entityType
