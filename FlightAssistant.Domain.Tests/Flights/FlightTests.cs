@@ -78,6 +78,23 @@ namespace FlightAssistant.Domain.Tests.Flights
         }
 
         [Fact]
+        public void MarkTracked_RaisesFlightTrackedWithTheFlightsOwnIds()
+        {
+            // #410, R1/R2: carries only ids, read off the flight itself, so a repeat track still lets
+            // the handler re-check the airline/airports without re-reading the flight.
+            var flight = NewFlight();
+
+            flight.MarkTracked(Now);
+
+            var evt = Assert.IsType<FlightTracked>(Assert.Single(flight.DomainEvents));
+            Assert.Equal(flight.Id, evt.FlightId);
+            Assert.Equal(flight.AirlineId, evt.AirlineId);
+            Assert.Equal(flight.DepartureAirportId, evt.DepartureAirportId);
+            Assert.Equal(flight.ArrivalAirportId, evt.ArrivalAirportId);
+            Assert.Equal(Now, evt.OccurredUtc);
+        }
+
+        [Fact]
         public void ApplySyncPlan_SetsModeAndNextDue()
         {
             var flight = NewFlight();
