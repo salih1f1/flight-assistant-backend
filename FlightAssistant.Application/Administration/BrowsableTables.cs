@@ -343,6 +343,7 @@ namespace FlightAssistant.Application.Administration
                 nameof(VerificationRequest.DifferencesJson),
                 nameof(VerificationRequest.SourceValuesJson),
                 nameof(VerificationRequest.Error),
+                nameof(VerificationRequest.FailedSource),
                 nameof(VerificationRequest.EstimatedCostUsd),
                 nameof(VerificationRequest.RequestedBy),
                 nameof(VerificationRequest.RequestedUtc),

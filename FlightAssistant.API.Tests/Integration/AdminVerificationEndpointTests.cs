@@ -493,8 +493,8 @@ public class AdminVerificationEndpointTests(FlightAssistantWebApplicationFactory
             new[]
             {
                 "Id", "EntityType", "EntityKey", "Sources", "Trigger", "Status", "Attempts", "NextAttemptUtc",
-                "DifferencesJson", "SourceValuesJson", "Error", "EstimatedCostUsd", "RequestedBy", "RequestedUtc",
-                "StartedUtc", "CompletedUtc"
+                "DifferencesJson", "SourceValuesJson", "Error", "FailedSource", "EstimatedCostUsd", "RequestedBy",
+                "RequestedUtc", "StartedUtc", "CompletedUtc"
             }.Order(),
             row.Keys.Order());
     }

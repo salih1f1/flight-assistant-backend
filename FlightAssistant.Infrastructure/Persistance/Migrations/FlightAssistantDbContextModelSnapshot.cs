@@ -1151,6 +1151,11 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasColumnType("numeric(10,4)")
                         .HasColumnName("estimated_cost_usd");
 
+                    b.Property<string>("FailedSource")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("failed_source");
+
                     b.Property<DateTime?>("NextAttemptUtc")
                         .HasColumnType("timestamptz")
                         .HasColumnName("next_attempt_utc");
@@ -1198,6 +1203,12 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                         .HasColumnName("trigger");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CompletedUtc")
+                        .HasDatabaseName("ix_verification_requests_error_attribution")
+                        .HasFilter("\"status\" = 'Error'");
+
+                    NpgsqlIndexBuilderExtensions.IncludeProperties(b.HasIndex("CompletedUtc"), new[] { "FailedSource", "EntityType" });
 
                     b.HasIndex("EntityType", "EntityKey")
                         .IsUnique()
