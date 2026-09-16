@@ -38,24 +38,26 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
     [Fact]
     public async Task GetTrackedFlights_CarriesSlotUsageAndTheCap()
     {
-        var userId = Guid.NewGuid().ToString();
-        var client = factory.CreateUserClient(userId);
+        // Track one flight, so the expected count is 1 rather than 0 (#397). Asserting 0 on a
+        // traveler that tracks nothing cannot distinguish a computed count from a hardcoded one —
+        // proven: hardcoding 0 in the endpoint left the previous version of this test green.
+        // The helper seeds its own reference rows and dates the flight 30 days out, so the flight
+        // is still active; one POST stays inside the Testing profile's 2 tracking permits.
+        var (client, body) = await TravelerReadyToTrackAsync();
 
-        await client.PostAsJsonAsync("travelers", new
-        {
-            email = $"{userId}@example.com",
-            displayName = "Test",
-            countryCode = (string?)null
-        });
+        // Fail loudly here rather than silently asserting a count further down.
+        Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync("flights", body)).StatusCode);
 
-        var body = await client.GetFromJsonAsync<JsonElement>("flights?page=1&pageSize=10");
+        var page = await client.GetFromJsonAsync<JsonElement>("flights?page=1&pageSize=10");
 
         var cap = factory.Services.GetRequiredService<IFlightSyncOptions>().MaxActiveTrackedFlightsPerTraveler;
-        Assert.Equal(0, body.GetProperty("activeTrackedFlights").GetInt32());
-        Assert.Equal(cap, body.GetProperty("trackingCap").GetInt32());
+        Assert.Equal(1, page.GetProperty("activeTrackedFlights").GetInt32());
+        Assert.Equal(cap, page.GetProperty("trackingCap").GetInt32());
         // Additive: the paging members a client already reads are untouched.
-        Assert.Equal(0, body.GetProperty("total").GetInt32());
-        Assert.Equal(1, body.GetProperty("page").GetInt32());
+        Assert.Equal(1, page.GetProperty("total").GetInt32());
+        Assert.Equal(1, page.GetProperty("page").GetInt32());
+        // The flight is 30 days out, so it still occupies a slot.
+        Assert.True(page.GetProperty("items")[0].GetProperty("countsTowardCap").GetBoolean());
     }
 
     [Fact]
