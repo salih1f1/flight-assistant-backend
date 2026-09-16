@@ -27,7 +27,25 @@ namespace FlightAssistant.Application.Queries.Flights
         bool CountsTowardCap
     );
 
-    public record GetTravelerFlightsQuery(Guid TravelerId, PagedRequest Paging) : IRequest<PagedResult<TravelerFlightResult>>;
+    /// <summary>
+    /// A page of tracked flights plus the traveler's slot usage (#397). Not a <c>PagedResult</c>:
+    /// the last two members describe the traveler, not the page, and a client cannot derive them
+    /// from one page — future-dated cancelled flights sort first, so page 1 can be entirely
+    /// non-counting while the slot-holding flights sit on page 2.
+    /// </summary>
+    public record TravelerFlightsPage(
+        IReadOnlyList<TravelerFlightResult> Items,
+        int Total,
+        int Page,
+        int PageSize,
+        // Flights of this traveler the status sync still polls, across every page — the same count
+        // POST /flights refuses a 409 against, from the same repository method.
+        int ActiveTrackedFlights,
+        // FlightSync:MaxActiveTrackedFlightsPerTraveler, so no client hardcodes it.
+        int TrackingCap
+    );
+
+    public record GetTravelerFlightsQuery(Guid TravelerId, PagedRequest Paging) : IRequest<TravelerFlightsPage>;
 
     public class GetTravelerFlightsQueryValidator : AbstractValidator<GetTravelerFlightsQuery>
     {
@@ -37,7 +55,7 @@ namespace FlightAssistant.Application.Queries.Flights
         }
     }
 
-    public sealed class GetTravelerFlightsQueryHandler : IRequestHandler<GetTravelerFlightsQuery, PagedResult<TravelerFlightResult>>
+    public sealed class GetTravelerFlightsQueryHandler : IRequestHandler<GetTravelerFlightsQuery, TravelerFlightsPage>
     {
         private readonly IFlightRepository _flights;
         private readonly IRefDataRepository _refData;
@@ -59,7 +77,7 @@ namespace FlightAssistant.Application.Queries.Flights
             _timeProvider = timeProvider;
         }
 
-        public async Task<PagedResult<TravelerFlightResult>> Handle(GetTravelerFlightsQuery query, CancellationToken ct)
+        public async Task<TravelerFlightsPage> Handle(GetTravelerFlightsQuery query, CancellationToken ct)
         {
             var (rows, total) = await _flights.GetTravelerFlightsAsync(query.TravelerId, query.Paging.Page, query.Paging.PageSize, ct);
 
@@ -100,7 +118,16 @@ namespace FlightAssistant.Application.Queries.Flights
                     !FlightSyncPlanner.IsStopped(r.Flight, now, planOptions)
                 ));
             }
-            return new PagedResult<TravelerFlightResult>(results, total, query.Paging.Page, query.Paging.PageSize);
+
+            // The traveler's slot usage across every page, not just this one (#397). Deliberately the
+            // same method TrackFlightCommand enforces its 409 with, called with the same clock reading
+            // as the per-row flags above, so the count can never contradict the flags beside it.
+            var activeTrackedFlights = await _flights.CountActiveTrackedFlightsAsync(
+                query.TravelerId, now, _syncOptions.StopAfterArrival, _syncOptions.StopWithoutArrivalAfter, ct);
+
+            return new TravelerFlightsPage(
+                results, total, query.Paging.Page, query.Paging.PageSize,
+                activeTrackedFlights, _syncOptions.MaxActiveTrackedFlightsPerTraveler);
         }
     }
 }

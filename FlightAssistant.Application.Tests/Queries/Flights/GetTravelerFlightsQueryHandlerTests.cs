@@ -185,4 +185,45 @@ public class GetTravelerFlightsQueryHandlerTests
 
         Assert.False(result.Items[0].CountsTowardCap);
     }
+
+    [Fact]
+    public async Task ReportsTheTravelersSlotUsageAndTheConfiguredCap()
+    {
+        var travelerId = Guid.NewGuid();
+        _flights.GetTravelerFlightsAsync(travelerId, 1, 50, Arg.Any<CancellationToken>())
+            .Returns(((IReadOnlyList<(TravelerFlight, Flight)>)[], 0));
+        _refData.GetAirlineIataMapAsync(Arg.Any<IReadOnlyList<int>>(), Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<int, string>());
+        _refData.GetAirportIataMapAsync(Arg.Any<IReadOnlyList<int>>(), Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<int, string>());
+        _flights.CountActiveTrackedFlightsAsync(
+            travelerId, Arg.Any<DateTime>(), Arg.Any<TimeSpan>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(2);
+
+        var result = await _handler.Handle(new GetTravelerFlightsQuery(travelerId, new PagedRequest(1, 50)), CancellationToken.None);
+
+        // Page 1 is empty, yet the traveler holds 2 of 3 slots — the exact case #397 exists for.
+        Assert.Equal(2, result.ActiveTrackedFlights);
+        Assert.Equal(3, result.TrackingCap);
+    }
+
+    [Fact]
+    public async Task TheSlotCountUsesTheSameClockAndWindowsAsTheRowFlags()
+    {
+        var travelerId = Guid.NewGuid();
+        _flights.GetTravelerFlightsAsync(travelerId, 1, 50, Arg.Any<CancellationToken>())
+            .Returns(((IReadOnlyList<(TravelerFlight, Flight)>)[], 0));
+        _refData.GetAirlineIataMapAsync(Arg.Any<IReadOnlyList<int>>(), Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<int, string>());
+        _refData.GetAirportIataMapAsync(Arg.Any<IReadOnlyList<int>>(), Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<int, string>());
+
+        await _handler.Handle(new GetTravelerFlightsQuery(travelerId, new PagedRequest(1, 50)), CancellationToken.None);
+
+        // The exact instant and the injected (non-default) windows: a second clock reading, or the
+        // planner's production defaults, both fail here. This is what makes the returned count the
+        // same rule POST /flights enforces rather than a lookalike.
+        await _flights.Received(1).CountActiveTrackedFlightsAsync(
+            travelerId, Now, TimeSpan.FromMinutes(20), TimeSpan.FromHours(12), Arg.Any<CancellationToken>());
+    }
 }

@@ -3335,7 +3335,7 @@
           "Flights"
         ],
         "summary": "List tracked flights",
-        "description": "Returns a paginated list of flights the authenticated traveler is tracking. Supports ?page and ?pageSize (default 50, max 200). countsTowardCap is true while the status sync still polls the flight, which is what occupies a slot against the tracking cap POST /flights enforces; it turns false once the flight has landed or been cancelled for long enough, or its arrival time passed a day ago without a landing being reported. Note it reflects this page only — a traveler's remaining slots cannot be counted from one page of a paginated list.",
+        "description": "Returns a paginated list of flights the authenticated traveler is tracking. Supports ?page and ?pageSize (default 50, max 200). countsTowardCap is true while the status sync still polls the flight, which is what occupies a slot against the tracking cap POST /flights enforces; it turns false once the flight has landed or been cancelled for long enough, or its arrival time passed a day ago without a landing being reported. activeTrackedFlights counts every flight of this traveler that still occupies a slot, across all pages, and trackingCap is the configured limit — so remaining capacity is trackingCap minus activeTrackedFlights, without paging through the list. Tracking a flight the traveler already tracks still succeeds at the cap.",
         "operationId": "GetTrackedFlights",
         "parameters": [
           {
@@ -3361,7 +3361,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FlightDtoPagedResult"
+                  "$ref": "#/components/schemas/TrackedFlightsDto"
                 }
               }
             }
@@ -5692,31 +5692,6 @@
         },
         "additionalProperties": false
       },
-      "FlightDtoPagedResult": {
-        "type": "object",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/FlightDto"
-            },
-            "nullable": true
-          },
-          "total": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "page": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "pageSize": {
-            "type": "integer",
-            "format": "int32"
-          }
-        },
-        "additionalProperties": false
-      },
       "FlightSearchResultDto": {
         "type": "object",
         "properties": {
@@ -6211,6 +6186,39 @@
           "scheduledArrivalUtc": {
             "type": "string",
             "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TrackedFlightsDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlightDto"
+            },
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "activeTrackedFlights": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "trackingCap": {
+            "type": "integer",
+            "format": "int32"
           }
         },
         "additionalProperties": false

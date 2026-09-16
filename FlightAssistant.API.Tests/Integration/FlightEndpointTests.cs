@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Contracts.Requests.Flights;
 using FlightAssistant.Domain.Flights.Entities;
@@ -32,6 +33,29 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
 
         var response = await client.GetAsync("flights?page=1&pageSize=10");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetTrackedFlights_CarriesSlotUsageAndTheCap()
+    {
+        var userId = Guid.NewGuid().ToString();
+        var client = factory.CreateUserClient(userId);
+
+        await client.PostAsJsonAsync("travelers", new
+        {
+            email = $"{userId}@example.com",
+            displayName = "Test",
+            countryCode = (string?)null
+        });
+
+        var body = await client.GetFromJsonAsync<JsonElement>("flights?page=1&pageSize=10");
+
+        var cap = factory.Services.GetRequiredService<IFlightSyncOptions>().MaxActiveTrackedFlightsPerTraveler;
+        Assert.Equal(0, body.GetProperty("activeTrackedFlights").GetInt32());
+        Assert.Equal(cap, body.GetProperty("trackingCap").GetInt32());
+        // Additive: the paging members a client already reads are untouched.
+        Assert.Equal(0, body.GetProperty("total").GetInt32());
+        Assert.Equal(1, body.GetProperty("page").GetInt32());
     }
 
     [Fact]
