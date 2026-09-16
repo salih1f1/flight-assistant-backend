@@ -293,20 +293,35 @@ public class VerificationRequestProcessorTests
 
     // ── AeroAPI budget gate (R4/R5, #401 task 2) ──────────────────────────────
 
+    /// <summary>
+    /// Claims a request with two <em>prior</em> attempts already recorded, not a fresh one -- a fresh
+    /// claim's <c>Attempts</c> is already 0, so "unchanged" and "reset to zero" would read identically.
+    /// Only a request that walks in with a non-zero attempt count, a stored error and a next-attempt
+    /// timestamp can prove the pause leaves all three exactly as they were (R5), rather than merely
+    /// leaving zero as zero.
+    /// </summary>
     [Fact]
     public async Task ProcessAsync_AeroApiBudgetExhausted_PausesTheRequest_ExactlyAsItWas_NoAttemptNoErrorNoSave()
     {
         _budget.State = ProviderBudgetState.Exhausted;
-        var request = ClaimedAirportRequest(new[] { "aeroapi" });
+        var request = ClaimedAirportRequest(new[] { "aeroapi" }, priorAttempts: 2);
+        var priorAttempts = request.Attempts;
+        var priorError = request.Error;
+        var priorNextAttemptUtc = request.NextAttemptUtc;
         var aeroApi = AirportSource("aeroapi", VerificationSourceFetchResult.Found(VerificationCheckedColumns.Project(Heathrow())));
 
         var outcome = await Processor(new FakeVerificationSourceRegistry(aeroApi)).ProcessAsync(Claim);
 
         Assert.Equal(VerificationProcessOutcome.Paused, outcome);
-        // Untouched: still the claimed Running request, no attempt counted, no error recorded (R5).
+        // Untouched: still the claimed Running request, and its prior attempt count, error and
+        // next-attempt timestamp survive the pause exactly as they were (R5) -- no attempt counted,
+        // no error recorded, nothing reset.
         Assert.Equal(VerificationRequestStatus.Running, request.Status);
-        Assert.Equal(0, request.Attempts);
-        Assert.Null(request.Error);
+        Assert.Equal(2, priorAttempts);
+        Assert.Equal(priorAttempts, request.Attempts);
+        Assert.Equal(priorError, request.Error);
+        Assert.NotNull(request.Error);
+        Assert.Equal(priorNextAttemptUtc, request.NextAttemptUtc);
         Assert.Null(request.CompletedUtc);
         Assert.Empty(aeroApi.Lookups);
 
