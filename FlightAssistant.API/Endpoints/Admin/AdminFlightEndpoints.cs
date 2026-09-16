@@ -60,7 +60,7 @@ namespace FlightAssistant.API.Endpoints.Admin
             .WithSummary("Get flight detail")
             .WithDescription(
                 $"Returns the flight with its current status and its {GetAdminFlightDetailQueryHandler.MaxStatusHistory} " +
-                "most recent status events, most recently recorded first — the record of what the sync actually saw, in the order it saw it. " +
+                "most recent status events, most recently recorded first (by event id) — the record of what the sync actually saw, in the order it saw it. " +
                 "Not ordered by effectiveAtUtc, which can move backwards when an estimate returns to an earlier value. " +
                 "Not the full history: a long-tracked flight polled every couple of minutes accumulates " +
                 "status-event rows without bound. StatusHistoryTruncated is true when the cap actually " +

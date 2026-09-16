@@ -1,4 +1,5 @@
 using FlightAssistant.Application.FlightSync;
+using FlightAssistant.Application.Queries.Admin.Flights;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Flights.Enums;
 using FlightAssistant.Domain.ReferenceData.Entities;
@@ -338,6 +339,28 @@ public class FlightRepositoryTests : PostgresTestBase
         Assert.Equal(new[] { second.Id, first.Id }, (await repo.GetFlightStatusEventsAsync(flight.Id)).Select(e => e.Id));
         Assert.Equal(second.Id, Assert.Single(await repo.GetRecentFlightStatusEventsAsync(flight.Id, limit: 1)).Id);
         Assert.Equal(second.Id, (await repo.GetLatestFlightStatusEventAsync(flight.Id))!.Id);
+    }
+
+    [Fact]
+    public async Task GetFlightStatusEventsAsync_ReturnsEveryEvent_NotJustTheAdminDrilldownCap()
+    {
+        using var db = CreateContext();
+        var flight = FlightArriving(db, "TK33", SyncNow.AddHours(3));
+        var scheduled = StatusId(db, "SCH");
+
+        const int total = GetAdminFlightDetailQueryHandler.MaxStatusHistory + 5;
+        for (var i = 0; i < total; i++)
+        {
+            db.FlightStatusEvents.Add(FlightStatusEvent.Create(
+                flight.Id, scheduled, SyncNow.AddMinutes(i), "AeroAPI", externalId: $"fa-{i}"));
+        }
+        db.SaveChanges();
+
+        var repo = Repository(db, ClockAt(SyncNow));
+
+        Assert.Equal(total, (await repo.GetFlightStatusEventsAsync(flight.Id)).Count);
+        Assert.Equal(GetAdminFlightDetailQueryHandler.MaxStatusHistory,
+            (await repo.GetRecentFlightStatusEventsAsync(flight.Id, GetAdminFlightDetailQueryHandler.MaxStatusHistory)).Count);
     }
 
     [Fact]

@@ -27,7 +27,8 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
     /// first (by id, #351 — not by effective time, which can move backwards). Backs
     /// <c>GET /admin/flights/{id}/detail</c>. <c>CurrentStatus</c> is simply
     /// <c>StatusHistory[0]</c> (null when the flight has no recorded events yet) — a flight has no
-    /// separate "current status" column of its own; it is always derived from the newest event.
+    /// separate "current status" column of its own; it is always derived from the most recently
+    /// recorded event (by event id).
     /// <c>StatusHistoryTruncated</c> is true when <see cref="StatusHistory"/> was cut off at
     /// <see cref="GetAdminFlightDetailQueryHandler.MaxStatusHistory"/> — without it, a response with
     /// exactly 50 events is indistinguishable from "this flight had exactly 50 events", and a caller
