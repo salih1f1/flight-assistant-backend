@@ -146,7 +146,7 @@ public class AcceptVerificationSourcePostgresTests : PostgresTestBase
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private AcceptVerificationSourceCommandHandler Handler(FlightAssistantDbContext db) =>
-        new(new VerificationRequestRepository(db, _time), new AirportRepository(db), new AirlineRepository(db), new CountryRepository(db), _time);
+        new(new VerificationRequestRepository(db, _time, new FakeJobOptions()), new AirportRepository(db), new AirlineRepository(db), new CountryRepository(db), _time);
 
     /// <summary>Program.cs's registration for an <c>/admin</c> request: the interceptor reads an actor-bearing admin context.</summary>
     private FlightAssistantDbContext CreateAuditedDbContext() =>

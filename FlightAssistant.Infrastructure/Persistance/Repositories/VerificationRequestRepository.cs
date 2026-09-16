@@ -18,11 +18,13 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
     {
         private readonly FlightAssistantDbContext _db;
         private readonly TimeProvider _timeProvider;
+        private readonly IVerificationJobOptions _options;
 
-        public VerificationRequestRepository(FlightAssistantDbContext db, TimeProvider timeProvider)
+        public VerificationRequestRepository(FlightAssistantDbContext db, TimeProvider timeProvider, IVerificationJobOptions options)
         {
             _db = db;
             _timeProvider = timeProvider;
+            _options = options;
         }
 
         public async Task<VerificationEnqueueResult> EnqueueAsync(
@@ -60,6 +62,47 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             var toQueue = distinct.Where(r => !alreadyOpen.Contains(r.EntityKey)).ToList();
             skipped += distinct.Count - toQueue.Count;
             if (toQueue.Count == 0) return new VerificationEnqueueResult(0, skipped);
+
+            // #418: flight-tracking trigger only (R2) -- RetryVerificationRequestCommandHandler turns
+            // any Skipped > 0 into a 409 claiming an open request exists, so a cooldown skip must
+            // never reach an admin retry/enqueue. TimeSpan.Zero disables the cooldown and skips this
+            // query entirely (R6), matching IdleRelease's convention.
+            if (trigger == VerificationTrigger.Flight && _options.ErrorCooldown > TimeSpan.Zero)
+            {
+                var cutoffUtc = requestedUtc - _options.ErrorCooldown;
+                var toQueueKeys = toQueue.Select(r => r.EntityKey).ToList();
+
+                // Which of the remaining candidates last completed as Error at or after cutoffUtc
+                // (R3): an Error row in the window such that no other row for the same key completed
+                // later -- a newer completion of any status (Verified/Mismatch/NotFound) supersedes
+                // an older Error, since the most recent outcome is what counts. Mirrors alreadyOpen
+                // above: one round trip, AsNoTracking, projecting just the keys into a HashSet -- the
+                // shape ix_verification_requests_error_cooldown (entity_type, entity_key,
+                // completed_utc, filtered to status = Error) exists to answer.
+                var cooling = (await _db.VerificationRequests
+                        .AsNoTracking()
+                        .Where(r => r.EntityType == entityType
+                            && toQueueKeys.Contains(r.EntityKey)
+                            && r.Status == VerificationRequestStatus.Error
+                            && r.CompletedUtc != null
+                            && r.CompletedUtc >= cutoffUtc
+                            && !_db.VerificationRequests.Any(newer =>
+                                newer.EntityType == entityType
+                                && newer.EntityKey == r.EntityKey
+                                && newer.CompletedUtc != null
+                                && newer.CompletedUtc > r.CompletedUtc))
+                        .Select(r => r.EntityKey)
+                        .Distinct()
+                        .ToListAsync(ct))
+                    .ToHashSet(StringComparer.Ordinal);
+
+                if (cooling.Count > 0)
+                {
+                    toQueue = toQueue.Where(r => !cooling.Contains(r.EntityKey)).ToList();
+                    skipped += cooling.Count;
+                    if (toQueue.Count == 0) return new VerificationEnqueueResult(0, skipped);
+                }
+            }
 
             // Usual path: one save for the whole batch.
             _db.VerificationRequests.AddRange(toQueue);

@@ -531,7 +531,7 @@ public class VerificationCyclePostgresTests : PostgresTestBase
     }
 
     private VerificationRequestRepository AnotherWorker(FlightAssistantDbContext db, DateTime at) =>
-        new(db, new FakeTimeProvider(new DateTimeOffset(at)));
+        new(db, new FakeTimeProvider(new DateTimeOffset(at)), new JobOptions(BatchSize: 10, MaxAttempts: 3, IdleRelease: TimeSpan.Zero));
 
     private async Task<IReadOnlyList<VerificationRequest>> ClaimOnAnotherWorkerAsync(DateTime at, int batchSize)
     {
