@@ -18,7 +18,7 @@ namespace FlightAssistant.Application.Interfaces.ExternalServices
         DateTime? ScheduledDepartureUtc = null,
         // The provider's current scheduled arrival (#399), the counterpart of ScheduledDepartureUtc.
         // A retimed flight's stored schedule is refreshed from both, so the sync planner's windows and
-        // the tracking cap's stop rule stop working from the times the flight was first tracked with.
+        // the tracking cap's stop rule no longer work from the times the flight was first tracked with.
         DateTime? ScheduledArrivalUtc = null
     );
 

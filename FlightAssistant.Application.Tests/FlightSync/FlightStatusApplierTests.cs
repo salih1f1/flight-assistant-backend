@@ -139,11 +139,41 @@ public class FlightStatusApplierTests
             .Returns(FlightStatusEvent.Create(flight.Id, 2, Now, Source, "ext-1", "A1", "T5"));
 
         var retimedDeparture = Now.AddHours(2);
-        var result = Status() with { ScheduledDepartureUtc = retimedDeparture };
+        var retimedArrival = Now.AddHours(10);
+        var result = Status() with
+        {
+            ScheduledDepartureUtc = retimedDeparture,
+            ScheduledArrivalUtc = retimedArrival
+        };
 
         Assert.False(await Apply(flight, result));
 
         Assert.Equal(retimedDeparture, flight.ScheduledDepartureUtc);
+        Assert.Equal(retimedArrival, flight.ScheduledArrivalUtc);
+    }
+
+    [Fact]
+    public async Task ANewStatus_WithARetimedSchedule_UpdatesTheStoredSchedule()
+    {
+        // The retime usually arrives *with* the status change (#399): SCH -> DLY is how an
+        // airline's retime normally surfaces, so this path must refresh the schedule too.
+        // This pins both the applier's arguments and Flight.ApplyStatusUpdate's forwarding —
+        // without it, deleting that forwarding leaves every test green.
+        var flight = AFlight();
+        _flights.GetLatestFlightStatusEventAsync(flight.Id, Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var retimedDeparture = Now.AddHours(2);
+        var retimedArrival = Now.AddHours(10);
+        var result = Status() with
+        {
+            ScheduledDepartureUtc = retimedDeparture,
+            ScheduledArrivalUtc = retimedArrival
+        };
+
+        Assert.True(await Apply(flight, result));
+
+        Assert.Equal(retimedDeparture, flight.ScheduledDepartureUtc);
+        Assert.Equal(retimedArrival, flight.ScheduledArrivalUtc);
     }
 
     [Fact]
