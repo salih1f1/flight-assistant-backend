@@ -58,7 +58,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         private readonly int _statusWindowPastDays;
         private readonly int _statusWindowFutureDays;
 
-        public string ProviderName => "AeroAPI";
+        public string ProviderName => FlightStatusSources.AeroApi;
 
         public AeroApiFlightStatusProvider(
             HttpClient http,

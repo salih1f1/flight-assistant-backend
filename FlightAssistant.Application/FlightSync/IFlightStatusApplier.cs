@@ -15,8 +15,9 @@ namespace FlightAssistant.Application.FlightSync
         /// Applies an already-fetched status. Makes no provider call and never saves: the caller owns the
         /// unit of work, so a poll and an alert can each choose their own transaction boundary.
         /// </summary>
-        /// <param name="source">The provider name recorded on the event and hashed into its dedup hash.
-        /// It must stay the same string for a given provider, or stored hashes stop matching.</param>
+        /// <param name="source">The provider name recorded on the event and hashed into its dedup hash —
+        /// <see cref="FlightStatusSources.AeroApi"/> for AeroAPI. Every path recording a status from the same
+        /// provider must pass the same constant, or stored hashes stop matching and each status is recorded twice.</param>
         /// <returns>Whether an event was recorded.</returns>
         Task<bool> ApplyAsync(
             Flight flight, FlightStatusResult result, string source, DateTime nowUtc, CancellationToken ct = default);
