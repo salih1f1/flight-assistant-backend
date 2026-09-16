@@ -99,6 +99,27 @@ public class RetryVerificationRequestCommandHandlerTests
         Assert.Contains("Airport 42 already has an open verification request", ex.Message);
     }
 
+    /// <summary>
+    /// #418 R2: the error-cooldown gate lives in <c>VerificationRequestRepository.EnqueueAsync</c>
+    /// and applies only to <c>VerificationTrigger.Flight</c>. A retry always asks with
+    /// <c>VerificationTrigger.Admin</c>, so an entity whose last check errored moments ago must
+    /// still queue -- this handler turns any <c>Skipped &gt; 0</c> into a 409 claiming an open
+    /// request exists, which would be false the moment a cooldown skip ever reached an admin
+    /// trigger.
+    /// </summary>
+    [Fact]
+    public async Task Handle_TheEntitysLastCheckErroredMomentsAgo_StillQueues_AndDoesNotConflict()
+    {
+        StoredRequest(VerificationEntityType.Airport, "42", "ourairports");
+        var queue = new CooldownGatedFakeQueue("42");
+
+        var result = await new RetryVerificationRequestCommandHandler(_requests, queue, Registry)
+            .Handle(new RetryVerificationRequestCommand(RequestId, Actor), CancellationToken.None);
+
+        Assert.Equal(new VerificationEnqueueResult(1, 0), result);
+        Assert.Equal(VerificationTrigger.Admin, Assert.Single(queue.Calls));
+    }
+
     [Fact]
     public async Task Handle_QueuesTheSameEntityAndSources_AsAnAdminRetry_WithTheActorAndTheRegistrysCost()
     {
