@@ -1,6 +1,7 @@
 using System.Globalization;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Interfaces.Verification;
+using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Domain.Common.Interfaces;
 using FlightAssistant.Domain.Verification.Entities;
 using FlightAssistant.Domain.Verification.Enums;
@@ -54,7 +55,18 @@ namespace FlightAssistant.Application.Verification
         /// request is still Running with no attempt counted. The stuck-request reset returns it to
         /// Pending after 10 minutes and counts the attempt then. Only the cycle runner reports this.
         /// </summary>
-        FailureUnrecorded
+        FailureUnrecorded,
+
+        /// <summary>
+        /// The request names <see cref="VerificationRequestProcessor.BudgetGatedSourceName"/> and
+        /// <see cref="IProviderBudgetGuard"/> reports <see cref="ProviderBudgetState.Exhausted"/> (R4):
+        /// the request is returned to Pending exactly as it was -- no attempt counted, no error
+        /// recorded (R5) -- for the queue to pick up next cycle. Deliberately not
+        /// <see cref="RetryScheduled"/> or <see cref="Error"/>: this is not a failure, it is the job
+        /// declining to spend money it doesn't have. Only the cycle runner reports this specially,
+        /// distinct from both a failed request and a failed cycle.
+        /// </summary>
+        Paused
     }
 
     /// <summary>
@@ -80,6 +92,22 @@ namespace FlightAssistant.Application.Verification
     /// <see cref="VerificationClaimLostException"/>. Either way the outcome is
     /// <see cref="VerificationProcessOutcome.ClaimLost"/> and no attempt is recorded.
     /// </para>
+    ///
+    /// <para>
+    /// <b>The AeroAPI budget gate (R4/R5, #401 task 2).</b> Checked right after source resolution --
+    /// after an unregistered/unsupported source has already had its chance to fail the request
+    /// outright, before anything is fetched. Only a request naming
+    /// <see cref="BudgetGatedSourceName"/> asks <see cref="IProviderBudgetGuard"/> at all; one naming
+    /// only free sources is never gated, budget exhausted or not. <c>SoftLimit</c> and <c>Normal</c>
+    /// proceed -- the soft limit exists to slow flight traffic, not an admin's explicitly requested
+    /// check. <c>Exhausted</c> returns the claim to Pending untouched (see
+    /// <see cref="VerificationProcessOutcome.Paused"/>) rather than recording anything through
+    /// <see cref="RecordSourceErrorAsync"/>, which would count an attempt and write error text --
+    /// forbidden outcomes for a pause. <paramref name="aeroApiBudgetPaused"/> (see
+    /// <see cref="ProcessAsync"/>) lets the cycle runner skip asking the guard again once one request
+    /// this cycle has already found it <c>Exhausted</c>: a gated request is paused on that flag alone,
+    /// no second read.
+    /// </para>
     /// </summary>
     public sealed class VerificationRequestProcessor
     {
@@ -88,12 +116,22 @@ namespace FlightAssistant.Application.Verification
         /// <summary>Joins source names in <c>IVerifiable.VerificationSource</c>.</summary>
         public const char VerifiedSourceSeparator = '+';
 
+        /// <summary>
+        /// The verification source name that spends AeroAPI's metered budget (#401, R4): only a
+        /// request naming this source ever consults <see cref="IProviderBudgetGuard"/>. Matches
+        /// <c>AeroApiVerificationSource.SourceName</c> (Infrastructure) by value -- Application
+        /// cannot reference that type, so this is Application's own copy of the name, the same way
+        /// every other caller names a source by its registered string.
+        /// </summary>
+        public const string BudgetGatedSourceName = "aeroapi";
+
         private readonly IVerificationRequestRepository _requests;
         private readonly IAirportRepository _airports;
         private readonly IAirlineRepository _airlines;
         private readonly ICountryRepository _countries;
         private readonly IVerificationSourceRegistry _registry;
         private readonly IVerificationJobOptions _options;
+        private readonly IProviderBudgetGuard _budgetGuard;
         private readonly TimeProvider _timeProvider;
         private readonly ILogger<VerificationRequestProcessor> _logger;
 
@@ -104,6 +142,7 @@ namespace FlightAssistant.Application.Verification
             ICountryRepository countries,
             IVerificationSourceRegistry registry,
             IVerificationJobOptions options,
+            IProviderBudgetGuard budgetGuard,
             TimeProvider timeProvider,
             ILogger<VerificationRequestProcessor> logger)
         {
@@ -113,14 +152,21 @@ namespace FlightAssistant.Application.Verification
             _countries = countries;
             _registry = registry;
             _options = options;
+            _budgetGuard = budgetGuard;
             _timeProvider = timeProvider;
             _logger = logger;
         }
 
         /// <summary>Processes one claimed request and saves its outcome.</summary>
+        /// <param name="aeroApiBudgetPaused">True once this cycle has already seen
+        /// <see cref="IProviderBudgetGuard"/> report <see cref="ProviderBudgetState.Exhausted"/> for
+        /// some earlier request: a request naming <see cref="BudgetGatedSourceName"/> is paused on
+        /// that alone, without asking the guard again (R4/R5's "stop calling AeroAPI for the rest of
+        /// the cycle"). A request naming only free sources ignores this flag and runs normally.</param>
         /// <exception cref="OperationCanceledException"><paramref name="ct"/> was cancelled; nothing
         /// is saved and the request stays Running until the stuck-request reset.</exception>
-        public async Task<VerificationProcessOutcome> ProcessAsync(VerificationClaim claim, CancellationToken ct = default)
+        public async Task<VerificationProcessOutcome> ProcessAsync(
+            VerificationClaim claim, bool aeroApiBudgetPaused = false, CancellationToken ct = default)
         {
             ArgumentNullException.ThrowIfNull(claim);
 
@@ -137,6 +183,13 @@ namespace FlightAssistant.Application.Verification
                     return await CompleteAsErrorAsync(request, $"Source '{name}' does not support {request.EntityType}.", ct);
                 sources.Add(source);
             }
+
+            // R4/R5: only a request naming the metered source is ever gated. Short-circuits on
+            // aeroApiBudgetPaused before asking the guard again -- decision 4's "stop calling AeroAPI
+            // for the rest of the cycle" without a second read of an already-exhausted budget.
+            if (sources.Any(s => string.Equals(s.Name, BudgetGatedSourceName, StringComparison.Ordinal))
+                && (aeroApiBudgetPaused || await _budgetGuard.GetStateAsync(ct) == ProviderBudgetState.Exhausted))
+                return await PauseAsync(claim, ct);
 
             var entity = await LoadEntityAsync(request, ct);
             if (entity is null)
@@ -303,6 +356,25 @@ namespace FlightAssistant.Application.Verification
                 outcome == VerificationProcessOutcome.Error ? "giving up" : $"retrying after {backoff}", error);
 
             return SaveAsync(request, outcome, ct);
+        }
+
+        /// <summary>
+        /// R4/R5: the AeroAPI budget is exhausted, so this request is left exactly as it was --
+        /// deliberately not routed through <see cref="RecordSourceErrorAsync"/>, which would count an
+        /// attempt and write error text, or through <see cref="SaveAsync"/>, which saves whatever this
+        /// scope's tracked <see cref="VerificationRequest"/> already has (nothing, here -- no domain
+        /// method on it was ever called). Instead it goes back to Pending the same way a cancelled
+        /// cycle returns its unfinished claims: one guarded SQL update, keyed by the claim's own
+        /// <c>StartedUtc</c>, that touches <c>status</c> and <c>started_utc</c> alone.
+        /// </summary>
+        private async Task<VerificationProcessOutcome> PauseAsync(VerificationClaim claim, CancellationToken ct)
+        {
+            _logger.LogInformation(
+                "Verification request {RequestId} stays Pending: this month's AeroAPI budget is exhausted.",
+                claim.RequestId);
+
+            await _requests.ReturnClaimsToPendingAsync(new[] { claim }, ct);
+            return VerificationProcessOutcome.Paused;
         }
 
         private async Task<VerificationProcessOutcome> SaveAsync(

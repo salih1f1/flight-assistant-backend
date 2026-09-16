@@ -28,8 +28,13 @@ namespace FlightAssistant.Application.Verification
     /// <param name="ClaimsLost">The subset another claim took over; nothing was written for them.</param>
     /// <param name="FailuresUnrecorded">The subset of <see cref="RequestsFailed"/> whose failure could not
     /// be recorded either: still Running, with no attempt counted until the stuck-request reset.</param>
+    /// <param name="Paused">The subset left exactly as they were -- still Pending, no attempt counted,
+    /// no error recorded -- because they named the AeroAPI source while this month's budget guard
+    /// reported <c>Exhausted</c> (R4/R5, #401 task 2). Not part of <see cref="RequestsFailed"/>: a
+    /// pause is the job declining to spend money it doesn't have, not a failure.</param>
     public sealed record VerificationCycleResult(
-        int StuckReset, int StuckAbandoned, int RequestsProcessed, int RequestsFailed, int ClaimsLost, int FailuresUnrecorded);
+        int StuckReset, int StuckAbandoned, int RequestsProcessed, int RequestsFailed, int ClaimsLost, int FailuresUnrecorded,
+        int Paused = 0);
 
     /// <summary>
     /// Runs one verification cycle. Resolved from the job's cycle scope (which carries the system
@@ -53,6 +58,18 @@ namespace FlightAssistant.Application.Verification
     /// spend an attempt on each of them. That step is best effort, on a short timeout of its own
     /// (<see cref="ReturnClaimsTimeout"/>): if it fails, those requests stay Running until the
     /// stuck-request reset, which counts the attempt.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>The AeroAPI budget pause (R4/R5, #401 task 2).</b> A request the processor pauses is not a
+    /// failure -- it stays exactly as it was, and is counted separately
+    /// (<see cref="VerificationCycleResult.Paused"/>). The first pause this cycle sees flips a local
+    /// flag that every later request in the loop is handed, so a request naming the metered source
+    /// after that point is paused without the processor asking <c>IProviderBudgetGuard</c> again; a
+    /// request naming only free sources keeps processing regardless. A cycle that paused some
+    /// requests still returns normally -- it is up to the caller
+    /// (<c>ReferenceVerificationBackgroundService</c>) to report that distinctly from an ordinary
+    /// success.
     /// </para>
     ///
     /// <para>
@@ -121,6 +138,8 @@ namespace FlightAssistant.Application.Verification
             var failed = 0;
             var lost = 0;
             var unrecorded = 0;
+            var paused = 0;
+            var aeroApiBudgetPaused = false;
             var next = 0;
             try
             {
@@ -128,7 +147,7 @@ namespace FlightAssistant.Application.Verification
                 {
                     ct.ThrowIfCancellationRequested();
 
-                    switch (await ProcessOneAsync(claims[next], cycleId, ct))
+                    switch (await ProcessOneAsync(claims[next], cycleId, aeroApiBudgetPaused, ct))
                     {
                         case VerificationProcessOutcome.RetryScheduled:
                         case VerificationProcessOutcome.Error:
@@ -141,6 +160,13 @@ namespace FlightAssistant.Application.Verification
                             failed++;
                             unrecorded++;
                             break;
+                        case VerificationProcessOutcome.Paused:
+                            paused++;
+                            // R4/R5 decision 4: once the budget is known Exhausted, every remaining
+                            // request naming aeroapi is paused on this flag alone -- no further guard
+                            // read this cycle. A request naming only free sources ignores the flag.
+                            aeroApiBudgetPaused = true;
+                            break;
                     }
                 }
             }
@@ -150,11 +176,11 @@ namespace FlightAssistant.Application.Verification
                 throw;
             }
 
-            var result = new VerificationCycleResult(reset.ReturnedToPending, reset.Abandoned, claims.Count, failed, lost, unrecorded);
+            var result = new VerificationCycleResult(reset.ReturnedToPending, reset.Abandoned, claims.Count, failed, lost, unrecorded, paused);
             if (claims.Count > 0)
                 _logger.LogInformation(
-                    "Verification cycle processed {Processed} request(s): {Failed} failed, {Lost} claim(s) lost.",
-                    claims.Count, failed, lost);
+                    "Verification cycle processed {Processed} request(s): {Failed} failed, {Lost} claim(s) lost, {Paused} paused (AeroAPI budget).",
+                    claims.Count, failed, lost, paused);
 
             try
             {
@@ -185,7 +211,8 @@ namespace FlightAssistant.Application.Verification
             return claimed.Select(VerificationClaim.From).ToList();
         }
 
-        private async Task<VerificationProcessOutcome> ProcessOneAsync(VerificationClaim claim, string cycleId, CancellationToken ct)
+        private async Task<VerificationProcessOutcome> ProcessOneAsync(
+            VerificationClaim claim, string cycleId, bool aeroApiBudgetPaused, CancellationToken ct)
         {
             Exception failure;
             try
@@ -193,7 +220,7 @@ namespace FlightAssistant.Application.Verification
                 using var scope = VerificationJobActor.CreateScope(_scopeFactory, cycleId);
                 return await scope.ServiceProvider
                     .GetRequiredService<VerificationRequestProcessor>()
-                    .ProcessAsync(claim, ct);
+                    .ProcessAsync(claim, aeroApiBudgetPaused, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {

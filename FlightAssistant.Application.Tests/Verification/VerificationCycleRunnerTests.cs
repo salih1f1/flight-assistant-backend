@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Interfaces.Verification;
+using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Application.Verification;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Verification.Entities;
@@ -27,6 +28,7 @@ public class VerificationCycleRunnerTests
     private readonly IAirportRepository _airports = Substitute.For<IAirportRepository>();
     private readonly IAirlineRepository _airlines = Substitute.For<IAirlineRepository>();
     private readonly ICountryRepository _countries = Substitute.For<ICountryRepository>();
+    private readonly FakeProviderBudgetGuard _budget = new();
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(Now));
 
     public VerificationCycleRunnerTests()
@@ -51,6 +53,7 @@ public class VerificationCycleRunnerTests
         services.AddSingleton(_countries);
         services.AddSingleton(registry);
         services.AddSingleton<IVerificationJobOptions>(options ?? new FakeJobOptions());
+        services.AddSingleton<IProviderBudgetGuard>(_budget);
         services.AddSingleton<TimeProvider>(_time);
 
         await using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
@@ -58,10 +61,13 @@ public class VerificationCycleRunnerTests
         return await cycleScope.ServiceProvider.GetRequiredService<IVerificationCycleRunner>().RunCycleAsync(ct);
     }
 
-    private VerificationRequest[] ClaimAirports(params (long Id, string Key)[] requests)
+    private VerificationRequest[] ClaimAirports(params (long Id, string Key)[] requests) =>
+        ClaimAirportsWithSources(requests.Select(r => (r.Id, r.Key, new[] { "ourairports" })).ToArray());
+
+    private VerificationRequest[] ClaimAirportsWithSources(params (long Id, string Key, string[] Sources)[] requests)
     {
         var claimed = requests
-            .Select(r => ClaimedRequests.Create(r.Id, VerificationEntityType.Airport, r.Key, new[] { "ourairports" }, ClaimedAt))
+            .Select(r => ClaimedRequests.Create(r.Id, VerificationEntityType.Airport, r.Key, r.Sources, ClaimedAt))
             .ToArray();
         _requests.ClaimBatchAsync(Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>()).Returns(claimed);
         foreach (var request in claimed)
@@ -271,6 +277,81 @@ public class VerificationCycleRunnerTests
 
         await _requests.Received(1).ReturnClaimsToPendingAsync(
             Arg.Any<IReadOnlyCollection<VerificationClaim>>(), Arg.Any<CancellationToken>());
+    }
+
+    // ── AeroAPI budget gate (R4/R5, #401 task 2) ────────────────────────────
+
+    /// <summary>
+    /// Decision 4: the first gated request finds the budget Exhausted and pauses; the runner then
+    /// stops asking the guard for the rest of the cycle, so the two later aeroapi-only requests pause
+    /// on that knowledge alone -- one guard read total, not three, and neither request's source is
+    /// ever looked up.
+    /// </summary>
+    [Fact]
+    public async Task RunCycleAsync_AeroApiBudgetExhausted_PausesEveryGatedRequest_AskingTheGuardOnlyOnce()
+    {
+        _budget.State = ProviderBudgetState.Exhausted;
+        var claimed = ClaimAirportsWithSources((1, "11", new[] { "aeroapi" }), (2, "22", new[] { "aeroapi" }), (3, "33", new[] { "aeroapi" }));
+        var aeroApi = new FakeVerificationSource("aeroapi", VerificationEntityType.Airport, VerificationSourceFetchResult.NotFound);
+
+        var result = await RunCycleAsync(new FakeVerificationSourceRegistry(aeroApi));
+
+        Assert.Equal(
+            new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 3, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0, Paused: 3),
+            result);
+        Assert.Equal(1, _budget.CallCount);
+        Assert.Empty(aeroApi.Lookups);
+        Assert.All(claimed, r =>
+        {
+            Assert.Equal(VerificationRequestStatus.Running, r.Status);
+            Assert.Equal(0, r.Attempts);
+            Assert.Null(r.Error);
+        });
+    }
+
+    /// <summary>Decision 2: a request naming only free sources keeps processing normally even once the
+    /// cycle has paused on an earlier, aeroapi-naming request -- gating follows the source named, not
+    /// the cycle's paused flag.</summary>
+    [Fact]
+    public async Task RunCycleAsync_AeroApiBudgetExhausted_ARequestNamingOnlyFreeSources_StillProcesses()
+    {
+        _budget.State = ProviderBudgetState.Exhausted;
+        var claimed = ClaimAirportsWithSources(
+            (1, "11", new[] { "aeroapi" }),
+            (2, "22", new[] { "ourairports" }),
+            (3, "33", new[] { "aeroapi" }));
+        var airport = Airport("BBB");
+        _airports.GetByIdAsync(22, Arg.Any<CancellationToken>()).Returns(airport);
+        var aeroApi = new FakeVerificationSource("aeroapi", VerificationEntityType.Airport, VerificationSourceFetchResult.NotFound);
+        var ourAirports = MatchingOurAirports();
+
+        var result = await RunCycleAsync(new FakeVerificationSourceRegistry(aeroApi, ourAirports));
+
+        Assert.Equal(
+            new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 3, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0, Paused: 2),
+            result);
+        Assert.Equal(VerificationRequestStatus.Running, claimed[0].Status); // paused (first guard read)
+        Assert.Equal(VerificationRequestStatus.Verified, claimed[1].Status); // free source: unaffected
+        Assert.True(airport.IsVerified);
+        Assert.Equal(VerificationRequestStatus.Running, claimed[2].Status); // paused (known-paused flag)
+        Assert.Equal(1, _budget.CallCount);
+        Assert.Empty(aeroApi.Lookups);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_AeroApiBudgetSoftLimit_DoesNotPause_TheGatedRequestStillCallsAeroApi()
+    {
+        _budget.State = ProviderBudgetState.SoftLimit;
+        ClaimAirportsWithSources((1, "11", new[] { "aeroapi" }));
+        _airports.GetByIdAsync(11, Arg.Any<CancellationToken>()).Returns(Airport("AAA"));
+        var aeroApi = new FakeVerificationSource("aeroapi", VerificationEntityType.Airport, VerificationSourceFetchResult.NotFound);
+
+        var result = await RunCycleAsync(new FakeVerificationSourceRegistry(aeroApi));
+
+        Assert.Equal(
+            new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 1, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0, Paused: 0),
+            result);
+        Assert.Single(aeroApi.Lookups);
     }
 
     /// <summary>Releasing caches is the last step. If it throws, the batch's outcomes are already saved,

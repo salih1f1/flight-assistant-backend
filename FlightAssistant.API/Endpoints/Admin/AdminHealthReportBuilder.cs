@@ -259,7 +259,8 @@ namespace FlightAssistant.API.Endpoints.Admin
                 snapshot.FailuresUnrecorded,
                 snapshot.NextRunDueUtc,
                 includeDiagnostics ? snapshot.LastError : null,
-                pendingCount);
+                pendingCount,
+                snapshot.RequestsPaused);
         }
     }
 }

@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Interfaces.Verification;
+using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Application.Verification;
 using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.ReferenceData.Entities;
@@ -26,6 +27,7 @@ public class VerificationRequestProcessorTests
     private readonly IAirportRepository _airports = Substitute.For<IAirportRepository>();
     private readonly IAirlineRepository _airlines = Substitute.For<IAirlineRepository>();
     private readonly ICountryRepository _countries = Substitute.For<ICountryRepository>();
+    private readonly FakeProviderBudgetGuard _budget = new();
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(Now));
 
     private static Airport Heathrow() => Airport.Create("LHR", "EGLL", "London Heathrow", "London", "GB", 51.4706, -0.461941, 83);
@@ -33,7 +35,7 @@ public class VerificationRequestProcessorTests
     private static Country UnitedKingdom() => Country.Create("GB", "United Kingdom", "GBR", 826, "Europe", "Northern Europe");
 
     private VerificationRequestProcessor Processor(IVerificationSourceRegistry registry, int maxAttempts = 3) =>
-        new(_requests, _airports, _airlines, _countries, registry, new FakeJobOptions(MaxAttempts: maxAttempts), _time,
+        new(_requests, _airports, _airlines, _countries, registry, new FakeJobOptions(MaxAttempts: maxAttempts), _budget, _time,
             NullLogger<VerificationRequestProcessor>.Instance);
 
     private VerificationRequest ClaimedAirportRequest(string[] sources, int priorAttempts = 0)
@@ -287,6 +289,100 @@ public class VerificationRequestProcessorTests
     public void Backoff_IsOneMinuteAfterTheFirstAttempt_AndFiveAfterEveryLaterOne(int failedAttempts, int expectedMinutes)
     {
         Assert.Equal(TimeSpan.FromMinutes(expectedMinutes), VerificationRetryBackoff.After(failedAttempts));
+    }
+
+    // ── AeroAPI budget gate (R4/R5, #401 task 2) ──────────────────────────────
+
+    [Fact]
+    public async Task ProcessAsync_AeroApiBudgetExhausted_PausesTheRequest_ExactlyAsItWas_NoAttemptNoErrorNoSave()
+    {
+        _budget.State = ProviderBudgetState.Exhausted;
+        var request = ClaimedAirportRequest(new[] { "aeroapi" });
+        var aeroApi = AirportSource("aeroapi", VerificationSourceFetchResult.Found(VerificationCheckedColumns.Project(Heathrow())));
+
+        var outcome = await Processor(new FakeVerificationSourceRegistry(aeroApi)).ProcessAsync(Claim);
+
+        Assert.Equal(VerificationProcessOutcome.Paused, outcome);
+        // Untouched: still the claimed Running request, no attempt counted, no error recorded (R5).
+        Assert.Equal(VerificationRequestStatus.Running, request.Status);
+        Assert.Equal(0, request.Attempts);
+        Assert.Null(request.Error);
+        Assert.Null(request.CompletedUtc);
+        Assert.Empty(aeroApi.Lookups);
+
+        await _requests.Received(1).ReturnClaimsToPendingAsync(
+            Arg.Is<IReadOnlyCollection<VerificationClaim>>(c => c.Single() == Claim), Arg.Any<CancellationToken>());
+        await _requests.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(ProviderBudgetState.Normal)]
+    [InlineData(ProviderBudgetState.SoftLimit)]
+    public async Task ProcessAsync_AeroApiBudgetNormalOrSoftLimit_ProceedsToFetchAeroApi(ProviderBudgetState state)
+    {
+        _budget.State = state;
+        _airports.GetByIdAsync(42, Arg.Any<CancellationToken>()).Returns(Heathrow());
+        ClaimedAirportRequest(new[] { "aeroapi" });
+        var aeroApi = AirportSource("aeroapi", VerificationSourceFetchResult.Found(VerificationCheckedColumns.Project(Heathrow())));
+
+        var outcome = await Processor(new FakeVerificationSourceRegistry(aeroApi)).ProcessAsync(Claim);
+
+        Assert.Equal(VerificationProcessOutcome.Verified, outcome);
+        Assert.Single(aeroApi.Lookups);
+        await _requests.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+        await _requests.DidNotReceive().ReturnClaimsToPendingAsync(
+            Arg.Any<IReadOnlyCollection<VerificationClaim>>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>Decision 2: which source a request names decides whether the gate applies at all.
+    /// The guard reporting Exhausted must not even be consulted for a request naming only free
+    /// sources.</summary>
+    [Fact]
+    public async Task ProcessAsync_ARequestNamingOnlyFreeSources_IgnoresAnExhaustedBudget_AndNeverAsksTheGuard()
+    {
+        _budget.State = ProviderBudgetState.Exhausted;
+        var airport = Heathrow();
+        _airports.GetByIdAsync(42, Arg.Any<CancellationToken>()).Returns(airport);
+        ClaimedAirportRequest(new[] { "ourairports" });
+        var ourAirports = AirportSource("ourairports", VerificationSourceFetchResult.Found(VerificationCheckedColumns.Project(Heathrow())));
+
+        var outcome = await Processor(new FakeVerificationSourceRegistry(ourAirports)).ProcessAsync(Claim);
+
+        Assert.Equal(VerificationProcessOutcome.Verified, outcome);
+        Assert.Equal(0, _budget.CallCount);
+    }
+
+    /// <summary>Decision 4: once the cycle already knows the budget paused, a gated request is paused
+    /// on that flag alone -- the processor never reads the guard a second time.</summary>
+    [Fact]
+    public async Task ProcessAsync_AeroApiBudgetAlreadyKnownPausedThisCycle_Pauses_WithoutAskingTheGuardAgain()
+    {
+        _budget.State = ProviderBudgetState.Normal; // if the guard were asked, it would say proceed
+        ClaimedAirportRequest(new[] { "aeroapi" });
+        var aeroApi = AirportSource("aeroapi", VerificationSourceFetchResult.NotFound);
+
+        var outcome = await Processor(new FakeVerificationSourceRegistry(aeroApi))
+            .ProcessAsync(Claim, aeroApiBudgetPaused: true);
+
+        Assert.Equal(VerificationProcessOutcome.Paused, outcome);
+        Assert.Equal(0, _budget.CallCount);
+        Assert.Empty(aeroApi.Lookups);
+    }
+
+    /// <summary>The known-paused flag from an earlier gated request in the same cycle must not leak
+    /// into a later request that names only free sources.</summary>
+    [Fact]
+    public async Task ProcessAsync_AeroApiBudgetKnownPausedThisCycle_ARequestNamingOnlyFreeSources_StillProceeds()
+    {
+        _airports.GetByIdAsync(42, Arg.Any<CancellationToken>()).Returns(Heathrow());
+        ClaimedAirportRequest(new[] { "ourairports" });
+        var ourAirports = AirportSource("ourairports", VerificationSourceFetchResult.Found(VerificationCheckedColumns.Project(Heathrow())));
+
+        var outcome = await Processor(new FakeVerificationSourceRegistry(ourAirports))
+            .ProcessAsync(Claim, aeroApiBudgetPaused: true);
+
+        Assert.Equal(VerificationProcessOutcome.Verified, outcome);
+        Assert.Equal(0, _budget.CallCount);
     }
 
     // ── Terminal errors ─────────────────────────────────────────────────────

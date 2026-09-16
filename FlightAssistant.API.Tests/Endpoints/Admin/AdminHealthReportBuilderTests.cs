@@ -129,6 +129,20 @@ public class AdminHealthReportBuilderTests
         Assert.Equal(3, dto.PendingCount);
     }
 
+    /// <summary>#401 task 2, R4/R5: a paused cycle's outcome and its RequestsPaused count both reach
+    /// the DTO, distinct from a Success with zero paused.</summary>
+    [Fact]
+    public async Task BuildVerificationAsync_APausedCycle_ReportsThePausedOutcomeAndCount()
+    {
+        var heartbeat = new VerificationJobHeartbeat(new FakeTimeProvider(new DateTimeOffset(T0)));
+        heartbeat.MarkRunPaused(processed: 6, failed: 1, stuckAbandoned: 0, failuresUnrecorded: 0, paused: 4, nextRunDueUtc: T0.AddSeconds(30));
+
+        var dto = await AdminHealthReportBuilder.BuildVerificationAsync(
+            heartbeat, enabled: true, PendingCount(2), includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
+
+        Assert.Equal(new AdminHealthVerificationDto(true, null, T0, "Paused", 6, 1, 0, 0, T0.AddSeconds(30), null, 2, RequestsPaused: 4), dto);
+    }
+
     [Fact]
     public async Task BuildVerificationAsync_CountingThrows_ReportsANullPendingCount_WithoutFailingTheSection()
     {
