@@ -5,6 +5,7 @@ using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Contracts.Requests.Flights;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Flights.Enums;
+using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -207,5 +208,70 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
         Assert.Equal(HttpStatusCode.TooManyRequests, (await clientA.PostAsync($"flights/{flightA.Id}/sync", content: null)).StatusCode);
 
         Assert.Equal(HttpStatusCode.OK, (await clientB.PostAsync($"flights/{flightB.Id}/sync", content: null)).StatusCode);
+    }
+
+    private int FlightTrackPermitLimit() =>
+        factory.Services.GetRequiredService<IConfiguration>().GetValue("RateLimiting:FlightTrack:PermitLimit", 10);
+
+    /// <summary>Registers a traveler and returns a client plus a body that tracks successfully. The
+    /// airline and airports must be seeded: reference rows seeded with <c>HasData</c> never reach this
+    /// InMemory database, which is shared across the Integration collection — hence the existence guards
+    /// and the codes no other test uses.</summary>
+    private async Task<(HttpClient Client, TrackFlightRequest Body)> TravelerReadyToTrackAsync()
+    {
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+            if (!db.Airlines.Any(a => a.Iata == "ZR"))
+                db.Airlines.Add(Airline.Create("ZR", null, "Track Limit Air", "GB"));
+            if (!db.Airports.Any(a => a.Iata == "ZRA"))
+                db.Airports.Add(Airport.Create("ZRA", null, "Track Limit Origin", "Origin", "GB"));
+            if (!db.Airports.Any(a => a.Iata == "ZRB"))
+                db.Airports.Add(Airport.Create("ZRB", null, "Track Limit Destination", "Destination", "US"));
+            await db.SaveChangesAsync();
+        }
+
+        var userId = Guid.NewGuid();
+        var client = factory.CreateUserClient(userId.ToString());
+        await client.PostAsJsonAsync("travelers", new { email = $"{userId}@example.com", displayName = "Test", countryCode = (string?)null });
+
+        var serviceDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30));
+        var body = new TrackFlightRequest(
+            $"ZR{Random.Shared.Next(1000, 9999)}", serviceDate, "ZRA", "ZRB",
+            serviceDate.ToDateTime(new TimeOnly(9, 0), DateTimeKind.Utc),
+            serviceDate.ToDateTime(new TimeOnly(12, 0), DateTimeKind.Utc));
+
+        return (client, body);
+    }
+
+    [Fact]
+    public async Task TrackFlight_RateLimit_Returns429WithRetryAfter_AfterTheConfiguredPermitCount()
+    {
+        var (client, body) = await TravelerReadyToTrackAsync();
+
+        // The same flight every time: re-tracking one the traveler already tracks returns 201 and adds
+        // nothing, so #380's cap (3 in appsettings.Testing.json) can never be what rejects these.
+        for (var i = 0; i < FlightTrackPermitLimit(); i++)
+            Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync("flights", body)).StatusCode);
+
+        var rejected = await client.PostAsJsonAsync("flights", body);
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
+        Assert.NotNull(rejected.Headers.RetryAfter);
+    }
+
+    /// <summary>Partitioned by traveler (oid), not by IP: every test client shares one IP, so a second
+    /// traveler getting 201 proves one traveler's burst doesn't throttle another.</summary>
+    [Fact]
+    public async Task TrackFlight_RateLimit_TwoTravelers_DoNotShareABucket()
+    {
+        var (clientA, bodyA) = await TravelerReadyToTrackAsync();
+        var (clientB, bodyB) = await TravelerReadyToTrackAsync();
+
+        for (var i = 0; i < FlightTrackPermitLimit(); i++)
+            await clientA.PostAsJsonAsync("flights", bodyA);
+        Assert.Equal(HttpStatusCode.TooManyRequests, (await clientA.PostAsJsonAsync("flights", bodyA)).StatusCode);
+
+        Assert.Equal(HttpStatusCode.Created, (await clientB.PostAsJsonAsync("flights", bodyB)).StatusCode);
     }
 }

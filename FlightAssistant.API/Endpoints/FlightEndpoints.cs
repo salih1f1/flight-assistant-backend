@@ -121,7 +121,8 @@ namespace FlightAssistant.API.Endpoints
                 "Tracking another returns 409 and adds nothing; tracking a flight the traveler already tracks still returns 201.")
             .Produces(201)
             .ProducesValidationProblem()
-            .ProducesProblem(409);
+            .ProducesProblem(409)
+            .RequireRateLimiting("flight-track");
 
             // DELETE /flights/{flightId} — stop tracking a flight
             group.MapDelete("{flightId:int}", async (HttpContext http, int flightId, IMediator mediator, CancellationToken ct) =>
