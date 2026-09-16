@@ -44,6 +44,13 @@ namespace FlightAssistant.API.HostedServices
         [Range(1, 3650)]
         public int StaleAfterDays { get; set; } = 180;
 
+        /// <summary>How long an entity whose most recent completed check was <c>Error</c> is left
+        /// alone before the flight-tracking trigger re-queues it (#418). <see cref="TimeSpan.Zero"/>
+        /// disables the cooldown. Not used by the job itself, which claims whatever is <c>Pending</c>
+        /// regardless of any prior <c>Error</c> outcome.</summary>
+        [Range(typeof(TimeSpan), "00:00:00", "7.00:00:00")]
+        public TimeSpan ErrorCooldown { get; set; } = TimeSpan.FromHours(6);
+
         /// <summary>The sources a check uses when its caller names none (steps 6 and 10). Not used by
         /// the job itself, which reads each request's own sources.</summary>
         public VerificationDefaultSources DefaultSources { get; set; } = new();

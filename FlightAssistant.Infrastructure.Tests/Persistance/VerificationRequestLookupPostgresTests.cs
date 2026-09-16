@@ -80,7 +80,7 @@ public class VerificationRequestLookupPostgresTests : PostgresTestBase
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private static VerificationRequestRepository Repository(FlightAssistantDbContext db) =>
-        new(db, new FakeTimeProvider(new DateTimeOffset(T0)));
+        new(db, new FakeTimeProvider(new DateTimeOffset(T0)), new FakeJobOptions());
 
     /// <summary>
     /// Completed immediately (<see cref="VerificationRequest.MarkVerified"/>): the partial unique

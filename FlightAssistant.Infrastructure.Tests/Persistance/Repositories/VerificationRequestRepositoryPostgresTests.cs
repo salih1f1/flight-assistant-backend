@@ -36,6 +36,9 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     private const string Differences = """[{"column":"Name","ours":"Heathrow","source":"London Heathrow Airport","sourceName":"ourairports"}]""";
     private const string SourceValues = """{"ourairports":{"Name":"London Heathrow Airport","City":"London","Latitude":51.4706}}""";
 
+    /// <summary>#418's default: matches <c>VerificationOptions.ErrorCooldown</c>'s own default.</summary>
+    private static readonly TimeSpan Cooldown = TimeSpan.FromHours(6);
+
     private readonly PostgresContainerFixture _fixture;
 
     public VerificationRequestRepositoryPostgresTests(PostgresContainerFixture fixture) : base(fixture)
@@ -597,6 +600,283 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         Assert.Equal("GB", Assert.Single(await verify.VerificationRequests.AsNoTracking().ToListAsync()).EntityKey);
     }
 
+    // ── Error cooldown (#418) ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task EnqueueAsync_FlightTrigger_SkipsAKeyWhoseLastCheckErroredInsideTheCooldownWindow()
+    {
+        await SeedErroredKeyAsync("1", completedUtc: T0.AddHours(1));
+
+        // now = T0+2h, cooldown 6h -> cutoff = T0-4h. The error completed at T0+1h: inside the window.
+        VerificationEnqueueResult result;
+        await using (var db = CreateDbContext())
+        {
+            result = await Repository(db, now: T0.AddHours(2), errorCooldown: Cooldown).EnqueueAsync(
+                VerificationEntityType.Airport, new[] { "1" }, OurAirports, VerificationTrigger.Flight, "system", 0m);
+        }
+
+        Assert.Equal(new VerificationEnqueueResult(Queued: 0, Skipped: 1), result);
+
+        await using var verify = CreateDbContext();
+        Assert.Single(await verify.VerificationRequests.Where(r => r.EntityKey == "1").ToListAsync());
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_FlightTrigger_QueuesAKeyOnceTheCooldownWindowHasPassed()
+    {
+        await SeedErroredKeyAsync("1", completedUtc: T0.AddHours(1));
+
+        // now = T0+8h, cooldown 6h -> cutoff = T0+2h. The error completed at T0+1h: outside the window.
+        VerificationEnqueueResult result;
+        await using (var db = CreateDbContext())
+        {
+            result = await Repository(db, now: T0.AddHours(8), errorCooldown: Cooldown).EnqueueAsync(
+                VerificationEntityType.Airport, new[] { "1" }, OurAirports, VerificationTrigger.Flight, "system", 0m);
+        }
+
+        Assert.Equal(new VerificationEnqueueResult(Queued: 1, Skipped: 0), result);
+    }
+
+    /// <summary>
+    /// Pins the window's inclusive boundary (M-1, final review): <c>CompletedUtc &gt;= cutoffUtc</c>
+    /// in <c>EnqueueAsync</c>, not <c>&gt;</c>. An error completing at exactly the cutoff instant
+    /// still cools -- eligibility begins strictly after it, not at it.
+    /// </summary>
+    [Fact]
+    public async Task EnqueueAsync_FlightTrigger_SkipsAKeyWhoseLastCheckErroredExactlyAtTheCooldownCutoff()
+    {
+        await SeedErroredKeyAsync("1", completedUtc: T0);
+
+        // now = T0+6h, cooldown 6h -> cutoff = T0 exactly. The error completed at T0: on the boundary.
+        VerificationEnqueueResult result;
+        await using (var db = CreateDbContext())
+        {
+            result = await Repository(db, now: T0.AddHours(6), errorCooldown: Cooldown).EnqueueAsync(
+                VerificationEntityType.Airport, new[] { "1" }, OurAirports, VerificationTrigger.Flight, "system", 0m);
+        }
+
+        Assert.Equal(new VerificationEnqueueResult(Queued: 0, Skipped: 1), result);
+    }
+
+    /// <summary>
+    /// R2: a cooldown skip must never reach an admin call, since <c>RetryVerificationRequestCommandHandler</c>
+    /// turns any <c>Skipped &gt; 0</c> into a 409 claiming an open request exists -- a cooldown skip
+    /// there would make that 409 lie. Proves both the result (queued despite the error) and the query
+    /// count (no cooldown lookup added) by comparing against an otherwise-identical call for a key
+    /// with no error history at all, rather than a hard-coded command count.
+    /// </summary>
+    [Fact]
+    public async Task EnqueueAsync_AdminTrigger_QueuesDespiteAnErrorInsideTheWindow_AndIssuesNoExtraQuery()
+    {
+        const string coolingKey = "1", freshKey = "2";
+        await SeedErroredKeyAsync(coolingKey, completedUtc: T0.AddHours(1));
+
+        var coolingCommands = new CommandCounter();
+        VerificationEnqueueResult coolingResult;
+        await using (var db = CreateDbContext(coolingCommands))
+        {
+            coolingResult = await Repository(db, now: T0.AddHours(2), errorCooldown: Cooldown).EnqueueAsync(
+                VerificationEntityType.Airport, new[] { coolingKey }, OurAirports, VerificationTrigger.Admin, "admin-oid", 0m);
+        }
+
+        var freshCommands = new CommandCounter();
+        VerificationEnqueueResult freshResult;
+        await using (var db = CreateDbContext(freshCommands))
+        {
+            freshResult = await Repository(db, now: T0.AddHours(2), errorCooldown: Cooldown).EnqueueAsync(
+                VerificationEntityType.Airport, new[] { freshKey }, OurAirports, VerificationTrigger.Admin, "admin-oid", 0m);
+        }
+
+        Assert.Equal(new VerificationEnqueueResult(Queued: 1, Skipped: 0), coolingResult);
+        Assert.Equal(new VerificationEnqueueResult(Queued: 1, Skipped: 0), freshResult);
+        Assert.Equal(freshCommands.Count, coolingCommands.Count);
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_FlightTrigger_LastCompletedWasVerified_IsNotSkipped()
+    {
+        await SeedEachAsync(Request("1", requestedUtc: T0));
+        await using (var db = CreateDbContext())
+        {
+            var repository = Repository(db);
+            Assert.Single(await repository.ClaimBatchAsync(1, T0)).MarkVerified(T0.AddHours(1));
+            await repository.SaveChangesAsync();
+        }
+
+        VerificationEnqueueResult result;
+        await using (var db = CreateDbContext())
+        {
+            result = await Repository(db, now: T0.AddHours(2), errorCooldown: Cooldown).EnqueueAsync(
+                VerificationEntityType.Airport, new[] { "1" }, OurAirports, VerificationTrigger.Flight, "system", 0m);
+        }
+
+        Assert.Equal(new VerificationEnqueueResult(Queued: 1, Skipped: 0), result);
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_FlightTrigger_LastCompletedWasMismatch_IsNotSkipped()
+    {
+        await SeedEachAsync(Request("1", requestedUtc: T0));
+        await using (var db = CreateDbContext())
+        {
+            var repository = Repository(db);
+            Assert.Single(await repository.ClaimBatchAsync(1, T0)).MarkMismatch(Differences, SourceValues, T0.AddHours(1));
+            await repository.SaveChangesAsync();
+        }
+
+        VerificationEnqueueResult result;
+        await using (var db = CreateDbContext())
+        {
+            result = await Repository(db, now: T0.AddHours(2), errorCooldown: Cooldown).EnqueueAsync(
+                VerificationEntityType.Airport, new[] { "1" }, OurAirports, VerificationTrigger.Flight, "system", 0m);
+        }
+
+        Assert.Equal(new VerificationEnqueueResult(Queued: 1, Skipped: 0), result);
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_FlightTrigger_LastCompletedWasNotFound_IsNotSkipped()
+    {
+        await SeedEachAsync(Request("1", requestedUtc: T0));
+        await using (var db = CreateDbContext())
+        {
+            var repository = Repository(db);
+            Assert.Single(await repository.ClaimBatchAsync(1, T0)).MarkNotFound(SourceValues, T0.AddHours(1));
+            await repository.SaveChangesAsync();
+        }
+
+        VerificationEnqueueResult result;
+        await using (var db = CreateDbContext())
+        {
+            result = await Repository(db, now: T0.AddHours(2), errorCooldown: Cooldown).EnqueueAsync(
+                VerificationEntityType.Airport, new[] { "1" }, OurAirports, VerificationTrigger.Flight, "system", 0m);
+        }
+
+        Assert.Equal(new VerificationEnqueueResult(Queued: 1, Skipped: 0), result);
+    }
+
+    /// <summary>
+    /// An Error completed inside what would otherwise be the cooldown window, but a later, non-Error
+    /// completion for the same key supersedes it (R3): the most recent outcome is what counts, not
+    /// merely whether *an* Error happened to fall in the window. Deliberately gives the Verified
+    /// request an old <c>RequestedUtc</c> and a recent <c>CompletedUtc</c> (it "took a while" -- e.g.
+    /// retried), and the Error request the reverse (a recent <c>RequestedUtc</c>, resolved quickly):
+    /// that inverts <c>RequestedUtc</c> order relative to <c>CompletedUtc</c> order between the two
+    /// rows, which the open-request index permits (it only blocks two simultaneously-open rows for
+    /// the same key, not this ordering of stored data), so a query that compared <c>RequestedUtc</c>
+    /// instead of <c>CompletedUtc</c> would pick the Error as "most recent" and wrongly skip.
+    /// </summary>
+    [Fact]
+    public async Task EnqueueAsync_FlightTrigger_OlderErrorSupersededByANewerNonErrorCompletion_IsNotSkipped()
+    {
+        const string key = "1";
+
+        // Requested at T0, but not completed (Verified) until T0+19h.
+        await SeedEachAsync(Request(key, requestedUtc: T0));
+        await using (var db = CreateDbContext())
+        {
+            var repository = Repository(db);
+            Assert.Single(await repository.ClaimBatchAsync(1, T0)).MarkVerified(T0.AddHours(19));
+            await repository.SaveChangesAsync();
+        }
+
+        // A later check for the same key -- requested at T0+15h, after the Verified request's own
+        // completion -- errors quickly, at T0+16h.
+        await SeedEachAsync(Request(key, requestedUtc: T0.AddHours(15)));
+        await using (var db = CreateDbContext())
+        {
+            var repository = Repository(db);
+            Assert.Single(await repository.ClaimBatchAsync(1, T0.AddHours(15))).MarkError("boom", T0.AddHours(16));
+            await repository.SaveChangesAsync();
+        }
+
+        // now = T0+20h, cooldown 6h -> cutoff = T0+14h. The Error's own CompletedUtc (T0+16h) is
+        // inside that window -- in isolation it would look like a recent failure -- but the Verified
+        // request's CompletedUtc (T0+19h) is later still, so it is the most recent outcome.
+        VerificationEnqueueResult result;
+        await using (var db = CreateDbContext())
+        {
+            result = await Repository(db, now: T0.AddHours(20), errorCooldown: Cooldown).EnqueueAsync(
+                VerificationEntityType.Airport, new[] { key }, OurAirports, VerificationTrigger.Flight, "system", 0m);
+        }
+
+        Assert.Equal(new VerificationEnqueueResult(Queued: 1, Skipped: 0), result);
+    }
+
+    /// <summary>R5: a cooldown skip counts in <c>Skipped</c> alongside an open-request skip, so the
+    /// interface's <c>Queued + Skipped == keys.Count</c> invariant holds when both kinds occur together.</summary>
+    [Fact]
+    public async Task EnqueueAsync_FlightTrigger_OpenRequestSkipAndCooldownSkipTogether_QueuedPlusSkippedEqualsKeyCount()
+    {
+        const string openKey = "1", coolingKey = "2", freshKey = "3";
+        await SeedEachAsync(Request(openKey, requestedUtc: T0)); // left Pending: open
+        await SeedErroredKeyAsync(coolingKey, completedUtc: T0.AddHours(1));
+
+        VerificationEnqueueResult result;
+        await using (var db = CreateDbContext())
+        {
+            result = await Repository(db, now: T0.AddHours(2), errorCooldown: Cooldown).EnqueueAsync(
+                VerificationEntityType.Airport, new[] { openKey, coolingKey, freshKey }, OurAirports,
+                VerificationTrigger.Flight, "system", 0m);
+        }
+
+        Assert.Equal(new VerificationEnqueueResult(Queued: 1, Skipped: 2), result);
+        Assert.Equal(3, result.Queued + result.Skipped);
+    }
+
+    /// <summary>R4: the cooldown lookup is one batched query regardless of how many candidate keys it
+    /// covers. Every key here is skipped, so no insert follows either -- exactly two commands total
+    /// (the open-request check, then the cooldown lookup) however many keys are passed; a per-key
+    /// implementation would grow with the key count instead.</summary>
+    [Fact]
+    public async Task EnqueueAsync_FlightTrigger_ManyKeysInTheCooldownWindow_CostsOneQuery()
+    {
+        var keys = new[] { "1", "2", "3", "4", "5" };
+        foreach (var key in keys)
+            await SeedErroredKeyAsync(key, completedUtc: T0.AddHours(1));
+
+        var commands = new CommandCounter();
+        VerificationEnqueueResult result;
+        await using (var db = CreateDbContext(commands))
+        {
+            result = await Repository(db, now: T0.AddHours(2), errorCooldown: Cooldown).EnqueueAsync(
+                VerificationEntityType.Airport, keys, OurAirports, VerificationTrigger.Flight, "system", 0m);
+        }
+
+        Assert.Equal(new VerificationEnqueueResult(Queued: 0, Skipped: keys.Length), result);
+        Assert.Equal(2, commands.Count);
+    }
+
+    /// <summary>R6: <see cref="TimeSpan.Zero"/> disables the cooldown and skips its query entirely --
+    /// proven, like the admin test above, by comparing against a key with no error history rather than
+    /// a hard-coded command count.</summary>
+    [Fact]
+    public async Task EnqueueAsync_FlightTrigger_ZeroCooldown_DisablesTheSkip_AndIssuesNoQuery()
+    {
+        const string coolingKey = "1", freshKey = "2";
+        await SeedErroredKeyAsync(coolingKey, completedUtc: T0.AddHours(1));
+
+        var zeroCooldownCommands = new CommandCounter();
+        VerificationEnqueueResult zeroCooldownResult;
+        await using (var db = CreateDbContext(zeroCooldownCommands))
+        {
+            zeroCooldownResult = await Repository(db, now: T0.AddHours(2), errorCooldown: TimeSpan.Zero).EnqueueAsync(
+                VerificationEntityType.Airport, new[] { coolingKey }, OurAirports, VerificationTrigger.Flight, "system", 0m);
+        }
+
+        var baselineCommands = new CommandCounter();
+        VerificationEnqueueResult baselineResult;
+        await using (var db = CreateDbContext(baselineCommands))
+        {
+            baselineResult = await Repository(db, now: T0.AddHours(2), errorCooldown: TimeSpan.Zero).EnqueueAsync(
+                VerificationEntityType.Airport, new[] { freshKey }, OurAirports, VerificationTrigger.Flight, "system", 0m);
+        }
+
+        Assert.Equal(new VerificationEnqueueResult(Queued: 1, Skipped: 0), zeroCooldownResult);
+        Assert.Equal(new VerificationEnqueueResult(Queued: 1, Skipped: 0), baselineResult);
+        Assert.Equal(baselineCommands.Count, zeroCooldownCommands.Count);
+    }
+
     // ── Queries ─────────────────────────────────────────────────────────────
 
     [Fact]
@@ -841,8 +1121,8 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
-    private static VerificationRequestRepository Repository(FlightAssistantDbContext db, DateTime? now = null) =>
-        new(db, new FakeTimeProvider(new DateTimeOffset(now ?? T0)));
+    private static VerificationRequestRepository Repository(FlightAssistantDbContext db, DateTime? now = null, TimeSpan? errorCooldown = null) =>
+        new(db, new FakeTimeProvider(new DateTimeOffset(now ?? T0)), new FakeJobOptions(ErrorCooldown: errorCooldown ?? TimeSpan.Zero));
 
     private static VerificationRequest Request(
         string key,
@@ -863,6 +1143,17 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
             await db.SaveChangesAsync();
         }
         return requests.Select(r => r.Id).ToArray();
+    }
+
+    /// <summary>Seeds one request for <paramref name="key"/>, requested at <c>T0</c>, claimed and
+    /// completed as <see cref="VerificationRequestStatus.Error"/> at <paramref name="completedUtc"/>.</summary>
+    private async Task SeedErroredKeyAsync(string key, DateTime completedUtc)
+    {
+        await SeedEachAsync(Request(key, requestedUtc: T0));
+        await using var db = CreateDbContext();
+        var repository = Repository(db);
+        Assert.Single(await repository.ClaimBatchAsync(1, T0)).MarkError("boom", completedUtc);
+        await repository.SaveChangesAsync();
     }
 
     private Task<long[]> SeedOrderingScenarioAsync() => SeedEachAsync(

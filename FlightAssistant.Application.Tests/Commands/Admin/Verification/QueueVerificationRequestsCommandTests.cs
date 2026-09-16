@@ -228,5 +228,23 @@ public class QueueVerificationRequestsCommandTests
         Assert.Empty(_queue.ReceivedCalls());
     }
 
+    /// <summary>
+    /// #418 R2: the error-cooldown gate lives in <c>VerificationRequestRepository.EnqueueAsync</c>
+    /// and applies only to <c>VerificationTrigger.Flight</c>. This command always asks with
+    /// <c>VerificationTrigger.Admin</c>, so a key whose entity last errored moments ago must still
+    /// queue rather than come back skipped.
+    /// </summary>
+    [Fact]
+    public async Task Handle_AKeyWhoseEntitysLastCheckErroredMomentsAgo_StillQueues()
+    {
+        var queue = new CooldownGatedFakeQueue("42");
+
+        var result = await new QueueVerificationRequestsCommandHandler(queue, Registry)
+            .Handle(Command(keys: new[] { "42" }), CancellationToken.None);
+
+        Assert.Equal(new VerificationEnqueueResult(1, 0), result);
+        Assert.Equal(VerificationTrigger.Admin, Assert.Single(queue.Calls));
+    }
+
     private static string ValidKey(string entityType) => entityType == "Country" ? "GB" : "1";
 }
