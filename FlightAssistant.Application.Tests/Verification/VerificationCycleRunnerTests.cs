@@ -37,6 +37,10 @@ public class VerificationCycleRunnerTests
         _requests.ResetStuckRunningAsync(default, default, default, default)
             .ReturnsForAnyArgs(new VerificationStuckResetResult(ReturnedToPending: 0, Abandoned: 0));
         _requests.GetSourceNamesInUseAsync(default).ReturnsForAnyArgs(Array.Empty<string>());
+        // The normal case for both the AeroAPI pause (G5) and a cancelled cycle's unfinished claims:
+        // returning a claim to Pending touches the row(s) it names. Individual tests override this.
+        _requests.ReturnClaimsToPendingAsync(Arg.Any<IReadOnlyCollection<VerificationClaim>>(), Arg.Any<CancellationToken>())
+            .Returns(ci => ci.Arg<IReadOnlyCollection<VerificationClaim>>().Count);
     }
 
     private static Airport Airport(string iata) => Domain.ReferenceData.Entities.Airport.Create(iata, null, $"{iata} Airport", "City", "GB");

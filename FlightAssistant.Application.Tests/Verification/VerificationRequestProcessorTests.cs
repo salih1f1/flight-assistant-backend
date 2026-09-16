@@ -30,6 +30,14 @@ public class VerificationRequestProcessorTests
     private readonly FakeProviderBudgetGuard _budget = new();
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(Now));
 
+    public VerificationRequestProcessorTests()
+    {
+        // The normal case: returning a paused claim to Pending touches exactly the one row it names.
+        // G5's own test overrides this to 0 to prove the claim-lost path.
+        _requests.ReturnClaimsToPendingAsync(Arg.Any<IReadOnlyCollection<VerificationClaim>>(), Arg.Any<CancellationToken>())
+            .Returns(1);
+    }
+
     private static Airport Heathrow() => Airport.Create("LHR", "EGLL", "London Heathrow", "London", "GB", 51.4706, -0.461941, 83);
 
     private static Country UnitedKingdom() => Country.Create("GB", "United Kingdom", "GBR", 826, "Europe", "Northern Europe");
@@ -398,6 +406,64 @@ public class VerificationRequestProcessorTests
 
         Assert.Equal(VerificationProcessOutcome.Verified, outcome);
         Assert.Equal(0, _budget.CallCount);
+    }
+
+    /// <summary>G4 (final fix): <c>sources.Any(...)</c> is what makes a mixed request gated -- every
+    /// other gate test here names <c>aeroapi</c> alone or a free source alone, so a request naming
+    /// both together was unproven.</summary>
+    [Fact]
+    public async Task ProcessAsync_AeroApiBudgetExhausted_ARequestNamingAFreeSourceAndAeroApiTogether_Pauses()
+    {
+        _budget.State = ProviderBudgetState.Exhausted;
+        var request = ClaimedAirportRequest(new[] { "ourairports", "aeroapi" });
+        var ourAirports = AirportSource("ourairports", VerificationSourceFetchResult.Found(VerificationCheckedColumns.Project(Heathrow())));
+        var aeroApi = AirportSource("aeroapi", VerificationSourceFetchResult.NotFound);
+
+        var outcome = await Processor(new FakeVerificationSourceRegistry(ourAirports, aeroApi)).ProcessAsync(Claim);
+
+        Assert.Equal(VerificationProcessOutcome.Paused, outcome);
+        Assert.Equal(VerificationRequestStatus.Running, request.Status);
+        Assert.Equal(0, request.Attempts);
+        Assert.Empty(ourAirports.Lookups);
+        Assert.Empty(aeroApi.Lookups);
+    }
+
+    /// <summary>Final fix G5: a zero-row update means the claim was lost -- reclaimed (by the
+    /// stuck-request reset, or another claim) between the guard finding Exhausted and the pause being
+    /// recorded -- so this is <c>ClaimLost</c>, not a pause that never actually happened.</summary>
+    [Fact]
+    public async Task ProcessAsync_AeroApiBudgetExhausted_TheReturnToPendingClaimsZeroRows_IsClaimLost_NotPaused()
+    {
+        _budget.State = ProviderBudgetState.Exhausted;
+        ClaimedAirportRequest(new[] { "aeroapi" });
+        _requests.ReturnClaimsToPendingAsync(Arg.Any<IReadOnlyCollection<VerificationClaim>>(), Arg.Any<CancellationToken>())
+            .Returns(0);
+        var aeroApi = AirportSource("aeroapi", VerificationSourceFetchResult.NotFound);
+
+        var outcome = await Processor(new FakeVerificationSourceRegistry(aeroApi)).ProcessAsync(Claim);
+
+        Assert.Equal(VerificationProcessOutcome.ClaimLost, outcome);
+    }
+
+    /// <summary>Final fix G6: a database failure while returning the claim to Pending is caught here,
+    /// not left to propagate -- the cycle runner treats any exception from <c>ProcessAsync</c> as
+    /// unexpected and records it as a source error (attempts +1, error text, backoff), exactly what
+    /// R5 forbids for a pause.</summary>
+    [Fact]
+    public async Task ProcessAsync_AeroApiBudgetExhausted_TheReturnToPendingThrows_StillReportsPaused_WithoutPropagating()
+    {
+        _budget.State = ProviderBudgetState.Exhausted;
+        var request = ClaimedAirportRequest(new[] { "aeroapi" });
+        _requests.ReturnClaimsToPendingAsync(Arg.Any<IReadOnlyCollection<VerificationClaim>>(), Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromException<int>(new TimeoutException("database gone")));
+        var aeroApi = AirportSource("aeroapi", VerificationSourceFetchResult.NotFound);
+
+        var outcome = await Processor(new FakeVerificationSourceRegistry(aeroApi)).ProcessAsync(Claim);
+
+        Assert.Equal(VerificationProcessOutcome.Paused, outcome);
+        Assert.Equal(VerificationRequestStatus.Running, request.Status);
+        Assert.Equal(0, request.Attempts);
+        Assert.Null(request.Error);
     }
 
     // ── Terminal errors ─────────────────────────────────────────────────────

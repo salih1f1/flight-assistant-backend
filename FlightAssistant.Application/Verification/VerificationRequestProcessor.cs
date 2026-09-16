@@ -366,14 +366,56 @@ namespace FlightAssistant.Application.Verification
         /// method on it was ever called). Instead it goes back to Pending the same way a cancelled
         /// cycle returns its unfinished claims: one guarded SQL update, keyed by the claim's own
         /// <c>StartedUtc</c>, that touches <c>status</c> and <c>started_utc</c> alone.
+        ///
+        /// <para>
+        /// <b>The row count (final fix G5).</b> A zero-row update means the claim was lost -- another
+        /// worker's stuck-request reset (or, in theory, another claim) already moved this row past
+        /// the <c>StartedUtc</c> this guard clause matches on -- so this reports
+        /// <see cref="VerificationProcessOutcome.ClaimLost"/>, the same outcome every other claim-loss
+        /// path in this class reports, rather than a pause that never actually happened.
+        /// </para>
+        ///
+        /// <para>
+        /// <b>A failed update (final fix G6).</b> If the database call itself throws, it is caught
+        /// here rather than left to propagate: the caller (<see cref="VerificationCycleRunner"/>)
+        /// treats any exception from <see cref="ProcessAsync"/> as unexpected and routes it to
+        /// <see cref="RecordUnexpectedFailureAsync"/> -- attempts +1, error text, backoff -- exactly
+        /// the outcome R5 forbids for a pause. The request is left Running; the stuck-request reset
+        /// reclaims it in 10 minutes, the same fallback the cycle runner's own
+        /// <c>ReturnUnfinishedClaimsAsync</c> already relies on when its best-effort return fails.
+        /// </para>
         /// </summary>
         private async Task<VerificationProcessOutcome> PauseAsync(VerificationClaim claim, CancellationToken ct)
         {
+            int returned;
+            try
+            {
+                returned = await _requests.ReturnClaimsToPendingAsync(new[] { claim }, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Could not return verification request {RequestId} to Pending for the AeroAPI budget pause; " +
+                    "it stays Running until the stuck-request reset reclaims it.",
+                    claim.RequestId);
+                return VerificationProcessOutcome.Paused;
+            }
+
+            if (returned == 0)
+            {
+                _logger.LogWarning(
+                    "Verification request {RequestId} was claimed again before its AeroAPI budget pause could be recorded; discarding it.",
+                    claim.RequestId);
+                return VerificationProcessOutcome.ClaimLost;
+            }
+
             _logger.LogInformation(
                 "Verification request {RequestId} stays Pending: this month's AeroAPI budget is exhausted.",
                 claim.RequestId);
-
-            await _requests.ReturnClaimsToPendingAsync(new[] { claim }, ct);
             return VerificationProcessOutcome.Paused;
         }
 
