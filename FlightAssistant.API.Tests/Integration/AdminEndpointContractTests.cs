@@ -8,6 +8,9 @@ namespace FlightAssistant.API.Tests.Integration;
 /// command carries a validator whose rule <c>{id:int}</c>/<c>{id:guid}</c> route constraints let
 /// an HTTP caller violate — <c>0</c>/negative ints and the all-zero guid both bind, they just fail
 /// <c>GreaterThan(0)</c> / <c>NotEqual(Guid.Empty)</c> once inside <c>ValidationBehaviour</c>.
+/// These pin that each 400 is reachable; the declaration itself is pinned by the committed
+/// spec/openapi.json, which CI regenerates and diffs byte-for-byte. Deleting a
+/// .ProducesValidationProblem() would leave every test here green — CI is the net for that half.
 /// </summary>
 [Collection("Integration")]
 public class AdminEndpointContractTests(FlightAssistantWebApplicationFactory factory)
