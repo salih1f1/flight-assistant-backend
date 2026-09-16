@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text;
 using FlightAssistant.Application.Interfaces.ExternalServices;
@@ -9,14 +10,14 @@ using Microsoft.Extensions.Options;
 namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroDataBox;
 
 /// <summary>
-/// Drives <see cref="AeroDataBoxFlightSearchProvider"/> against a recorded AeroDataBox
-/// <c>/flights/airports/iata/...</c> payload (see
-/// <c>FlightAssistant.Infrastructure.Tests/Fixtures/AeroDataBox/departures.json</c>), mirroring
-/// <c>AeroApiFlightSearchProviderTests</c>'s scripted-handler-plus-fixture approach. No live call
-/// is ever made and the configured key here is always a dummy value that must never appear in any
-/// assertion or log output. Each fixture row's <c>aircraft</c> object is shape-filler only — its
-/// <c>model</c>/<c>reg</c> sub-fields were not recorded from the spike and nothing in the mapping
-/// reads them.
+/// Drives <see cref="AeroDataBoxFlightSearchProvider"/> against a fixture hand-authored in the
+/// shape AeroDataBox's <c>/flights/airports/iata/...</c> endpoint returned during the 2026-09-16
+/// spike (see <c>FlightAssistant.Infrastructure.Tests/Fixtures/AeroDataBox/departures.json</c>) —
+/// it is not a recorded payload — mirroring <c>AeroApiFlightSearchProviderTests</c>'s
+/// scripted-handler-plus-fixture approach. No live call is ever made and the configured key here
+/// is always a dummy value that must never appear in any assertion or log output. Each fixture
+/// row's <c>aircraft</c> object is shape-filler only — its <c>model</c>/<c>reg</c> sub-fields were
+/// not recorded from the spike and nothing in the mapping reads them.
 /// </summary>
 public class AeroDataBoxFlightSearchProviderTests
 {
@@ -26,6 +27,16 @@ public class AeroDataBoxFlightSearchProviderTests
     private static string ReadFixture(string name) =>
         File.ReadAllText(Path.Combine(FixturesDir, name));
 
+    private const string EmptyDeparturesBody = """{ "departures": [] }""";
+
+    /// <summary>
+    /// The provider issues two sequential window requests per search (see the provider's
+    /// <c>DayWindows</c>). Serving the SAME body to both would double every row, making dedupe
+    /// load-bearing in tests that are not about dedupe — so this default handler answers the FIRST
+    /// request with the scripted <c>(status, body)</c> and every request after that with an
+    /// ordinary empty-departures <c>200 OK</c>. Tests that need to script both windows
+    /// independently use <see cref="PerWindowHttpMessageHandler"/> instead.
+    /// </summary>
     private sealed class ScriptedHttpMessageHandler : HttpMessageHandler
     {
         private readonly HttpStatusCode _status;
@@ -45,16 +56,38 @@ public class AeroDataBoxFlightSearchProviderTests
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Requests.Add(request.RequestUri!);
-            var response = new HttpResponseMessage(_status)
+            var isFirst = Requests.Count == 1;
+            var response = new HttpResponseMessage(isFirst ? _status : HttpStatusCode.OK)
             {
-                Content = new StringContent(_body, Encoding.UTF8, "application/json")
+                Content = new StringContent(isFirst ? _body : EmptyDeparturesBody, Encoding.UTF8, "application/json")
             };
-            if (_headers is not null)
+            if (isFirst && _headers is not null)
             {
                 foreach (var (key, value) in _headers)
                     response.Headers.TryAddWithoutValidation(key, value);
             }
             return Task.FromResult(response);
+        }
+    }
+
+    /// <summary>Answers each request by inspecting its URL — used to give the two search windows
+    /// different responses (merge, dedupe, partial-failure tests).</summary>
+    private sealed class PerWindowHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly Func<Uri, (HttpStatusCode Status, string Body)> _responseFor;
+        public List<Uri> Requests { get; } = [];
+
+        public PerWindowHttpMessageHandler(Func<Uri, (HttpStatusCode, string)> responseFor) => _responseFor = responseFor;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request.RequestUri!);
+            var (status, body) = _responseFor(request.RequestUri!);
+            return Task.FromResult(new HttpResponseMessage(status)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            });
         }
     }
 
@@ -64,6 +97,18 @@ public class AeroDataBoxFlightSearchProviderTests
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken) =>
             throw new HttpRequestException("simulated connection failure");
+    }
+
+    /// <summary>Throws a given exception on every request — used to simulate
+    /// <c>HttpClient.Timeout</c>, this client's only timeout (it carries no resilience handler).</summary>
+    private sealed class ThrowingHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly Func<Exception> _factory;
+        public ThrowingHttpMessageHandler(Func<Exception> factory) => _factory = factory;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            throw _factory();
     }
 
     private static (AeroDataBoxFlightSearchProvider Provider, ScriptedHttpMessageHandler Handler) Provider(
@@ -90,37 +135,154 @@ public class AeroDataBoxFlightSearchProviderTests
     private static readonly FlightSearchCriteria SofToIst =
         new("SOF", "IST", new DateOnly(2026, 9, 29), null, IncludeCodeshares: true);
 
+    private static string Departure(string number, string codeshareStatus, string scheduledUtc, string scheduledLocal) => $$"""
+        {
+          "number": "{{number}}",
+          "codeshareStatus": "{{codeshareStatus}}",
+          "departure": { "airport": { "iata": "SOF" }, "scheduledTime": { "utc": "{{scheduledUtc}}", "local": "{{scheduledLocal}}" } },
+          "arrival": { "airport": { "iata": "IST" }, "scheduledTime": { "utc": "2026-09-29T08:05:00Z", "local": "2026-09-29T11:05:00+03:00" } }
+        }
+        """;
+
     // ------------------------------------------------------------------
-    // The request URL
+    // The request URL: two ≤12-hour windows, not one whole day
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task SearchAsync_BuildsTheUrl_WithTheWholeLocalDayWindow_AndWithCodesharedTrue()
+    public async Task SearchAsync_QueriesTwoWindows_WithCodesharedTrue()
     {
         var (provider, handler) = Provider(HttpStatusCode.OK, ReadFixture("departures.json"));
 
         await provider.SearchAsync(SofToIst with { IncludeCodeshares = true });
 
-        Assert.Single(handler.Requests);
-        var request = handler.Requests[0];
-        Assert.Equal("/flights/airports/iata/SOF/2026-09-29T00:00/2026-09-29T23:59", request.AbsolutePath);
-        Assert.Contains("withLeg=true", request.Query);
-        Assert.Contains("direction=Departure", request.Query);
-        Assert.Contains("withCancelled=false", request.Query);
-        Assert.Contains("withCargo=false", request.Query);
-        Assert.Contains("withPrivate=false", request.Query);
-        Assert.Contains("withCodeshared=true", request.Query);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal("/flights/airports/iata/SOF/2026-09-29T00:00/2026-09-29T11:59", handler.Requests[0].AbsolutePath);
+        Assert.Equal("/flights/airports/iata/SOF/2026-09-29T12:00/2026-09-29T23:59", handler.Requests[1].AbsolutePath);
+        Assert.All(handler.Requests, r =>
+        {
+            Assert.Contains("withLeg=true", r.Query);
+            Assert.Contains("direction=Departure", r.Query);
+            Assert.Contains("withCancelled=false", r.Query);
+            Assert.Contains("withCargo=false", r.Query);
+            Assert.Contains("withPrivate=false", r.Query);
+            Assert.Contains("withCodeshared=true", r.Query);
+        });
     }
 
     [Fact]
-    public async Task SearchAsync_BuildsTheUrl_WithCodesharedFalse()
+    public async Task SearchAsync_QueriesTwoWindows_WithCodesharedFalse()
     {
         var (provider, handler) = Provider(HttpStatusCode.OK, ReadFixture("departures.json"));
 
         await provider.SearchAsync(SofToIst with { IncludeCodeshares = false });
 
-        Assert.Single(handler.Requests);
-        Assert.Contains("withCodeshared=false", handler.Requests[0].Query);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.All(handler.Requests, r => Assert.Contains("withCodeshared=false", r.Query));
+    }
+
+    [Fact]
+    public async Task SearchAsync_NeverRequestsAWindowLongerThan12Hours()
+    {
+        // Regression guard for #267 (f89f95e's test did the same): AeroDataBox rejects any window
+        // over 12 hours with HTTP 400.
+        var (provider, handler) = Provider(HttpStatusCode.OK, ReadFixture("departures.json"));
+
+        await provider.SearchAsync(SofToIst);
+
+        Assert.NotEmpty(handler.Requests);
+        foreach (var uri in handler.Requests)
+        {
+            var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var to = DateTime.ParseExact(segments[^1], "yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+            var from = DateTime.ParseExact(segments[^2], "yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+            Assert.True(to > from, "End of window must be after start.");
+            Assert.True(to - from <= TimeSpan.FromHours(12),
+                $"Window {from:o}..{to:o} exceeds the 12h AeroDataBox limit.");
+        }
+    }
+
+    [Fact]
+    public async Task SearchAsync_FormatsTheWindowDatesInvariantly_RegardlessOfCurrentCulture()
+    {
+        var original = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("th-TH");
+            var (provider, handler) = Provider(HttpStatusCode.OK, ReadFixture("departures.json"));
+
+            await provider.SearchAsync(SofToIst);
+
+            Assert.All(handler.Requests, r => Assert.Contains("2026-09-29", r.AbsolutePath));
+            Assert.All(handler.Requests, r => Assert.DoesNotContain("2569", r.AbsolutePath));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = original;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Merge and dedupe across the two windows
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task SearchAsync_MergesRowsFromBothWindows()
+    {
+        // Window 1 (…T11:59) answers with a morning row; window 2 (…T23:59) answers with an
+        // afternoon one. Both must come back.
+        var morning = $$"""{ "departures": [ {{Departure("TK 1028", "IsOperator", "2026-09-29T06:35:00Z", "2026-09-29T09:35:00+03:00")}} ] }""";
+        var afternoon = $$"""{ "departures": [ {{Departure("TK 1032", "IsOperator", "2026-09-29T15:00:00Z", "2026-09-29T18:00:00+03:00")}} ] }""";
+        var handler = new PerWindowHttpMessageHandler(uri =>
+            uri.AbsolutePath.EndsWith("T11:59") ? (HttpStatusCode.OK, morning) : (HttpStatusCode.OK, afternoon));
+        var provider = ProviderOver(handler);
+
+        var results = await provider.SearchAsync(SofToIst);
+
+        Assert.Equal(2, results.Count);
+        Assert.Contains(results, r => r.FlightNumber == "TK1028");
+        Assert.Contains(results, r => r.FlightNumber == "TK1032");
+    }
+
+    [Fact]
+    public async Task SearchAsync_DedupesTheSameRowFromBothWindows_ButKeepsACodeshareAtTheSameTime()
+    {
+        // Both windows answer identically here, simulating the same physical departures showing up
+        // in both responses (e.g. a boundary overlap). TK1028 must be deduped to one row; its
+        // codeshare 6E4120 — same scheduled time, different flight number — must survive
+        // separately, since the dedupe key is (FlightNumber, ScheduledDepartureUtc).
+        var body = $$"""
+        {
+          "departures": [
+            {{Departure("TK 1028", "IsOperator", "2026-09-29T06:35:00Z", "2026-09-29T09:35:00+03:00")}},
+            {{Departure("6E 4120", "IsCodeshared", "2026-09-29T06:35:00Z", "2026-09-29T09:35:00+03:00")}}
+          ]
+        }
+        """;
+        var handler = new PerWindowHttpMessageHandler(_ => (HttpStatusCode.OK, body));
+        var provider = ProviderOver(handler);
+
+        var results = await provider.SearchAsync(SofToIst);
+
+        Assert.Equal(2, results.Count);
+        Assert.Single(results, r => r.FlightNumber == "TK1028");
+        Assert.Single(results, r => r.FlightNumber == "6E4120");
+    }
+
+    [Fact]
+    public async Task SearchAsync_Throws_WhenTheSecondWindowFails_AndReturnsNoRows()
+    {
+        // Window 1 succeeds with a row; window 2 fails. The whole search must throw — one window's
+        // rows are never returned as if they were the full day.
+        var morning = $$"""{ "departures": [ {{Departure("TK 1028", "IsOperator", "2026-09-29T06:35:00Z", "2026-09-29T09:35:00+03:00")}} ] }""";
+        var handler = new PerWindowHttpMessageHandler(uri =>
+            uri.AbsolutePath.EndsWith("T11:59")
+                ? (HttpStatusCode.OK, morning)
+                : (HttpStatusCode.InternalServerError, """{ "message": "boom" }"""));
+        var provider = ProviderOver(handler);
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(SofToIst));
+
+        Assert.Equal(502, ex.StatusCode);
     }
 
     // ------------------------------------------------------------------
@@ -154,6 +316,22 @@ public class AeroDataBoxFlightSearchProviderTests
 
         Assert.DoesNotContain(results, r => r.FlightNumber == "BA249");
         Assert.All(results, r => Assert.Equal("IST", r.ArrivalAirportIata));
+        // Positive anchor — without it this test passes against `return [];` too.
+        Assert.Contains(results, r => r.FlightNumber == "TK1028");
+    }
+
+    [Fact]
+    public async Task SearchAsync_TrimsTheArrivalIata_BeforeComparing()
+    {
+        // The origin is trimmed and uppercased in BuildUrl already; the arrival, compared only in
+        // TryMapRow, needs the same trim — otherwise a padded FlightSearchCriteria.ArrivalIata
+        // returns zero rows silently (fix round 2, finding 13).
+        var padded = SofToIst with { ArrivalIata = " IST " };
+        var (provider, _) = Provider(HttpStatusCode.OK, ReadFixture("departures.json"));
+
+        var results = await provider.SearchAsync(padded);
+
+        Assert.Contains(results, r => r.FlightNumber == "TK1028");
     }
 
     [Fact]
@@ -185,7 +363,7 @@ public class AeroDataBoxFlightSearchProviderTests
     }
 
     // ------------------------------------------------------------------
-    // The revised-time window gotcha (Step 2 of the brief)
+    // The scheduled-date keeper — never the revised time (unchanged from fix round 1)
     // ------------------------------------------------------------------
 
     [Fact]
@@ -204,9 +382,15 @@ public class AeroDataBoxFlightSearchProviderTests
     [Fact]
     public async Task SearchAsync_KeepsARowScheduledOnTheRequestedDay_EvenWhenRevisedPastLocalMidnight()
     {
-        // TK 1032: scheduled 23:50 local on the 29th, revised to 00:20 local on the 30th. It is a
-        // 29th service because it is SCHEDULED on the 29th — whatever its delay does. Kept, with
-        // ServiceDate and ScheduledDepartureUtc following the scheduled time, not the revised one.
+        // TK 1032: scheduled 23:50 local on the 29th, revised to 00:20 local on the 30th. Its
+        // revised time (00:20 on the 30th) falls after the end of the LAST window this provider
+        // ever queries for this date (2026-09-29T23:59), so the real AeroDataBox endpoint cannot
+        // actually return this row for this search — see the class remarks' residual-cost
+        // paragraph. This test pins the predicate against a synthetic row instead: IF a row like
+        // this were ever returned, it must be kept, because it is a 29th service — SCHEDULED on the
+        // 29th, whatever its delay does. It is the only test that separates "scheduled date" from
+        // "scheduled AND revised dates both on the requested day" (TK1030 has both on the 29th;
+        // TK1026 below has both off the 29th).
         var (provider, _) = Provider(HttpStatusCode.OK, ReadFixture("departures.json"));
 
         var results = await provider.SearchAsync(SofToIst);
@@ -219,16 +403,20 @@ public class AeroDataBoxFlightSearchProviderTests
     [Fact]
     public async Task SearchAsync_ExcludesARowScheduledOnThePreviousDay_ThatRevisedIntoTheRequestedDay()
     {
-        // TK 1026: scheduled 23:40 local on the 28th, revised to 00:30 local on the 29th. This is
-        // the real contaminant — AeroDataBox's server-side window filters on revised time, so a row
-        // like this genuinely leaks into a day-29 query even though it is a 28th service. Its
-        // scheduled local date is the 28th, so it is excluded despite its revised time (and hence
-        // its presence in the response) landing on the requested day.
+        // TK 1026: scheduled 23:40 local on the 28th, revised to 00:30 local on the 29th. The
+        // 2026-09-16 spike measured only that a row revised OUT of a window is absent — not that a
+        // row revised INTO one is present — so this is not confirmed to be a response AeroDataBox
+        // would actually send. It CAN leak in if the server's revised-time window admits rows
+        // revised into it as well as excludes rows revised out of it (unmeasured either way), but
+        // the scheduled-date filter here is correct regardless: its scheduled local date is the
+        // 28th, so it is excluded whether or not the server ever actually includes it.
         var (provider, _) = Provider(HttpStatusCode.OK, ReadFixture("departures.json"));
 
         var results = await provider.SearchAsync(SofToIst);
 
         Assert.DoesNotContain(results, r => r.FlightNumber == "TK1026");
+        // Positive anchor — without it this test passes against `return [];` too.
+        Assert.Contains(results, r => r.FlightNumber == "TK1028");
     }
 
     // ------------------------------------------------------------------
@@ -253,6 +441,42 @@ public class AeroDataBoxFlightSearchProviderTests
         var results = await provider.SearchAsync(SofToIst);
 
         Assert.Empty(results);
+    }
+
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("null")]
+    [InlineData("\"oops\"")]
+    public async Task SearchAsync_ReturnsEmptyList_WhenTheBodyParsesButIsNotAnObject(string body)
+    {
+        var (provider, _) = Provider(HttpStatusCode.OK, body);
+
+        var results = await provider.SearchAsync(SofToIst);
+
+        Assert.Empty(results);
+    }
+
+    [Fact]
+    public async Task SearchAsync_SkipsNonObjectElementsOfDepartures()
+    {
+        const string body = """
+        {
+          "departures": [
+            null,
+            {
+              "number": "TK 1028",
+              "codeshareStatus": "IsOperator",
+              "departure": { "airport": { "iata": "SOF" }, "scheduledTime": { "utc": "2026-09-29T06:35:00Z", "local": "2026-09-29T09:35:00+03:00" } },
+              "arrival": { "airport": { "iata": "IST" }, "scheduledTime": { "utc": "2026-09-29T08:05:00Z", "local": "2026-09-29T11:05:00+03:00" } }
+            }
+          ]
+        }
+        """;
+        var (provider, _) = Provider(HttpStatusCode.OK, body);
+
+        var results = await provider.SearchAsync(SofToIst);
+
+        Assert.Contains(results, r => r.FlightNumber == "TK1028");
     }
 
     [Fact]
@@ -296,6 +520,30 @@ public class AeroDataBoxFlightSearchProviderTests
     }
 
     [Fact]
+    public async Task SearchAsync_ReturnsEmptyList_OnNoContentSuccess()
+    {
+        // Defensive and unobserved — no spike ever hit an empty window, but the global constraint
+        // is "no data is an empty list, never an error", and 204 must not be treated as an
+        // unparseable-body failure.
+        var (provider, _) = Provider(HttpStatusCode.NoContent, "");
+
+        var results = await provider.SearchAsync(SofToIst);
+
+        Assert.Empty(results);
+    }
+
+    [Fact]
+    public async Task SearchAsync_ReturnsEmptyList_OnAnEmptyOrWhitespaceSuccessBody()
+    {
+        // Defensive and unobserved, same reasoning as the 204 case above.
+        var (provider, _) = Provider(HttpStatusCode.OK, "   ");
+
+        var results = await provider.SearchAsync(SofToIst);
+
+        Assert.Empty(results);
+    }
+
+    [Fact]
     public async Task SearchAsync_ThrowsBadGateway_WhenTheBodyIsNotValidJson()
     {
         var (provider, _) = Provider(HttpStatusCode.OK, "not json");
@@ -313,6 +561,35 @@ public class AeroDataBoxFlightSearchProviderTests
         var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(SofToIst));
 
         Assert.Equal(502, ex.StatusCode);
+    }
+
+    // ------------------------------------------------------------------
+    // Timeout vs genuine caller cancellation
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task SearchAsync_MapsATimeout_ToBadGateway_WhenTheCallerDidNotCancel()
+    {
+        // HttpClient.Timeout throws TaskCanceledException — an OperationCanceledException — and
+        // this client carries no resilience handler, so HttpClient.Timeout is its only timeout.
+        var provider = ProviderOver(new ThrowingHttpMessageHandler(
+            () => new TaskCanceledException("timeout", new TimeoutException())));
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(SofToIst));
+
+        Assert.Equal(502, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task SearchAsync_PropagatesCancellation_WhenTheCallerActuallyCancelled()
+    {
+        var provider = ProviderOver(new ThrowingHttpMessageHandler(
+            () => new TaskCanceledException("timeout", new TimeoutException())));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => provider.SearchAsync(SofToIst, cts.Token));
     }
 
     // ------------------------------------------------------------------
@@ -354,9 +631,43 @@ public class AeroDataBoxFlightSearchProviderTests
     }
 
     [Fact]
-    public async Task SearchAsync_MapsAnyOtherFailureStatus_ToBadGateway()
+    public async Task SearchAsync_Maps400_ToInternalServerError_WithoutInvitingARetry()
+    {
+        // #267's live example: the removed whole-day window earned exactly this from AeroDataBox.
+        var (provider, _) = Provider(HttpStatusCode.BadRequest, """{ "message": "range too long" }""");
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(SofToIst));
+
+        Assert.Equal(500, ex.StatusCode);
+        Assert.DoesNotContain("try again", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SearchAsync_Maps404_ToInternalServerError()
+    {
+        var (provider, _) = Provider(HttpStatusCode.NotFound, """{ "message": "not found" }""");
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(SofToIst));
+
+        Assert.Equal(500, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task SearchAsync_Maps500FromUpstream_ToBadGateway()
     {
         var (provider, _) = Provider(HttpStatusCode.InternalServerError, """{ "message": "boom" }""");
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(SofToIst));
+
+        Assert.Equal(502, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task SearchAsync_Maps503FromUpstream_ToBadGateway()
+    {
+        // Upstream sending ITS OWN 503 is distinct from the 429 case we map to our own 503 — this
+        // falls into the catch-all 5xx bucket, 502.
+        var (provider, _) = Provider(HttpStatusCode.ServiceUnavailable, """{ "message": "maintenance" }""");
 
         var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(SofToIst));
 
@@ -386,8 +697,24 @@ public class AeroDataBoxFlightSearchProviderTests
         Assert.Contains("REDACTED", ex.DiagnosticDetail);
     }
 
+    [Fact]
+    public async Task SearchAsync_RedactsOtherCredentialShapedFields_NotJustTheConfiguredKey()
+    {
+        // The test above only exercises the literal-configured-key replacement. This exercises
+        // KeyLikeFieldPattern itself with a value that is NOT the configured key — a broken pattern
+        // would not be caught by the test above.
+        var (provider, _) = Provider(
+            HttpStatusCode.Unauthorized,
+            """{ "apiKey": "some-other-secret" }""");
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(SofToIst));
+
+        Assert.DoesNotContain("some-other-secret", ex.DiagnosticDetail);
+        Assert.Contains("REDACTED", ex.DiagnosticDetail);
+    }
+
     // ------------------------------------------------------------------
-    // Guard: a route search needs both airports
+    // Guard: a route search needs both airports — our defect, once Task 2 lands (fix round 2, finding 9)
     // ------------------------------------------------------------------
 
     [Theory]
@@ -400,7 +727,8 @@ public class AeroDataBoxFlightSearchProviderTests
         var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(
             new FlightSearchCriteria(departureIata, arrivalIata, new DateOnly(2026, 9, 29), null)));
 
-        Assert.Equal(400, ex.StatusCode);
+        Assert.Equal(500, ex.StatusCode);
+        Assert.Contains("both a departure and an arrival airport", ex.DiagnosticDetail);
         Assert.Empty(handler.Requests);
     }
 }
