@@ -102,6 +102,8 @@ void MarkVerificationFailed(string issue);        // IsVerified = false, Verifie
 
 **Index:** unique partial index on `(entity_type, entity_key)` where `status in ('Pending','Running')`: at most one open check per entity.
 
+**Error-cooldown index (#418).** A second partial index, `(entity_type, entity_key, completed_utc)`, supports the flight-trigger cooldown in §4.1. Filtered on `completed_utc is not null`, not `status = 'Error'`: the cooldown query's second half asks whether any row for the key completed *more recently*, of *any* status, which a `status = 'Error'`-filtered index cannot serve — see CLAUDE.md for the sequential-scan regression that filter caused, and why it must not come back.
+
 **Canonical `entity_key` (controller ruling).** One stored form per entity, so the unique index above sees one entity as exactly one key: a two-letter, upper-cased code for `Country`; a positive `int` id in canonical decimal form (no sign, no leading zeros) for `Airport`/`Airline`. Surrounding whitespace is rejected outright, not trimmed. `EnqueueAsync`'s own duplicate-key pre-check compares these canonical keys.
 
 **Concurrency.** Each row also carries PostgreSQL's own `xmin` system column as an optimistic-concurrency token — no extra column needed. A save against a stale token (typically a request that was reset as stuck and reclaimed by another cycle since it was loaded) throws; the job treats that as "claim lost": nothing is written and no attempt is counted for it. §4.2 covers how the claim and the processor use this token together.
@@ -174,6 +176,8 @@ POST /admin/verification-requests
 
 Default sources: airport → `ourairports`, airline → `aeroapi`, country → `mledoze` (`Verification:DefaultSources`).
 
+**Error cooldown (#418).** `EnqueueAsync` itself — not this handler — separately skips a key, for the flight trigger only, whose most recently *completed* request was `Error` within `Verification:ErrorCooldown` (default 6 h): a row a broken upstream just failed on stays skipped, counted in `skipped`, until the cooldown passes, instead of being re-queued (and re-billed) on every repeat track. `Verified`, `Mismatch` and `NotFound` never start this cooldown; the latter two are already excluded by rule 3 above. `0` disables it, and issues no extra query. The admin queue and retry routes (§4.4) always enqueue with trigger `admin`, which this check never gates — see CLAUDE.md for why that has to hold.
+
 ### 4.2 The job — `ReferenceVerificationBackgroundService`
 
 Follows `FlightStatusSyncBackgroundService`: polling loop, scoped services per cycle, heartbeat reported to the admin health report. `Verification:Enabled` (default `true`, controller ruling, for parity with `FlightSync:Enabled`) gates the whole loop; disabled, the heartbeat stays `NeverRun` rather than reporting a broken job.
@@ -192,6 +196,8 @@ Each cycle:
 | Source error (timeout, non-success status including 429, network error, body over the size cap, unparseable content, no usable rows) | **Unchanged** | `attempts + 1`; back to `Pending` with backoff; after `MaxAttempts` → `Error` |
 | Entity deleted meanwhile | — | `Error` with `"Entity no longer exists"` |
 | A requested source isn't registered (e.g. `aeroapi` before step 9), or doesn't support the entity type | **Unchanged** | `Error` straight away, naming the source — never retried, since retrying cannot change the answer |
+
+**A row that completes `Error` is never flagged (#418).** Every `Error` path above leaves the entity's `IVerifiable` columns untouched — never `MarkVerificationFailed`, which only the `Mismatch`/`NotFound` rows above call. Flagging it would conflate "could not check" with "is wrong": one upstream outage would flood needs-attention with rows that were never actually wrong, and, since a flagged row is skipped by the flight trigger's own stale-check rule, auto-re-verification would stay stopped for every one of them until an admin cleared each by hand. Instead, `Error` starts the flight-trigger cooldown in §4.1 — a time-boxed backoff, not a manual-intervention state. See CLAUDE.md for the rejected alternative and for why splitting permanent errors from transient exhaustion is left for later.
 
 **Backoff (controller ruling):** 1 minute after the 1st failed attempt, 5 minutes after the 2nd and every later one. A source error is retryable but not necessarily transient — a reshaped upstream dataset fails the same way every time — which is why `MaxAttempts`, not the backoff itself, is what ends the retries.
 
@@ -261,7 +267,8 @@ POST /admin/verification-requests/{id}/retry
        trigger admin, the caller as requested_by, cost from the registry. The retried request is unchanged.
      → 400 if one of its sources is no longer registered, or no longer supports the entity type
      → 404 if the request doesn't exist
-     → 409 if the entity already has an open request
+     → 409 if the entity already has an open request — never the §4.1 error cooldown, which gates
+       trigger `flight` only and a retry always enqueues as trigger `admin` (#418)
 
 PATCH /admin/countries/{code}/verify          (#331)
 ```
@@ -296,6 +303,7 @@ Queuing goes through one interface (`IVerificationQueue`), so a message signal c
 | `IdleRelease` | 30 min (range 0–24 h); `0` releases a source's dataset as soon as no open request uses it |
 | `StaleAfterDays` | 180 (range 1–3650) |
 | `DefaultSources` | Airport `ourairports`, Airline `aeroapi`, Country `mledoze` |
+| `ErrorCooldown` | 6 h (range 0–7 d); `0` disables it (#418) |
 
 Validated on start like `AeroApiOptions`. **`Enabled`** (controller ruling, for parity with `FlightSync:Enabled`) gates the whole background service. Every source list — each `DefaultSources` entry, and every request's own `sources` column — follows the same one rule (`VerificationRequest.TryJoinSources`, shared by the domain and this options validation): at least one name; none blank or containing whitespace, `,` or `+`; duplicates dropped; the joined form fitting the `sources` column — so a configured default is always guaranteed to be a queueable request.
 
@@ -374,7 +382,7 @@ Every PR proves its tests by breaking the code, showing the failure, and restori
 - **Sources:** recorded HTTP fixtures (OurAirports CSV slice, mledoze JSON, AeroAPI operator/airport JSON); not found; missing column; timeout, 5xx, 429; OurAirports download reused within 24 h and dropped when no open request uses it; no call when no request needs the source.
 - **Job (Postgres, as in `*PostgresTests`):** two workers never claim the same request; unique index merges duplicates; stuck `Running` reset; backoff and `MaxAttempts` → `Error` with the entity unchanged; budget pause leaves requests `Pending`; `system` audit rows.
 - **Flight trigger:** queues unverified and stale (181 days); skips fresh (179 days), flagged and already-open; tracking succeeds when queuing throws.
-- **Endpoints:** source validation; `queued`/`skipped` counts; accept-source 204 / 409 on changed entity; retry 409 on open request; verify by country code.
+- **Endpoints:** source validation; `queued`/`skipped` counts; accept-source 204 / 409 on changed entity; retry 409 on open request; verify by country code; queue and retry unaffected by the flight-trigger error cooldown (#418).
 - **Import/export:** round trip keeps verification details; old CSV stamps `import`.
 
 **Panel** (Vitest + React Testing Library)
@@ -401,6 +409,8 @@ One issue → branch → PR per step; wait for review after each.
 | 10 | backend | Flight-tracking trigger |
 
 **All ten steps are now landed.** #410 (step 10, the flight-tracking trigger) was the last; §4.1 above is the as-built shape.
+
+**Landed after all ten steps (#418).** A source error left an entity looking exactly like one never checked, so the flight-tracking trigger re-queued it — and re-billed whatever source it used — on every repeat track against a broken upstream. `Verification:ErrorCooldown` (default 6 h) makes `EnqueueAsync` skip a flight-triggered key whose most recently completed request was `Error` inside the window (§2.3, §4.1); the admin queue and retry routes are unaffected, since both always enqueue with trigger `admin` (§4.4). See CLAUDE.md for why the entity itself is deliberately left unflagged, and for the index-filter defect (fix round 1) this uncovered.
 
 Steps 1–4 stand alone: countries become verifiable and imports work for moving data between environments. AeroAPI comes late so the free sources prove the approach first.
 
