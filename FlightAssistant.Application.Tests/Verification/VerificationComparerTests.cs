@@ -219,12 +219,14 @@ public class VerificationComparerTests
     {
         var ours = new Dictionary<string, string?>(StringComparer.Ordinal)
         {
-            ["Iata"] = "BA", ["Icao"] = "BAW", ["Name"] = "British Airways", ["CountryCode"] = "GB",
+            ["Iata"] = "BA", ["Icao"] = "BAW", ["Name"] = "British Airways",
+            ["CountryCode"] = "GB", // not a checked Airline column (R1, #401): aeroapi reports a name, never a code
             ["AllianceCode"] = "OW" // not a checked Airline column
         };
         var source = new Dictionary<string, string?>(StringComparer.Ordinal)
         {
-            ["Iata"] = "BA", ["Icao"] = "BAW", ["Name"] = "British Airways", ["CountryCode"] = "GB",
+            ["Iata"] = "BA", ["Icao"] = "BAW", ["Name"] = "British Airways",
+            ["CountryCode"] = "FR", // deliberately differs -- must not affect the outcome
             ["AllianceCode"] = "ST" // deliberately differs -- must not affect the outcome
         };
 

@@ -130,8 +130,12 @@ namespace FlightAssistant.Contracts.Responses.Admin
     /// <see cref="AdminHealthFlightSyncDto"/>, plus how many verification requests are waiting.</summary>
     /// <param name="Enabled">Mirrors <c>Verification:Enabled</c> (default <c>true</c>). When
     /// <c>false</c>, the timestamps below stay <c>null</c> by design: "disabled", not "broken".</param>
-    /// <param name="LastOutcome">One of <c>"NeverRun"</c>, <c>"Running"</c>, <c>"Success"</c> or
-    /// <c>"Failed"</c>. <c>"Failed"</c> means the cycle itself failed, not a request in it.</param>
+    /// <param name="LastOutcome">One of <c>"NeverRun"</c>, <c>"Running"</c>, <c>"Success"</c>,
+    /// <c>"Paused"</c> or <c>"Failed"</c>. <c>"Failed"</c> means the cycle itself failed, not a
+    /// request in it. <c>"Paused"</c> (#401 task 2, R4/R5) means the cycle worked through its batch
+    /// but left <see cref="RequestsPaused"/> requests Pending because this month's AeroAPI budget is
+    /// exhausted -- distinct from <c>"Success"</c> (nothing held back) and from <c>"Failed"</c> (the
+    /// cycle itself did not break; it declined to spend money it doesn't have).</param>
     /// <param name="RequestsProcessed">How many requests the most recently completed cycle claimed and
     /// worked through.</param>
     /// <param name="RequestsFailed">The subset of <see cref="RequestsProcessed"/> that hit a source
@@ -150,6 +154,13 @@ namespace FlightAssistant.Contracts.Responses.Admin
     /// <param name="PendingCount">Requests in <c>Pending</c>, due now or waiting to retry. <c>null</c>
     /// when the count could not be read (e.g. the database is unreachable): "cannot tell", not
     /// zero.</param>
+    /// <param name="RequestsPaused">The subset of the last completed cycle left exactly as they
+    /// were -- still Pending, no attempt counted, no error recorded -- because they named the AeroAPI
+    /// source while this month's budget was exhausted (#401 task 2, R4/R5). Not part of
+    /// <see cref="RequestsFailed"/>: a pause is not a failure. Describes the last completed cycle,
+    /// exactly like <see cref="RequestsProcessed"/> -- so a cycle that fails before finishing its own
+    /// batch leaves this at whatever an earlier paused cycle last reported, the same way it leaves
+    /// <see cref="RequestsProcessed"/> and the other counts.</param>
     public sealed record AdminHealthVerificationDto(
         bool Enabled,
         DateTime? LastRunStartedUtc,
@@ -161,6 +172,7 @@ namespace FlightAssistant.Contracts.Responses.Admin
         int FailuresUnrecorded,
         DateTime? NextRunDueUtc,
         string? LastError,
-        int? PendingCount
+        int? PendingCount,
+        int RequestsPaused = 0
     );
 }

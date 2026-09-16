@@ -532,19 +532,12 @@ public class AcceptVerificationSourceCommandHandlerTests
         await AssertNothingSaved();
     }
 
-    [Fact]
-    public async Task Handle_ANewAirlineCountryCodeThatIsNotInCountries_Is409_NamingIt_AndWritesNothing()
-    {
-        AirlineMismatch((nameof(Airline.CountryCode), "XK"), (nameof(Airline.Name), "British Airways Plc"));
-        var airline = LoadedAirline();
-        _countries.FindByCodeAsync("XK", Arg.Any<CancellationToken>()).ReturnsNull();
-
-        var ex = await AcceptFails(409, source: Airlines);
-
-        Assert.Equal("Airline CountryCode XK is not a country we have; add the country first.", ex.Message);
-        AssertUnchanged(airline);
-        await AssertNothingSaved();
-    }
+    // Handle_ANewAirlineCountryCodeThatIsNotInCountries... removed (#401, R1): Airline.CountryCode
+    // is no longer a checked/comparable column, so CheckedAsMismatch's real VerificationComparer
+    // call can no longer produce a stored "CountryCode" difference for an Airline entity -- the
+    // scenario this test exercised cannot arise through the normal check flow any more. The shared
+    // EnsureCountryExistsAsync mechanism this test also covered stays proven by the Airport
+    // equivalent above (Handle_ANewAirportCountryCodeThatIsNotInCountries_Is409_NamingIt_AndWritesNothing).
 
     /// <summary>A malformed code is named by the edit rules, not looked up.</summary>
     [Fact]

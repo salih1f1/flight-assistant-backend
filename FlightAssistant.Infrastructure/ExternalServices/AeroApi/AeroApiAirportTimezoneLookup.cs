@@ -31,7 +31,10 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
     public sealed class AeroApiAirportTimezoneLookup
     {
         // Airport time zones change about once a decade, so a success is kept for a year (#373).
-        private static readonly TimeSpan SuccessCacheDuration = TimeSpan.FromDays(365);
+        // Internal (not private) so AeroApiVerificationSource (#401, R7) can write under the exact
+        // same TTL when it opportunistically fills this cache from an already-paid-for airport
+        // check -- two different durations for the same key would just mean whichever wrote last wins.
+        internal static readonly TimeSpan SuccessCacheDuration = TimeSpan.FromDays(365);
 
         // An airport AeroAPI doesn't know (404, 400) or has no timezone for is kept as a miss for an
         // hour (#373). A transient failure isn't cached at all: a cached miss would send that origin's
@@ -47,6 +50,15 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
 
         private const string Operation = "Airport lookup";
         private const string CacheKeyPrefix = "aeroapi:airport-tz:";
+
+        /// <summary>
+        /// The timezone cache key for one IATA code, upper-cased. A small shared helper (#401, R7)
+        /// rather than exposing <see cref="CacheKeyPrefix"/> alone: <see cref="AeroApiVerificationSource"/>
+        /// fills this same cache from an airport check, and a caller that forgot to upper-case first
+        /// would write a second, differently-cased entry nothing ever reads back -- one method is the
+        /// one place that can't happen.
+        /// </summary>
+        internal static string CacheKeyFor(string iata) => CacheKeyPrefix + iata.ToUpperInvariant();
 
         private readonly HttpClient _http;
         private readonly ICacheService _cache;
@@ -68,7 +80,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         public async Task<string?> TryGetTimezoneAsync(string iata, CancellationToken ct = default)
         {
             var normalized = iata.ToUpperInvariant();
-            var key = CacheKeyPrefix + normalized;
+            var key = CacheKeyFor(normalized);
 
             var cached = await _cache.GetAsync<string>(key, ct);
             if (cached is not null)

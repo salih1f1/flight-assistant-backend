@@ -46,10 +46,14 @@ namespace FlightAssistant.Application.Verification
     /// added here without also supplying the selector that reads it off the entity.
     ///
     /// <para>
-    /// <c>Airline.AllianceCode</c> and <c>Country.IsEU</c>/<c>IsSchengen</c>/<c>IsEEA</c> are
-    /// deliberately absent -- <see cref="VerificationComparer"/> only ever looks at columns this
-    /// registry lists, so an unregistered column is silently ignored rather than needing an
-    /// explicit exclusion list anywhere.
+    /// <c>Airline.AllianceCode</c>, <c>Airline.CountryCode</c> (#401, R1) and
+    /// <c>Country.IsEU</c>/<c>IsSchengen</c>/<c>IsEEA</c> are deliberately absent --
+    /// <see cref="VerificationComparer"/> only ever looks at columns this registry lists, so an
+    /// unregistered column is silently ignored rather than needing an explicit exclusion list
+    /// anywhere. <c>CountryCode</c> came out of the airline list because <c>aeroapi</c> -- the
+    /// airline source -- reports an operator's country as a name (<c>"United Kingdom"</c>), never a
+    /// code, and nothing in the app reads an airline's own country; it stays on <c>Airport</c>,
+    /// where every source reports a real two-letter code.
     /// </para>
     /// </summary>
     public static class VerificationCheckedColumns
@@ -72,8 +76,7 @@ namespace FlightAssistant.Application.Verification
             {
                 (new VerificationColumnDefinition(nameof(Airline.Iata), VerificationColumnKind.Code), a => a.Iata),
                 (new VerificationColumnDefinition(nameof(Airline.Icao), VerificationColumnKind.Code), a => a.Icao),
-                (new VerificationColumnDefinition(nameof(Airline.Name), VerificationColumnKind.Text), a => a.Name),
-                (new VerificationColumnDefinition(nameof(Airline.CountryCode), VerificationColumnKind.Code), a => a.CountryCode)
+                (new VerificationColumnDefinition(nameof(Airline.Name), VerificationColumnKind.Text), a => a.Name)
             };
 
         private static readonly IReadOnlyList<(VerificationColumnDefinition Column, Func<Country, string?> Select)> CountryColumns =

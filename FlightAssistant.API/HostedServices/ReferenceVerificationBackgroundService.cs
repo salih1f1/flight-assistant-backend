@@ -12,6 +12,17 @@ namespace FlightAssistant.API.HostedServices
     /// updates <see cref="VerificationJobHeartbeat"/>. The cycle itself (reset, claim, one scope per
     /// request, release) lives in the Application runner, so it is tested against PostgreSQL without
     /// this project.
+    ///
+    /// <para>
+    /// <b>A cycle that paused (#401 task 2, R4/R5).</b> <see cref="VerificationCycleResult.Paused"/>
+    /// &gt; 0 means the batch ran to completion but left some requests Pending because this month's
+    /// AeroAPI budget is exhausted -- <see cref="VerificationJobHeartbeat.MarkRunPaused"/>, not
+    /// <see cref="VerificationJobHeartbeat.MarkRunSucceeded"/>, so <c>/admin/health</c> shows this
+    /// distinctly from an ordinary success. It is still not a failure: a
+    /// <see cref="VerificationCycleFailedException"/> after the batch reports the failed batch's own
+    /// <c>Paused</c> count alongside its other counts, since a cycle can pause some requests and then
+    /// separately fail releasing source caches.
+    /// </para>
     /// </summary>
     public sealed class ReferenceVerificationBackgroundService : BackgroundService
     {
@@ -51,8 +62,13 @@ namespace FlightAssistant.API.HostedServices
                 try
                 {
                     var result = await RunCycleAsync(stoppingToken);
-                    _heartbeat.MarkRunSucceeded(
-                        result.RequestsProcessed, result.RequestsFailed, result.StuckAbandoned, result.FailuresUnrecorded, NextRunDueUtc());
+                    if (result.Paused > 0)
+                        _heartbeat.MarkRunPaused(
+                            result.RequestsProcessed, result.RequestsFailed, result.StuckAbandoned, result.FailuresUnrecorded,
+                            result.Paused, NextRunDueUtc());
+                    else
+                        _heartbeat.MarkRunSucceeded(
+                            result.RequestsProcessed, result.RequestsFailed, result.StuckAbandoned, result.FailuresUnrecorded, NextRunDueUtc());
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -69,7 +85,7 @@ namespace FlightAssistant.API.HostedServices
                     _heartbeat.MarkRunFailed(
                         cause, NextRunDueUtc(),
                         ex.CompletedWork.RequestsProcessed, ex.CompletedWork.RequestsFailed,
-                        ex.CompletedWork.StuckAbandoned, ex.CompletedWork.FailuresUnrecorded);
+                        ex.CompletedWork.StuckAbandoned, ex.CompletedWork.FailuresUnrecorded, ex.CompletedWork.Paused);
                 }
                 catch (Exception ex)
                 {

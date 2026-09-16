@@ -14,16 +14,22 @@ namespace FlightAssistant.Application.Interfaces.Verification
     /// (every other column) happens later, in <see cref="VerificationComparer"/>, against the values
     /// <see cref="VerificationSourceFetchResult.Found"/> returns.
     /// </summary>
-    /// <param name="Iata">The entity's IATA code. Read by an airport (and, later, airline) source
-    /// such as <c>OurAirportsVerificationSource</c>, which tries this first.</param>
+    /// <param name="Iata">The entity's IATA code. Read by an airport or airline source -- e.g.
+    /// <c>OurAirportsVerificationSource</c> (airports) or <c>AeroApiVerificationSource</c> (airports
+    /// and airlines) -- which tries this first.</param>
     /// <param name="Icao">The entity's ICAO code. Read by the same sources as a fallback when
     /// <see cref="Iata"/> has no match, or is itself empty.</param>
     /// <param name="CountryCode">The country's two-letter code. Read by
     /// <c>MledozeCountriesVerificationSource</c>.</param>
     public sealed record VerificationSourceLookupKey(string? Iata, string? Icao, string? CountryCode)
     {
-        /// <summary>A key for an airport (or airline) lookup by IATA/ICAO code.</summary>
+        /// <summary>A key for an airport lookup by IATA/ICAO code.</summary>
         public static VerificationSourceLookupKey ForAirport(string? iata, string? icao) => new(iata, icao, null);
+
+        /// <summary>A key for an airline lookup by IATA/ICAO code (#401). Fields are identical to
+        /// <see cref="ForAirport"/> -- an airline is matched by the same two codes an airport is --
+        /// this is a distinct factory purely so a call site reads as what it is looking up.</summary>
+        public static VerificationSourceLookupKey ForAirline(string? iata, string? icao) => new(iata, icao, null);
 
         /// <summary>A key for a country lookup by its two-letter code.</summary>
         public static VerificationSourceLookupKey ForCountry(string countryCode) => new(null, null, countryCode);
@@ -90,11 +96,11 @@ namespace FlightAssistant.Application.Interfaces.Verification
     }
 
     /// <summary>
-    /// One outside verification source (#367 task 3, spec §4.3): OurAirports for airports, mledoze
-    /// for countries today; a future AeroAPI source (step 9) would implement this the same way for
-    /// airports and airlines. Implementations live in Infrastructure --
-    /// <c>OurAirportsVerificationSource</c>, <c>MledozeCountriesVerificationSource</c> -- and are
-    /// resolved by name through <see cref="IVerificationSourceRegistry"/>.
+    /// One outside verification source (#367 task 3, spec §4.3; #401 adds a metered one): OurAirports
+    /// for airports, mledoze for countries, aeroapi for airports and airlines. Implementations live in
+    /// Infrastructure -- <c>OurAirportsVerificationSource</c>, <c>MledozeCountriesVerificationSource</c>,
+    /// <c>AeroApiVerificationSource</c> -- and are resolved by name through
+    /// <see cref="IVerificationSourceRegistry"/>.
     ///
     /// <para>
     /// <b>Lifecycle (spec §4.3).</b> A source loads its dataset lazily, on the first
@@ -103,19 +109,22 @@ namespace FlightAssistant.Application.Interfaces.Verification
     /// once the registry determines no open request uses this source any more and no lookup has used
     /// the dataset for the job's idle period (<see cref="IVerificationJobOptions.IdleRelease"/>). Implementations
     /// share one dataset-cache helper (Infrastructure) for this download/age/release bookkeeping,
-    /// so it exists in one place rather than once per source.
+    /// so it exists in one place rather than once per source. <c>AeroApiVerificationSource</c> is the
+    /// exception (#401, R6): it calls per lookup rather than loading a whole dataset, so it holds
+    /// nothing for this lifecycle to apply to -- see its own <see cref="HasCachedData"/>/
+    /// <see cref="ReleaseCache"/>.
     /// </para>
     /// </summary>
     public interface IVerificationSource
     {
         /// <summary>The source's name as stored in <c>verification_requests.sources</c> and
-        /// <c>IVerifiable.VerificationSource</c> (e.g. <c>ourairports</c>, <c>mledoze</c>), and the
-        /// name <see cref="IVerificationSourceRegistry.TryGet"/> resolves this instance by.</summary>
+        /// <c>IVerifiable.VerificationSource</c> (e.g. <c>ourairports</c>, <c>mledoze</c>, <c>aeroapi</c>),
+        /// and the name <see cref="IVerificationSourceRegistry.TryGet"/> resolves this instance by.</summary>
         string Name { get; }
 
-        /// <summary>The cost of one row lookup against this source, in USD. 0 for both free sources
-        /// this task adds; a future metered source (AeroAPI, step 9) would report its real per-row
-        /// cost here, summed into <c>VerificationRequest.EstimatedCostUsd</c> by the queue.</summary>
+        /// <summary>The cost of one row lookup against this source, in USD. 0 for the two free
+        /// dataset sources; <c>aeroapi</c> (#401) reports its real per-row cost here, summed into
+        /// <c>VerificationRequest.EstimatedCostUsd</c> by the queue.</summary>
         decimal CostPerRowUsd { get; }
 
         /// <summary>Which entity types this source can look up. <see cref="LookupAsync"/> rejects

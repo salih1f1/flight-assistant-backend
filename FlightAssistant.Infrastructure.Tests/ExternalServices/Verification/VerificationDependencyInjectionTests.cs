@@ -13,10 +13,15 @@ namespace FlightAssistant.Infrastructure.Tests.ExternalServices.Verification;
 /// Builds the real container (<c>AddInfrastructure</c>) rather than constructing
 /// <see cref="OurAirportsVerificationSource"/>/<see cref="MledozeCountriesVerificationSource"/> by
 /// hand, the way <c>GitHubDependencyInjectionTests</c> does for the CI provider -- only this proves
-/// what DI actually wires: both sources land in the registry, both are singletons (so a cached
-/// dataset survives the job's per-cycle scope), neither client carries credentials, resolving the
-/// registry alone never talks to the network, and each source actually uses its own named client
-/// (fix round 1, items 4-5).
+/// what DI actually wires: all three sources land in the registry, all three are singletons (so a
+/// free source's cached dataset survives the job's per-cycle scope, and <c>AeroApiVerificationSource</c>
+/// -- which holds no dataset of its own, R6 -- is still safe for <c>IVerificationSourceRegistry</c>'s
+/// own singleton construction to depend on), the two free sources' dedicated clients carry no
+/// credentials, resolving the registry alone never talks to the network, and each free source
+/// actually uses its own named client (fix round 1, items 4-5). <c>AeroApiVerificationSource</c>
+/// (#401) is deliberately not part of the credentials/named-client tests below: it reuses the
+/// shared, authenticated <c>"AeroApi"</c> client every other AeroAPI caller does, so asserting it
+/// carries <i>no</i> credentials would be asserting a bug, not a guarantee.
 /// </summary>
 public class VerificationDependencyInjectionTests
 {
@@ -70,14 +75,15 @@ public class VerificationDependencyInjectionTests
     }
 
     [Fact]
-    public void TheRegistry_ResolvesBothFreeSourcesByName()
+    public void TheRegistry_ResolvesAllThreeSourcesByName()
     {
         using var provider = BuildContainer();
         var registry = provider.GetRequiredService<IVerificationSourceRegistry>();
 
         Assert.IsType<OurAirportsVerificationSource>(registry.TryGet("ourairports"));
         Assert.IsType<MledozeCountriesVerificationSource>(registry.TryGet("mledoze"));
-        Assert.Equal(2, registry.Sources.Count);
+        Assert.IsType<AeroApiVerificationSource>(registry.TryGet("aeroapi"));
+        Assert.Equal(3, registry.Sources.Count);
     }
 
     [Fact]
@@ -86,8 +92,7 @@ public class VerificationDependencyInjectionTests
         using var provider = BuildContainer();
         var registry = provider.GetRequiredService<IVerificationSourceRegistry>();
 
-        // aeroapi isn't registered as a verification source until #367 step 9.
-        Assert.Null(registry.TryGet("aeroapi"));
+        Assert.Null(registry.TryGet("not-a-real-source"));
     }
 
     [Fact]
@@ -102,6 +107,15 @@ public class VerificationDependencyInjectionTests
         var fromB = scopeB.ServiceProvider.GetRequiredService<IVerificationSourceRegistry>().TryGet("ourairports");
 
         Assert.Same(fromA, fromB);
+
+        // AeroApiVerificationSource holds no dataset (R6), but it must still be the very same
+        // singleton across scopes -- that is what lets IVerificationSourceRegistry (itself a
+        // singleton, built from IEnumerable<IVerificationSource>) depend on it at all without a
+        // captive-dependency failure.
+        var aeroApiFromA = scopeA.ServiceProvider.GetRequiredService<IVerificationSourceRegistry>().TryGet("aeroapi");
+        var aeroApiFromB = scopeB.ServiceProvider.GetRequiredService<IVerificationSourceRegistry>().TryGet("aeroapi");
+
+        Assert.Same(aeroApiFromA, aeroApiFromB);
     }
 
     [Theory]

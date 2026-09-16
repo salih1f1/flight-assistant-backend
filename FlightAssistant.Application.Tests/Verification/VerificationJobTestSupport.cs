@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Verification;
+using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Application.Verification;
 using FlightAssistant.Domain.Verification.Entities;
 using FlightAssistant.Domain.Verification.Enums;
@@ -7,6 +8,22 @@ namespace FlightAssistant.Application.Tests.Verification;
 
 /// <summary>Job settings for a test. <see cref="IdleRelease"/> defaults to zero: release at once.</summary>
 internal sealed record FakeJobOptions(int BatchSize = 10, int MaxAttempts = 3, TimeSpan IdleRelease = default) : IVerificationJobOptions;
+
+/// <summary>A budget guard whose <see cref="State"/> a test sets directly, defaulting to
+/// <see cref="ProviderBudgetState.Normal"/> like the real guard's fail-open behaviour. Counts every
+/// <see cref="GetStateAsync"/> call so a test can prove the processor/runner did -- or, once paused,
+/// deliberately did not -- ask it again (R4/R5, #401 task 2).</summary>
+internal sealed class FakeProviderBudgetGuard : IProviderBudgetGuard
+{
+    public ProviderBudgetState State { get; set; } = ProviderBudgetState.Normal;
+    public int CallCount { get; private set; }
+
+    public Task<ProviderBudgetState> GetStateAsync(CancellationToken ct = default)
+    {
+        CallCount++;
+        return Task.FromResult(State);
+    }
+}
 
 /// <summary>A source whose answer the test decides, recording every lookup and release.</summary>
 internal sealed class FakeVerificationSource : IVerificationSource

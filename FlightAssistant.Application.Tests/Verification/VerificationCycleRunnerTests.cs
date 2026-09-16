@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Interfaces.Verification;
+using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Application.Verification;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Verification.Entities;
@@ -27,6 +28,7 @@ public class VerificationCycleRunnerTests
     private readonly IAirportRepository _airports = Substitute.For<IAirportRepository>();
     private readonly IAirlineRepository _airlines = Substitute.For<IAirlineRepository>();
     private readonly ICountryRepository _countries = Substitute.For<ICountryRepository>();
+    private readonly FakeProviderBudgetGuard _budget = new();
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(Now));
 
     public VerificationCycleRunnerTests()
@@ -35,6 +37,10 @@ public class VerificationCycleRunnerTests
         _requests.ResetStuckRunningAsync(default, default, default, default)
             .ReturnsForAnyArgs(new VerificationStuckResetResult(ReturnedToPending: 0, Abandoned: 0));
         _requests.GetSourceNamesInUseAsync(default).ReturnsForAnyArgs(Array.Empty<string>());
+        // The normal case for both the AeroAPI pause (G5) and a cancelled cycle's unfinished claims:
+        // returning a claim to Pending touches the row(s) it names. Individual tests override this.
+        _requests.ReturnClaimsToPendingAsync(Arg.Any<IReadOnlyCollection<VerificationClaim>>(), Arg.Any<CancellationToken>())
+            .Returns(ci => ci.Arg<IReadOnlyCollection<VerificationClaim>>().Count);
     }
 
     private static Airport Airport(string iata) => Domain.ReferenceData.Entities.Airport.Create(iata, null, $"{iata} Airport", "City", "GB");
@@ -51,6 +57,7 @@ public class VerificationCycleRunnerTests
         services.AddSingleton(_countries);
         services.AddSingleton(registry);
         services.AddSingleton<IVerificationJobOptions>(options ?? new FakeJobOptions());
+        services.AddSingleton<IProviderBudgetGuard>(_budget);
         services.AddSingleton<TimeProvider>(_time);
 
         await using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
@@ -58,12 +65,46 @@ public class VerificationCycleRunnerTests
         return await cycleScope.ServiceProvider.GetRequiredService<IVerificationCycleRunner>().RunCycleAsync(ct);
     }
 
-    private VerificationRequest[] ClaimAirports(params (long Id, string Key)[] requests)
+    private VerificationRequest[] ClaimAirports(params (long Id, string Key)[] requests) =>
+        ClaimAirportsWithSources(requests.Select(r => (r.Id, r.Key, new[] { "ourairports" })).ToArray());
+
+    private VerificationRequest[] ClaimAirportsWithSources(params (long Id, string Key, string[] Sources)[] requests)
     {
         var claimed = requests
-            .Select(r => ClaimedRequests.Create(r.Id, VerificationEntityType.Airport, r.Key, new[] { "ourairports" }, ClaimedAt))
+            .Select(r => ClaimedRequests.Create(r.Id, VerificationEntityType.Airport, r.Key, r.Sources, ClaimedAt))
             .ToArray();
-        _requests.ClaimBatchAsync(Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>()).Returns(claimed);
+        // Any exclude list: most tests here don't exercise G1's replacement claim, so both the
+        // initial call (excludeIds null) and a hypothetical replacement call return the same batch.
+        _requests.ClaimBatchAsync(Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<IReadOnlyCollection<long>?>(), Arg.Any<CancellationToken>())
+            .Returns(claimed);
+        foreach (var request in claimed)
+            _requests.GetByIdAsync(request.Id, Arg.Any<CancellationToken>()).Returns(request);
+        return claimed;
+    }
+
+    /// <summary>
+    /// G1 (#401 final fix): sets up two distinct <c>ClaimBatchAsync</c> calls -- the initial one
+    /// (<c>excludeIds</c> null) returning <paramref name="firstBatch"/>, and the replacement one
+    /// (<c>excludeIds</c> matching exactly <paramref name="expectedExcludedIds"/>) returning
+    /// <paramref name="secondBatch"/>. Registered after <see cref="ClaimAirportsWithSources"/>'s
+    /// generic any-args setup would be, so these more specific matchers win for calls that match both.
+    /// </summary>
+    private VerificationRequest[] ClaimTwoBatches(
+        (long Id, string Key, string[] Sources)[] firstBatch,
+        long[] expectedExcludedIds,
+        (long Id, string Key, string[] Sources)[] secondBatch)
+    {
+        var first = firstBatch.Select(r => ClaimedRequests.Create(r.Id, VerificationEntityType.Airport, r.Key, r.Sources, ClaimedAt)).ToArray();
+        var second = secondBatch.Select(r => ClaimedRequests.Create(r.Id, VerificationEntityType.Airport, r.Key, r.Sources, ClaimedAt)).ToArray();
+
+        _requests.ClaimBatchAsync(Arg.Any<int>(), Arg.Any<DateTime>(), null, Arg.Any<CancellationToken>()).Returns(first);
+        _requests.ClaimBatchAsync(
+                Arg.Any<int>(), Arg.Any<DateTime>(),
+                Arg.Is<IReadOnlyCollection<long>>(ids => ids.SequenceEqual(expectedExcludedIds)),
+                Arg.Any<CancellationToken>())
+            .Returns(second);
+
+        var claimed = first.Concat(second).ToArray();
         foreach (var request in claimed)
             _requests.GetByIdAsync(request.Id, Arg.Any<CancellationToken>()).Returns(request);
         return claimed;
@@ -124,7 +165,7 @@ public class VerificationCycleRunnerTests
     {
         _requests.ResetStuckRunningAsync(Arg.Any<DateTime>(), Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>())
             .Returns(new VerificationStuckResetResult(ReturnedToPending: 2, Abandoned: 1));
-        _requests.ClaimBatchAsync(Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>())
+        _requests.ClaimBatchAsync(Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<IReadOnlyCollection<long>?>(), Arg.Any<CancellationToken>())
             .Returns(Array.Empty<VerificationRequest>());
 
         var result = await RunCycleAsync(new FakeVerificationSourceRegistry(), new FakeJobOptions(BatchSize: 7, MaxAttempts: 4));
@@ -133,7 +174,7 @@ public class VerificationCycleRunnerTests
         Received.InOrder(() =>
         {
             _requests.ResetStuckRunningAsync(Now.AddMinutes(-10), 4, Now, Arg.Any<CancellationToken>());
-            _requests.ClaimBatchAsync(7, Now, Arg.Any<CancellationToken>());
+            _requests.ClaimBatchAsync(7, Now, null, Arg.Any<CancellationToken>());
         });
     }
 
@@ -271,6 +312,123 @@ public class VerificationCycleRunnerTests
 
         await _requests.Received(1).ReturnClaimsToPendingAsync(
             Arg.Any<IReadOnlyCollection<VerificationClaim>>(), Arg.Any<CancellationToken>());
+    }
+
+    // ── AeroAPI budget gate (R4/R5, #401 task 2) ────────────────────────────
+
+    /// <summary>
+    /// Decision 4: the first gated request finds the budget Exhausted and pauses; the runner then
+    /// stops asking the guard for the rest of the cycle, so the two later aeroapi-only requests pause
+    /// on that knowledge alone -- one guard read total, not three, and neither request's source is
+    /// ever looked up. G1: a queue that is nothing but gated requests still claims exactly one
+    /// (empty) replacement batch and ends cleanly -- never a further, third claim call.
+    /// </summary>
+    [Fact]
+    public async Task RunCycleAsync_AeroApiBudgetExhausted_PausesEveryGatedRequest_AskingTheGuardOnlyOnce_AndClaimsOneEmptyReplacementBatch()
+    {
+        _budget.State = ProviderBudgetState.Exhausted;
+        var claimed = ClaimTwoBatches(
+            firstBatch: new (long, string, string[])[] { (1, "11", new[] { "aeroapi" }), (2, "22", new[] { "aeroapi" }), (3, "33", new[] { "aeroapi" }) },
+            expectedExcludedIds: new[] { 1L, 2L, 3L },
+            secondBatch: Array.Empty<(long, string, string[])>());
+        var aeroApi = new FakeVerificationSource("aeroapi", VerificationEntityType.Airport, VerificationSourceFetchResult.NotFound);
+
+        var result = await RunCycleAsync(new FakeVerificationSourceRegistry(aeroApi));
+
+        Assert.Equal(
+            new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 3, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0, Paused: 3),
+            result);
+        Assert.Equal(1, _budget.CallCount);
+        Assert.Empty(aeroApi.Lookups);
+        Assert.All(claimed, r =>
+        {
+            Assert.Equal(VerificationRequestStatus.Running, r.Status);
+            Assert.Equal(0, r.Attempts);
+            Assert.Null(r.Error);
+        });
+        // "Don't loop" (G1): the initial claim plus exactly one replacement, never a third attempt
+        // even though the replacement itself came back with nothing claimable.
+        await _requests.Received(2).ClaimBatchAsync(
+            Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<IReadOnlyCollection<long>?>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>Decision 2: a request naming only free sources keeps processing normally even once the
+    /// cycle has paused on an earlier, aeroapi-naming request -- gating follows the source named, not
+    /// the cycle's paused flag.</summary>
+    [Fact]
+    public async Task RunCycleAsync_AeroApiBudgetExhausted_ARequestNamingOnlyFreeSources_StillProcesses()
+    {
+        _budget.State = ProviderBudgetState.Exhausted;
+        var claimed = ClaimTwoBatches(
+            firstBatch: new (long, string, string[])[] { (1, "11", new[] { "aeroapi" }), (2, "22", new[] { "ourairports" }), (3, "33", new[] { "aeroapi" }) },
+            expectedExcludedIds: new[] { 1L, 3L },
+            secondBatch: Array.Empty<(long, string, string[])>());
+        var airport = Airport("BBB");
+        _airports.GetByIdAsync(22, Arg.Any<CancellationToken>()).Returns(airport);
+        var aeroApi = new FakeVerificationSource("aeroapi", VerificationEntityType.Airport, VerificationSourceFetchResult.NotFound);
+        var ourAirports = MatchingOurAirports();
+
+        var result = await RunCycleAsync(new FakeVerificationSourceRegistry(aeroApi, ourAirports));
+
+        Assert.Equal(
+            new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 3, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0, Paused: 2),
+            result);
+        Assert.Equal(VerificationRequestStatus.Running, claimed[0].Status); // paused (first guard read)
+        Assert.Equal(VerificationRequestStatus.Verified, claimed[1].Status); // free source: unaffected
+        Assert.True(airport.IsVerified);
+        Assert.Equal(VerificationRequestStatus.Running, claimed[2].Status); // paused (known-paused flag)
+        Assert.Equal(1, _budget.CallCount);
+        Assert.Empty(aeroApi.Lookups);
+    }
+
+    /// <summary>
+    /// G1 (#401 final fix): the core scenario the finding names -- a batch full of gated requests
+    /// with free-source work queued behind them. The initial claim pauses both aeroapi requests; the
+    /// replacement claim (excluding exactly those ids) reaches the two ourairports requests that a
+    /// naive single-claim cycle would never see until the month rolled over, and both complete.
+    /// </summary>
+    [Fact]
+    public async Task RunCycleAsync_G1_AfterPausingTheGatedBatch_TheReplacementBatchReachesFreeSourceWorkBehindThem()
+    {
+        _budget.State = ProviderBudgetState.Exhausted;
+        var claimed = ClaimTwoBatches(
+            firstBatch: new (long, string, string[])[] { (1, "11", new[] { "aeroapi" }), (2, "22", new[] { "aeroapi" }) },
+            expectedExcludedIds: new[] { 1L, 2L },
+            secondBatch: new (long, string, string[])[] { (3, "33", new[] { "ourairports" }), (4, "44", new[] { "ourairports" }) });
+        _airports.GetByIdAsync(33, Arg.Any<CancellationToken>()).Returns(Airport("CCC"));
+        _airports.GetByIdAsync(44, Arg.Any<CancellationToken>()).Returns(Airport("DDD"));
+        var aeroApi = new FakeVerificationSource("aeroapi", VerificationEntityType.Airport, VerificationSourceFetchResult.NotFound);
+        var ourAirports = MatchingOurAirports();
+
+        var result = await RunCycleAsync(new FakeVerificationSourceRegistry(aeroApi, ourAirports));
+
+        Assert.Equal(
+            new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 4, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0, Paused: 2),
+            result);
+        Assert.Equal(VerificationRequestStatus.Running, claimed[0].Status); // paused
+        Assert.Equal(VerificationRequestStatus.Running, claimed[1].Status); // paused
+        Assert.Equal(VerificationRequestStatus.Verified, claimed[2].Status); // reached via the replacement batch
+        Assert.Equal(VerificationRequestStatus.Verified, claimed[3].Status); // reached via the replacement batch
+        // One guard read total, across both batches -- the replacement's own aeroapi exposure is
+        // zero here since nothing gated survived into it, but the flag would have covered it too.
+        Assert.Equal(1, _budget.CallCount);
+        Assert.Empty(aeroApi.Lookups);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_AeroApiBudgetSoftLimit_DoesNotPause_TheGatedRequestStillCallsAeroApi()
+    {
+        _budget.State = ProviderBudgetState.SoftLimit;
+        ClaimAirportsWithSources((1, "11", new[] { "aeroapi" }));
+        _airports.GetByIdAsync(11, Arg.Any<CancellationToken>()).Returns(Airport("AAA"));
+        var aeroApi = new FakeVerificationSource("aeroapi", VerificationEntityType.Airport, VerificationSourceFetchResult.NotFound);
+
+        var result = await RunCycleAsync(new FakeVerificationSourceRegistry(aeroApi));
+
+        Assert.Equal(
+            new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 1, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0, Paused: 0),
+            result);
+        Assert.Single(aeroApi.Lookups);
     }
 
     /// <summary>Releasing caches is the last step. If it throws, the batch's outcomes are already saved,

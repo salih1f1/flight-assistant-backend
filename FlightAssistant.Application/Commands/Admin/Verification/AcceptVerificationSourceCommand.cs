@@ -51,8 +51,8 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
     /// <item>409 when a value can't be parsed, would empty a required column, or breaks the admin edit's
     /// rules (<see cref="VerificationSourceChanges"/>).</item>
     /// <item>409 when a new value for a unique column already belongs to another row.</item>
-    /// <item>409 when a new airport or airline <c>CountryCode</c> is not in <c>countries</c>, which both
-    /// reference by foreign key.</item>
+    /// <item>409 when a new airport <c>CountryCode</c> is not in <c>countries</c>, which it references by
+    /// foreign key.</item>
     /// <item>The entity's <c>Update</c>, then <c>Verify(actor, source)</c>, then one save.</item>
     /// </list>
     /// The request itself is not changed: it stays <c>Mismatch</c> as history. Accepting the same source
@@ -156,7 +156,10 @@ namespace FlightAssistant.Application.Commands.Admin.Verification
             await EnsureUniqueValuesAreFreeAsync<Airline>(changes, airline, a => a.Id,
                 (nameof(Airline.Iata), value => _airlines.FindByIataAsync((string)value, ct)),
                 (nameof(Airline.Icao), value => _airlines.FindByIcaoAsync((string)value, ct)));
-            await EnsureCountryExistsAsync(changes, VerificationEntityType.Airline, nameof(Airline.CountryCode), ct);
+            // No EnsureCountryExistsAsync here (F1, #401 review): Airline.CountryCode is no longer a
+            // checked column (R1), so ChangesSinceCheck's own column lookup above already throws 409
+            // for it before this point on legacy data that still names it, and the live path never
+            // produces a difference for it at all.
             changes.ApplyTo(airline);
             airline.Verify(accepted.Command.VerifiedBy, accepted.Command.Source, UtcNow());
 

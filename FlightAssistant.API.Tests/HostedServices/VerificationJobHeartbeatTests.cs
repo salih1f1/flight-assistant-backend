@@ -114,4 +114,52 @@ public class VerificationJobHeartbeatTests
             new VerificationJobSnapshot(null, T0, VerificationJobOutcome.Failed, 5, 2, 1, 0, T0.AddSeconds(60), "InvalidOperationException: release boom"),
             heartbeat.Current);
     }
+
+    // ── AeroAPI budget pause (R4/R5, #401 task 2) ───────────────────────────
+
+    /// <summary>A paused cycle gets its own outcome, distinct from both Success and Failed, so an
+    /// operator can tell "the queue isn't draining because of budget" apart from either at a glance.</summary>
+    [Fact]
+    public void MarkRunPaused_SetsThePausedOutcome_WithEveryCountIncludingRequestsPaused()
+    {
+        var heartbeat = new VerificationJobHeartbeat(_time);
+        heartbeat.MarkRunStarted();
+
+        heartbeat.MarkRunPaused(processed: 6, failed: 1, stuckAbandoned: 0, failuresUnrecorded: 0, paused: 4, nextRunDueUtc: T0.AddSeconds(30));
+
+        Assert.Equal(
+            new VerificationJobSnapshot(T0, T0, VerificationJobOutcome.Paused, 6, 1, 0, 0, T0.AddSeconds(30), null, RequestsPaused: 4),
+            heartbeat.Current);
+    }
+
+    /// <summary>A subsequent ordinary success clears a stale RequestsPaused left by an earlier paused
+    /// cycle -- otherwise the count would keep reporting a pause that already resolved.</summary>
+    [Fact]
+    public void MarkRunSucceeded_AfterAPausedCycle_ClearsRequestsPaused()
+    {
+        var heartbeat = new VerificationJobHeartbeat(_time);
+        heartbeat.MarkRunPaused(processed: 6, failed: 1, stuckAbandoned: 0, failuresUnrecorded: 0, paused: 4, nextRunDueUtc: T0.AddSeconds(30));
+
+        _time.Advance(TimeSpan.FromSeconds(30));
+        heartbeat.MarkRunSucceeded(processed: 3, failed: 0, stuckAbandoned: 0, failuresUnrecorded: 0, nextRunDueUtc: T0.AddSeconds(60));
+
+        var snapshot = heartbeat.Current;
+        Assert.Equal(VerificationJobOutcome.Success, snapshot.LastOutcome);
+        Assert.Equal(0, snapshot.RequestsPaused);
+    }
+
+    /// <summary>The batch-aware failed overload also carries a paused count: a cycle can pause some
+    /// requests and then separately fail releasing source caches, and both facts belong on the report.</summary>
+    [Fact]
+    public void MarkRunFailed_AfterTheBatchWasProcessed_CarriesThatBatchsPausedCountToo()
+    {
+        var heartbeat = new VerificationJobHeartbeat(_time);
+
+        heartbeat.MarkRunFailed(
+            new InvalidOperationException("release boom"), T0.AddSeconds(60),
+            processed: 5, failed: 2, stuckAbandoned: 1, failuresUnrecorded: 0, paused: 3);
+
+        Assert.Equal(3, heartbeat.Current.RequestsPaused);
+        Assert.Equal(VerificationJobOutcome.Failed, heartbeat.Current.LastOutcome);
+    }
 }

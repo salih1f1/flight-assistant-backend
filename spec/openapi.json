@@ -4809,6 +4809,10 @@
             "type": "integer",
             "format": "int32",
             "nullable": true
+          },
+          "requestsPaused": {
+            "type": "integer",
+            "format": "int32"
           }
         },
         "additionalProperties": false

@@ -1,6 +1,10 @@
 namespace FlightAssistant.API.HostedServices
 {
-    public enum VerificationJobOutcome { NeverRun, Running, Success, Failed }
+    /// <summary><c>Paused</c> (#401 task 2, R4/R5) is a cycle that worked through its batch but left
+    /// some requests Pending because this month's AeroAPI budget is exhausted -- distinct from
+    /// <c>Success</c> (nothing held back) and from <c>Failed</c> (the cycle itself broke), so an
+    /// operator sees *why* the queue isn't draining without reading logs.</summary>
+    public enum VerificationJobOutcome { NeverRun, Running, Success, Paused, Failed }
 
     public sealed record VerificationJobSnapshot(
         DateTime? LastRunStartedUtc,
@@ -11,7 +15,8 @@ namespace FlightAssistant.API.HostedServices
         int StuckAbandoned,
         int FailuresUnrecorded,
         DateTime? NextRunDueUtc,
-        string? LastError);
+        string? LastError,
+        int RequestsPaused = 0);
 
     /// <summary>
     /// Process-wide observable state for <see cref="ReferenceVerificationBackgroundService"/>, read by
@@ -91,6 +96,38 @@ namespace FlightAssistant.API.HostedServices
                     RequestsFailed = failed,
                     StuckAbandoned = stuckAbandoned,
                     FailuresUnrecorded = failuresUnrecorded,
+                    RequestsPaused = 0,
+                    NextRunDueUtc = nextRunDueUtc,
+                    LastError = null,
+                };
+            }
+        }
+
+        /// <summary>
+        /// Marks a cycle that worked through its batch but left some requests Pending because this
+        /// month's AeroAPI budget is exhausted (#401 task 2, R4/R5): <see cref="VerificationJobOutcome.Paused"/>,
+        /// not <see cref="VerificationJobOutcome.Success"/> (nothing was held back) and not
+        /// <see cref="VerificationJobOutcome.Failed"/> (the cycle itself did not break -- it is
+        /// deliberately declining to spend money it doesn't have). Otherwise identical to
+        /// <see cref="MarkRunSucceeded"/>: every other outcome in the same batch (verified, mismatch,
+        /// failed, lost) is still counted normally.
+        /// </summary>
+        /// <param name="paused">Requests this cycle left Pending untouched -- no attempt counted, no
+        /// error recorded -- because they named the AeroAPI source while the budget guard reported
+        /// <c>Exhausted</c>.</param>
+        public void MarkRunPaused(int processed, int failed, int stuckAbandoned, int failuresUnrecorded, int paused, DateTime nextRunDueUtc)
+        {
+            lock (_lock)
+            {
+                _snapshot = _snapshot with
+                {
+                    LastRunCompletedUtc = UtcNow(),
+                    LastOutcome = VerificationJobOutcome.Paused,
+                    RequestsProcessed = processed,
+                    RequestsFailed = failed,
+                    StuckAbandoned = stuckAbandoned,
+                    FailuresUnrecorded = failuresUnrecorded,
+                    RequestsPaused = paused,
                     NextRunDueUtc = nextRunDueUtc,
                     LastError = null,
                 };
@@ -121,7 +158,11 @@ namespace FlightAssistant.API.HostedServices
         /// working through its batch (releasing source caches threw): the batch's counts replace the
         /// previous cycle's, since they describe work this cycle really did.
         /// </summary>
-        public void MarkRunFailed(Exception ex, DateTime nextRunDueUtc, int processed, int failed, int stuckAbandoned, int failuresUnrecorded)
+        /// <param name="paused">The failed batch's own paused count (R4/R5) -- a cycle can pause some
+        /// requests and then still fail releasing source caches; defaults to 0 for a caller with
+        /// nothing to report.</param>
+        public void MarkRunFailed(
+            Exception ex, DateTime nextRunDueUtc, int processed, int failed, int stuckAbandoned, int failuresUnrecorded, int paused = 0)
         {
             lock (_lock)
             {
@@ -133,6 +174,7 @@ namespace FlightAssistant.API.HostedServices
                     RequestsFailed = failed,
                     StuckAbandoned = stuckAbandoned,
                     FailuresUnrecorded = failuresUnrecorded,
+                    RequestsPaused = paused,
                     NextRunDueUtc = nextRunDueUtc,
                     LastError = $"{ex.GetType().Name}: {ex.Message}",
                 };

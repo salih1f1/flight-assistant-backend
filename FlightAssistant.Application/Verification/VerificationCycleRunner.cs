@@ -8,8 +8,10 @@ namespace FlightAssistant.Application.Verification
     /// <summary>One cycle of the reference-data verification job (#367, spec §4.2).</summary>
     public interface IVerificationCycleRunner
     {
-        /// <summary>Resets stuck requests, claims a batch, processes each claimed request and
-        /// releases source caches no open request uses.</summary>
+        /// <summary>Resets stuck requests, claims a batch, processes each claimed request -- and, if
+        /// any of them paused for the AeroAPI budget, claims and processes one replacement batch
+        /// excluding those ids (#401 final fix G1), so free-source work behind them still drains this
+        /// cycle -- then releases source caches no open request uses.</summary>
         /// <exception cref="VerificationCycleFailedException">The batch was processed, then releasing
         /// source caches failed; carries the batch's counts.</exception>
         /// <exception cref="OperationCanceledException"><paramref name="ct"/> was cancelled. Claims the
@@ -20,7 +22,8 @@ namespace FlightAssistant.Application.Verification
     /// <param name="StuckReset">Stuck Running requests the reset returned to Pending, one attempt added.</param>
     /// <param name="StuckAbandoned">Stuck Running requests the reset completed as Error because they ran
     /// out of attempts. Not part of <see cref="RequestsProcessed"/>: this cycle did not claim them.</param>
-    /// <param name="RequestsProcessed">Requests claimed and worked through this cycle.</param>
+    /// <param name="RequestsProcessed">Requests claimed and worked through this cycle -- the initial
+    /// batch, plus the replacement batch (#401 final fix G1) when one was claimed.</param>
     /// <param name="RequestsFailed">The subset that ended in a source error (retry scheduled or
     /// <c>Error</c>), an unusable source, a deleted entity or an unexpected exception, whether or not
     /// that exception could be recorded. A mismatch or not-found is a completed check, not a failure;
@@ -28,8 +31,13 @@ namespace FlightAssistant.Application.Verification
     /// <param name="ClaimsLost">The subset another claim took over; nothing was written for them.</param>
     /// <param name="FailuresUnrecorded">The subset of <see cref="RequestsFailed"/> whose failure could not
     /// be recorded either: still Running, with no attempt counted until the stuck-request reset.</param>
+    /// <param name="Paused">The subset left exactly as they were -- still Pending, no attempt counted,
+    /// no error recorded -- because they named the AeroAPI source while this month's budget guard
+    /// reported <c>Exhausted</c> (R4/R5, #401 task 2). Not part of <see cref="RequestsFailed"/>: a
+    /// pause is the job declining to spend money it doesn't have, not a failure.</param>
     public sealed record VerificationCycleResult(
-        int StuckReset, int StuckAbandoned, int RequestsProcessed, int RequestsFailed, int ClaimsLost, int FailuresUnrecorded);
+        int StuckReset, int StuckAbandoned, int RequestsProcessed, int RequestsFailed, int ClaimsLost, int FailuresUnrecorded,
+        int Paused = 0);
 
     /// <summary>
     /// Runs one verification cycle. Resolved from the job's cycle scope (which carries the system
@@ -53,6 +61,33 @@ namespace FlightAssistant.Application.Verification
     /// spend an attempt on each of them. That step is best effort, on a short timeout of its own
     /// (<see cref="ReturnClaimsTimeout"/>): if it fails, those requests stay Running until the
     /// stuck-request reset, which counts the attempt.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>The AeroAPI budget pause (R4/R5, #401 task 2).</b> A request the processor pauses is not a
+    /// failure -- it stays exactly as it was, and is counted separately
+    /// (<see cref="VerificationCycleResult.Paused"/>). The first pause this cycle sees flips a local
+    /// flag that every later request in the loop is handed, so a request naming the metered source
+    /// after that point is paused without the processor asking <c>IProviderBudgetGuard</c> again; a
+    /// request naming only free sources keeps processing regardless. A cycle that paused some
+    /// requests still returns normally -- it is up to the caller
+    /// (<c>ReferenceVerificationBackgroundService</c>) to report that distinctly from an ordinary
+    /// success.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>The replacement batch (#401 final fix G1).</b> A paused request returns to Pending with its
+    /// <c>requested_utc</c>/<c>id</c> untouched (R5 forbids nudging them to reorder it), so it sits at
+    /// the head of the claim order again next cycle. Left alone, a queue with <c>BatchSize</c> or more
+    /// open <c>aeroapi</c>-naming requests would claim, pause and exclude exactly those every cycle,
+    /// never reaching a country or airport request behind them -- free work that costs nothing and
+    /// has nothing to do with the budget. So once the initial batch has paused at least one request,
+    /// the cycle claims <b>one</b> further batch that excludes those specific ids and processes it the
+    /// same way, sharing the same "budget already known Exhausted" flag (no second guard read even
+    /// across the two batches). Exactly one replacement batch, never a loop: if it too pauses
+    /// everything in it (a queue that is nothing but gated requests), the cycle still ends cleanly and
+    /// tries again next cycle, rather than hammering the queue for a batch that keeps coming back
+    /// empty of anything claimable.
     /// </para>
     ///
     /// <para>
@@ -116,45 +151,36 @@ namespace FlightAssistant.Application.Verification
                     "Completed {Count} verification request(s) as Error: stuck in Running for over {StuckAfter} with no attempts left.",
                     reset.Abandoned, StuckAfter);
 
-            var claims = await ClaimAsync(now, cycleId, ct);
+            var claims = await ClaimAsync(now, cycleId, excludeIds: null, ct);
 
+            var processed = 0;
             var failed = 0;
             var lost = 0;
             var unrecorded = 0;
-            var next = 0;
-            try
-            {
-                for (; next < claims.Count; next++)
-                {
-                    ct.ThrowIfCancellationRequested();
+            var paused = 0;
+            var pausedIds = new List<long>();
+            var aeroApiBudgetPaused = false;
 
-                    switch (await ProcessOneAsync(claims[next], cycleId, ct))
-                    {
-                        case VerificationProcessOutcome.RetryScheduled:
-                        case VerificationProcessOutcome.Error:
-                            failed++;
-                            break;
-                        case VerificationProcessOutcome.ClaimLost:
-                            lost++;
-                            break;
-                        case VerificationProcessOutcome.FailureUnrecorded:
-                            failed++;
-                            unrecorded++;
-                            break;
-                    }
-                }
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            await ProcessBatchAsync(claims);
+
+            // G1: a paused request goes back to Pending with requested_utc/id untouched (R5 forbids
+            // nudging them), so it sits at the head of the claim order again -- left alone, a queue
+            // with BatchSize or more open aeroapi requests would claim, pause and exclude exactly
+            // those every cycle, never reaching a free-source request behind them. One replacement
+            // batch excluding just-paused ids is enough to reach it; never a loop, so a queue that is
+            // nothing but gated requests still ends the cycle cleanly rather than re-claiming an
+            // empty batch forever.
+            if (pausedIds.Count > 0)
             {
-                await ReturnUnfinishedClaimsAsync(claims.Skip(next).ToList());
-                throw;
+                var replacementClaims = await ClaimAsync(now, cycleId, pausedIds, ct);
+                await ProcessBatchAsync(replacementClaims);
             }
 
-            var result = new VerificationCycleResult(reset.ReturnedToPending, reset.Abandoned, claims.Count, failed, lost, unrecorded);
-            if (claims.Count > 0)
+            var result = new VerificationCycleResult(reset.ReturnedToPending, reset.Abandoned, processed, failed, lost, unrecorded, paused);
+            if (processed > 0)
                 _logger.LogInformation(
-                    "Verification cycle processed {Processed} request(s): {Failed} failed, {Lost} claim(s) lost.",
-                    claims.Count, failed, lost);
+                    "Verification cycle processed {Processed} request(s): {Failed} failed, {Lost} claim(s) lost, {Paused} paused (AeroAPI budget).",
+                    processed, failed, lost, paused);
 
             try
             {
@@ -171,21 +197,69 @@ namespace FlightAssistant.Application.Verification
             }
 
             return result;
+
+            // Processes one claimed batch (the initial claim, or the G1 replacement claim), updating
+            // this method's own counters and pausedIds so a second call picks up exactly where the
+            // first left off -- including aeroApiBudgetPaused, so the replacement batch never asks
+            // the guard again either if the initial batch already found it Exhausted.
+            async Task ProcessBatchAsync(IReadOnlyList<VerificationClaim> batch)
+            {
+                processed += batch.Count;
+                var next = 0;
+                try
+                {
+                    for (; next < batch.Count; next++)
+                    {
+                        ct.ThrowIfCancellationRequested();
+
+                        switch (await ProcessOneAsync(batch[next], cycleId, aeroApiBudgetPaused, ct))
+                        {
+                            case VerificationProcessOutcome.RetryScheduled:
+                            case VerificationProcessOutcome.Error:
+                                failed++;
+                                break;
+                            case VerificationProcessOutcome.ClaimLost:
+                                lost++;
+                                break;
+                            case VerificationProcessOutcome.FailureUnrecorded:
+                                failed++;
+                                unrecorded++;
+                                break;
+                            case VerificationProcessOutcome.Paused:
+                                paused++;
+                                pausedIds.Add(batch[next].RequestId);
+                                // R4/R5 decision 4: once the budget is known Exhausted, every remaining
+                                // request naming aeroapi is paused on this flag alone -- no further
+                                // guard read this cycle, across either batch. A request naming only
+                                // free sources ignores the flag.
+                                aeroApiBudgetPaused = true;
+                                break;
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    await ReturnUnfinishedClaimsAsync(batch.Skip(next).ToList());
+                    throw;
+                }
+            }
         }
 
-        private async Task<IReadOnlyList<VerificationClaim>> ClaimAsync(DateTime now, string cycleId, CancellationToken ct)
+        private async Task<IReadOnlyList<VerificationClaim>> ClaimAsync(
+            DateTime now, string cycleId, IReadOnlyCollection<long>? excludeIds, CancellationToken ct)
         {
             // The claimed requests come back tracked; this context is disposed without saving, and
             // each request is re-loaded in its own scope.
             using var scope = VerificationJobActor.CreateScope(_scopeFactory, cycleId);
             var claimed = await scope.ServiceProvider
                 .GetRequiredService<IVerificationRequestRepository>()
-                .ClaimBatchAsync(_options.BatchSize, now, ct);
+                .ClaimBatchAsync(_options.BatchSize, now, excludeIds, ct);
 
             return claimed.Select(VerificationClaim.From).ToList();
         }
 
-        private async Task<VerificationProcessOutcome> ProcessOneAsync(VerificationClaim claim, string cycleId, CancellationToken ct)
+        private async Task<VerificationProcessOutcome> ProcessOneAsync(
+            VerificationClaim claim, string cycleId, bool aeroApiBudgetPaused, CancellationToken ct)
         {
             Exception failure;
             try
@@ -193,7 +267,7 @@ namespace FlightAssistant.Application.Verification
                 using var scope = VerificationJobActor.CreateScope(_scopeFactory, cycleId);
                 return await scope.ServiceProvider
                     .GetRequiredService<VerificationRequestProcessor>()
-                    .ProcessAsync(claim, ct);
+                    .ProcessAsync(claim, aeroApiBudgetPaused, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {

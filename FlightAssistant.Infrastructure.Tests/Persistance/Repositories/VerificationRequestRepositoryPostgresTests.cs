@@ -124,6 +124,45 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         });
     }
 
+    /// <summary>
+    /// #401 final fix G1: excludes the otherwise-first row by id, in real SQL -- proving
+    /// <c>NOT ("id" = ANY(...))</c> actually reaches the query, not just that the C# threads the
+    /// parameter through. The excluded row stays Pending, untouched: exclusion is not the same as
+    /// shrinking the batch.
+    /// </summary>
+    [Fact]
+    public async Task ClaimBatchAsync_ExcludesGivenIds_ClaimingTheNextEligibleRowInstead()
+    {
+        var ids = await SeedEachAsync(
+            Request("1", requestedUtc: T0),
+            Request("2", requestedUtc: T0.AddSeconds(1)),
+            Request("3", requestedUtc: T0.AddSeconds(2)));
+        var now = T0.AddMinutes(1);
+
+        await using var db = CreateDbContext();
+        var claimed = await Repository(db).ClaimBatchAsync(1, now, excludeIds: new[] { ids[0] });
+
+        Assert.Equal(new[] { ids[1] }, claimed.Select(r => r.Id));
+
+        await using var verify = CreateDbContext();
+        var untouched = await verify.VerificationRequests.AsNoTracking().SingleAsync(r => r.Id == ids[0]);
+        Assert.Equal(VerificationRequestStatus.Pending, untouched.Status);
+    }
+
+    /// <summary>#401 final fix G1's "don't loop" case at the SQL layer: excluding every otherwise-due
+    /// id claims nothing rather than throwing or ignoring the exclusion.</summary>
+    [Fact]
+    public async Task ClaimBatchAsync_ExcludingEveryEligibleId_ClaimsNothing()
+    {
+        var ids = await SeedEachAsync(Request("1", requestedUtc: T0), Request("2", requestedUtc: T0.AddSeconds(1)));
+        var now = T0.AddMinutes(1);
+
+        await using var db = CreateDbContext();
+        var claimed = await Repository(db).ClaimBatchAsync(10, now, excludeIds: ids);
+
+        Assert.Empty(claimed);
+    }
+
     /// <summary><c>next_attempt_utc</c> in the future is not due; null, past and exactly-now are.</summary>
     [Fact]
     public async Task ClaimBatchAsync_SkipsARequestWhoseNextAttemptIsInTheFuture()

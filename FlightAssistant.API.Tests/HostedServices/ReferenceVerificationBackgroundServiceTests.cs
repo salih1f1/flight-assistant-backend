@@ -22,8 +22,10 @@ public class ReferenceVerificationBackgroundServiceTests
 
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(T0));
 
-    private static VerificationCycleResult Processed(int processed, int failed = 0, int stuckAbandoned = 0, int failuresUnrecorded = 0) =>
-        new(StuckReset: 0, StuckAbandoned: stuckAbandoned, RequestsProcessed: processed, RequestsFailed: failed, ClaimsLost: 0, FailuresUnrecorded: failuresUnrecorded);
+    private static VerificationCycleResult Processed(
+        int processed, int failed = 0, int stuckAbandoned = 0, int failuresUnrecorded = 0, int paused = 0) =>
+        new(StuckReset: 0, StuckAbandoned: stuckAbandoned, RequestsProcessed: processed, RequestsFailed: failed, ClaimsLost: 0,
+            FailuresUnrecorded: failuresUnrecorded, Paused: paused);
 
     [Fact]
     public async Task Disabled_NeverRunsACycle_AndTheHeartbeatStaysNeverRun()
@@ -64,6 +66,29 @@ public class ReferenceVerificationBackgroundServiceTests
         await job.Service.StopAsync(CancellationToken.None);
     }
 
+    /// <summary>A cycle result carrying a paused count marks the heartbeat Paused, not Success -- R4/R5
+    /// (#401 task 2): a paused cycle is not a failed cycle either, so this must not reach Failed.</summary>
+    [Fact]
+    public async Task ACycleThatPaused_MarksTheHeartbeatPaused_NotSuccessOrFailed()
+    {
+        var script = new CycleScript();
+        script.Then(() => Processed(processed: 5, failed: 1, paused: 3));
+        await using var job = Job.Create(script, _time);
+
+        await job.Service.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => job.Heartbeat.Current.LastOutcome != VerificationJobOutcome.Running
+            && job.Heartbeat.Current.LastOutcome != VerificationJobOutcome.NeverRun);
+
+        var snapshot = job.Heartbeat.Current;
+        Assert.Equal(VerificationJobOutcome.Paused, snapshot.LastOutcome);
+        Assert.Equal(5, snapshot.RequestsProcessed);
+        Assert.Equal(1, snapshot.RequestsFailed);
+        Assert.Equal(3, snapshot.RequestsPaused);
+        Assert.Null(snapshot.LastError);
+
+        await job.Service.StopAsync(CancellationToken.None);
+    }
+
     [Fact]
     public async Task AFailingCycle_MarksTheHeartbeatFailed_AndTheLoopRunsAgainAfterThePollInterval()
     {
@@ -94,7 +119,9 @@ public class ReferenceVerificationBackgroundServiceTests
     /// A cycle that fails only after processing its batch (the runner's
     /// <see cref="VerificationCycleFailedException"/>) is Failed with that batch's counts, new fields
     /// included (R5). The previous cycle reported different counts for every field, so keeping any of
-    /// those would fail this test.
+    /// those would fail this test. The failed batch also paused some requests before releasing source
+    /// caches threw (#401 task 2): that count travels to the heartbeat too, but the outcome is still
+    /// Failed, not Paused -- the release failure is what determines the outcome here.
     /// </summary>
     [Fact]
     public async Task ACycleFailingAfterItsBatch_MarksTheHeartbeatFailed_WithThatBatchsCounts()
@@ -102,7 +129,7 @@ public class ReferenceVerificationBackgroundServiceTests
         var script = new CycleScript();
         script.Then(() => Processed(9, failed: 4, stuckAbandoned: 3, failuresUnrecorded: 2));
         script.Then(() => throw new VerificationCycleFailedException(
-            Processed(5, failed: 2, stuckAbandoned: 1, failuresUnrecorded: 0), new InvalidOperationException("release boom")));
+            Processed(5, failed: 2, stuckAbandoned: 1, failuresUnrecorded: 0, paused: 3), new InvalidOperationException("release boom")));
         await using var job = Job.Create(script, _time);
 
         await job.Service.StartAsync(CancellationToken.None);
@@ -117,6 +144,7 @@ public class ReferenceVerificationBackgroundServiceTests
         Assert.Equal(2, snapshot.RequestsFailed);
         Assert.Equal(1, snapshot.StuckAbandoned);
         Assert.Equal(0, snapshot.FailuresUnrecorded);
+        Assert.Equal(3, snapshot.RequestsPaused);
         Assert.Equal("InvalidOperationException: release boom", snapshot.LastError);
 
         await job.Service.StopAsync(CancellationToken.None);

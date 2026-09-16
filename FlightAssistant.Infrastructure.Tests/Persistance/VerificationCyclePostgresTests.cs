@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using FlightAssistant.Application;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Interfaces.Verification;
+using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Application.Verification;
 using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.Common;
@@ -488,6 +489,10 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         foreach (var source in sources)
             services.AddSingleton(source);
         services.AddSingleton<IVerificationSourceRegistry, VerificationSourceRegistry>();
+        // Normal: none of these tests exercise the budget gate (#401 task 2, Application-level tests
+        // own that); a fixed guard just satisfies VerificationRequestProcessor's DI dependency without
+        // ever reaching AeroAPI.
+        services.AddSingleton<IProviderBudgetGuard>(new FixedBudgetGuard(ProviderBudgetState.Normal));
 
         // Program.cs's DbContext registration: the audit interceptor reads the scope's IAdminContext.
         services.AddScoped<AdminAuditInterceptor>();
@@ -574,6 +579,13 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         VerificationSourceFetchResult.Found(values);
 
     private sealed record JobOptions(int BatchSize, int MaxAttempts, TimeSpan IdleRelease) : IVerificationJobOptions;
+
+    /// <summary>A budget guard that always reports the same state -- these tests are not about the
+    /// budget gate (#401 task 2), just its DI dependency on <c>VerificationRequestProcessor</c>.</summary>
+    private sealed class FixedBudgetGuard(ProviderBudgetState state) : IProviderBudgetGuard
+    {
+        public Task<ProviderBudgetState> GetStateAsync(CancellationToken ct = default) => Task.FromResult(state);
+    }
 
     private sealed class CountingHandler(HttpStatusCode status) : HttpMessageHandler
     {

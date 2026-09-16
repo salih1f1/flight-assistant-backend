@@ -25,8 +25,8 @@ namespace FlightAssistant.Application.Queries.Admin.Verification
 
     /// <summary>
     /// Lists the registry's sources whose <see cref="IVerificationSource.SupportedEntityTypes"/>
-    /// contain the entity type, ordered by name. Empty is a valid answer: no source checks
-    /// <c>Airline</c> until step 9.
+    /// contain the entity type, ordered by name. Empty is a valid answer for an entity type no
+    /// registered source supports.
     /// </summary>
     public sealed class GetVerificationSourcesQueryHandler
         : IRequestHandler<GetVerificationSourcesQuery, IReadOnlyList<AdminVerificationSourceResult>>
