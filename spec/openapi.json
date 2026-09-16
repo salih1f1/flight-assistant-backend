@@ -862,7 +862,7 @@
           "Admin - Data"
         ],
         "summary": "Read one browsable table's rows, masked and paginated",
-        "description": "Strictly read-only. Every column SensitiveProperties marks sensitive is replaced with \"<redacted>\" server-side before this response is built — the full value never leaves the API from this endpoint (a full reveal, audited, is a separate future endpoint). 'sort' is a column name, optionally prefixed with '-' for descending (e.g. sort=-CreatedUtc); paging is stable even without an explicit sort, via an always-appended primary-key tiebreaker. 'filter' is 'column:value' — exact match for a non-string column, case-insensitive contains for a string column, split on the first ':' only so a value such as an ISO-8601 timestamp can itself contain colons. Both 'sort' and 'filter' column names are matched case-sensitively (e.g. 'CreatedUtc', not 'createdUtc') against the table's exposed-column whitelist and rejected with 400 if unknown, wrong-case or sensitive — a sensitive column would otherwise let a filter be used to guess a masked value one character at a time.",
+        "description": "Strictly read-only. Every column SensitiveProperties marks sensitive is replaced with \"<redacted>\" server-side before this response is built — the full value never leaves the API from this endpoint (a full reveal, audited, is a separate future endpoint). 'sort' is a column name, optionally prefixed with '-' for descending (e.g. sort=-CreatedUtc); paging is stable even without an explicit sort, via an always-appended primary-key tiebreaker. 'filter' is 'column:value' — exact match for a non-string column, case-insensitive contains for a string column, split on the first ':' only so a value such as an ISO-8601 timestamp can itself contain colons. On a string column, a value of exactly '*' means 'has a value' — not null, and not blank (non-empty after trimming whitespace); '*' anywhere else in the value is still a literal character to find by contains. On a non-string column '*' is not special-cased and is simply an unparseable value, a 400. Both 'sort' and 'filter' column names are matched case-sensitively (e.g. 'CreatedUtc', not 'createdUtc') against the table's exposed-column whitelist and rejected with 400 if unknown, wrong-case or sensitive — a sensitive column would otherwise let a filter be used to guess a masked value one character at a time.",
         "operationId": "AdminGetBrowsableTableData",
         "parameters": [
           {
@@ -2971,7 +2971,89 @@
         }
       }
     },
+    "/admin/verification-needs-attention": {
+      "get": {
+        "tags": [
+          "Admin - Verification"
+        ],
+        "summary": "Counts of reference-data rows that need attention",
+        "description": "One entry per VerificationEntityType (Airport, Airline, Country), always all three, in enum order, with a count of 0 rather than an omitted entry. A row needs attention when its most recent automated check found a problem: IsVerified is false and VerificationIssue is set -- the state only the verification job's mismatch and not-found paths leave behind. A row that has simply never been checked (IsVerified false, no issue) does not count. No parameters.",
+        "operationId": "AdminGetVerificationNeedsAttention",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VerificationNeedsAttentionDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/verification-requests": {
+      "get": {
+        "tags": [
+          "Admin - Verification"
+        ],
+        "summary": "An entity's most recent verification checks",
+        "description": "The entity's checks, newest first, at most 'limit' (default 5, range 1-50). Not a page: no total, and the full history stays browsable at GET /admin/data/verification-requests. Each row's sources, differences and source values come back typed, not as the stored comma-joined or JSON strings: sources is the list of source names checked; differences is { column, ours, source, sourceName } per differing column; sourceValues is keyed by source name, each value a map of column name to what that source reported. 'entityType' is required and must be exactly Airport, Airline or Country; 'entityKey' is required and canonicalised before matching, so a lower-case country code finds the upper-case row. An entity with no checks yet is an empty list, never a 404.",
+        "operationId": "AdminListVerificationRequests",
+        "parameters": [
+          {
+            "name": "entityType",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "entityKey",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VerificationRequestDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "Admin - Verification"
@@ -4641,6 +4723,14 @@
             "type": "integer",
             "format": "int32"
           },
+          "stuckAbandoned": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failuresUnrecorded": {
+            "type": "integer",
+            "format": "int32"
+          },
           "nextRunDueUtc": {
             "type": "string",
             "format": "date-time",
@@ -6299,6 +6389,127 @@
           "skipped": {
             "type": "integer",
             "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "VerificationNeedsAttentionDto": {
+        "type": "object",
+        "properties": {
+          "entityType": {
+            "type": "string",
+            "nullable": true
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "VerificationRequestDifferenceDto": {
+        "type": "object",
+        "properties": {
+          "column": {
+            "type": "string",
+            "nullable": true
+          },
+          "ours": {
+            "type": "string",
+            "nullable": true
+          },
+          "source": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceName": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "VerificationRequestDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "entityType": {
+            "type": "string",
+            "nullable": true
+          },
+          "entityKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "trigger": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "attempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "nextAttemptUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "differences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VerificationRequestDifferenceDto"
+            },
+            "nullable": true
+          },
+          "sourceValues": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          },
+          "estimatedCostUsd": {
+            "type": "number",
+            "format": "double"
+          },
+          "requestedBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "requestedUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startedUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "completedUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
           }
         },
         "additionalProperties": false

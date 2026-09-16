@@ -254,6 +254,8 @@ namespace FlightAssistant.API.Endpoints.Admin
                 snapshot.LastOutcome.ToString(),
                 snapshot.RequestsProcessed,
                 snapshot.RequestsFailed,
+                snapshot.StuckAbandoned,
+                snapshot.FailuresUnrecorded,
                 snapshot.NextRunDueUtc,
                 includeDiagnostics ? snapshot.LastError : null,
                 pendingCount);

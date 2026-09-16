@@ -37,7 +37,47 @@ namespace FlightAssistant.API.Endpoints.Admin
             .Produces<List<VerificationSourceDto>>(200)
             .ProducesValidationProblem();
 
+            // GET /admin/verification-needs-attention
+            admin.MapGet("verification-needs-attention", async (IMediator mediator, CancellationToken ct) =>
+            {
+                var counts = await mediator.Send(new GetVerificationNeedsAttentionQuery(), ct);
+                return Results.Ok(counts.Select(c => new VerificationNeedsAttentionDto(c.EntityType.ToString(), c.Count)).ToList());
+            })
+            .WithTags(Tag)
+            .WithName("AdminGetVerificationNeedsAttention")
+            .WithSummary("Counts of reference-data rows that need attention")
+            .WithDescription(
+                "One entry per VerificationEntityType (Airport, Airline, Country), always all three, in " +
+                "enum order, with a count of 0 rather than an omitted entry. A row needs attention when " +
+                "its most recent automated check found a problem: IsVerified is false and " +
+                "VerificationIssue is set -- the state only the verification job's mismatch and " +
+                "not-found paths leave behind. A row that has simply never been checked (IsVerified " +
+                "false, no issue) does not count. No parameters.")
+            .Produces<List<VerificationNeedsAttentionDto>>(200);
+
             var requests = admin.MapGroup("verification-requests").WithTags(Tag);
+
+            // GET /admin/verification-requests?entityType=Airport&entityKey=1&limit=5
+            requests.MapGet("", async (
+                string? entityType, string? entityKey, int? limit, IMediator mediator, CancellationToken ct) =>
+            {
+                var results = await mediator.Send(new GetVerificationRequestsQuery(entityType, entityKey, limit), ct);
+                return Results.Ok(results.Select(ToDto).ToList());
+            })
+            .WithName("AdminListVerificationRequests")
+            .WithSummary("An entity's most recent verification checks")
+            .WithDescription(
+                "The entity's checks, newest first, at most 'limit' (default 5, range 1-50). Not a page: no " +
+                "total, and the full history stays browsable at GET /admin/data/verification-requests. Each " +
+                "row's sources, differences and source values come back typed, not as the stored comma-joined " +
+                "or JSON strings: sources is the list of source names checked; differences is { column, ours, " +
+                "source, sourceName } per differing column; sourceValues is keyed by source name, each value " +
+                "a map of column name to what that source reported. " +
+                "'entityType' is required and must be exactly Airport, Airline or Country; 'entityKey' is " +
+                "required and canonicalised before matching, so a lower-case country code finds the " +
+                "upper-case row. An entity with no checks yet is an empty list, never a 404.")
+            .Produces<List<VerificationRequestDto>>(200)
+            .ProducesValidationProblem();
 
             // POST /admin/verification-requests
             requests.MapPost("", async (
@@ -108,5 +148,23 @@ namespace FlightAssistant.API.Endpoints.Admin
             .ProducesProblem(404)
             .ProducesProblem(409);
         }
+
+        private static VerificationRequestDto ToDto(VerificationRequestResult r) => new(
+            r.Id,
+            r.EntityType.ToString(),
+            r.EntityKey,
+            r.Sources,
+            r.Trigger.ToString(),
+            r.Status.ToString(),
+            r.Attempts,
+            r.NextAttemptUtc,
+            r.Differences.Select(d => new VerificationRequestDifferenceDto(d.Column, d.Ours, d.Source, d.SourceName)).ToList(),
+            r.SourceValues,
+            r.Error,
+            r.EstimatedCostUsd,
+            r.RequestedBy,
+            r.RequestedUtc,
+            r.StartedUtc,
+            r.CompletedUtc);
     }
 }

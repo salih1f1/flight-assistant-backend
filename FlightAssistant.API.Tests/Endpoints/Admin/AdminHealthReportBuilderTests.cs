@@ -81,17 +81,21 @@ public class AdminHealthReportBuilderTests
         return heartbeat;
     }
 
+    /// <summary>The builder maps <c>StuckAbandoned</c> and <c>FailuresUnrecorded</c> straight off the
+    /// heartbeat snapshot, in that order, after <c>RequestsFailed</c> — swapping them would pass every
+    /// other assertion here, which is why this pins the full record rather than the two fields in
+    /// isolation.</summary>
     [Fact]
     public async Task BuildVerificationAsync_ReportsTheHeartbeatSnapshot_AndThePendingCount()
     {
         var heartbeat = new VerificationJobHeartbeat(new FakeTimeProvider(new DateTimeOffset(T0)));
         heartbeat.MarkRunStarted();
-        heartbeat.MarkRunSucceeded(processed: 5, failed: 2, nextRunDueUtc: T0.AddSeconds(30));
+        heartbeat.MarkRunSucceeded(processed: 5, failed: 2, stuckAbandoned: 4, failuresUnrecorded: 1, nextRunDueUtc: T0.AddSeconds(30));
 
         var dto = await AdminHealthReportBuilder.BuildVerificationAsync(
             heartbeat, enabled: true, PendingCount(7), includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
 
-        Assert.Equal(new AdminHealthVerificationDto(true, T0, T0, "Success", 5, 2, T0.AddSeconds(30), null, 7), dto);
+        Assert.Equal(new AdminHealthVerificationDto(true, T0, T0, "Success", 5, 2, 4, 1, T0.AddSeconds(30), null, 7), dto);
     }
 
     [Fact]
@@ -101,7 +105,7 @@ public class AdminHealthReportBuilderTests
             new VerificationJobHeartbeat(TimeProvider.System), enabled: false, PendingCount(0),
             includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
 
-        Assert.Equal(new AdminHealthVerificationDto(false, null, null, "NeverRun", 0, 0, null, null, 0), dto);
+        Assert.Equal(new AdminHealthVerificationDto(false, null, null, "NeverRun", 0, 0, 0, 0, null, null, 0), dto);
     }
 
     [Fact]

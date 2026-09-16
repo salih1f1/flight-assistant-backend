@@ -17,7 +17,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace FlightAssistant.API.Tests.Integration;
 
 /// <summary>
-/// The four admin verification endpoints (#378) and <c>GET /admin/data/verification-requests</c>. They map
+/// The six admin verification endpoints (#378, #385) and <c>GET /admin/data/verification-requests</c>. They map
 /// each handler's outcome onto a status; the rules themselves are covered by the Application handler tests,
 /// and the audit row and unique-collision refusal by <c>AcceptVerificationSourcePostgresTests</c>, since this
 /// host runs on InMemory with the audit interceptor stripped.
@@ -104,6 +104,111 @@ public class AdminVerificationEndpointTests(FlightAssistantWebApplicationFactory
         var response = await factory.CreateUserClient().GetAsync("admin/verification-sources?entityType=Airport");
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    // ══════════════ GET /admin/verification-needs-attention ══════════════
+
+    [Fact]
+    public async Task GetNeedsAttention_Returns200_WithAllThreeEntityTypes_InEnumOrder()
+    {
+        var response = await factory.CreateAdminClient().GetAsync("admin/verification-needs-attention");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var rows = await response.Content.ReadFromJsonAsync<List<VerificationNeedsAttentionDto>>();
+        Assert.Equal(new[] { "Airport", "Airline", "Country" }, rows!.Select(r => r.EntityType));
+    }
+
+    /// <summary>
+    /// The shared "Integration" collection database carries rows other tests left behind, so this
+    /// asserts a delta rather than an absolute count: marking one fresh airport's verification as
+    /// failed must raise the Airport entry by exactly one and leave Airline and Country untouched.
+    /// </summary>
+    [Fact]
+    public async Task GetNeedsAttention_AnAirportMarkedVerificationFailed_IncreasesOnlyTheAirportCount_ByOne()
+    {
+        var client = factory.CreateAdminClient();
+        var before = await NeedsAttentionCountsAsync(client);
+
+        var airport = await SeedAirportAsync("ZVF", "Needs Attention Airport");
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+            var tracked = await db.Airports.SingleAsync(a => a.Id == airport.Id);
+            tracked.MarkVerificationFailed("Name mismatch");
+            await db.SaveChangesAsync();
+        }
+
+        var after = await NeedsAttentionCountsAsync(client);
+
+        Assert.Equal(before["Airport"] + 1, after["Airport"]);
+        Assert.Equal(before["Airline"], after["Airline"]);
+        Assert.Equal(before["Country"], after["Country"]);
+    }
+
+    // ══════════════ GET /admin/verification-requests ══════════════
+
+    [Fact]
+    public async Task ListRequests_ReturnsTheEntitysChecks_WithTypedDifferencesAndSourceValues()
+    {
+        var airport = await SeedAirportAsync("ZVE", "List Test Airport");
+        var key = airport.Id.ToString(CultureInfo.InvariantCulture);
+        var mismatchId = await SeedMismatchAsync(airport, nameof(Airport.Name), "List Test Airport", "List Source Name");
+
+        var response = await factory.CreateAdminClient().GetAsync($"admin/verification-requests?entityType=Airport&entityKey={key}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var rows = await response.Content.ReadFromJsonAsync<List<VerificationRequestDto>>();
+        var row = Assert.Single(rows!, r => r.Id == mismatchId);
+        Assert.Equal("Airport", row.EntityType);
+        Assert.Equal(key, row.EntityKey);
+        Assert.Equal(new[] { "ourairports" }, row.Sources);
+        Assert.Equal("Mismatch", row.Status);
+        var difference = Assert.Single(row.Differences);
+        Assert.Equal(nameof(Airport.Name), difference.Column);
+        Assert.Equal("List Test Airport", difference.Ours);
+        Assert.Equal("List Source Name", difference.Source);
+        Assert.Equal("ourairports", difference.SourceName);
+        Assert.Equal("List Source Name", row.SourceValues["ourairports"][nameof(Airport.Name)]);
+    }
+
+    [Fact]
+    public async Task ListRequests_AnEntityWithNoChecksYet_Returns200_Empty()
+    {
+        var response = await factory.CreateAdminClient().GetAsync($"admin/verification-requests?entityType=Airport&entityKey={NextKey()}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Empty((await response.Content.ReadFromJsonAsync<List<VerificationRequestDto>>())!);
+    }
+
+    [Fact]
+    public async Task ListRequests_ABadEntityType_Returns400()
+    {
+        var response = await factory.CreateAdminClient().GetAsync("admin/verification-requests?entityType=Airports&entityKey=1");
+
+        await AssertValidationErrorsAsync(response, ("EntityType", "EntityType must be one of Airport, Airline, Country."));
+    }
+
+    /// <summary>
+    /// F2: a 'limit' value minimal API cannot parse as <c>int?</c> never reaches the handler or its
+    /// validator -- ASP.NET Core's own model-binding failure short-circuits the request with its own
+    /// bare <c>ProblemDetails</c> (RFC 9110 §15.5.1), not our <c>ValidationProblemDetails</c> ("errors"
+    /// grouped by property name). Pinned as observed, not changed: the panel needs to know this shape
+    /// even though it differs from every other 400 this API returns.
+    /// </summary>
+    [Fact]
+    public async Task ListRequests_ANonNumericLimit_Returns400_TheFrameworksOwnBindingFailureProblemDetails()
+    {
+        var response = await factory.CreateAdminClient().GetAsync("admin/verification-requests?entityType=Airport&entityKey=1&limit=abc");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("https://tools.ietf.org/html/rfc9110#section-15.5.1", problem.RootElement.GetProperty("type").GetString());
+        Assert.Equal("Bad Request", problem.RootElement.GetProperty("title").GetString());
+        Assert.Equal(400, problem.RootElement.GetProperty("status").GetInt32());
+        Assert.True(problem.RootElement.TryGetProperty("traceId", out _));
+        // Not our ValidationProblemDetails: no "errors" property grouping failures by field name.
+        Assert.False(problem.RootElement.TryGetProperty("errors", out _));
     }
 
     // ══════════════ POST /admin/verification-requests ══════════════
@@ -439,6 +544,14 @@ public class AdminVerificationEndpointTests(FlightAssistantWebApplicationFactory
             airport.Id.ToString(CultureInfo.InvariantCulture),
             new[] { new VerificationDifference(column, ours, source, "ourairports") },
             sourceValues));
+    }
+
+    private static async Task<Dictionary<string, int>> NeedsAttentionCountsAsync(HttpClient client)
+    {
+        var response = await client.GetAsync("admin/verification-needs-attention");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var rows = await response.Content.ReadFromJsonAsync<List<VerificationNeedsAttentionDto>>();
+        return rows!.ToDictionary(r => r.EntityType, r => r.Count);
     }
 
     private async Task<long> SeedRequestAsync(VerificationRequest request)

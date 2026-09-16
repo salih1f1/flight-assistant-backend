@@ -133,6 +133,46 @@ namespace FlightAssistant.Domain.Tests.Common
             Assert.Equal("Name, City differ (ourairports)", entity.VerificationIssue);
         }
 
+        /// <summary>
+        /// #385 final review G1: <c>VerificationNeedsAttentionRepository</c>'s "needs attention" count
+        /// and the admin data browser's <c>VerificationIssue:*</c> "has a value" filter (spec §4.7)
+        /// select the same rows only because this invariant holds -- the count's predicate checks
+        /// both <c>IsVerified</c> and <c>VerificationIssue</c>, but the filter is a general-purpose
+        /// column filter with no knowledge of <c>IsVerified</c>, so it checks only the issue. Pins the
+        /// invariant directly, across all three mutators, rather than leaving it to be inferred from
+        /// the individual property assertions the tests above already make. <c>Verify</c> is the
+        /// interesting case: it must actively clear a pre-existing issue, not merely not set one, so
+        /// each scenario below starts from a prior Needs-attention state via
+        /// <see cref="MarkVerificationFailed_OnVerifiedEntity_ClearsVerifiedStateAndSetsIssue"/>'s same
+        /// setup rather than a fresh, already-null-issue entity.
+        /// </summary>
+        [Theory]
+        [MemberData(nameof(Factories))]
+        public void ANonNullVerificationIssue_AlwaysImpliesNotVerified(string name, Func<IVerifiable> create)
+        {
+            Assert.NotEmpty(name); // theory label, asserted so the parameter isn't flagged unused
+
+            var afterVerify = create();
+            afterVerify.MarkVerificationFailed("stale seed data");
+            afterVerify.Verify("admin@example.com", VerificationSources.Manual);
+            AssertInvariantHolds(afterVerify);
+
+            var afterUnverify = create();
+            afterUnverify.MarkVerificationFailed("stale seed data");
+            afterUnverify.Unverify();
+            AssertInvariantHolds(afterUnverify);
+
+            var afterMarkFailed = create();
+            afterMarkFailed.MarkVerificationFailed("Name, City differ (ourairports)");
+            AssertInvariantHolds(afterMarkFailed);
+
+            static void AssertInvariantHolds(IVerifiable entity)
+            {
+                if (entity.VerificationIssue is not null)
+                    Assert.False(entity.IsVerified);
+            }
+        }
+
         [Theory]
         [MemberData(nameof(Factories))]
         public void SatisfiesIVerifiableInterface(string name, Func<IVerifiable> create)

@@ -116,6 +116,119 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
         Assert.Equal("Has a name", Assert.Single(items)[nameof(Traveler.DisplayName)]);
     }
 
+    // ── "Has a value" (#385 Task 3 / R4): a string filter of exactly "*" ────────
+
+    /// <summary>
+    /// The whole-value sentinel <c>*</c> means "not null, and not blank" (R4, amended): a
+    /// whitespace-only value is excluded alongside null and empty, matching Task 2's
+    /// needs-attention count (<c>VerificationIssue.Trim() != ""</c>) exactly — the admin
+    /// dashboard's count and the <c>VerificationIssue:*</c> grid it links to must never disagree
+    /// over whether a whitespace-only value counts. Seeds all four cases (null, empty,
+    /// whitespace-only, a real value) in one table so the three exclusions and the one inclusion
+    /// are proven side by side, not in isolation.
+    /// </summary>
+    [Fact]
+    public async Task QueryAsync_StringFilter_Star_MatchesNonBlankValues_ExcludingNullEmptyAndWhitespace()
+    {
+        await using var db = CreateDbContext();
+        var nullDisplay = NewTraveler();
+        var emptyDisplay = NewTraveler();
+        var whitespaceDisplay = NewTraveler();
+        var normalDisplay = NewTraveler("Ada Lovelace");
+        db.Travelers.AddRange(nullDisplay, emptyDisplay, whitespaceDisplay, normalDisplay);
+        // Traveler.Register normalizes a blank display name to null (Traveler.cs), so a genuine
+        // empty-string / whitespace-only value has to be written directly against EF's tracked
+        // property, exactly as the VerifiedAt override does below for a nullable DateTime.
+        db.Entry(emptyDisplay).Property(t => t.DisplayName).CurrentValue = "";
+        db.Entry(whitespaceDisplay).Property(t => t.DisplayName).CurrentValue = "   ";
+        await db.SaveChangesAsync();
+
+        var (items, total) = await Repository(db).QueryAsync(
+            TravelersTable, 1, 50, sortColumn: null, sortDescending: false,
+            filterColumn: nameof(Traveler.DisplayName), filterValue: "*");
+
+        Assert.Equal(1, total);
+        Assert.Equal("Ada Lovelace", Assert.Single(items)[nameof(Traveler.DisplayName)]);
+    }
+
+    /// <summary>
+    /// A value that merely *contains* <c>*</c> alongside other text is still an ordinary
+    /// case-insensitive contains match, exactly as before #385 — only a filter value that is
+    /// exactly <c>*</c>, the whole value, triggers "has a value".
+    /// </summary>
+    [Fact]
+    public async Task QueryAsync_StringFilter_ValueContainingStar_StillMatchesByContains_NotHasValue()
+    {
+        await using var db = CreateDbContext();
+        var withStar = NewTraveler("VIP*Gold");
+        var withoutStar = NewTraveler("VIP Gold");
+        db.Travelers.AddRange(withStar, withoutStar);
+        await db.SaveChangesAsync();
+
+        var (items, total) = await Repository(db).QueryAsync(
+            TravelersTable, 1, 50, sortColumn: null, sortDescending: false,
+            filterColumn: nameof(Traveler.DisplayName), filterValue: "vip*gold");
+
+        Assert.Equal(1, total);
+        Assert.Equal("VIP*Gold", Assert.Single(items)[nameof(Traveler.DisplayName)]);
+    }
+
+    /// <summary>
+    /// R4's SQL-translation requirement, the same proof <see cref="ApplyFilter_StringContains_TranslatesToSql"/>
+    /// gives the contains branch, extended to the "has a value" branch (task brief: "whatever
+    /// existing test proves a filter translates to SQL rather than running in memory, extend it to
+    /// this branch"). Built entirely from an <c>IS NOT NULL</c> comparison plus a trim-then-compare
+    /// (<c>.Trim()</c> translates to Postgres's <c>btrim()</c>) with no client-evaluated step,
+    /// proven against the exact query <see cref="BrowsableDataRepository.QueryAsync"/> composes
+    /// (via the internal <c>BuildQueryString</c> seam), not a hand-rebuilt stand-in.
+    /// </summary>
+    [Fact]
+    public void ApplyFilter_StringHasValue_TranslatesToSql()
+    {
+        using var db = CreateDbContext();
+
+        var sql = Repository(db).BuildQueryString(
+            TravelersTable, sortColumn: null, sortDescending: false,
+            filterColumn: nameof(Traveler.DisplayName), filterValue: "*");
+
+        // A client-evaluated fallback would produce a query with no WHERE clause referencing the
+        // column at all. Asserting on the generated SQL text is the only way to tell the two apart.
+        Assert.Contains("WHERE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DisplayName", sql, StringComparison.Ordinal);
+        Assert.Contains("IS NOT NULL", sql, StringComparison.OrdinalIgnoreCase);
+        // The trim is what makes a whitespace-only value fail the filter in the database itself —
+        // Postgres's btrim(), not string.Trim() evaluated after the rows are pulled into memory.
+        Assert.Contains("btrim(", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.True(
+            sql.Contains("<> ''", StringComparison.Ordinal) || sql.Contains("!= ''", StringComparison.Ordinal),
+            $"Expected the generated SQL to compare against an empty string in the database, got:\n{sql}");
+
+        // Not the contains branch's machinery — this predicate needs no case-folding at all.
+        Assert.False(sql.Contains("lower(", StringComparison.OrdinalIgnoreCase));
+
+        // I2 (see ApplyFilter_StringContains_TranslatesToSql above): the primary-key tiebreaker
+        // must show up as a real ORDER BY clause here too.
+        Assert.Contains("ORDER BY t.\"Id\"", sql, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// R4's other half: on a non-string column <c>*</c> gets no special treatment at all — it
+    /// reaches <see cref="BrowsableDataRepository"/>'s ordinary value conversion like any other
+    /// value and fails to parse as a <see cref="Guid"/>, a 400 exactly like today's
+    /// unparseable-value tests below.
+    /// </summary>
+    [Fact]
+    public async Task QueryAsync_NonStringFilter_StarValue_ThrowsDomainException400()
+    {
+        await using var db = CreateDbContext();
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => Repository(db).QueryAsync(
+            TravelersTable, 1, 50, sortColumn: null, sortDescending: false,
+            filterColumn: nameof(Traveler.Id), filterValue: "*"));
+
+        Assert.Equal(400, ex.StatusCode);
+    }
+
     // ── Exact match on a non-string column ──────────────────────────────────────
 
     [Fact]
