@@ -102,9 +102,11 @@ namespace FlightAssistant.Domain.Flights.Entities
             string? equipmentAircraftIcao,
             DateTime nowUtc,
             bool statusChanged = true,
-            DateTime? reportedScheduledDepartureUtc = null)
+            DateTime? reportedScheduledDepartureUtc = null,
+            DateTime? reportedScheduledArrivalUtc = null)
         {
-            ApplyProviderTimes(estimatedDepartureUtc, estimatedArrivalUtc, actualDepartureUtc, actualArrivalUtc, equipmentAircraftIcao, nowUtc);
+            ApplyProviderTimes(estimatedDepartureUtc, estimatedArrivalUtc, actualDepartureUtc, actualArrivalUtc, equipmentAircraftIcao, nowUtc,
+                reportedScheduledDepartureUtc, reportedScheduledArrivalUtc);
             CancelledAtUtc = statusCode == CancelledStatusCode ? CancelledAtUtc ?? nowUtc : null;
             UpdatedUtc = nowUtc;
 
@@ -148,7 +150,12 @@ namespace FlightAssistant.Domain.Flights.Entities
         /// stored value. An actual departure or arrival, once reported, is kept when a later response omits
         /// it: clearing an actual arrival would send a landed flight back to the planner's no-arrival rule
         /// and up to a day of Fast polls the budget guard doesn't hold back. The aircraft type is taken only
-        /// when reported. Raises no event, so it sends no push, and leaves <see cref="CancelledAtUtc"/> alone,
+        /// when reported. The scheduled departure and arrival (#399) follow the same keep-when-omitted rule as
+        /// the actual times — these columns are non-nullable, and a provider that omits one has not reported
+        /// the flight as unscheduled — so a retime updates them, and a response with no schedule leaves the
+        /// stored one alone; the sync planner's Live/Fast windows and the tracking cap's stop rule both read
+        /// these fields directly, so a stale value keeps working from when the flight was first tracked.
+        /// Raises no event, so it sends no push, and leaves <see cref="CancelledAtUtc"/> alone,
         /// since that follows the status. <see cref="UpdatedUtc"/> moves only when something changed.
         /// <see cref="ApplyStatusUpdate"/> uses it too, so both paths keep actual times the same way.
         /// </summary>
@@ -158,21 +165,34 @@ namespace FlightAssistant.Domain.Flights.Entities
             DateTime? actualDepartureUtc,
             DateTime? actualArrivalUtc,
             string? equipmentAircraftIcao,
-            DateTime nowUtc)
+            DateTime nowUtc,
+            DateTime? reportedScheduledDepartureUtc = null,
+            DateTime? reportedScheduledArrivalUtc = null)
         {
             var actualDeparture = actualDepartureUtc ?? ActualDepartureUtc;
             var actualArrival = actualArrivalUtc ?? ActualArrivalUtc;
+
+            // An airline retimes a flight, sometimes by hours (#399). The stored schedule is written once at
+            // tracking and would otherwise stay wrong for the flight's whole life — the planner's Live window
+            // reads it directly, and the tracking cap's stop rule reads the arrival. A provider that omits a
+            // scheduled time keeps the stored one: these are non-nullable, and "not reported" is not "unknown".
+            var scheduledDeparture = reportedScheduledDepartureUtc ?? ScheduledDepartureUtc;
+            var scheduledArrival = reportedScheduledArrivalUtc ?? ScheduledArrivalUtc;
 
             var changed = EstimatedDepartureUtc != estimatedDepartureUtc
                           || EstimatedArrivalUtc != estimatedArrivalUtc
                           || ActualDepartureUtc != actualDeparture
                           || ActualArrivalUtc != actualArrival
+                          || ScheduledDepartureUtc != scheduledDeparture
+                          || ScheduledArrivalUtc != scheduledArrival
                           || (equipmentAircraftIcao is not null && EquipmentAircraftIcao != equipmentAircraftIcao);
 
             EstimatedDepartureUtc = estimatedDepartureUtc;
             EstimatedArrivalUtc = estimatedArrivalUtc;
             ActualDepartureUtc = actualDeparture;
             ActualArrivalUtc = actualArrival;
+            ScheduledDepartureUtc = scheduledDeparture;
+            ScheduledArrivalUtc = scheduledArrival;
             if (equipmentAircraftIcao is not null)
                 EquipmentAircraftIcao = equipmentAircraftIcao;
 

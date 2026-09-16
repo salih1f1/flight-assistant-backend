@@ -160,6 +160,45 @@ namespace FlightAssistant.Domain.Tests.Flights
             Assert.Equal(Now.AddMinutes(5), flight.UpdatedUtc);
         }
 
+        [Fact]
+        public void ApplyProviderTimes_ARetimedFlight_UpdatesTheStoredSchedule()
+        {
+            var flight = Flight.Create(1, "BA123", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(1), Now.AddHours(8));
+            flight.ApplyStatusUpdate("SCH", null, null, null, null, null, Now);
+
+            flight.ApplyProviderTimes(null, null, null, null, null, Now.AddMinutes(5),
+                reportedScheduledDepartureUtc: Now.AddHours(2), reportedScheduledArrivalUtc: Now.AddHours(9));
+
+            Assert.Equal(Now.AddHours(2), flight.ScheduledDepartureUtc);
+            Assert.Equal(Now.AddHours(9), flight.ScheduledArrivalUtc);
+            Assert.Equal(Now.AddMinutes(5), flight.UpdatedUtc);
+        }
+
+        [Fact]
+        public void ApplyProviderTimes_AResponseWithoutScheduledTimes_KeepsTheStoredOnes()
+        {
+            var flight = Flight.Create(1, "BA123", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(1), Now.AddHours(8));
+            flight.ApplyStatusUpdate("SCH", null, null, null, null, null, Now);
+
+            flight.ApplyProviderTimes(null, null, null, null, null, Now.AddMinutes(5));
+
+            Assert.Equal(Now.AddHours(1), flight.ScheduledDepartureUtc);
+            Assert.Equal(Now.AddHours(8), flight.ScheduledArrivalUtc);
+            Assert.Equal(Now, flight.UpdatedUtc); // nothing changed
+        }
+
+        [Fact]
+        public void ApplyProviderTimes_AnUnchangedSchedule_DoesNotMarkTheFlightUpdated()
+        {
+            var flight = Flight.Create(1, "BA123", 10, 20, DateOnly.FromDateTime(Now), Now.AddHours(1), Now.AddHours(8));
+            flight.ApplyStatusUpdate("SCH", null, null, null, null, null, Now);
+
+            flight.ApplyProviderTimes(null, null, null, null, null, Now.AddMinutes(5),
+                reportedScheduledDepartureUtc: Now.AddHours(1), reportedScheduledArrivalUtc: Now.AddHours(8));
+
+            Assert.Equal(Now, flight.UpdatedUtc);
+        }
+
         // ── Push decision (#352) ──
 
         private static FlightStatusChanged SingleEvent(Flight flight) =>

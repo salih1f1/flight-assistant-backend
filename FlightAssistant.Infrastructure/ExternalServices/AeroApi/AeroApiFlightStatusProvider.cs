@@ -212,6 +212,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
             // actual arrival a landed flight never stops syncing (#345).
             var actualArrival = TryGetUtcDateTime(flight, "actual_in") ?? TryGetUtcDateTime(flight, "actual_on");
             var scheduledOut = TryGetUtcDateTime(flight, "scheduled_out");
+            var scheduledIn = TryGetUtcDateTime(flight, "scheduled_in");
             var statusCode = MapStatusCode(statusRaw, cancelled, diverted, scheduledOut, estimatedOut, criteria);
 
             var effectiveAt = actualOut ?? estimatedOut ?? scheduledOut ?? _timeProvider.GetUtcNow().UtcDateTime;
@@ -229,7 +230,8 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
                 EquipmentIcao: TryGetString(flight, "aircraft_type"),
                 ExternalId: TryGetString(flight, "fa_flight_id"),
                 RawPayloadJson: flight.GetRawText(),
-                ScheduledDepartureUtc: scheduledOut
+                ScheduledDepartureUtc: scheduledOut,
+                ScheduledArrivalUtc: scheduledIn
             );
         }
 

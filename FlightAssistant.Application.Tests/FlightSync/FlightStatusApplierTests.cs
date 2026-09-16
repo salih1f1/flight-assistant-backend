@@ -129,6 +129,54 @@ public class FlightStatusApplierTests
     }
 
     [Fact]
+    public async Task AStatusTheFlightAlreadyHas_WithALaterScheduledDeparture_UpdatesTheStoredSchedule()
+    {
+        // The known-status path records no new event, but the flight's stored schedule must still be
+        // refreshed from a retime (#399) — the sync planner reads it directly.
+        var flight = AFlight();
+        _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(true);
+        _flights.GetLatestFlightStatusEventAsync(flight.Id, Arg.Any<CancellationToken>())
+            .Returns(FlightStatusEvent.Create(flight.Id, 2, Now, Source, "ext-1", "A1", "T5"));
+
+        var retimedDeparture = Now.AddHours(2);
+        var retimedArrival = Now.AddHours(10);
+        var result = Status() with
+        {
+            ScheduledDepartureUtc = retimedDeparture,
+            ScheduledArrivalUtc = retimedArrival
+        };
+
+        Assert.False(await Apply(flight, result));
+
+        Assert.Equal(retimedDeparture, flight.ScheduledDepartureUtc);
+        Assert.Equal(retimedArrival, flight.ScheduledArrivalUtc);
+    }
+
+    [Fact]
+    public async Task ANewStatus_WithARetimedSchedule_UpdatesTheStoredSchedule()
+    {
+        // The retime usually arrives *with* the status change (#399): SCH -> DLY is how an
+        // airline's retime normally surfaces, so this path must refresh the schedule too.
+        // This pins both the applier's arguments and Flight.ApplyStatusUpdate's forwarding —
+        // without it, deleting that forwarding leaves every test green.
+        var flight = AFlight();
+        _flights.GetLatestFlightStatusEventAsync(flight.Id, Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var retimedDeparture = Now.AddHours(2);
+        var retimedArrival = Now.AddHours(10);
+        var result = Status() with
+        {
+            ScheduledDepartureUtc = retimedDeparture,
+            ScheduledArrivalUtc = retimedArrival
+        };
+
+        Assert.True(await Apply(flight, result));
+
+        Assert.Equal(retimedDeparture, flight.ScheduledDepartureUtc);
+        Assert.Equal(retimedArrival, flight.ScheduledArrivalUtc);
+    }
+
+    [Fact]
     public async Task TheSourceReachesTheEventAndItsHash()
     {
         var flight = AFlight();
