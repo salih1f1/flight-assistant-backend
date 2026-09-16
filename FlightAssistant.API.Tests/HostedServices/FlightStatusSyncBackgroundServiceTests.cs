@@ -188,12 +188,16 @@ public class FlightStatusSyncBackgroundServiceTests
             .Send(Arg.Any<SyncFlightStatusCommand>(), Arg.Any<CancellationToken>())
             .Returns(_ => { _clock.Advance(TimeSpan.FromSeconds(20)); return true; });
 
-        var service = Service();
+        var logger = new CapturingLogger<FlightStatusSyncBackgroundService>();
+        var service = Service(logger: logger);
         await service.StartAsync(CancellationToken.None);
         try
         {
             await WaitUntil(() => _heartbeat.Current.LastOutcome == FlightSyncOutcome.Success);
             Assert.Equal(TimeSpan.FromSeconds(20), _heartbeat.Current.LastRunDuration);
+            // 20 s against the 1-minute default interval is the inside-the-interval case: a healthy run
+            // must not warn, or the warning that flags a sick loop becomes noise (#353 final review M1).
+            Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Warning);
         }
         finally
         {
@@ -230,6 +234,28 @@ public class FlightStatusSyncBackgroundServiceTests
         {
             await WaitUntil(() => _heartbeat.Current.LastOutcome == FlightSyncOutcome.Success);
             Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("longer than"));
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task AFailedRun_StillRecordsHowLongItTook()
+    {
+        // "Failed after ten minutes" and "failed instantly" are different problems, which is why the
+        // heartbeat records a duration on the failure path too (#353 final review M2). The batch itself
+        // must fail here — a single flight throwing is swallowed and counted, and still reports Success.
+        _flights.GetDueTrackedFlightIdsAsync(Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<int>>(_ => { _clock.Advance(TimeSpan.FromSeconds(10)); throw new InvalidOperationException("due lookup boom"); });
+
+        var service = Service();
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntil(() => _heartbeat.Current.LastOutcome == FlightSyncOutcome.Failed);
+            Assert.Equal(TimeSpan.FromSeconds(10), _heartbeat.Current.LastRunDuration);
         }
         finally
         {

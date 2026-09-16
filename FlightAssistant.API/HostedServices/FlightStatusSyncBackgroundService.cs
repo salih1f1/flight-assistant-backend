@@ -64,12 +64,13 @@ namespace FlightAssistant.API.HostedServices
         {
             _heartbeat.MarkRunStarted();
             var startedUtc = _timeProvider.GetUtcNow();
+            var startTimestamp = _timeProvider.GetTimestamp();
             var nextRunDueUtc = startedUtc.UtcDateTime + _options.LoopInterval;
 
             try
             {
                 var result = await RunOnceAsync(ct);
-                _heartbeat.MarkRunSucceeded(result.Processed, result.Failed, nextRunDueUtc, Elapsed(startedUtc));
+                _heartbeat.MarkRunSucceeded(result.Processed, result.Failed, nextRunDueUtc, MeasureAndWarn(startTimestamp));
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -78,19 +79,20 @@ namespace FlightAssistant.API.HostedServices
             catch (Exception ex)
             {
                 _log.LogError(ex, "Flight status sync run failed. Retrying in {Interval}.", _options.LoopInterval);
-                _heartbeat.MarkRunFailed(ex, nextRunDueUtc, Elapsed(startedUtc));
+                _heartbeat.MarkRunFailed(ex, nextRunDueUtc, MeasureAndWarn(startTimestamp));
             }
         }
 
         /// <summary>
-        /// How long the run took, by the injected clock rather than a <c>Stopwatch</c>, so a test on a
-        /// <c>FakeTimeProvider</c> can assert an exact value (#353). A run longer than the loop interval is
-        /// not an error — <c>PeriodicTimer</c> simply starts the next one immediately — but it means each
-        /// flight is polled less often than the interval suggests, which is invisible without this warning.
+        /// How long the run took, by the injected clock's monotonic timestamp rather than a wall-clock
+        /// difference, so an NTP step mid-run cannot corrupt the figure or trip the warning below (#353).
+        /// A run longer than the loop interval is not an error — <c>PeriodicTimer</c> simply starts the next
+        /// one immediately — but it means each flight is polled less often than the interval suggests,
+        /// which is invisible without this warning.
         /// </summary>
-        private TimeSpan Elapsed(DateTimeOffset startedUtc)
+        private TimeSpan MeasureAndWarn(long startTimestamp)
         {
-            var elapsed = _timeProvider.GetUtcNow() - startedUtc;
+            var elapsed = _timeProvider.GetElapsedTime(startTimestamp);
             if (elapsed > _options.LoopInterval)
                 _log.LogWarning(
                     "Flight status sync run took {Duration}, longer than the {Interval} loop interval; the next run starts immediately.",
