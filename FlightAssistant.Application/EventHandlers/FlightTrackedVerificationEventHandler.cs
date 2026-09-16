@@ -34,10 +34,14 @@ namespace FlightAssistant.Application.EventHandlers
     /// </para>
     ///
     /// <para>
-    /// <b>Never throws (R5).</b> One catch around the whole body, logged with the flight id. Domain
-    /// events dispatch only after the triggering <c>SaveChangesAsync</c> commits, so the traveler's
-    /// response has already been sent by the time this runs -- a failure here must never surface to
-    /// them, and must never roll anything back (there is nothing left to roll back).
+    /// <b>Never throws (R5).</b> One catch around the whole body, logged with the flight id. The
+    /// dispatch is post-<b>commit</b>, not post-response: <c>DomainEventDispatchInterceptor</c>
+    /// publishes from inside the triggering <c>SaveChangesAsync</c> call, which
+    /// <c>TrackFlightCommandHandler</c> is still awaiting -- the endpoint has not yet built its
+    /// response. An uncaught exception here would therefore unwind out of that
+    /// <c>SaveChangesAsync</c> and become a 500 for a tracking write that already committed and
+    /// cannot be rolled back, so a failure here must never surface to the traveler, and must never
+    /// try to roll anything back (there is nothing left to roll back).
     /// </para>
     /// </summary>
     public sealed class FlightTrackedVerificationEventHandler : INotificationHandler<FlightTracked>
