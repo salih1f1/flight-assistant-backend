@@ -141,13 +141,26 @@ public class AdminHealthEndpointTests(FlightAssistantWebApplicationFactory facto
         return client;
     }
 
+    /// <summary>Registers a prepared <see cref="FlightSyncHeartbeat"/> as the singleton, overriding
+    /// Program.cs's own registration (DI resolves the last descriptor). The integration factory removes
+    /// every <c>IHostedService</c>, so the background service that would call <c>Mark*</c> never runs in
+    /// this suite — this stands in for it.</summary>
+    private static WebApplicationFactory<Program> WithFlightSyncHeartbeat(
+        FlightAssistantWebApplicationFactory factory, FlightSyncHeartbeat heartbeat, string? environmentName = null) =>
+        factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+            {
+                if (environmentName is not null)
+                    services.AddSingleton<IHostEnvironment>(new FakeHostEnvironment(environmentName));
+
+                services.AddSingleton(heartbeat);
+            }));
+
     /// <summary>
     /// Registers a <see cref="FlightSyncHeartbeat"/> instance that already has a failed run on it —
     /// DI resolves the last-registered descriptor for a given service type, so this overrides
     /// Program.cs's own <c>AddSingleton&lt;FlightSyncHeartbeat&gt;()</c>, the same technique
-    /// <see cref="WithThreeFakeChecks"/> uses for <see cref="IHostEnvironment"/>. The integration
-    /// factory removes every <c>IHostedService</c>, so the background service that would normally
-    /// call <c>Mark*</c> never runs in this suite — this stands in for it directly.
+    /// <see cref="WithThreeFakeChecks"/> uses for <see cref="IHostEnvironment"/>.
     /// </summary>
     private static WebApplicationFactory<Program> WithFailedFlightSyncHeartbeat(
         FlightAssistantWebApplicationFactory factory, string? environmentName = null)
@@ -156,14 +169,7 @@ public class AdminHealthEndpointTests(FlightAssistantWebApplicationFactory facto
         heartbeat.MarkRunStarted();
         heartbeat.MarkRunFailed(new InvalidOperationException("sync boom"), DateTime.UtcNow.AddMinutes(10));
 
-        return factory.WithWebHostBuilder(builder =>
-            builder.ConfigureServices(services =>
-            {
-                if (environmentName is not null)
-                    services.AddSingleton<IHostEnvironment>(new FakeHostEnvironment(environmentName));
-
-                services.AddSingleton(heartbeat);
-            }));
+        return WithFlightSyncHeartbeat(factory, heartbeat, environmentName);
     }
 
     /// <summary>The verification job's counterpart of <see cref="WithFailedFlightSyncHeartbeat"/>:
@@ -446,6 +452,30 @@ public class AdminHealthEndpointTests(FlightAssistantWebApplicationFactory facto
 
         Assert.Equal("Failed", dto!.FlightSync.LastOutcome);
         Assert.Null(dto.FlightSync.LastError);
+    }
+
+    [Fact]
+    public async Task GetHealth_ReportsTheLastRunDuration()
+    {
+        var heartbeat = new FlightSyncHeartbeat();
+        heartbeat.MarkRunStarted();
+        heartbeat.MarkRunSucceeded(processed: 3, failed: 0, nextRunDueUtc: DateTime.UtcNow.AddMinutes(1),
+            duration: TimeSpan.FromSeconds(42));
+
+        using var scopedFactory = WithFlightSyncHeartbeat(factory, heartbeat);
+        var client = AdminClient(scopedFactory);
+
+        var dto = await (await client.GetAsync("/admin/health")).Content.ReadFromJsonAsync<AdminHealthDto>();
+
+        Assert.Equal(42, dto!.FlightSync.LastRunDurationSeconds);
+    }
+
+    [Fact]
+    public async Task GetHealth_BeforeAnyRun_HasNoRunDuration()
+    {
+        var dto = await (await factory.CreateAdminClient().GetAsync("/admin/health")).Content.ReadFromJsonAsync<AdminHealthDto>();
+
+        Assert.Null(dto!.FlightSync.LastRunDurationSeconds);
     }
 
     [Fact]

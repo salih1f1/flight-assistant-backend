@@ -9,7 +9,11 @@ namespace FlightAssistant.API.HostedServices
         int FlightsProcessed,
         int FlightsFailed,
         DateTime? NextRunDueUtc,
-        string? LastError);
+        string? LastError,
+        // How long the last completed run took (#353). Null until one completes — a run that has
+        // never finished must not read as an instant one. Measured by the background service with
+        // its own TimeProvider, so this stays a plain state holder with no clock.
+        TimeSpan? LastRunDuration = null);
 
     /// <summary>
     /// Process-wide observable state for <see cref="FlightStatusSyncBackgroundService"/>. Both the
@@ -73,9 +77,10 @@ namespace FlightAssistant.API.HostedServices
         /// Marks a run as completed. A batch that processed every flight but had some throw is
         /// still <see cref="FlightSyncOutcome.Success"/> — the batch itself ran to completion;
         /// <paramref name="failed"/> is what tells the operator something is wrong with individual
-        /// flights, not the sync loop.
+        /// flights, not the sync loop. <paramref name="duration"/> is how long the run took,
+        /// measured by the caller's clock.
         /// </summary>
-        public void MarkRunSucceeded(int processed, int failed, DateTime nextRunDueUtc)
+        public void MarkRunSucceeded(int processed, int failed, DateTime nextRunDueUtc, TimeSpan? duration = null)
         {
             lock (_lock)
             {
@@ -87,6 +92,7 @@ namespace FlightAssistant.API.HostedServices
                     FlightsFailed = failed,
                     NextRunDueUtc = nextRunDueUtc,
                     LastError = null,
+                    LastRunDuration = duration,
                 };
             }
         }
@@ -94,9 +100,10 @@ namespace FlightAssistant.API.HostedServices
         /// <summary>
         /// Marks the whole run (not a single flight) as failed. Records only the exception's type
         /// and message — never a stack trace, since this value is rendered to an operator outside
-        /// Production.
+        /// Production. A failed run's duration is still worth reporting — a run that failed after
+        /// ten minutes is a different problem from one that failed at once.
         /// </summary>
-        public void MarkRunFailed(Exception ex, DateTime nextRunDueUtc)
+        public void MarkRunFailed(Exception ex, DateTime nextRunDueUtc, TimeSpan? duration = null)
         {
             lock (_lock)
             {
@@ -106,6 +113,7 @@ namespace FlightAssistant.API.HostedServices
                     LastOutcome = FlightSyncOutcome.Failed,
                     NextRunDueUtc = nextRunDueUtc,
                     LastError = $"{ex.GetType().Name}: {ex.Message}",
+                    LastRunDuration = duration,
                 };
             }
         }
