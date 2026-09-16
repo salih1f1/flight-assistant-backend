@@ -263,4 +263,33 @@ public class FlightStatusChangedNotificationHandlerTests
             expectedBody,
             Arg.Any<CancellationToken>());
     }
+
+    [Fact]
+    public async Task Handle_AnEventThatShouldNotNotify_SendsNothing_AndLooksNothingUp()
+    {
+        await _handler.Handle(TestEvent with { StatusCode = "DEP", ShouldNotify = false }, default);
+
+        await _flights.DidNotReceive().GetTrackingsByFlightIdAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
+        await _push.DidNotReceive().SendAsync(
+            Arg.Any<IEnumerable<string>>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Handle_ADelayWithMinutes_SaysHowLate()
+    {
+        var travelerId = Guid.NewGuid();
+        var tracking = TravelerFlight.Create(travelerId, 1);
+        tracking.SetNotify(true);
+        var traveler = Traveler.Register(travelerId, "test@example.com");
+        traveler.AddDeviceToken("ios", "token-aaa-111");
+        _flights.GetTrackingsByFlightIdAsync(1, Arg.Any<CancellationToken>())
+            .Returns(new List<TravelerFlight> { tracking });
+        _travelers.GetByIdsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Traveler> { traveler });
+
+        await _handler.Handle(TestEvent with { StatusCode = "DLY", DelayMinutes = 40 }, default);
+
+        await _push.Received(1).SendAsync(
+            Arg.Any<IEnumerable<string>>(), Arg.Any<string>(), "Your flight is delayed by 40 min.", Arg.Any<CancellationToken>());
+    }
 }

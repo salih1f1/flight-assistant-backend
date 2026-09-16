@@ -1,5 +1,6 @@
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Flights.Enums;
+using FlightAssistant.Domain.Flights.Events;
 
 namespace FlightAssistant.Domain.Tests.Flights
 {
@@ -157,6 +158,169 @@ namespace FlightAssistant.Domain.Tests.Flights
 
             Assert.Equal(Now.AddMinutes(-45), flight.ActualArrivalUtc);
             Assert.Equal(Now.AddMinutes(5), flight.UpdatedUtc);
+        }
+
+        // ── Push decision (#352) ──
+
+        private static FlightStatusChanged SingleEvent(Flight flight) =>
+            Assert.IsType<FlightStatusChanged>(Assert.Single(flight.DomainEvents));
+
+        [Fact]
+        public void ApplyStatusUpdate_AChangedStatus_ShouldNotify()
+        {
+            var flight = NewFlight();
+
+            flight.ApplyStatusUpdate("DEP", null, null, Now, null, null, Now, statusChanged: true);
+
+            var evt = SingleEvent(flight);
+            Assert.True(evt.ShouldNotify);
+            Assert.Null(evt.DelayMinutes);
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_TheSameStatusAgain_DoesNotNotify()
+        {
+            // A corrected actual departure on DEP records the event without a second push.
+            var flight = NewFlight();
+
+            flight.ApplyStatusUpdate("DEP", null, null, Now.AddMinutes(2), null, null, Now, statusChanged: false);
+
+            Assert.False(SingleEvent(flight).ShouldNotify);
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_AFirstDelay_NotifiesWithTheMinutesLate_AndRemembersTheEstimate()
+        {
+            var flight = NewFlight();
+
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(40), null, null, null, null, Now, statusChanged: true);
+
+            var evt = SingleEvent(flight);
+            Assert.True(evt.ShouldNotify);
+            Assert.Equal(40, evt.DelayMinutes);
+            Assert.Equal(Now.AddHours(1).AddMinutes(40), flight.DelayNotifiedDepartureUtc);
+        }
+
+        [Theory]
+        [InlineData(54, false)] // 14 min later than the last push: not enough
+        [InlineData(55, true)]  // exactly 15 min later
+        [InlineData(30, false)] // the estimate moved earlier
+        public void ApplyStatusUpdate_AStillDelayedFlight_NotifiesOnlyWhenTheDelayGrewByTheThreshold(int minutesLate, bool expectNotify)
+        {
+            var flight = NewFlight();
+            var pushedFor = Now.AddHours(1).AddMinutes(40);
+            flight.ApplyStatusUpdate("DLY", pushedFor, null, null, null, null, Now, statusChanged: true);
+            flight.ClearDomainEvents();
+
+            var estimate = Now.AddHours(1).AddMinutes(minutesLate);
+            flight.ApplyStatusUpdate("DLY", estimate, null, null, null, null, Now.AddMinutes(5), statusChanged: false);
+
+            var evt = SingleEvent(flight);
+            Assert.Equal(expectNotify, evt.ShouldNotify);
+            Assert.Equal(minutesLate, evt.DelayMinutes);
+            Assert.Equal(expectNotify ? estimate : pushedFor, flight.DelayNotifiedDepartureUtc);
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_SmallSlips_AddUpToAnotherPush()
+        {
+            // 40 → 50 → 60 min late: neither slip is 15 min, but 60 is 20 min past the last push.
+            var flight = NewFlight();
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(40), null, null, null, null, Now, statusChanged: true);
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(50), null, null, null, null, Now.AddMinutes(5), statusChanged: false);
+            flight.ClearDomainEvents();
+
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(60), null, null, null, null, Now.AddMinutes(10), statusChanged: false);
+
+            Assert.True(SingleEvent(flight).ShouldNotify);
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_AFlightDelayedBeforeThisShipped_IsPushedOnce()
+        {
+            // Still DLY (no status change) but no remembered estimate: the next delayed sync pushes once.
+            var flight = NewFlight();
+
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(40), null, null, null, null, Now, statusChanged: false);
+            Assert.True(SingleEvent(flight).ShouldNotify);
+            flight.ClearDomainEvents();
+
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(45), null, null, null, null, Now.AddMinutes(5), statusChanged: false);
+            Assert.False(SingleEvent(flight).ShouldNotify);
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_ADelayWithoutAnEstimate_NotifiesOnlyOnAStatusChange_WithoutMinutes()
+        {
+            var flight = NewFlight();
+
+            flight.ApplyStatusUpdate("DLY", null, null, null, null, null, Now, statusChanged: false);
+
+            var evt = SingleEvent(flight);
+            Assert.False(evt.ShouldNotify);
+            Assert.Null(evt.DelayMinutes);
+            Assert.Null(flight.DelayNotifiedDepartureUtc);
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_ADelayCountsMinutesFromTheReportedSchedule()
+        {
+            // Stored schedule Now+1h. AeroAPI now schedules Now+1h30 and estimates Now+1h50: 20 min late, not 50.
+            var flight = NewFlight();
+
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(50), null, null, null, null, Now,
+                statusChanged: true, reportedScheduledDepartureUtc: Now.AddHours(1).AddMinutes(30));
+
+            Assert.Equal(20, SingleEvent(flight).DelayMinutes);
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_AnEstimateNotAfterTheSchedule_HasNoMinutes()
+        {
+            var flight = NewFlight();
+
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1), null, null, null, null, Now, statusChanged: true);
+
+            Assert.Null(SingleEvent(flight).DelayMinutes);
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_ReturningToDelayedFromASilentStatus_PushesOnlyWhenTheDelayGrew()
+        {
+            // DLY (40) → SCH → DLY (45): SCH sent nothing and the delay grew only 5 min, so no push.
+            var flight = NewFlight();
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(40), null, null, null, null, Now, statusChanged: true);
+            flight.ApplyStatusUpdate("SCH", Now.AddHours(1), null, null, null, null, Now.AddMinutes(5), statusChanged: true);
+            flight.ClearDomainEvents();
+
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(45), null, null, null, null, Now.AddMinutes(10), statusChanged: true);
+
+            Assert.False(SingleEvent(flight).ShouldNotify);
+            Assert.Equal(Now.AddHours(1).AddMinutes(40), flight.DelayNotifiedDepartureUtc);
+            flight.ClearDomainEvents();
+
+            // → DLY (55): 15 min past the last delay push.
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(55), null, null, null, null, Now.AddMinutes(15), statusChanged: false);
+
+            Assert.True(SingleEvent(flight).ShouldNotify);
+        }
+
+        [Fact]
+        public void ApplyStatusUpdate_AStatusTravelersHear_ForgetsTheLastDelayPush()
+        {
+            // DLY (40) → CAN → reinstated SCH → DLY (20): the cancellation was pushed, so the new delay is news.
+            var flight = NewFlight();
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(40), null, null, null, null, Now, statusChanged: true);
+            flight.ApplyStatusUpdate("CAN", null, null, null, null, null, Now.AddMinutes(5), statusChanged: true);
+            Assert.Null(flight.DelayNotifiedDepartureUtc);
+            flight.ApplyStatusUpdate("SCH", Now.AddHours(1), null, null, null, null, Now.AddMinutes(10), statusChanged: true);
+            flight.ClearDomainEvents();
+
+            flight.ApplyStatusUpdate("DLY", Now.AddHours(1).AddMinutes(20), null, null, null, null, Now.AddMinutes(15), statusChanged: true);
+
+            var evt = SingleEvent(flight);
+            Assert.True(evt.ShouldNotify);
+            Assert.Equal(20, evt.DelayMinutes);
         }
     }
 

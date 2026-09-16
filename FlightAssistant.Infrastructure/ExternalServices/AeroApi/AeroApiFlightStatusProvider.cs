@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Domain.Common.Exceptions;
+using FlightAssistant.Domain.Flights.Entities;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -203,7 +204,6 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
             var cancelled = flight.TryGetProperty("cancelled", out var c) && c.ValueKind == JsonValueKind.True;
             var diverted = flight.TryGetProperty("diverted", out var d) && d.ValueKind == JsonValueKind.True;
             var statusRaw = TryGetString(flight, "status");
-            var statusCode = MapStatusCode(statusRaw, cancelled, diverted, criteria);
 
             var estimatedOut = TryGetUtcDateTime(flight, "estimated_out");
             var estimatedIn = TryGetUtcDateTime(flight, "estimated_in");
@@ -212,6 +212,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
             // actual arrival a landed flight never stops syncing (#345).
             var actualArrival = TryGetUtcDateTime(flight, "actual_in") ?? TryGetUtcDateTime(flight, "actual_on");
             var scheduledOut = TryGetUtcDateTime(flight, "scheduled_out");
+            var statusCode = MapStatusCode(statusRaw, cancelled, diverted, scheduledOut, estimatedOut, criteria);
 
             var effectiveAt = actualOut ?? estimatedOut ?? scheduledOut ?? _timeProvider.GetUtcNow().UtcDateTime;
 
@@ -227,7 +228,8 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
                 BaggageClaim: TryGetString(flight, "baggage_claim"),
                 EquipmentIcao: TryGetString(flight, "aircraft_type"),
                 ExternalId: TryGetString(flight, "fa_flight_id"),
-                RawPayloadJson: flight.GetRawText()
+                RawPayloadJson: flight.GetRawText(),
+                ScheduledDepartureUtc: scheduledOut
             );
         }
 
@@ -239,30 +241,51 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         /// stale "Scheduled"/"En Route" string on a flight that has in fact been cancelled or
         /// diverted, so the prose must never be allowed to mask either. (A flight cannot be both;
         /// if the payload claims it is, cancellation is the more consequential of the two for a
-        /// traveller and wins.) Only the segment before the first "/" is
-        /// matched (AeroAPI qualifies some statuses, e.g. <c>"Arrived / Gate Arrival"</c>), compared
-        /// case-insensitively against a deliberately small, documented set — anything outside it is
-        /// logged, not guessed at.
+        /// traveller and wins.) The segment before the first "/" picks the code, compared
+        /// case-insensitively against a deliberately small, documented set ("Taxiing" counts as
+        /// departed) — anything outside it is logged, not guessed at.
+        ///
+        /// <para>
+        /// <b>Before departure, a delay comes from the times, not the prose (#352).</b> AeroAPI writes a
+        /// delay both as a qualifier ("Scheduled / Delayed") and as a leading "Delayed", so the text
+        /// alone isn't reliable. With both <paramref name="scheduledOut"/> and
+        /// <paramref name="estimatedOut"/>, a scheduled or delayed flight is <c>DLY</c> when the estimate
+        /// is at least <see cref="Flight.DelayThreshold"/> late and <c>SCH</c> otherwise, whatever the text
+        /// says. Without both times, a "Delayed" segment anywhere in the text still means <c>DLY</c>.
+        /// </para>
         /// </summary>
-        private string MapStatusCode(string? status, bool cancelled, bool diverted, string criteria)
+        private string MapStatusCode(
+            string? status, bool cancelled, bool diverted, DateTime? scheduledOut, DateTime? estimatedOut, string criteria)
         {
             if (cancelled) return StatusCancelled;
             if (diverted) return StatusDiverted;
 
-            var prefix = status?.Split('/')[0].Trim().ToLowerInvariant();
+            var segments = status?.Split('/').Select(s => s.Trim().ToLowerInvariant()).ToArray() ?? [];
 
-            return prefix switch
+            var code = segments.FirstOrDefault() switch
             {
                 "scheduled" => StatusScheduled,
-                "en route" => StatusDeparted,
-                "departed" => StatusDeparted,
-                "arrived" => StatusArrived,
-                "landed" => StatusArrived,
+                "en route" or "departed" or "taxiing" => StatusDeparted,
+                "arrived" or "landed" => StatusArrived,
                 "delayed" => StatusDelayed,
                 "diverted" => StatusDiverted,
                 "cancelled" => StatusCancelled,
-                _ => LogUnmappedStatus(status, criteria)
+                _ => null
             };
+
+            if (code is null)
+                return LogUnmappedStatus(status, criteria);
+
+            if (code == StatusScheduled || code == StatusDelayed)
+            {
+                if (scheduledOut is { } scheduled && estimatedOut is { } estimated)
+                    return estimated - scheduled >= Flight.DelayThreshold ? StatusDelayed : StatusScheduled;
+
+                if (segments.Skip(1).Contains("delayed"))
+                    return StatusDelayed;
+            }
+
+            return code;
         }
 
         private string LogUnmappedStatus(string? status, string criteria)
