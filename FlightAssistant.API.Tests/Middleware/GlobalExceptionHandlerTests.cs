@@ -1,4 +1,7 @@
+using System.Globalization;
 using System.Text.Json;
+using CsvHelper;
+using CsvHelper.Configuration;
 using FlightAssistant.API.Middleware;
 using FlightAssistant.Domain.Common.Exceptions;
 using Microsoft.AspNetCore.Http;
@@ -9,9 +12,9 @@ using NSubstitute;
 namespace FlightAssistant.API.Tests.Middleware;
 
 /// <summary>
-/// Pins the two guarantees the problem-response contract makes: every error carries a
-/// <c>traceId</c> for log correlation, and the operator-facing cause is surfaced outside
-/// Production only.
+/// Pins the three guarantees the problem-response contract makes: every error carries a
+/// <c>traceId</c> for log correlation, the operator-facing cause is surfaced outside
+/// Production only, and every problem response uses <c>application/problem+json</c> (#415).
 /// </summary>
 public class GlobalExceptionHandlerTests
 {
@@ -180,13 +183,24 @@ public class GlobalExceptionHandlerTests
     }
 
     [Fact]
-    public async Task EveryProblemResponse_IsProblemJson()
+    public async Task DomainExceptionArm_IsProblemJson()
     {
         // The spec declares application/problem+json on 122 responses; before #415 this handler
         // sent application/json, so handler-produced problems contradicted it while the
         // framework's own matched. All four arms funnel through one helper.
         var (handler, ctx) = Sut(Environments.Development);
         await handler.TryHandleAsync(ctx, PlanRestriction(), default);
+
+        Assert.StartsWith("application/problem+json", ctx.Response.ContentType);
+    }
+
+    [Fact]
+    public async Task CsvArm_IsProblemJson()
+    {
+        var (handler, ctx) = Sut(Environments.Development);
+        var csvContext = new CsvContext(new CsvConfiguration(CultureInfo.InvariantCulture));
+
+        await handler.TryHandleAsync(ctx, new CsvHelperException(csvContext, "bad csv"), default);
 
         Assert.StartsWith("application/problem+json", ctx.Response.ContentType);
     }
