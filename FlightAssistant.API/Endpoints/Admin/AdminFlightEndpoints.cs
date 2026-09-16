@@ -121,8 +121,9 @@ namespace FlightAssistant.API.Endpoints.Admin
             .WithDescription(
                 "Syncs the flight's status now. A flight not yet inside the provider's live-status window makes no provider call, " +
                 "and a flight no traveler tracks makes no call and has its sync plan cleared; both return { updated: false }. " +
-                "Otherwise { updated: true } means an event was recorded — a new status, or a gate, terminal or baggage-claim change on the current status — " +
-                "and { updated: false } means none was, which still allows a moved estimated time to have been saved. " +
+                "Otherwise { updated: true } means an event was recorded — a new status, a revised time for the status the flight already has, " +
+                "or a gate, terminal or baggage-claim change on the current status — and { updated: false } means none was, which still allows " +
+                "a revised estimated arrival or aircraft type to have been saved. " +
                 "Once this month's flight data budget is used up, only a flight in its near-departure window (by default, from 4 hours before departure until 30 minutes after it lands) makes a call; any other returns 503.")
             .Produces(200)
             .ProducesProblem(503);
