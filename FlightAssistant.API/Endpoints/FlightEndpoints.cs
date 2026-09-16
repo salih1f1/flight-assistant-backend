@@ -118,10 +118,12 @@ namespace FlightAssistant.API.Endpoints
                 "DepartureAirportIata, ArrivalAirportIata, ScheduledDepartureUtc, ScheduledArrivalUtc. " +
                 $"A traveler can track up to {new FlightSyncOptions().MaxActiveTrackedFlightsPerTraveler} flights at a time by default. " +
                 "A flight counts until its status sync stops: by default 30 minutes after it lands or is cancelled, or a day after its arrival time if no landing is reported. " +
-                "Tracking another returns 409 and adds nothing; tracking a flight the traveler already tracks still returns 201.")
+                "Tracking another returns 409 and adds nothing; tracking a flight the traveler already tracks still returns 201. " +
+                "Rate-limited per traveler: too many tracking requests return 429 with a Retry-After header.")
             .Produces(201)
             .ProducesValidationProblem()
-            .ProducesProblem(409);
+            .ProducesProblem(409)
+            .RequireRateLimiting("flight-track");
 
             // DELETE /flights/{flightId} — stop tracking a flight
             group.MapDelete("{flightId:int}", async (HttpContext http, int flightId, IMediator mediator, CancellationToken ct) =>

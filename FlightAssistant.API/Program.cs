@@ -291,6 +291,24 @@ builder.Services.AddRateLimiter(rl =>
             QueueLimit = 0
         }));
 
+    // Tracking a flight (#390). Tracking makes no provider call — TrackFlightCommandHandler has no
+    // provider — so this is not a spend path. What it bounds is the rate at which one caller creates
+    // tracked flights, each of which the sync loop then polls: #380 caps how many a traveler may have
+    // active at once, not how fast they can be added, and each attempt costs reference-data lookups and
+    // writes. 10 per minute sits just above flight-sync's 6 and well under #380's cap of 20, so a person
+    // adding the flights from a search result never notices it.
+    var trackLimit = builder.Configuration.GetValue("RateLimiting:FlightTrack:PermitLimit", 10);
+    var trackWindow = builder.Configuration.GetValue("RateLimiting:FlightTrack:WindowSeconds", 60);
+    rl.AddPolicy("flight-track", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        partitionKey: CallerPartitionKey(ctx),
+        factory: _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = trackLimit,
+            Window = TimeSpan.FromSeconds(trackWindow),
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 0
+        }));
+
     // Add Retry-After header on 429
     rl.OnRejected = async (ctx, ct) =>
     {
