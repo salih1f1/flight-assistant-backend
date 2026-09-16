@@ -159,14 +159,26 @@ namespace FlightAssistant.Application.EventHandlers
         private static string Key(int id) => id.ToString(CultureInfo.InvariantCulture);
 
         /// <summary>
+        /// How far into the future <see cref="IVerifiable.VerifiedAt"/> may read before it counts as
+        /// the future-timestamp case rather than ordinary clock skew between App Service instances
+        /// (M5). A row the job verified moments ago on one instance must not be re-queued -- burning
+        /// a metered lookup -- just because the track request landed on another instance whose clock
+        /// is a few hundred milliseconds behind. Minutes, not seconds: generous enough to absorb any
+        /// realistic clock drift while staying far short of the imported-row case this rule exists
+        /// to catch, which is days or months out (see <see cref="NeedsVerification"/>).
+        /// </summary>
+        private static readonly TimeSpan ClockSkewTolerance = TimeSpan.FromMinutes(5);
+
+        /// <summary>
         /// Whether <paramref name="row"/> needs an automated check. R4 beats R3: a row an admin is
         /// already reviewing -- a non-blank <see cref="IVerifiable.VerificationIssue"/> -- is skipped
         /// outright, stale or not, because re-queueing it would overwrite that in-progress state the
         /// moment the check completed. Absent an issue, R3 treats the row as stale (and queues it) when
         /// any of five things is true: it is unverified; it has no verification timestamp; that
-        /// timestamp is older than <paramref name="staleAfterDays"/>; that timestamp is in the
-        /// <b>future</b> (an imported row keeps the file's own timestamp rather than the moment of
-        /// import, and must not therefore read as fresh forever); or it was verified only by
+        /// timestamp is older than <paramref name="staleAfterDays"/>; that timestamp is more than
+        /// <see cref="ClockSkewTolerance"/> in the <b>future</b> (an imported row keeps the file's own
+        /// timestamp rather than the moment of import, and must not therefore read as fresh forever --
+        /// the tolerance only absorbs ordinary clock skew, not that case); or it was verified only by
         /// <see cref="VerificationSources.Import"/> -- weaker evidence than an automated check, since a
         /// hand-built CSV is stamped the same way even when recent.
         /// </summary>
@@ -178,7 +190,7 @@ namespace FlightAssistant.Application.EventHandlers
             return !row.IsVerified
                 || row.VerifiedAt is null
                 || row.VerifiedAt < nowUtc.AddDays(-staleAfterDays)
-                || row.VerifiedAt > nowUtc
+                || row.VerifiedAt > nowUtc.Add(ClockSkewTolerance)
                 || row.VerificationSource == VerificationSources.Import;
         }
     }

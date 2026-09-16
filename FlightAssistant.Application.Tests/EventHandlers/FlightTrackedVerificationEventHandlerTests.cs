@@ -165,6 +165,21 @@ public class FlightTrackedVerificationEventHandlerTests
     }
 
     [Fact]
+    public async Task Handle_AirportVerifiedMomentsInTheFuture_ClockSkewIsNotStale_IsNotQueued()
+    {
+        // M5/Fix 5: a few hundred milliseconds -- or even a couple of minutes -- ahead of "now" is
+        // ordinary clock skew between App Service instances, not the imported-row case. It must not
+        // cost a metered re-check.
+        var arrival = NewAirport(ArrivalAirportId, "JFK", "US");
+        arrival.Verify("admin", "ourairports", Now.AddMinutes(2));
+        _airports.GetByIdAsync(ArrivalAirportId, Arg.Any<CancellationToken>()).Returns(arrival);
+
+        await Handler().Handle(Event(), default);
+
+        await ExpectNoCallFor(VerificationEntityType.Airport);
+    }
+
+    [Fact]
     public async Task Handle_AirlineVerifiedOnlyByImport_IsQueuedEvenThoughRecent()
     {
         var airline = NewAirline(AirlineId, "GB");
