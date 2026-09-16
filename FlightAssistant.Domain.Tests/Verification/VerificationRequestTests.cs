@@ -48,6 +48,7 @@ namespace FlightAssistant.Domain.Tests.Verification
             Assert.Null(request.DifferencesJson);
             Assert.Null(request.SourceValuesJson);
             Assert.Null(request.Error);
+            Assert.Null(request.FailedSource);
         }
 
         /// <summary>Goes through <see cref="VerificationRequest.TryJoinSources"/>, the rule the job's
@@ -223,6 +224,7 @@ namespace FlightAssistant.Domain.Tests.Verification
             Assert.Equal(NowUtc, request.CompletedUtc);
             Assert.Null(request.NextAttemptUtc);
             Assert.Null(request.Error);
+            Assert.Null(request.FailedSource);
         }
 
         [Fact]
@@ -253,6 +255,8 @@ namespace FlightAssistant.Domain.Tests.Verification
             Assert.Equal(sourceValues, request.SourceValuesJson);
             Assert.Equal(NowUtc, request.CompletedUtc);
             Assert.Null(request.NextAttemptUtc);
+            Assert.Null(request.Error);
+            Assert.Null(request.FailedSource);
         }
 
         [Fact]
@@ -266,6 +270,8 @@ namespace FlightAssistant.Domain.Tests.Verification
             Assert.Equal("{}", request.SourceValuesJson);
             Assert.Null(request.DifferencesJson);
             Assert.Equal(NowUtc, request.CompletedUtc);
+            Assert.Null(request.Error);
+            Assert.Null(request.FailedSource);
         }
 
         [Fact]
@@ -280,6 +286,7 @@ namespace FlightAssistant.Domain.Tests.Verification
             Assert.Equal(0, request.Attempts);
             Assert.Equal(NowUtc, request.CompletedUtc);
             Assert.Null(request.NextAttemptUtc);
+            Assert.Null(request.FailedSource);
         }
 
         [Fact]
@@ -330,6 +337,7 @@ namespace FlightAssistant.Domain.Tests.Verification
             Assert.Equal(1, request.Attempts);
             Assert.Equal(firstFailure.AddMinutes(1), request.NextAttemptUtc);
             Assert.Equal("HTTP 503", request.Error);
+            Assert.Null(request.FailedSource); // no source given
             Assert.Null(request.StartedUtc);
             Assert.Null(request.CompletedUtc);
 
@@ -339,6 +347,7 @@ namespace FlightAssistant.Domain.Tests.Verification
             Assert.Equal(2, request.Attempts);
             Assert.Equal(secondFailure.AddMinutes(5), request.NextAttemptUtc);
             Assert.Equal("timeout", request.Error);
+            Assert.Null(request.FailedSource);
             Assert.Null(request.CompletedUtc);
         }
 
@@ -390,6 +399,157 @@ namespace FlightAssistant.Domain.Tests.Verification
             Assert.Throws<ArgumentOutOfRangeException>(() => request.RecordSourceError("x", NowUtc, maxAttempts: 0, backoff: TimeSpan.Zero));
             Assert.Throws<ArgumentOutOfRangeException>(() => request.RecordSourceError("x", NowUtc, maxAttempts: 3, backoff: TimeSpan.FromSeconds(-1)));
             Assert.Equal(0, request.Attempts);
+        }
+
+        // ── FailedSource (#424): non-null iff Error is attributable to one named source, and it
+        // changes exactly when Error changes ───────────────────────────────────
+
+        [Fact]
+        public void RecordSourceError_WithASource_SetsFailedSourceOnARetry()
+        {
+            var request = NewRequest();
+
+            request.RecordSourceError("HTTP 503", NowUtc, maxAttempts: 3, backoff: TimeSpan.FromMinutes(1), failedSource: "aeroapi");
+
+            Assert.Equal(VerificationRequestStatus.Pending, request.Status);
+            Assert.Equal("aeroapi", request.FailedSource);
+        }
+
+        [Fact]
+        public void RecordSourceError_WithASource_StillSetsFailedSourceWhenItCompletesAsError()
+        {
+            var request = NewRequest();
+            request.RecordSourceError("HTTP 503", RequestedUtc.AddMinutes(1), maxAttempts: 2, backoff: TimeSpan.FromMinutes(1), failedSource: "aeroapi");
+
+            request.RecordSourceError("HTTP 429", RequestedUtc.AddMinutes(3), maxAttempts: 2, backoff: TimeSpan.FromMinutes(1), failedSource: "aeroapi");
+
+            Assert.Equal(VerificationRequestStatus.Error, request.Status);
+            Assert.Equal("aeroapi", request.FailedSource);
+        }
+
+        [Fact]
+        public void RecordSourceError_WithNoSource_LeavesFailedSourceNull()
+        {
+            var request = NewRequest();
+
+            request.RecordSourceError("Unexpected error (TimeoutException); see logs", NowUtc, maxAttempts: 3, backoff: TimeSpan.FromMinutes(1));
+
+            Assert.Null(request.FailedSource);
+            Assert.Equal("Unexpected error (TimeoutException); see logs", request.Error);
+        }
+
+        [Fact]
+        public void RecordSourceError_ANewSourceOnARetry_ReplacesTheEarlierOne()
+        {
+            var request = NewRequest();
+            request.RecordSourceError("HTTP 503", RequestedUtc.AddMinutes(1), maxAttempts: 3, backoff: TimeSpan.FromMinutes(1), failedSource: "aeroapi");
+            Assert.Equal("aeroapi", request.FailedSource);
+
+            request.RecordSourceError("Source 'ourairports' is not registered.", RequestedUtc.AddMinutes(3), maxAttempts: 3, backoff: TimeSpan.FromMinutes(1), failedSource: "ourairports");
+
+            Assert.Equal("ourairports", request.FailedSource);
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData(" ")]
+        [InlineData("aero api")]
+        [InlineData("aero,api")]
+        [InlineData("aero+api")]
+        public void RecordSourceError_InvalidFailedSource_ThrowsNamingTheParameterAndChangesNothing(string failedSource)
+        {
+            var request = NewRequest();
+
+            var ex = Assert.Throws<ArgumentException>(() =>
+                request.RecordSourceError("timeout", NowUtc, maxAttempts: 3, backoff: TimeSpan.FromMinutes(1), failedSource: failedSource));
+
+            Assert.Equal("failedSource", ex.ParamName);
+            Assert.Equal(0, request.Attempts);
+            Assert.Null(request.Error);
+            Assert.Null(request.FailedSource);
+        }
+
+        [Fact]
+        public void RecordSourceError_FailedSourceOverTheLimit_Throws()
+        {
+            var request = NewRequest();
+
+            var ex = Assert.Throws<ArgumentException>(() =>
+                request.RecordSourceError("timeout", NowUtc, maxAttempts: 3, backoff: TimeSpan.FromMinutes(1),
+                    failedSource: new string('s', VerificationRequest.MaxFailedSourceLength + 1)));
+
+            Assert.Equal("failedSource", ex.ParamName);
+        }
+
+        [Fact]
+        public void MarkError_WithASource_SetsFailedSource()
+        {
+            var request = NewRequest();
+
+            request.MarkError("aeroapi: HTTP 503", NowUtc, failedSource: "aeroapi");
+
+            Assert.Equal(VerificationRequestStatus.Error, request.Status);
+            Assert.Equal("aeroapi", request.FailedSource);
+        }
+
+        [Fact]
+        public void MarkError_WithNoSource_LeavesFailedSourceNull()
+        {
+            var request = NewRequest();
+
+            request.MarkError("Entity no longer exists", NowUtc);
+
+            Assert.Null(request.FailedSource);
+        }
+
+        [Fact]
+        public void MarkError_FailedSourceExactlyAtTheLimit_IsAccepted()
+        {
+            var request = NewRequest();
+            var name = new string('s', VerificationRequest.MaxFailedSourceLength);
+
+            request.MarkError("boom", NowUtc, failedSource: name);
+
+            Assert.Equal(name, request.FailedSource);
+        }
+
+        [Fact]
+        public void MarkError_FailedSourceOverTheLimit_Throws()
+        {
+            var request = NewRequest();
+
+            var ex = Assert.Throws<ArgumentException>(() =>
+                request.MarkError("boom", NowUtc, failedSource: new string('s', VerificationRequest.MaxFailedSourceLength + 1)));
+
+            Assert.Equal("failedSource", ex.ParamName);
+        }
+
+        public static IEnumerable<object[]> SuccessOutcomes()
+        {
+            object[] Case(string label, Action<VerificationRequest, DateTime> apply) => new object[] { label, apply };
+
+            yield return Case(nameof(VerificationRequest.MarkVerified), (r, now) => r.MarkVerified(now));
+            yield return Case(nameof(VerificationRequest.MarkMismatch), (r, now) => r.MarkMismatch("[]", "{}", now));
+            yield return Case(nameof(VerificationRequest.MarkNotFound), (r, now) => r.MarkNotFound("{}", now));
+        }
+
+        /// <summary>The lifecycle invariant's other half: a request that failed with an attributed
+        /// source, then later succeeds, clears FailedSource exactly as it clears Error. Break-proof:
+        /// deleting the "FailedSource = null;" line from any of the three success methods fails this
+        /// for that method's case.</summary>
+        [Theory]
+        [MemberData(nameof(SuccessOutcomes))]
+        public void SuccessOutcome_AfterASourceErrorNamedASource_ClearsFailedSource(string label, Action<VerificationRequest, DateTime> apply)
+        {
+            Assert.NotEmpty(label); // theory label, asserted so the parameter isn't flagged unused
+            var request = NewRequest();
+            request.RecordSourceError("HTTP 503", RequestedUtc, maxAttempts: 3, backoff: TimeSpan.FromMinutes(1), failedSource: "aeroapi");
+            Assert.Equal("aeroapi", request.FailedSource); // sanity check before the outcome clears it
+
+            apply(request, NowUtc);
+
+            Assert.Null(request.FailedSource);
+            Assert.Null(request.Error);
         }
 
         // ── Guards shared by every outcome ──────────────────────────────────────

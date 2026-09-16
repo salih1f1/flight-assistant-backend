@@ -30,6 +30,11 @@ namespace FlightAssistant.Domain.Verification.Entities
         /// <summary>Column size of <c>sources</c> (the comma-joined names).</summary>
         public const int MaxSourcesLength = 100;
 
+        /// <summary>Column size of <c>failed_source</c>: a single source name. Sized the same as
+        /// <see cref="MaxSourcesLength"/> because a single name, carrying no separator, can be as
+        /// long as the entire joined <see cref="Sources"/> budget when it is the only one.</summary>
+        public const int MaxFailedSourceLength = MaxSourcesLength;
+
         /// <summary>Column size of <c>requested_by</c>.</summary>
         public const int MaxRequestedByLength = 255;
 
@@ -90,6 +95,17 @@ namespace FlightAssistant.Domain.Verification.Entities
         /// <summary>The last source error, at most <see cref="MaxErrorLength"/> characters. Kept while a
         /// retry is pending and on <see cref="VerificationRequestStatus.Error"/>; cleared by the other outcomes.</summary>
         public string? Error { get; private set; }
+
+        /// <summary>
+        /// The source that produced the current <see cref="Error"/>, when the failure is
+        /// attributable to one named source. Non-null if and only if <see cref="Error"/> was set by
+        /// <see cref="RecordSourceError"/> or <see cref="MarkError"/> with a source given, and it
+        /// changes exactly when <see cref="Error"/> changes: set alongside it there, cleared alongside
+        /// it by <see cref="MarkVerified"/>, <see cref="MarkMismatch"/> and <see cref="MarkNotFound"/>.
+        /// Null for a failure not attributable to one named source (an unexpected exception, a
+        /// deleted entity, an abandoned claim).
+        /// </summary>
+        public string? FailedSource { get; private set; }
 
         /// <summary>Sum of each source's per-row cost; 0 for the free sources.</summary>
         public decimal EstimatedCostUsd { get; private set; }
@@ -167,6 +183,7 @@ namespace FlightAssistant.Domain.Verification.Entities
             EnsureUtc(nowUtc, nameof(nowUtc));
 
             Error = null;
+            FailedSource = null;
             Complete(VerificationRequestStatus.Verified, nowUtc);
         }
 
@@ -183,6 +200,7 @@ namespace FlightAssistant.Domain.Verification.Entities
             DifferencesJson = differencesJson;
             SourceValuesJson = sourceValuesJson;
             Error = null;
+            FailedSource = null;
             Complete(VerificationRequestStatus.Mismatch, nowUtc);
         }
 
@@ -198,28 +216,35 @@ namespace FlightAssistant.Domain.Verification.Entities
             DifferencesJson = null;
             SourceValuesJson = sourceValuesJson;
             Error = null;
+            FailedSource = null;
             Complete(VerificationRequestStatus.NotFound, nowUtc);
         }
 
         /// <summary>
         /// A retryable source failure. Increments <see cref="Attempts"/> and stores
-        /// <paramref name="error"/> (truncated). If <see cref="Attempts"/> has reached
-        /// <paramref name="maxAttempts"/>, the request completes as
-        /// <see cref="VerificationRequestStatus.Error"/>; otherwise it goes back to
+        /// <paramref name="error"/> (truncated) and <paramref name="failedSource"/> — set every time,
+        /// including a retry below <paramref name="maxAttempts"/>, exactly as <see cref="Error"/> is.
+        /// If <see cref="Attempts"/> has reached <paramref name="maxAttempts"/>, the request completes
+        /// as <see cref="VerificationRequestStatus.Error"/>; otherwise it goes back to
         /// <see cref="VerificationRequestStatus.Pending"/> with <see cref="NextAttemptUtc"/> =
         /// <paramref name="nowUtc"/> + <paramref name="backoff"/> and <see cref="StartedUtc"/> cleared.
         /// </summary>
+        /// <param name="failedSource">The source this failure is attributable to, or null when it
+        /// isn't attributable to one named source (an unexpected exception). Not yet enforced against
+        /// the request's own <see cref="Sources"/> — the caller names a source it actually queried.</param>
         /// <exception cref="InvalidOperationException">The request is already completed.</exception>
-        public void RecordSourceError(string error, DateTime nowUtc, int maxAttempts, TimeSpan backoff)
+        public void RecordSourceError(string error, DateTime nowUtc, int maxAttempts, TimeSpan backoff, string? failedSource = null)
         {
             EnsureOpen();
             ArgumentException.ThrowIfNullOrWhiteSpace(error);
             EnsureUtc(nowUtc, nameof(nowUtc));
             ArgumentOutOfRangeException.ThrowIfLessThan(maxAttempts, 1);
             ArgumentOutOfRangeException.ThrowIfLessThan(backoff, TimeSpan.Zero);
+            EnsureValidFailedSource(failedSource, nameof(failedSource));
 
             Attempts++;
             Error = Truncate(error);
+            FailedSource = failedSource;
 
             if (Attempts >= maxAttempts)
             {
@@ -233,15 +258,20 @@ namespace FlightAssistant.Domain.Verification.Entities
         }
 
         /// <summary>A failure that is not retried (entity deleted, unknown source):
-        /// <see cref="VerificationRequestStatus.Error"/> straight away, with <paramref name="error"/> truncated.</summary>
+        /// <see cref="VerificationRequestStatus.Error"/> straight away, with <paramref name="error"/>
+        /// truncated and <paramref name="failedSource"/> stored alongside it.</summary>
+        /// <param name="failedSource">The source this failure is attributable to, or null when it
+        /// isn't attributable to one named source (e.g. the entity was deleted).</param>
         /// <exception cref="InvalidOperationException">The request is already completed.</exception>
-        public void MarkError(string error, DateTime nowUtc)
+        public void MarkError(string error, DateTime nowUtc, string? failedSource = null)
         {
             EnsureOpen();
             ArgumentException.ThrowIfNullOrWhiteSpace(error);
             EnsureUtc(nowUtc, nameof(nowUtc));
+            EnsureValidFailedSource(failedSource, nameof(failedSource));
 
             Error = Truncate(error);
+            FailedSource = failedSource;
             Complete(VerificationRequestStatus.Error, nowUtc);
         }
 
@@ -404,6 +434,25 @@ namespace FlightAssistant.Domain.Verification.Entities
             // valid UTF-16, and Npgsql would fail to encode the whole save.
             var length = char.IsHighSurrogate(error[MaxErrorLength - 1]) ? MaxErrorLength - 1 : MaxErrorLength;
             return error[..length];
+        }
+
+        /// <summary>
+        /// Validates an optional <c>failedSource</c> argument against the same shape
+        /// <see cref="TryJoinSources"/> requires of every name in <see cref="Sources"/> — no blank,
+        /// no whitespace, <see cref="SourceSeparator"/> or <c>+</c> — plus <see cref="MaxFailedSourceLength"/>.
+        /// A null <paramref name="failedSource"/> (no attributable source) is always valid.
+        /// </summary>
+        private static void EnsureValidFailedSource(string? failedSource, string paramName)
+        {
+            if (failedSource is null) return;
+
+            if (string.IsNullOrWhiteSpace(failedSource))
+                throw new ArgumentException("A failed source name cannot be blank.", paramName);
+            if (failedSource.Any(c => c == SourceSeparator || c == '+' || char.IsWhiteSpace(c)))
+                throw new ArgumentException(
+                    $"Failed source '{failedSource}' cannot contain whitespace, '{SourceSeparator}' or '+'.", paramName);
+
+            EnsureMaxLength(failedSource, MaxFailedSourceLength, paramName);
         }
 
         private static void EnsureMaxLength(string value, int maxLength, string paramName)
