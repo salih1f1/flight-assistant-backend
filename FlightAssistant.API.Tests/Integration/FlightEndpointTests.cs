@@ -387,9 +387,15 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
         // AdminVerificationEndpointTests already owns ZVA-ZVF (its class doc names this shared-DB
         // convention), which this test collided with under its previous ZV/ZVA/ZVB codes without
         // being caught, because the guard below reused the existing row on the collision instead
-        // of failing on it. Seeded unconditionally now, not existence-guarded: a genuine collision
-        // must fail loudly on the Airports.Iata unique index rather than silently attach this
-        // test's assertions to another test's row.
+        // of failing on it. Seeded unconditionally now, not existence-guarded -- but EF Core
+        // InMemory does not enforce unique indexes (confirmed directly: a model with
+        // HasIndex(...).IsUnique() happily accepts a duplicate insert), so a future collision on
+        // these codes would not throw at all. Both rows would simply persist in the shared
+        // "FlightAssistantIntegrationTests" database, and a lookup by IATA code
+        // (RefDataRepository.GetAirportIdByIataAsync) would return whichever one the provider
+        // happened to enumerate first -- silently binding this test's assertions to an arbitrary
+        // row instead of the one it just seeded. That is exactly why these codes were picked for
+        // being unclaimed rather than relying on any constraint to catch a clash.
         //
         // The airline is seeded already verified (a real, non-import source) while both airports
         // are left unverified. FlightTrackedVerificationEventHandler queues the airline before the
