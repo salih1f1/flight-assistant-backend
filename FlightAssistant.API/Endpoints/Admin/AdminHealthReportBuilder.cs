@@ -216,7 +216,8 @@ namespace FlightAssistant.API.Endpoints.Admin
                 snapshot.FlightsProcessed,
                 snapshot.FlightsFailed,
                 snapshot.NextRunDueUtc,
-                includeDiagnostics ? snapshot.LastError : null);
+                includeDiagnostics ? snapshot.LastError : null,
+                snapshot.LastRunDuration?.TotalSeconds);
         }
 
         /// <summary>

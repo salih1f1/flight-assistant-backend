@@ -4627,6 +4627,11 @@
           "lastError": {
             "type": "string",
             "nullable": true
+          },
+          "lastRunDurationSeconds": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
           }
         },
         "additionalProperties": false

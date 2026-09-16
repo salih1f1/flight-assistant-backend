@@ -109,6 +109,10 @@ namespace FlightAssistant.Contracts.Responses.Admin
     /// already counted inside <see cref="FlightsProcessed"/>.</param>
     /// <param name="LastError">Rendered outside Production only; always <c>null</c> in
     /// Production.</param>
+    /// <param name="LastRunDurationSeconds">How long the most recently completed run took, in seconds, or
+    /// <c>null</c> when none has completed — "never run", not "instant". Compare it with
+    /// <c>FlightSync:LoopInterval</c>: a run that takes longer means each flight is polled less often than
+    /// the interval suggests, because the next run starts immediately rather than on the tick (#353).</param>
     public sealed record AdminHealthFlightSyncDto(
         bool Enabled,
         DateTime? LastRunStartedUtc,
@@ -117,7 +121,8 @@ namespace FlightAssistant.Contracts.Responses.Admin
         int FlightsProcessed,
         int FlightsFailed,
         DateTime? NextRunDueUtc,
-        string? LastError
+        string? LastError,
+        double? LastRunDurationSeconds
     );
 
     /// <summary>The reference-data verification job's last-cycle heartbeat
