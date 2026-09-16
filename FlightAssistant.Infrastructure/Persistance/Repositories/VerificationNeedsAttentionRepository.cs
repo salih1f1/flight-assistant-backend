@@ -31,6 +31,18 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         /// over <typeparamref name="TEntity"/> because <c>Airport</c>, <c>Airline</c> and <c>Country</c>
         /// share no common <c>DbSet</c>, only the <see cref="SeedableEntity"/> base the two verification
         /// columns live on.
+        /// <para>
+        /// The <c>!e.IsVerified</c> conjunct here is redundant with the admin data browser's
+        /// <c>VerificationIssue:*</c> filter (spec §4.7) only because of an invariant this predicate
+        /// does not itself enforce: every <see cref="SeedableEntity"/> mutator that leaves
+        /// <c>VerificationIssue</c> non-null also leaves <c>IsVerified</c> false. The dashboard card
+        /// built from this count links to that filter (a general-purpose column filter with no
+        /// knowledge of <c>IsVerified</c>), so the two must keep selecting the same rows. The
+        /// invariant itself is pinned by
+        /// <c>SeedableEntityVerificationTests.ANonNullVerificationIssue_AlwaysImpliesNotVerified</c>
+        /// (Domain.Tests), not here -- if it ever broke, this predicate and the filter would silently
+        /// disagree on which rows "need attention".
+        /// </para>
         /// </summary>
         private static Expression<Func<TEntity, bool>> NeedsAttention<TEntity>() where TEntity : SeedableEntity =>
             e => !e.IsVerified && e.VerificationIssue != null && e.VerificationIssue.Trim() != "";

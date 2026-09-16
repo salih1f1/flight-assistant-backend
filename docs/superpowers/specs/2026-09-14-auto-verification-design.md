@@ -334,7 +334,7 @@ GET /admin/data/verification-requests?filter=VerificationIssue:*
 1. **Grid (`DataBrowserPage`)** — row selection on the 8 verifiable tables; **Verify selected (n)**; status badge (Verified with source / Needs attention / Unverified); the new columns are filterable. The "Verifying isn't available for Countries" notice is removed once #331 lands.
 2. **Verify dialog** — **Manually**: the selected rows with their checked columns, a Verify button per row and **Verify all shown**. **Against sources** (airports, airlines, countries only): source checkboxes from `GET /admin/verification-sources`, live cost line (`12 × $0.015 = $0.18 · this month $2.10 of $5`), **Start**, then `Queued n · skipped m`.
 3. **Detail page (`RecordPage`)** — verification panel with status, source, verified at and by. On Needs attention: differences table (`Column | Ours | <source>`) with **Take source values**, **Keep ours and verify**, **Edit** then **Check again**.
-4. **Dashboard** — Needs attention card with counts per entity type, each linking to the grid filtered on `VerificationIssue` not empty. System health row for the job: heartbeat, pending count, paused state.
+4. **Dashboard** — Needs attention card with counts per entity type, each linking to the grid filtered on `VerificationIssue:*` (§4.7: non-null and non-blank after trimming). System health row for the job: heartbeat, pending count, paused state.
 5. **History** — `verification_requests` in the sidebar as a raw table, with a **Retry** row action on `Error` rows.
 
 ---
