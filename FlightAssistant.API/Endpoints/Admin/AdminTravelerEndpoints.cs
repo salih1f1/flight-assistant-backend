@@ -91,7 +91,8 @@ namespace FlightAssistant.API.Endpoints.Admin
             })
             .WithName("AdminDeleteTraveler")
             .WithSummary("Delete traveler")
-            .Produces(204);
+            .Produces(204)
+            .ProducesValidationProblem();
 
             // POST /admin/travelers/{id}/flights — track a flight for this traveler (#340), so an
             // operator can test tracking for a traveler without that traveler's own sign-in.
@@ -140,6 +141,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "push notifications from reaching that token, and the client re-registers a fresh " +
                 "one on its next launch.")
             .Produces(204)
+            .ProducesValidationProblem()
             .ProducesProblem(404);
         }
     }

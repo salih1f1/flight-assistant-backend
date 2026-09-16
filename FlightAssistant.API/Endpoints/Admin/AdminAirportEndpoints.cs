@@ -65,6 +65,7 @@ namespace FlightAssistant.API.Endpoints.Admin
             .WithName("AdminUpdateAirport")
             .WithSummary("Update airport")
             .Produces(204)
+            .ProducesValidationProblem()
             .ProducesProblem(404);
 
             // DELETE /admin/airports/{id}
@@ -75,7 +76,8 @@ namespace FlightAssistant.API.Endpoints.Admin
             })
             .WithName("AdminDeleteAirport")
             .WithSummary("Delete airport")
-            .Produces(204);
+            .Produces(204)
+            .ProducesValidationProblem();
         }
     }
 }
