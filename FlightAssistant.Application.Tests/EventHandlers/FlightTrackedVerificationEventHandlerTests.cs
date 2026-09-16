@@ -63,11 +63,19 @@ public class FlightTrackedVerificationEventHandlerTests
 
         var gb = NewCountry("GB");
         gb.Verify("admin", "mledoze", Now.AddDays(-1));
-        _countries.FindByCodeAsync("GB", Arg.Any<CancellationToken>()).Returns(gb);
 
         var us = NewCountry("US");
         us.Verify("admin", "mledoze", Now.AddDays(-1));
-        _countries.FindByCodeAsync("US", Arg.Any<CancellationToken>()).Returns(us);
+
+        // The handler resolves every distinct code in one batched call (R8) -- reply with whichever
+        // of the two seeded countries the requested codes actually cover, the way a real WHERE
+        // Code IN (...) would.
+        _countries.FindByCodesAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                var codes = ci.Arg<IReadOnlyCollection<string>>();
+                return (IReadOnlyList<Country>)new[] { gb, us }.Where(c => codes.Contains(c.Code)).ToList();
+            });
 
         _queue.EnqueueAsync(Arg.Any<VerificationEntityType>(), Arg.Any<IReadOnlyCollection<string>>(),
                 Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<VerificationTrigger>(), Arg.Any<string>(),
@@ -223,8 +231,8 @@ public class FlightTrackedVerificationEventHandlerTests
 
         var gb = NewCountry("GB"); // unverified
         var us = NewCountry("US"); // unverified
-        _countries.FindByCodeAsync("GB", Arg.Any<CancellationToken>()).Returns(gb);
-        _countries.FindByCodeAsync("US", Arg.Any<CancellationToken>()).Returns(us);
+        _countries.FindByCodesAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Country> { gb, us });
 
         await Handler().Handle(Event(), default);
 
@@ -260,12 +268,18 @@ public class FlightTrackedVerificationEventHandlerTests
         // The baseline airline is already GB and freshly verified -- no Airline call from it either.
 
         var gb = NewCountry("GB"); // unverified -> the only thing that should get queued
-        _countries.FindByCodeAsync("GB", Arg.Any<CancellationToken>()).Returns(gb);
+        _countries.FindByCodesAsync(
+                Arg.Is<IReadOnlyCollection<string>>(c => c.Count == 1 && c.Single() == "GB"),
+                Arg.Any<CancellationToken>())
+            .Returns(new List<Country> { gb });
 
         await Handler().Handle(Event(), default);
 
-        await _countries.Received(1).FindByCodeAsync("GB", Arg.Any<CancellationToken>());
-        await _countries.DidNotReceive().FindByCodeAsync("US", Arg.Any<CancellationToken>());
+        // One batched call with a single de-duplicated code -- not three calls, and not a call
+        // carrying "US" at all (nothing on this fixture resolves to US).
+        await _countries.Received(1).FindByCodesAsync(
+            Arg.Is<IReadOnlyCollection<string>>(c => c.Count == 1 && c.Single() == "GB"),
+            Arg.Any<CancellationToken>());
 
         await _queue.Received(1).EnqueueAsync(VerificationEntityType.Country,
             Arg.Is<IReadOnlyCollection<string>>(k => k.Count == 1 && k.Single() == "GB"),

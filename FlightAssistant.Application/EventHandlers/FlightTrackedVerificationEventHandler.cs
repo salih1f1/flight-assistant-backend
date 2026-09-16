@@ -19,9 +19,10 @@ namespace FlightAssistant.Application.EventHandlers
     ///
     /// <para>
     /// <b>Reads (R8).</b> One row each for the airline and the two airports, never inside a loop, then
-    /// at most three country reads for their distinct <see cref="Airport.CountryCode"/>/
-    /// <see cref="Airline.CountryCode"/> values (R6) -- six reads at most per track request. None of
-    /// this scales with anything but the flight's own fixed shape, unlike <c>FlightDeletedEventHandler</c>'s
+    /// one batched read for their distinct <see cref="Airport.CountryCode"/>/
+    /// <see cref="Airline.CountryCode"/> values (R6) via <see cref="ICountryRepository.FindByCodesAsync"/>
+    /// -- four reads at most per track request, not one round trip per country. None of this scales
+    /// with anything but the flight's own fixed shape, unlike <c>FlightDeletedEventHandler</c>'s
     /// per-traveler work, which is why it stays a handful of straight-line awaits rather than a loop
     /// issuing one repository call per row.
     /// </para>
@@ -129,11 +130,15 @@ namespace FlightAssistant.Application.EventHandlers
             if (departure is not null) codes.Add(departure.CountryCode);
             if (arrival is not null) codes.Add(arrival.CountryCode);
 
-            var keys = new List<string>(codes.Count);
-            foreach (var code in codes)
+            // R8: one batched read for every distinct code, not one round trip per code -- a code
+            // with no matching row is simply absent from the result, same as a null FindByCodeAsync
+            // reply would have been.
+            var countries = await _countries.FindByCodesAsync(codes, ct);
+
+            var keys = new List<string>(countries.Count);
+            foreach (var country in countries)
             {
-                var country = await _countries.FindByCodeAsync(code, ct);
-                if (country is not null && NeedsVerification(country, nowUtc, staleAfterDays))
+                if (NeedsVerification(country, nowUtc, staleAfterDays))
                     keys.Add(country.Code);
             }
             return keys;

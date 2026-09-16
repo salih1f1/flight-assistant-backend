@@ -15,6 +15,14 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         public Task<Country?> FindByCodeAsync(string code, CancellationToken ct = default) =>
             _db.Countries.FirstOrDefaultAsync(c => c.Code == code.ToUpperInvariant(), ct);
 
+        public async Task<IReadOnlyList<Country>> FindByCodesAsync(IReadOnlyCollection<string> codes, CancellationToken ct = default)
+        {
+            if (codes.Count == 0) return Array.Empty<Country>();
+
+            var canonical = codes.Select(c => c.ToUpperInvariant()).Distinct().ToArray();
+            return await _db.Countries.Where(c => canonical.Contains(c.Code)).ToListAsync(ct);
+        }
+
         public Task<Country?> FindByAlpha3Async(string alpha3, CancellationToken ct = default) =>
             _db.Countries.FirstOrDefaultAsync(c => c.Alpha3 == alpha3.ToUpperInvariant(), ct);
 
