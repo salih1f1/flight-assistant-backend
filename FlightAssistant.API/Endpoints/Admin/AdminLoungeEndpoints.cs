@@ -65,6 +65,7 @@ namespace FlightAssistant.API.Endpoints.Admin
             .WithName("AdminUpdateLounge")
             .WithSummary("Update lounge")
             .Produces(204)
+            .ProducesValidationProblem()
             .ProducesProblem(404);
 
             // DELETE /admin/lounges/{id}
@@ -75,7 +76,8 @@ namespace FlightAssistant.API.Endpoints.Admin
             })
             .WithName("AdminDeleteLounge")
             .WithSummary("Delete lounge")
-            .Produces(204);
+            .Produces(204)
+            .ProducesValidationProblem();
         }
     }
 }

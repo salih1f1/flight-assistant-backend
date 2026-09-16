@@ -52,6 +52,7 @@ namespace FlightAssistant.API.Endpoints.Admin
             .WithName("AdminUpdateLoyaltyProgram")
             .WithSummary("Update loyalty program")
             .Produces(204)
+            .ProducesValidationProblem()
             .ProducesProblem(404);
 
             // DELETE /admin/loyalty/programs/{id}
@@ -62,7 +63,8 @@ namespace FlightAssistant.API.Endpoints.Admin
             })
             .WithName("AdminDeleteLoyaltyProgram")
             .WithSummary("Delete loyalty program")
-            .Produces(204);
+            .Produces(204)
+            .ProducesValidationProblem();
         }
     }
 }
