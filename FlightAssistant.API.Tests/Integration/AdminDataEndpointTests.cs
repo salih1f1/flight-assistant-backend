@@ -199,6 +199,19 @@ public class AdminDataEndpointTests(FlightAssistantWebApplicationFactory factory
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    /// <summary>
+    /// #385/R4: the "has a value" sentinel is a string-column concept only — on a non-string
+    /// column (<see cref="Traveler.Id"/>, a <see cref="Guid"/>) <c>*</c> is not special-cased at
+    /// all, so it reaches the same value conversion any other filter value does and fails to parse,
+    /// a 400 exactly like an unparseable value does today.
+    /// </summary>
+    [Fact]
+    public async Task GetTableData_NonStringColumnFilteredOnStar_Returns400()
+    {
+        var response = await factory.CreateAdminClient().GetAsync($"admin/data/travelers?filter={nameof(Traveler.Id)}:*");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     // ── Sensitive column in sort/filter ─────────────────────────────────────────
 
     [Fact]

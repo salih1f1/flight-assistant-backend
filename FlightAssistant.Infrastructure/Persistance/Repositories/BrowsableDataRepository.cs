@@ -290,17 +290,24 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
 
         /// <summary>
         /// Exact match for a non-string column; case-insensitive <c>contains</c> for a string
-        /// column; "on or after" for a date column whose value starts with <c>&gt;=</c> (#334), where a
-        /// null date never matches. On a string column a leading <c>&gt;=</c> is just text to find. Unlike <see cref="PropertyKeySelector{TEntity}"/>, this resolves the column's
+        /// column, unless the raw value is exactly <c>*</c> — the "has a value" sentinel (#385):
+        /// matches a non-null, non-empty string, and only the literal whole-value <c>*</c> means
+        /// this, so <c>*</c> as part of a longer value (e.g. <c>Gold*</c>) is still a literal
+        /// substring to find; "on or after" for a date column whose value starts with <c>&gt;=</c>
+        /// (#334), where a null date never matches. On a string column a leading <c>&gt;=</c> is
+        /// just text to find. Unlike <see cref="PropertyKeySelector{TEntity}"/>, this resolves the column's
         /// real CLR type via reflection and calls <c>EF.Property&lt;TProperty&gt;</c> with that
         /// exact type — needed so <c>.ToLower().Contains(...)</c> is available on a string column,
         /// and so an exact-match comparison on a non-string column compares against a
         /// correctly-typed constant instead of an opaque boxed <see cref="object"/> (which would
-        /// either fail to translate or translate to the wrong SQL type). The string branch composes
-        /// entirely out of translatable calls (<see cref="string.ToLower()"/>,
-        /// <see cref="string.Contains(string)"/>) with no client-evaluated step, so it becomes real
-        /// SQL rather than pulling the table into memory first — the usual way this pattern goes
-        /// wrong.
+        /// either fail to translate or translate to the wrong SQL type). Every string-branch
+        /// predicate — the <c>*</c> sentinel included — composes entirely out of translatable calls
+        /// (<see cref="string.ToLower()"/>, <see cref="string.Contains(string)"/>, equality against
+        /// <see cref="string.Empty"/>) with no client-evaluated step, so it becomes real SQL rather
+        /// than pulling the table into memory first — the usual way this pattern goes wrong. On a
+        /// non-string column <c>*</c> is not special-cased at all: it reaches
+        /// <see cref="ConvertFilterValue"/> like any other value and fails to parse there, a 400
+        /// like any other unparseable filter.
         /// </summary>
         private static IQueryable<TEntity> ApplyFilter<TEntity>(IQueryable<TEntity> query, string columnName, string rawValue)
             where TEntity : class
@@ -316,15 +323,27 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             Expression body;
             if (propertyType == typeof(string))
             {
-                var lowerValue = rawValue.ToLowerInvariant();
-                var toLowerCall = Expression.Call(propertyAccess, typeof(string).GetMethod(nameof(string.ToLower), Type.EmptyTypes)!);
-                var containsCall = Expression.Call(
-                    toLowerCall, typeof(string).GetMethod(nameof(string.Contains), new[] { typeof(string) })!, Expression.Constant(lowerValue));
-                // A null string column is never "contains"-matched, and skipping the null check
+                // A null string column is never a match either way, and skipping the null check
                 // would let EF Core's null-semantics rewriting turn this into something that no
-                // longer reads as a plain translated LIKE.
+                // longer reads as a plain translated comparison.
                 var notNull = Expression.NotEqual(propertyAccess, Expression.Constant(null, typeof(string)));
-                body = Expression.AndAlso(notNull, containsCall);
+
+                if (rawValue == "*")
+                {
+                    // "Has a value" (#385/R4): non-null and not the empty string. Deliberately not
+                    // "not blank" — a whitespace-only value is neither null nor empty, so it still
+                    // counts as having a value; R4 names exactly these two exclusions, nothing more.
+                    var notEmpty = Expression.NotEqual(propertyAccess, Expression.Constant(string.Empty, typeof(string)));
+                    body = Expression.AndAlso(notNull, notEmpty);
+                }
+                else
+                {
+                    var lowerValue = rawValue.ToLowerInvariant();
+                    var toLowerCall = Expression.Call(propertyAccess, typeof(string).GetMethod(nameof(string.ToLower), Type.EmptyTypes)!);
+                    var containsCall = Expression.Call(
+                        toLowerCall, typeof(string).GetMethod(nameof(string.Contains), new[] { typeof(string) })!, Expression.Constant(lowerValue));
+                    body = Expression.AndAlso(notNull, containsCall);
+                }
             }
             else
             {
