@@ -126,8 +126,14 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "Otherwise { updated: true } means an event was recorded — a new status, a revised time for the status the flight already has, " +
                 "or a gate, terminal or baggage-claim change on the current status — and { updated: false } means none was, which still allows " +
                 "a revised estimated arrival or aircraft type to have been saved. " +
-                "Once this month's flight data budget is used up, only a flight in its near-departure window (by default, from 4 hours before departure until 30 minutes after it lands) makes a call; any other returns 503.")
+                "Once this month's flight data budget is used up, only a flight in its near-departure window (by default, from 4 hours before departure until 30 minutes after it lands) makes a call; any other returns 503. " +
+                "Returns 404 if no flight with that id exists — unlike the traveler route, which answers 403 because it checks the tracking link first. " +
+                "503 also covers the flight data provider throttling requests, not only the monthly budget; 502 is returned when the provider is unreachable or answers unexpectedly, and 500 for a provider configuration problem.")
             .Produces(200)
+            .ProducesValidationProblem()
+            .ProducesProblem(404)
+            .ProducesProblem(500)
+            .ProducesProblem(502)
             .ProducesProblem(503);
         }
 

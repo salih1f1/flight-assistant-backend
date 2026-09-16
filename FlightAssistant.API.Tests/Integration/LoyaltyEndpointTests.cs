@@ -75,4 +75,19 @@ public class LoyaltyEndpointTests(FlightAssistantWebApplicationFactory factory)
         var response = await client.GetAsync("loyalty/memberships?page=1&pageSize=10");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
+
+    [Fact]
+    public async Task RemoveMembership_Unknown_Returns204_Idempotently()
+    {
+        // The declared 404 was unreachable — the handler returns early (#407).
+        var response = await factory.CreateUserClient().DeleteAsync($"loyalty/memberships/{Guid.NewGuid()}");
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task RemoveMembership_EmptyGuid_Returns400()
+    {
+        var response = await factory.CreateUserClient().DeleteAsync($"loyalty/memberships/{Guid.Empty}");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
 }
