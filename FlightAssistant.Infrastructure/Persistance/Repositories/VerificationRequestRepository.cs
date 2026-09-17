@@ -188,7 +188,8 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         }
 
         public async Task<IReadOnlyList<VerificationRequest>> ClaimBatchAsync(
-            int batchSize, DateTime nowUtc, IReadOnlyCollection<long>? excludeIds = null, CancellationToken ct = default)
+            int batchSize, DateTime nowUtc, IReadOnlyCollection<long>? excludeIds = null,
+            IReadOnlyCollection<string>? excludeSourceNames = null, CancellationToken ct = default)
         {
             ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
             EnsureUtc(nowUtc, nameof(nowUtc));
@@ -197,9 +198,11 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             var running = nameof(VerificationRequestStatus.Running);
             var flight = VerificationRequestConfiguration.FlightTriggerValue;
 
-            // Always a concrete array, never null: ANY(NULL::bigint[]) is NULL, not false, which
-            // would make "NOT (id = ANY(...))" NULL too and silently exclude every row.
+            // Always concrete arrays, never null: ANY(NULL::bigint[]) is NULL, not false, and
+            // array && NULL::text[] is likewise NULL, not false -- either would make its NOT(...)
+            // predicate NULL too and silently exclude every row instead of none (#428 R3).
             var exclude = excludeIds?.ToArray() ?? Array.Empty<long>();
+            var excludeSources = excludeSourceNames?.ToArray() ?? Array.Empty<string>();
 
             // One statement, so choosing rows and marking them Running cannot be separated by another
             // claimer. The CTE picks at most batchSize ids exactly once; an IN (subquery) form can be
@@ -208,6 +211,11 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             // instead of waiting and then claiming them a second time. xmin (the concurrency token)
             // is returned explicitly because RETURNING v.* never includes system columns. Every
             // value is a parameter.
+            //
+            // string_to_array(..., ',') && excludeSources (#428 R2): array-overlap over the whole
+            // split names of the comma-joined "sources" column, never LIKE '%aeroapi%' -- a substring
+            // match would also exclude an unrelated "aeroapi-v2" source. Sound because a source name
+            // can never itself contain a comma (VerificationRequest.TryJoinSources forbids it).
             var claimed = await _db.VerificationRequests
                 .FromSql($"""
                     WITH claimable AS (
@@ -216,6 +224,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                         WHERE "status" = {pending}
                           AND ("next_attempt_utc" IS NULL OR "next_attempt_utc" <= {nowUtc})
                           AND NOT ("id" = ANY({exclude}))
+                          AND NOT (string_to_array("sources", ',') && {excludeSources})
                         ORDER BY ("trigger" = {flight}) DESC, "requested_utc", "id"
                         LIMIT {batchSize}
                         FOR UPDATE SKIP LOCKED

@@ -79,14 +79,24 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// <param name="batchSize">At least 1.</param>
         /// <param name="nowUtc">Must have <see cref="DateTimeKind.Utc"/>.</param>
         /// <param name="excludeIds">Ids never claimed by this call, however otherwise eligible. Null
-        /// or empty excludes nothing. Exists so a cycle that paused some requests for the AeroAPI
-        /// budget (#401 final fix G1) can claim a replacement batch that skips straight past them --
-        /// unchanged <c>requested_utc</c>/<c>id</c> would otherwise put a paused request back at the
-        /// head of the claim order, where it would be claimed, paused and excluded again next cycle,
-        /// starving every free-source request behind it until the budget resets. R5 still forbids
-        /// touching <c>next_attempt_utc</c>, <c>attempts</c> or <c>error</c> to solve this instead.</param>
+        /// or empty excludes nothing.</param>
+        /// <param name="excludeSourceNames">Source names never claimed by this call: a request is
+        /// skipped when any one of its own (comma-joined) source names exactly matches one of these,
+        /// e.g. excluding <c>"aeroapi"</c> skips a request naming <c>"aeroapi"</c> alone or
+        /// <c>"ourairports,aeroapi"</c>, but never one naming only <c>"aeroapi-v2"</c> -- matching is
+        /// whole-name, never a substring (#428 R2). Null or empty excludes nothing (#428 R3: always
+        /// sent to PostgreSQL as a concrete array, never a raw NULL, which would silently exclude
+        /// every row instead of none). Exists so a cycle that just paused a request for the AeroAPI
+        /// budget (#401 final fix G1) can claim a replacement batch that skips every request naming
+        /// that source, not only the ones just paused (#428): unchanged <c>requested_utc</c>/<c>id</c>
+        /// puts a paused request back at the head of the claim order, so excluding by id alone still
+        /// lets the replacement batch fill up on other, not-yet-tried requests naming the same gated
+        /// source when the backlog is at least two batches deep -- pausing them too and never reaching
+        /// the free-source work behind them. R5 still forbids touching <c>next_attempt_utc</c>,
+        /// <c>attempts</c> or <c>error</c> to solve this instead.</param>
         Task<IReadOnlyList<VerificationRequest>> ClaimBatchAsync(
-            int batchSize, DateTime nowUtc, IReadOnlyCollection<long>? excludeIds = null, CancellationToken ct = default);
+            int batchSize, DateTime nowUtc, IReadOnlyCollection<long>? excludeIds = null,
+            IReadOnlyCollection<string>? excludeSourceNames = null, CancellationToken ct = default);
 
         /// <summary>How many requests are <c>Pending</c> (due or not). Running requests are not counted.</summary>
         Task<int> CountPendingAsync(CancellationToken ct = default);

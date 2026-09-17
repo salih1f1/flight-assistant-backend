@@ -475,24 +475,107 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         Assert.Empty(await verify.AdminAuditLogs.ToListAsync());
     }
 
+    // ── The replacement claim excludes by source name, not just paused ids (#428) ───────────
+
+    /// <summary>
+    /// #428: proved against real PostgreSQL that #401's original G1 -- excluding only the ids just
+    /// paused -- isn't enough once the backlog of open aeroapi requests is at least two batches deep.
+    /// Four flight-triggered aeroapi requests sit ahead of two ourairports requests for real seeded
+    /// airports; BatchSize is 2, so P (4) &gt;= 2 x BatchSize. The initial claim pauses its two aeroapi
+    /// requests; the fixed replacement claim excludes the aeroapi source entirely, reaching straight
+    /// past the other two, not-yet-tried aeroapi requests to the free-source ones behind them, which
+    /// are actually verified -- not merely "not excluded by id" (the #419 review's own warning about a
+    /// lookups-only assertion that passed on both the broken and fixed code, because it seeded no
+    /// airport rows, so the free requests ended as Error either way).
+    /// </summary>
+    [Fact]
+    public async Task RunCycle_G1_DeepFlightTriggeredAeroApiBacklog_TheReplacementClaimStillReachesFreeSourceWork() =>
+        await AssertReplacementClaimReachesFreeSourceWorkAsync(VerificationTrigger.Flight);
+
+    /// <summary>Same scenario (#428), admin-triggered: the fix does not depend on the flight trigger's
+    /// own priority in the claim's <c>ORDER BY</c> -- source-name exclusion works the same when every
+    /// request, gated and free alike, is ordered by <c>requested_utc</c> alone.</summary>
+    [Fact]
+    public async Task RunCycle_G1_DeepAdminTriggeredAeroApiBacklog_TheReplacementClaimStillReachesFreeSourceWork() =>
+        await AssertReplacementClaimReachesFreeSourceWorkAsync(VerificationTrigger.Admin);
+
+    private async Task AssertReplacementClaimReachesFreeSourceWorkAsync(VerificationTrigger backlogTrigger)
+    {
+        await SeedAsync(UnitedKingdom(), France());
+        var lhr = Heathrow();
+        var cdg = CharlesDeGaulle();
+        await SeedAsync(lhr, cdg);
+
+        // Four aeroapi requests, requested well before the two free-source ones below: plain
+        // requested_utc order alone (the admin-triggered variant) already puts them first, and the
+        // flight-triggered variant is ahead regardless of requested_utc (ORDER BY trigger = Flight
+        // DESC first) -- which is why #428's proof names a flight-triggered backlog specifically.
+        for (var i = 1; i <= 4; i++)
+            await EnqueueAsync(
+                VerificationEntityType.Airline, i.ToString(CultureInfo.InvariantCulture), "aeroapi",
+                requestedUtc: T0.AddHours(-10 + i), trigger: backlogTrigger);
+
+        var lhrRequest = await EnqueueAsync(VerificationEntityType.Airport, Key(lhr.Id), "ourairports", requestedUtc: T0.AddHours(-1));
+        var cdgRequest = await EnqueueAsync(VerificationEntityType.Airport, Key(cdg.Id), "ourairports", requestedUtc: T0.AddMinutes(-30));
+
+        // The aeroapi lookup is never reached (paused before fetch); NotFound is just a harmless stub.
+        var aeroApi = new FakeSource("aeroapi", VerificationEntityType.Airline, _ => VerificationSourceFetchResult.NotFound);
+        var ourAirports = new FakeSource("ourairports", VerificationEntityType.Airport, key =>
+            key.Iata == "LHR" ? Found(VerificationCheckedColumns.Project(Heathrow())) : Found(VerificationCheckedColumns.Project(CharlesDeGaulle())));
+        await using var job = BuildJob(
+            new IVerificationSource[] { aeroApi, ourAirports }, batchSize: 2, budgetState: ProviderBudgetState.Exhausted);
+
+        var result = await RunCycleAsync(job);
+
+        // P (4) >= 2 x BatchSize (2): the initial claim pauses 2, and the replacement claim -- fixed
+        // to exclude the aeroapi source, not just those 2 ids -- reaches the 2 free requests instead
+        // of pausing 2 more of the remaining, not-yet-tried aeroapi requests (the broken behaviour;
+        // see the runner-passes-no-source-names break-proof).
+        Assert.Equal(
+            new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 4, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0, Paused: 2),
+            result);
+        Assert.Empty(aeroApi.Lookups);
+
+        await using var verify = CreateDbContext();
+        var requests = await verify.VerificationRequests.AsNoTracking().ToDictionaryAsync(r => r.Id);
+        Assert.Equal(VerificationRequestStatus.Verified, requests[lhrRequest].Status);
+        Assert.Equal(VerificationRequestStatus.Verified, requests[cdgRequest].Status);
+        Assert.True((await verify.Airports.AsNoTracking().SingleAsync(a => a.Id == lhr.Id)).IsVerified);
+        Assert.True((await verify.Airports.AsNoTracking().SingleAsync(a => a.Id == cdg.Id)).IsVerified);
+
+        // Every aeroapi request -- the 2 paused, and the 2 the replacement claim never even touched
+        // -- is left exactly as it was: still Pending, no attempt, no error.
+        var aeroApiRequests = requests.Values.Where(r => r.EntityType == VerificationEntityType.Airline).ToList();
+        Assert.Equal(4, aeroApiRequests.Count);
+        Assert.All(aeroApiRequests, r =>
+        {
+            Assert.Equal(VerificationRequestStatus.Pending, r.Status);
+            Assert.Equal(0, r.Attempts);
+            Assert.Null(r.Error);
+        });
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     /// <summary>The job's services as the API host wires them, minus what a cycle doesn't touch.</summary>
-    private ServiceProvider BuildJob(IVerificationSource[] sources, int maxAttempts = 3)
+    private ServiceProvider BuildJob(
+        IVerificationSource[] sources, int maxAttempts = 3, int batchSize = 10,
+        ProviderBudgetState budgetState = ProviderBudgetState.Normal)
     {
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddApplication();
         services.AddSingleton<TimeProvider>(_time);
         // IdleRelease zero: a source no open request uses is released after the cycle, as these tests expect.
-        services.AddSingleton<IVerificationJobOptions>(new JobOptions(BatchSize: 10, MaxAttempts: maxAttempts, IdleRelease: TimeSpan.Zero));
+        services.AddSingleton<IVerificationJobOptions>(new JobOptions(BatchSize: batchSize, MaxAttempts: maxAttempts, IdleRelease: TimeSpan.Zero));
         foreach (var source in sources)
             services.AddSingleton(source);
         services.AddSingleton<IVerificationSourceRegistry, VerificationSourceRegistry>();
-        // Normal: none of these tests exercise the budget gate (#401 task 2, Application-level tests
-        // own that); a fixed guard just satisfies VerificationRequestProcessor's DI dependency without
-        // ever reaching AeroAPI.
-        services.AddSingleton<IProviderBudgetGuard>(new FixedBudgetGuard(ProviderBudgetState.Normal));
+        // Normal by default: most of these tests are not about the budget gate (#401 task 2,
+        // Application-level tests own that); a fixed guard just satisfies
+        // VerificationRequestProcessor's DI dependency without ever reaching AeroAPI. The #428
+        // replacement-claim tests below pass Exhausted to exercise the real pause-and-replace path.
+        services.AddSingleton<IProviderBudgetGuard>(new FixedBudgetGuard(budgetState));
 
         // Program.cs's DbContext registration: the audit interceptor reads the scope's IAdminContext.
         services.AddScoped<AdminAuditInterceptor>();
@@ -520,11 +603,13 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         await db.SaveChangesAsync();
     }
 
-    private async Task<long> EnqueueAsync(VerificationEntityType entityType, string key, string source, DateTime? requestedUtc = null)
+    private async Task<long> EnqueueAsync(
+        VerificationEntityType entityType, string key, string source, DateTime? requestedUtc = null,
+        VerificationTrigger trigger = VerificationTrigger.Admin)
     {
         await using var db = CreateDbContext();
         var request = VerificationRequest.Create(
-            entityType, key, new[] { source }, VerificationTrigger.Admin, "admin-oid", 0m, requestedUtc ?? T0.AddHours(-1));
+            entityType, key, new[] { source }, trigger, "admin-oid", 0m, requestedUtc ?? T0.AddHours(-1));
         db.VerificationRequests.Add(request);
         await db.SaveChangesAsync();
         return request.Id;

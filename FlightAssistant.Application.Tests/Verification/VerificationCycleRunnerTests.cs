@@ -74,8 +74,10 @@ public class VerificationCycleRunnerTests
             .Select(r => ClaimedRequests.Create(r.Id, VerificationEntityType.Airport, r.Key, r.Sources, ClaimedAt))
             .ToArray();
         // Any exclude list: most tests here don't exercise G1's replacement claim, so both the
-        // initial call (excludeIds null) and a hypothetical replacement call return the same batch.
-        _requests.ClaimBatchAsync(Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<IReadOnlyCollection<long>?>(), Arg.Any<CancellationToken>())
+        // initial call (excludeSourceNames null) and a hypothetical replacement call return the same batch.
+        _requests.ClaimBatchAsync(
+                Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<IReadOnlyCollection<long>?>(),
+                Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(claimed);
         foreach (var request in claimed)
             _requests.GetByIdAsync(request.Id, Arg.Any<CancellationToken>()).Returns(request);
@@ -83,24 +85,23 @@ public class VerificationCycleRunnerTests
     }
 
     /// <summary>
-    /// G1 (#401 final fix): sets up two distinct <c>ClaimBatchAsync</c> calls -- the initial one
-    /// (<c>excludeIds</c> null) returning <paramref name="firstBatch"/>, and the replacement one
-    /// (<c>excludeIds</c> matching exactly <paramref name="expectedExcludedIds"/>) returning
-    /// <paramref name="secondBatch"/>. Registered after <see cref="ClaimAirportsWithSources"/>'s
-    /// generic any-args setup would be, so these more specific matchers win for calls that match both.
+    /// G1 (#401 final fix; #428 fixes the replacement claim to exclude by source name): sets up two
+    /// distinct <c>ClaimBatchAsync</c> calls -- the initial one (<c>excludeSourceNames</c> null)
+    /// returning <paramref name="firstBatch"/>, and the replacement one (<c>excludeSourceNames</c>
+    /// matching exactly <see cref="VerificationRequestProcessor.BudgetGatedSourceName"/>) returning
+    /// <paramref name="secondBatch"/>.
     /// </summary>
     private VerificationRequest[] ClaimTwoBatches(
         (long Id, string Key, string[] Sources)[] firstBatch,
-        long[] expectedExcludedIds,
         (long Id, string Key, string[] Sources)[] secondBatch)
     {
         var first = firstBatch.Select(r => ClaimedRequests.Create(r.Id, VerificationEntityType.Airport, r.Key, r.Sources, ClaimedAt)).ToArray();
         var second = secondBatch.Select(r => ClaimedRequests.Create(r.Id, VerificationEntityType.Airport, r.Key, r.Sources, ClaimedAt)).ToArray();
 
-        _requests.ClaimBatchAsync(Arg.Any<int>(), Arg.Any<DateTime>(), null, Arg.Any<CancellationToken>()).Returns(first);
+        _requests.ClaimBatchAsync(Arg.Any<int>(), Arg.Any<DateTime>(), null, null, Arg.Any<CancellationToken>()).Returns(first);
         _requests.ClaimBatchAsync(
-                Arg.Any<int>(), Arg.Any<DateTime>(),
-                Arg.Is<IReadOnlyCollection<long>>(ids => ids.SequenceEqual(expectedExcludedIds)),
+                Arg.Any<int>(), Arg.Any<DateTime>(), null,
+                Arg.Is<IReadOnlyCollection<string>>(names => names.SequenceEqual(new[] { VerificationRequestProcessor.BudgetGatedSourceName })),
                 Arg.Any<CancellationToken>())
             .Returns(second);
 
@@ -165,7 +166,9 @@ public class VerificationCycleRunnerTests
     {
         _requests.ResetStuckRunningAsync(Arg.Any<DateTime>(), Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>())
             .Returns(new VerificationStuckResetResult(ReturnedToPending: 2, Abandoned: 1));
-        _requests.ClaimBatchAsync(Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<IReadOnlyCollection<long>?>(), Arg.Any<CancellationToken>())
+        _requests.ClaimBatchAsync(
+                Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<IReadOnlyCollection<long>?>(),
+                Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(Array.Empty<VerificationRequest>());
 
         var result = await RunCycleAsync(new FakeVerificationSourceRegistry(), new FakeJobOptions(BatchSize: 7, MaxAttempts: 4));
@@ -174,7 +177,7 @@ public class VerificationCycleRunnerTests
         Received.InOrder(() =>
         {
             _requests.ResetStuckRunningAsync(Now.AddMinutes(-10), 4, Now, Arg.Any<CancellationToken>());
-            _requests.ClaimBatchAsync(7, Now, null, Arg.Any<CancellationToken>());
+            _requests.ClaimBatchAsync(7, Now, null, null, Arg.Any<CancellationToken>());
         });
     }
 
@@ -329,7 +332,6 @@ public class VerificationCycleRunnerTests
         _budget.State = ProviderBudgetState.Exhausted;
         var claimed = ClaimTwoBatches(
             firstBatch: new (long, string, string[])[] { (1, "11", new[] { "aeroapi" }), (2, "22", new[] { "aeroapi" }), (3, "33", new[] { "aeroapi" }) },
-            expectedExcludedIds: new[] { 1L, 2L, 3L },
             secondBatch: Array.Empty<(long, string, string[])>());
         var aeroApi = new FakeVerificationSource("aeroapi", VerificationEntityType.Airport, VerificationSourceFetchResult.NotFound);
 
@@ -349,7 +351,8 @@ public class VerificationCycleRunnerTests
         // "Don't loop" (G1): the initial claim plus exactly one replacement, never a third attempt
         // even though the replacement itself came back with nothing claimable.
         await _requests.Received(2).ClaimBatchAsync(
-            Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<IReadOnlyCollection<long>?>(), Arg.Any<CancellationToken>());
+            Arg.Any<int>(), Arg.Any<DateTime>(), Arg.Any<IReadOnlyCollection<long>?>(),
+            Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>());
     }
 
     /// <summary>Decision 2: a request naming only free sources keeps processing normally even once the
@@ -361,7 +364,6 @@ public class VerificationCycleRunnerTests
         _budget.State = ProviderBudgetState.Exhausted;
         var claimed = ClaimTwoBatches(
             firstBatch: new (long, string, string[])[] { (1, "11", new[] { "aeroapi" }), (2, "22", new[] { "ourairports" }), (3, "33", new[] { "aeroapi" }) },
-            expectedExcludedIds: new[] { 1L, 3L },
             secondBatch: Array.Empty<(long, string, string[])>());
         var airport = Airport("BBB");
         _airports.GetByIdAsync(22, Arg.Any<CancellationToken>()).Returns(airport);
@@ -384,8 +386,8 @@ public class VerificationCycleRunnerTests
     /// <summary>
     /// G1 (#401 final fix): the core scenario the finding names -- a batch full of gated requests
     /// with free-source work queued behind them. The initial claim pauses both aeroapi requests; the
-    /// replacement claim (excluding exactly those ids) reaches the two ourairports requests that a
-    /// naive single-claim cycle would never see until the month rolled over, and both complete.
+    /// replacement claim (excluding the aeroapi source, #428) reaches the two ourairports requests
+    /// that a naive single-claim cycle would never see until the month rolled over, and both complete.
     /// </summary>
     [Fact]
     public async Task RunCycleAsync_G1_AfterPausingTheGatedBatch_TheReplacementBatchReachesFreeSourceWorkBehindThem()
@@ -393,7 +395,6 @@ public class VerificationCycleRunnerTests
         _budget.State = ProviderBudgetState.Exhausted;
         var claimed = ClaimTwoBatches(
             firstBatch: new (long, string, string[])[] { (1, "11", new[] { "aeroapi" }), (2, "22", new[] { "aeroapi" }) },
-            expectedExcludedIds: new[] { 1L, 2L },
             secondBatch: new (long, string, string[])[] { (3, "33", new[] { "ourairports" }), (4, "44", new[] { "ourairports" }) });
         _airports.GetByIdAsync(33, Arg.Any<CancellationToken>()).Returns(Airport("CCC"));
         _airports.GetByIdAsync(44, Arg.Any<CancellationToken>()).Returns(Airport("DDD"));

@@ -9,9 +9,10 @@ namespace FlightAssistant.Application.Verification
     public interface IVerificationCycleRunner
     {
         /// <summary>Resets stuck requests, claims a batch, processes each claimed request -- and, if
-        /// any of them paused for the AeroAPI budget, claims and processes one replacement batch
-        /// excluding those ids (#401 final fix G1), so free-source work behind them still drains this
-        /// cycle -- then releases source caches no open request uses.</summary>
+        /// any of them paused for the AeroAPI budget, claims and processes one replacement batch that
+        /// excludes every request naming that source (#401 final fix G1; #428 fixes it to exclude by
+        /// source name, not just the ids just paused), so free-source work behind them still drains
+        /// this cycle -- then releases source caches no open request uses.</summary>
         /// <exception cref="VerificationCycleFailedException">The batch was processed, then releasing
         /// source caches failed; carries the batch's counts.</exception>
         /// <exception cref="OperationCanceledException"><paramref name="ct"/> was cancelled. Claims the
@@ -76,13 +77,19 @@ namespace FlightAssistant.Application.Verification
     /// </para>
     ///
     /// <para>
-    /// <b>The replacement batch (#401 final fix G1).</b> A paused request returns to Pending with its
-    /// <c>requested_utc</c>/<c>id</c> untouched (R5 forbids nudging them to reorder it), so it sits at
-    /// the head of the claim order again next cycle. Left alone, a queue with <c>BatchSize</c> or more
-    /// open <c>aeroapi</c>-naming requests would claim, pause and exclude exactly those every cycle,
-    /// never reaching a country or airport request behind them -- free work that costs nothing and
-    /// has nothing to do with the budget. So once the initial batch has paused at least one request,
-    /// the cycle claims <b>one</b> further batch that excludes those specific ids and processes it the
+    /// <b>The replacement batch (#401 final fix G1; excluding by source name is #428).</b> A paused
+    /// request returns to Pending with its <c>requested_utc</c>/<c>id</c> untouched (R5 forbids
+    /// nudging them to reorder it), so it sits at the head of the claim order again next cycle. Left
+    /// alone, a queue with <c>BatchSize</c> or more open <c>aeroapi</c>-naming requests would claim,
+    /// pause and exclude exactly those every cycle, never reaching a country or airport request behind
+    /// them -- free work that costs nothing and has nothing to do with the budget. Excluding only the
+    /// ids just paused (#401's original G1) isn't enough: with <b>at least two batches</b> of open
+    /// <c>aeroapi</c> requests ahead of the free-source work, a replacement claim that skips just those
+    /// ids still fills up on the next batch of <c>aeroapi</c> requests behind them -- proved against
+    /// real PostgreSQL (#428) -- pausing that batch too and reaching nothing free, every cycle, until
+    /// the month's budget resets. So once the initial batch has paused at least one request, the cycle
+    /// claims <b>one</b> further batch that excludes every request naming
+    /// <see cref="VerificationRequestProcessor.BudgetGatedSourceName"/> at all, and processes it the
     /// same way, sharing the same "budget already known Exhausted" flag (no second guard read even
     /// across the two batches). Exactly one replacement batch, never a loop: if it too pauses
     /// everything in it (a queue that is nothing but gated requests), the cycle still ends cleanly and
@@ -151,28 +158,31 @@ namespace FlightAssistant.Application.Verification
                     "Completed {Count} verification request(s) as Error: stuck in Running for over {StuckAfter} with no attempts left.",
                     reset.Abandoned, StuckAfter);
 
-            var claims = await ClaimAsync(now, cycleId, excludeIds: null, ct);
+            var claims = await ClaimAsync(now, cycleId, excludeSourceNames: null, ct);
 
             var processed = 0;
             var failed = 0;
             var lost = 0;
             var unrecorded = 0;
             var paused = 0;
-            var pausedIds = new List<long>();
             var aeroApiBudgetPaused = false;
 
             await ProcessBatchAsync(claims);
 
             // G1: a paused request goes back to Pending with requested_utc/id untouched (R5 forbids
-            // nudging them), so it sits at the head of the claim order again -- left alone, a queue
-            // with BatchSize or more open aeroapi requests would claim, pause and exclude exactly
-            // those every cycle, never reaching a free-source request behind them. One replacement
-            // batch excluding just-paused ids is enough to reach it; never a loop, so a queue that is
-            // nothing but gated requests still ends the cycle cleanly rather than re-claiming an
-            // empty batch forever.
-            if (pausedIds.Count > 0)
+            // nudging them), so it sits at the head of the claim order again. Excluding only the ids
+            // just paused isn't enough (#428): with a backlog of at least two batches of open aeroapi
+            // requests, a replacement claim that skips just those ids still fills up on the *next*
+            // batch of aeroapi requests behind them, pausing that batch too and never reaching the
+            // free-source work further back -- every cycle, until the month's budget resets. Excluding
+            // by source name instead means the replacement claim can never contain another aeroapi
+            // request at all, so it reaches straight past the whole gated backlog to whatever free
+            // work is behind it. One replacement batch is enough; never a loop, so a queue that is
+            // nothing but gated requests still ends the cycle cleanly rather than re-claiming an empty
+            // batch forever.
+            if (aeroApiBudgetPaused)
             {
-                var replacementClaims = await ClaimAsync(now, cycleId, pausedIds, ct);
+                var replacementClaims = await ClaimAsync(now, cycleId, new[] { VerificationRequestProcessor.BudgetGatedSourceName }, ct);
                 await ProcessBatchAsync(replacementClaims);
             }
 
@@ -199,9 +209,9 @@ namespace FlightAssistant.Application.Verification
             return result;
 
             // Processes one claimed batch (the initial claim, or the G1 replacement claim), updating
-            // this method's own counters and pausedIds so a second call picks up exactly where the
-            // first left off -- including aeroApiBudgetPaused, so the replacement batch never asks
-            // the guard again either if the initial batch already found it Exhausted.
+            // this method's own counters -- including aeroApiBudgetPaused, both the replacement
+            // batch's trigger condition and, once true, what lets it skip asking the guard again for
+            // the rest of the cycle.
             async Task ProcessBatchAsync(IReadOnlyList<VerificationClaim> batch)
             {
                 processed += batch.Count;
@@ -227,7 +237,6 @@ namespace FlightAssistant.Application.Verification
                                 break;
                             case VerificationProcessOutcome.Paused:
                                 paused++;
-                                pausedIds.Add(batch[next].RequestId);
                                 // R4/R5 decision 4: once the budget is known Exhausted, every remaining
                                 // request naming aeroapi is paused on this flag alone -- no further
                                 // guard read this cycle, across either batch. A request naming only
@@ -246,14 +255,17 @@ namespace FlightAssistant.Application.Verification
         }
 
         private async Task<IReadOnlyList<VerificationClaim>> ClaimAsync(
-            DateTime now, string cycleId, IReadOnlyCollection<long>? excludeIds, CancellationToken ct)
+            DateTime now, string cycleId, IReadOnlyCollection<string>? excludeSourceNames, CancellationToken ct)
         {
             // The claimed requests come back tracked; this context is disposed without saving, and
-            // each request is re-loaded in its own scope.
+            // each request is re-loaded in its own scope. R1 (#428): only the replacement claim
+            // excludes anything, and only by source name -- never by id, so a deep aeroapi backlog
+            // can't fill the replacement batch with more of the same gated source (see the G1 comment
+            // in RunCycleAsync).
             using var scope = VerificationJobActor.CreateScope(_scopeFactory, cycleId);
             var claimed = await scope.ServiceProvider
                 .GetRequiredService<IVerificationRequestRepository>()
-                .ClaimBatchAsync(_options.BatchSize, now, excludeIds, ct);
+                .ClaimBatchAsync(_options.BatchSize, now, excludeSourceNames: excludeSourceNames, ct: ct);
 
             return claimed.Select(VerificationClaim.From).ToList();
         }

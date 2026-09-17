@@ -169,6 +169,73 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         Assert.Empty(claimed);
     }
 
+    /// <summary>
+    /// #428 R1/R2: excluding "aeroapi" by source name skips a request naming only "aeroapi" and one
+    /// naming "ourairports,aeroapi" (a whole-name match inside the comma-joined column), in real SQL
+    /// -- proving <c>NOT (string_to_array("sources", ',') &amp;&amp; {excludeSources})</c> actually
+    /// reaches the query. A request naming only the free "ourairports" source is unaffected and still
+    /// claimed. Both excluded rows stay Pending, untouched.
+    /// </summary>
+    [Fact]
+    public async Task ClaimBatchAsync_ExcludingASourceName_SkipsRequestsNamingItSoloOrAlongsideAnother_ButStillClaimsFreeRequests()
+    {
+        var ids = await SeedEachAsync(
+            Request("1", requestedUtc: T0, sources: new[] { "aeroapi" }),
+            Request("2", requestedUtc: T0.AddSeconds(1), sources: new[] { "ourairports", "aeroapi" }),
+            Request("3", requestedUtc: T0.AddSeconds(2), sources: OurAirports));
+        var now = T0.AddMinutes(1);
+
+        await using var db = CreateDbContext();
+        var claimed = await Repository(db).ClaimBatchAsync(10, now, excludeSourceNames: new[] { "aeroapi" });
+
+        Assert.Equal(new[] { ids[2] }, claimed.Select(r => r.Id));
+
+        await using var verify = CreateDbContext();
+        var untouched = await verify.VerificationRequests.AsNoTracking()
+            .Where(r => r.Id == ids[0] || r.Id == ids[1])
+            .ToListAsync();
+        Assert.All(untouched, r => Assert.Equal(VerificationRequestStatus.Pending, r.Status));
+    }
+
+    /// <summary>
+    /// #428 R2: matching is whole-name, never a substring. A request naming only "aeroapi-v2" --
+    /// legitimately a different, unregistered source name; <c>VerificationRequest.TryJoinSources</c>
+    /// only forbids whitespace, ',' and '+' in a name, not registration -- is still claimed while
+    /// "aeroapi" is excluded. A <c>LIKE '%aeroapi%'</c> predicate would wrongly exclude it; array
+    /// overlap over the split names does not.
+    /// </summary>
+    [Fact]
+    public async Task ClaimBatchAsync_ExcludingASourceName_DoesNotMatchADifferentSourceNameAsASubstring()
+    {
+        var ids = await SeedEachAsync(Request("1", requestedUtc: T0, sources: new[] { "aeroapi-v2" }));
+        var now = T0.AddMinutes(1);
+
+        await using var db = CreateDbContext();
+        var claimed = await Repository(db).ClaimBatchAsync(10, now, excludeSourceNames: new[] { "aeroapi" });
+
+        Assert.Equal(ids, claimed.Select(r => r.Id));
+    }
+
+    /// <summary>
+    /// #428 R3: <c>excludeSourceNames</c> left at its default (null -- no exclusion requested) must
+    /// still reach PostgreSQL as a concrete empty array, never as a raw NULL:
+    /// <c>string_to_array(...) &amp;&amp; NULL::text[]</c> is NULL, not false, which would make the
+    /// claim's <c>NOT(...)</c> predicate NULL -- and so false -- for every row, silently claiming
+    /// nothing at all instead of everything due. Seeds a request naming the same source a caller might
+    /// otherwise exclude, proving that with no exclusion requested, it is still claimed normally.
+    /// </summary>
+    [Fact]
+    public async Task ClaimBatchAsync_NoSourceNamesExcluded_StillClaimsARequestNamingTheGatedSource()
+    {
+        var ids = await SeedEachAsync(Request("1", requestedUtc: T0, sources: new[] { "aeroapi" }));
+        var now = T0.AddMinutes(1);
+
+        await using var db = CreateDbContext();
+        var claimed = await Repository(db).ClaimBatchAsync(10, now, excludeSourceNames: null);
+
+        Assert.Equal(ids, claimed.Select(r => r.Id));
+    }
+
     /// <summary><c>next_attempt_utc</c> in the future is not due; null, past and exactly-now are.</summary>
     [Fact]
     public async Task ClaimBatchAsync_SkipsARequestWhoseNextAttemptIsInTheFuture()
