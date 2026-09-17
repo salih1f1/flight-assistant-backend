@@ -200,7 +200,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
 
             // Always concrete arrays, never null: ANY(NULL::bigint[]) is NULL, not false, and
             // array && NULL::text[] is likewise NULL, not false -- either would make its NOT(...)
-            // predicate NULL too and silently exclude every row instead of none (#428 R3).
+            // predicate NULL too and silently exclude every row instead of none.
             var exclude = excludeIds?.ToArray() ?? Array.Empty<long>();
             var excludeSources = excludeSourceNames?.ToArray() ?? Array.Empty<string>();
 
@@ -212,7 +212,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             // is returned explicitly because RETURNING v.* never includes system columns. Every
             // value is a parameter.
             //
-            // string_to_array(..., ',') && excludeSources (#428 R2): array-overlap over the whole
+            // string_to_array(..., ',') && excludeSources: array-overlap over the whole
             // split names of the comma-joined "sources" column, never LIKE '%aeroapi%' -- a substring
             // match would also exclude an unrelated "aeroapi-v2" source. Sound because a source name
             // can never itself contain a comma (VerificationRequest.TryJoinSources forbids it).

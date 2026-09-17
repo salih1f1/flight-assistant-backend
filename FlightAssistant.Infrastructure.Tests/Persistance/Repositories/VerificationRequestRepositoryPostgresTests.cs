@@ -131,10 +131,9 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     }
 
     /// <summary>
-    /// #401 final fix G1: excludes the otherwise-first row by id, in real SQL -- proving
-    /// <c>NOT ("id" = ANY(...))</c> actually reaches the query, not just that the C# threads the
-    /// parameter through. The excluded row stays Pending, untouched: exclusion is not the same as
-    /// shrinking the batch.
+    /// Proves <c>excludeIds</c>'s SQL reaches the query, not just that the C# threads the parameter
+    /// through: <c>NOT ("id" = ANY(...))</c> excludes the otherwise-first row by id, in real SQL. The
+    /// excluded row stays Pending, untouched: exclusion is not the same as shrinking the batch.
     /// </summary>
     [Fact]
     public async Task ClaimBatchAsync_ExcludesGivenIds_ClaimingTheNextEligibleRowInstead()
@@ -155,8 +154,8 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         Assert.Equal(VerificationRequestStatus.Pending, untouched.Status);
     }
 
-    /// <summary>#401 final fix G1's "don't loop" case at the SQL layer: excluding every otherwise-due
-    /// id claims nothing rather than throwing or ignoring the exclusion.</summary>
+    /// <summary>Excluding every otherwise-due id, at the SQL layer: <c>excludeIds</c> claims nothing
+    /// rather than throwing or ignoring the exclusion.</summary>
     [Fact]
     public async Task ClaimBatchAsync_ExcludingEveryEligibleId_ClaimsNothing()
     {
@@ -170,7 +169,7 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     }
 
     /// <summary>
-    /// #428 R1/R2: excluding "aeroapi" by source name skips a request naming only "aeroapi" and one
+    /// Excluding "aeroapi" by source name skips a request naming only "aeroapi" and one
     /// naming "ourairports,aeroapi" (a whole-name match inside the comma-joined column), in real SQL
     /// -- proving <c>NOT (string_to_array("sources", ',') &amp;&amp; {excludeSources})</c> actually
     /// reaches the query. A request naming only the free "ourairports" source is unaffected and still
@@ -198,7 +197,7 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     }
 
     /// <summary>
-    /// #428 R2: matching is whole-name, never a substring. A request naming only "aeroapi-v2" --
+    /// Matching is whole-name, never a substring. A request naming only "aeroapi-v2" --
     /// legitimately a different, unregistered source name; <c>VerificationRequest.TryJoinSources</c>
     /// only forbids whitespace, ',' and '+' in a name, not registration -- is still claimed while
     /// "aeroapi" is excluded. A <c>LIKE '%aeroapi%'</c> predicate would wrongly exclude it; array
@@ -217,8 +216,8 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     }
 
     /// <summary>
-    /// #428 R3: <c>excludeSourceNames</c> left at its default (null -- no exclusion requested) must
-    /// still reach PostgreSQL as a concrete empty array, never as a raw NULL:
+    /// <c>excludeSourceNames</c> left at its default (null -- no exclusion requested) must still
+    /// reach PostgreSQL as a concrete empty array, never as a raw NULL:
     /// <c>string_to_array(...) &amp;&amp; NULL::text[]</c> is NULL, not false, which would make the
     /// claim's <c>NOT(...)</c> predicate NULL -- and so false -- for every row, silently claiming
     /// nothing at all instead of everything due. Seeds a request naming the same source a caller might

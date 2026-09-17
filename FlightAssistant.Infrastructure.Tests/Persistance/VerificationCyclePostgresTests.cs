@@ -484,9 +484,10 @@ public class VerificationCyclePostgresTests : PostgresTestBase
     /// airports; BatchSize is 2, so P (4) &gt;= 2 x BatchSize. The initial claim pauses its two aeroapi
     /// requests; the fixed replacement claim excludes the aeroapi source entirely, reaching straight
     /// past the other two, not-yet-tried aeroapi requests to the free-source ones behind them, which
-    /// are actually verified -- not merely "not excluded by id" (the #419 review's own warning about a
-    /// lookups-only assertion that passed on both the broken and fixed code, because it seeded no
-    /// airport rows, so the free requests ended as Error either way).
+    /// are actually verified -- not merely "not excluded by id". A lookups-only assertion would not
+    /// tell the two apart: with no airport rows seeded, the free requests would end as Error under
+    /// both the broken and the fixed code, so this test seeds real airports and asserts each one's
+    /// <c>IsVerified</c> directly.
     /// </summary>
     [Fact]
     public async Task RunCycle_G1_DeepFlightTriggeredAeroApiBacklog_TheReplacementClaimStillReachesFreeSourceWork() =>
@@ -529,8 +530,9 @@ public class VerificationCyclePostgresTests : PostgresTestBase
 
         // P (4) >= 2 x BatchSize (2): the initial claim pauses 2, and the replacement claim -- fixed
         // to exclude the aeroapi source, not just those 2 ids -- reaches the 2 free requests instead
-        // of pausing 2 more of the remaining, not-yet-tried aeroapi requests (the broken behaviour;
-        // see the runner-passes-no-source-names break-proof).
+        // of pausing 2 more of the remaining, not-yet-tried aeroapi requests (the broken behaviour).
+        // Restoring the paused-id exclusion (#401's original G1) makes this assertion fail with
+        // Paused: 4, not 2 -- the regression this test actually guards against.
         Assert.Equal(
             new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 4, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0, Paused: 2),
             result);

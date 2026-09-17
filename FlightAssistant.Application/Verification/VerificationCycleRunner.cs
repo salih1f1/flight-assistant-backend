@@ -91,10 +91,10 @@ namespace FlightAssistant.Application.Verification
     /// claims <b>one</b> further batch that excludes every request naming
     /// <see cref="VerificationRequestProcessor.BudgetGatedSourceName"/> at all, and processes it the
     /// same way, sharing the same "budget already known Exhausted" flag (no second guard read even
-    /// across the two batches). Exactly one replacement batch, never a loop: if it too pauses
-    /// everything in it (a queue that is nothing but gated requests), the cycle still ends cleanly and
-    /// tries again next cycle, rather than hammering the queue for a batch that keeps coming back
-    /// empty of anything claimable.
+    /// across the two batches). Exactly one replacement batch, never a loop: if the queue holds only
+    /// gated requests, the replacement claim excludes every one of them and comes back empty --
+    /// nothing left in it to pause -- so the cycle still ends cleanly and tries again next cycle,
+    /// rather than hammering the queue for a batch that keeps coming back empty of anything claimable.
     /// </para>
     ///
     /// <para>
@@ -258,10 +258,10 @@ namespace FlightAssistant.Application.Verification
             DateTime now, string cycleId, IReadOnlyCollection<string>? excludeSourceNames, CancellationToken ct)
         {
             // The claimed requests come back tracked; this context is disposed without saving, and
-            // each request is re-loaded in its own scope. R1 (#428): only the replacement claim
-            // excludes anything, and only by source name -- never by id, so a deep aeroapi backlog
-            // can't fill the replacement batch with more of the same gated source (see the G1 comment
-            // in RunCycleAsync).
+            // each request is re-loaded in its own scope. Only the replacement claim excludes
+            // anything, and only by source name -- never by id, so a deep aeroapi backlog can't fill
+            // the replacement batch with more of the same gated source (see the G1 comment in
+            // RunCycleAsync).
             using var scope = VerificationJobActor.CreateScope(_scopeFactory, cycleId);
             var claimed = await scope.ServiceProvider
                 .GetRequiredService<IVerificationRequestRepository>()
