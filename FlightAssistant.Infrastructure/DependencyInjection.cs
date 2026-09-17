@@ -7,8 +7,10 @@ using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Application.ProviderBudget;
+using FlightAssistant.Infrastructure.ExternalServices;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
+using FlightAssistant.Infrastructure.ExternalServices.AeroDataBox;
 using FlightAssistant.Infrastructure.ExternalServices.GitHub;
 using FlightAssistant.Infrastructure.ExternalServices.Verification;
 using FlightAssistant.Infrastructure.Notifications;
@@ -233,18 +235,66 @@ namespace FlightAssistant.Infrastructure
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
                 sp.GetRequiredService<ILogger<AeroApiFlightSearchProvider>>()));
 
-            // IFlightSearchProvider resolves to the caching decorator, not AeroApiFlightSearchProvider
-            // directly (issue #282) — GET /flights/search is anonymous and only rate-limited per IP,
-            // so without a cache in front of it, a scripted client could drain the $5/month metered
-            // tier long before the throttle (a latency control, not a spend cap) even slowed it down.
-            // AeroApiFlightSearchProvider itself stays registered and resolvable — the decorator wraps
-            // it, it does not replace it.
+            // AeroDataBox (#422): route searches (both airports, no usable flight number) move here
+            // from AeroAPI's per-search-billed /schedules call, onto AeroDataBox's free tier.
+            // ApiKey is deliberately NOT [Required]/ValidateOnStart, unlike AeroApiOptions — the app
+            // must still start without it (GitHubOptions.IsConfigured precedent), and
+            // FlightSearchProviderSelector below falls back to AeroAPI when it is unset.
+            services.AddOptions<AeroDataBoxOptions>()
+                .BindConfiguration("AeroDataBox");
+
+            // No AeroApiThrottleGate and no resilience handler on this client: the gate exists to
+            // stay inside a METERED tier's rate limit, and every resilience timeout in this repo is
+            // derived from AeroApi:MinRequestInterval — neither applies to a free, quota-based API.
+            // TimeoutSeconds -> client.Timeout is this client's ONLY timeout as a result. The key is
+            // sent only when configured, never as a null/empty header value.
+            services.AddHttpClient(AeroDataBoxFlightSearchProvider.HttpClientName, (sp, client) =>
+            {
+                var options = sp.GetRequiredService<IOptions<AeroDataBoxOptions>>().Value;
+                client.BaseAddress = new Uri(options.BaseUrl);
+                if (options.IsConfigured)
+                    client.DefaultRequestHeaders.Add("X-RapidAPI-Key", options.ApiKey);
+                client.DefaultRequestHeaders.Add("X-RapidAPI-Host", AeroDataBoxOptions.RapidApiHost);
+                client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+            });
+
+            services.AddScoped(sp => new AeroDataBoxFlightSearchProvider(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(AeroDataBoxFlightSearchProvider.HttpClientName),
+                sp.GetRequiredService<IOptions<AeroDataBoxOptions>>(),
+                sp.GetRequiredService<ILogger<AeroDataBoxFlightSearchProvider>>()));
+
+            // IFlightSearchProvider resolves to the caching decorator, which now fronts BOTH
+            // providers (issue #282, widened by #422) — GET /flights/search is anonymous and only
+            // rate-limited per IP, so without a cache in front of it, a scripted client could drain
+            // the $5/month metered AeroAPI tier long before the throttle (a latency control, not a
+            // spend cap) even slowed it down. AeroDataBox costs nothing, but a repeated identical
+            // search still shouldn't re-issue two upstream calls on every request.
+            //
+            // FlightSearchProviderSelector sits INSIDE the cache and OUTSIDE the AeroAPI budget
+            // decorator: the budget decorator refuses on AeroAPI spend specifically, so wrapping the
+            // free AeroDataBox path in it would refuse free searches for no reason, and the cache
+            // must stay outermost so a cached result is still answered past the budget (#303). A
+            // consequence worth stating rather than discovering later: a route search is no longer
+            // refused when the AeroAPI budget is Exhausted, because it never touches AeroAPI once
+            // AeroDataBox is configured — an improvement, and a real behaviour change.
+            //
+            // The cache key (AeroApiFlightSearchCachingDecorator.BuildCacheKey) has no provider
+            // dimension. That is safe ONLY because the selector's routing is deterministic by
+            // criteria shape — a given key always reaches the same provider. If a shape is ever
+            // routed to both providers, the key must gain one.
+            //
+            // AeroApiFlightSearchProvider itself stays registered and resolvable — the decorator
+            // wraps it, it does not replace it.
             services.AddScoped<IFlightSearchProvider>(sp => new AeroApiFlightSearchCachingDecorator(
-                // Inside the cache, so a cached search is answered past the budget (#303).
-                new AeroApiFlightSearchBudgetDecorator(
-                    sp.GetRequiredService<AeroApiFlightSearchProvider>(),
-                    sp.GetRequiredService<IProviderBudgetGuard>(),
-                    sp.GetRequiredService<ILogger<AeroApiFlightSearchBudgetDecorator>>()),
+                new FlightSearchProviderSelector(
+                    sp.GetRequiredService<AeroDataBoxFlightSearchProvider>(),
+                    // Inside the cache, so a cached search is answered past the budget (#303).
+                    new AeroApiFlightSearchBudgetDecorator(
+                        sp.GetRequiredService<AeroApiFlightSearchProvider>(),
+                        sp.GetRequiredService<IProviderBudgetGuard>(),
+                        sp.GetRequiredService<ILogger<AeroApiFlightSearchBudgetDecorator>>()),
+                    sp.GetRequiredService<IOptions<AeroDataBoxOptions>>(),
+                    sp.GetRequiredService<ILogger<FlightSearchProviderSelector>>()),
                 sp.GetRequiredService<ICacheService>(),
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
                 sp.GetRequiredService<TimeProvider>(),
