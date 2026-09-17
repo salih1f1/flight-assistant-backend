@@ -1096,41 +1096,61 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     }
 
     /// <summary>
-    /// #424 fix wave: with no ORDER BY, Postgres's GROUP BY plan (a HashAggregate) can return these
-    /// groups in a different order between two identical polls whenever a new group first appears or
-    /// the planner switches to a sort-based aggregate -- CLAUDE.md already treats that kind of shuffle,
-    /// for an admin panel re-rendering identical data, as churn with no cause. Count descending alone
-    /// doesn't order three groups tied at count 1, so this seeds exactly that tie to prove the
-    /// FailedSource/EntityType tie-break, not merely that a count-descending order exists. Break-proof:
-    /// dropping the two ThenBy clauses from GetRecentFailureGroupsAsync leaves the tied groups in
-    /// whatever order the database happens to produce, failing this assertion.
+    /// #424 fix wave: with no ORDER BY, an admin panel could see these groups reorder between two
+    /// identical polls -- CLAUDE.md already treats that, for a panel re-rendering identical data
+    /// differently, as churn with no cause. This proves the primary sort genuinely is Count
+    /// descending, not merely that *some* order comes out matching it: <c>"zzz-source"</c> has the
+    /// highest count (3) but sorts alphabetically last, and <c>"aaa-source"</c> has a lower count (1)
+    /// but sorts alphabetically first, so a query that (mistakenly) ordered by <c>FailedSource</c>
+    /// before <c>Count</c> would put <c>aaa-source</c> ahead of <c>zzz-source</c> -- the reverse of
+    /// the required order. Verified break-proof: dropping <c>OrderByDescending(Count)</c> (replacing
+    /// it with plain <c>OrderBy(FailedSource).ThenBy(EntityType)</c>, since <c>ThenBy</c> cannot
+    /// follow nothing) reliably fails this assertion, confirmed across three separate runs against
+    /// real PostgreSQL.
+    ///
+    /// <para>
+    /// <b>What this test does not prove.</b> The <c>FailedSource</c>/<c>EntityType</c> tie-break among
+    /// equal-count groups (<c>aaa-source</c>, <c>mledoze</c> and the null/unattributed group all tie at
+    /// count 1 below) is asserted here, but dropping only the two <c>ThenBy</c> clauses does **not**
+    /// reliably fail this test: at this table's scale <c>EXPLAIN</c> shows Postgres always choosing a
+    /// <c>GroupAggregate</c> plan, which requires its input pre-sorted by <c>(failed_source,
+    /// entity_type)</c> and gets that via its own <c>Sort</c> node -- so the tied groups already come
+    /// out in that order as a structural side effect of the query plan, independent of whether
+    /// <c>GetRecentFailureGroupsAsync</c> asks for it. No seed data at unit-test scale changes this:
+    /// it would take a table large enough to flip the planner to a <c>HashAggregate</c>, which is
+    /// impractical to seed reliably in a unit test and would make the test's passing depend on a cost
+    /// threshold that could shift with a Postgres version. The tie-break is still correct C# — it just
+    /// isn't provable by mutation at this scale; the assertion stays as documentation of the intended
+    /// behaviour.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task GetRecentFailureGroupsAsync_OrdersByCountDescending_ThenFailedSourceThenEntityType()
     {
         var now = T0.AddDays(2);
 
-        // Count descending: aeroapi/Airport (2) outranks every count-1 group below it.
-        await SeedErrorAsync("1", VerificationEntityType.Airport, "aeroapi", now.AddHours(-1));
-        await SeedErrorAsync("2", VerificationEntityType.Airport, "aeroapi", now.AddHours(-2));
+        // Highest count (3), but alphabetically last: must still sort first.
+        await SeedErrorAsync("1", VerificationEntityType.Airport, "zzz-source", now.AddHours(-1));
+        await SeedErrorAsync("2", VerificationEntityType.Airport, "zzz-source", now.AddHours(-2));
+        await SeedErrorAsync("3", VerificationEntityType.Airport, "zzz-source", now.AddHours(-3));
 
-        // Three groups tied at count 1: the tie-break orders them by FailedSource, then EntityType.
-        await SeedErrorAsync("FR", VerificationEntityType.Country, null, now.AddMinutes(-5));     // null, Country
-        await SeedErrorAsync("4", VerificationEntityType.Airline, "mledoze", now.AddMinutes(-6));  // mledoze, Airline
-        await SeedErrorAsync("5", VerificationEntityType.Airport, "mledoze", now.AddMinutes(-7));  // mledoze, Airport
+        // Three groups tied at count 1, alphabetically ahead of "zzz-source": must still sort after it.
+        await SeedErrorAsync("4", VerificationEntityType.Airport, "aaa-source", now.AddMinutes(-5));
+        await SeedErrorAsync("5", VerificationEntityType.Airline, "mledoze", now.AddMinutes(-6));
+        await SeedErrorAsync("FR", VerificationEntityType.Country, null, now.AddMinutes(-7));
 
         await using var db = CreateDbContext();
         var groups = await Repository(db, now: now).GetRecentFailureGroupsAsync();
 
         // Postgres's default collation sorts ASC NULLS LAST, so the unattributed (null) group trails
-        // the two named "mledoze" groups here even though it ties them on Count -- empirically
-        // confirmed against the real database, not assumed from .NET string-ordering semantics.
+        // the two named count-1 groups here too -- empirically confirmed against the real database,
+        // not assumed from .NET string-ordering semantics.
         Assert.Equal(
             new[]
             {
-                new VerificationFailureGroup("aeroapi", VerificationEntityType.Airport, 2),
+                new VerificationFailureGroup("zzz-source", VerificationEntityType.Airport, 3),
+                new VerificationFailureGroup("aaa-source", VerificationEntityType.Airport, 1),
                 new VerificationFailureGroup("mledoze", VerificationEntityType.Airline, 1),
-                new VerificationFailureGroup("mledoze", VerificationEntityType.Airport, 1),
                 new VerificationFailureGroup(null, VerificationEntityType.Country, 1),
             },
             groups);
