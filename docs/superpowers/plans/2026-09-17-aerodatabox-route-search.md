@@ -21,12 +21,13 @@
 
 ## Amendments during execution (2026-09-17)
 
-Four statements in this plan were wrong as first written. They are corrected in place below.
+Several statements in this plan were wrong as first written, and a live measurement after the final review corrected more. They are corrected in place below.
 
-- **The query window.** Step 2 originally said to query the whole local day, `T00:00`–`T23:59`, "as the removed provider did". AeroDataBox rejects any window longer than **12 hours**: issue #267 quotes the parameter documentation, and `f89f95e` records the removed provider failing every request with HTTP 400. That failure went unseen because the provider swallowed errors into an empty list. The day is now two sequential ≤12h windows, so an uncached route search makes **up to 2 calls**.
+- **The query window.** Step 2 originally said to query the whole local day, `T00:00`–`T23:59`, "as the removed provider did". AeroDataBox **documents** a maximum window of **12 hours**, quoted in issue #267. #267 blamed the removed provider's empty results on that limit. That provider swallowed every error unlogged, though, so the 400 was inferred from the documentation rather than observed, and no call on this branch has measured the limit either. The day is now two sequential ≤12h windows, so an uncached route search makes **up to 2 calls**.
 - **The date filter.** Step 2 originally said to filter "using the row's own local time" without saying which time, and Step 4 described excluding a row by its revised time. Rows are kept on their **scheduled** local date instead. That is what `ServiceDate` means everywhere in this system, and it is what `AeroApiFlightStatusProvider` matches status syncs on.
-- **The error buckets.** Step 3 originally sent every unclassified status to 502. Any other 4xx now maps to **500**. A 4xx cannot be told apart from a malformed request of ours, such as the 12-hour cap above, and a 500 keeps a systematic defect loud; #267's 400 was silent for that provider's whole life. Whether AeroDataBox also answers well-formed but unknown input, such as an unknown airport or an out-of-range date, with a 4xx is unmeasured. If it does, that surfaces as a 500 too.
-- **The fixture.** The constraints and Step 4 called it "recorded". No raw spike payload was kept: `departures.json` is hand-authored in the shape the spike returned.
+- **The error buckets.** Step 3 originally sent every unclassified status to 502. Any other 4xx now maps to **500**. A 4xx cannot be told apart from a malformed request of ours, such as the 12-hour cap above, and a 500 keeps a systematic defect loud; #267's failure was silent for that provider's whole life. An unknown airport was later measured to return a 204 (no data), not a 4xx. Whether an out-of-range date yields a 4xx is unmeasured; if it does, that surfaces as a 500 too.
+- **The fixture.** The constraints and Step 4 called it "recorded". No raw spike payload was kept, so `departures.json` is hand-authored. A real response recorded on 2026-09-17 was later added as `departures-sof-2026-09-18-recorded.json`, and the hand-authored file was brought to its shape.
+- **The payload shape (live measurement, 2026-09-17, after the final review).** Four user-approved calls found that `departure.airport` is absent from every departures row (36 of 36). The origin therefore comes from the search criteria, since it is the queried airport. The original parser required that field and would have dropped every real row. "No departures" is a **204**, and so is an unknown airport. A date about 11 months ahead returned far fewer rows (8 against 36 for the next day). Each call costs exactly one request of a hard-capped 1,505 per period, which allows about 752 uncached route searches. Local times carry a UTC offset, not an IANA zone.
 
 ---
 
@@ -49,7 +50,7 @@ Four statements in this plan were wrong as first written. They are corrected in 
 
 - [ ] **Step 1: Options, optional by design**
 
-`AeroDataBox--ApiKey` exists in Key Vault but is wired into nothing today. Follow the **`GitHubOptions` precedent** (`GitHubOptions.cs:34`), not the `AeroApiOptions` one: the key is **optional**, the app still starts without it, and an unconfigured provider degrades rather than crashing.
+`AeroDataBox--ApiKey` exists in Key Vault but, when this plan was written, was wired into nothing. Follow the **`GitHubOptions` precedent** (`GitHubOptions.cs:34`), not the `AeroApiOptions` one: the key is **optional**, the app still starts without it, and an unconfigured provider degrades rather than crashing.
 
 ```csharp
 namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
@@ -62,9 +63,10 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
     {
         public const string RapidApiHost = "aerodatabox.p.rapidapi.com";
 
+        public const string ApiBaseUrl = $"https://{RapidApiHost}/";   // amended: a constant, not configurable
+
         public string? ApiKey { get; set; }
-        public string BaseUrl { get; set; } = $"https://{RapidApiHost}/";
-        public int TimeoutSeconds { get; set; } = 30;
+        [Range(1, 300)] public int TimeoutSeconds { get; set; } = 30;   // amended: validated on start
 
         public bool IsConfigured => !string.IsNullOrWhiteSpace(ApiKey);
     }
@@ -76,11 +78,11 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
 `GET /flights/airports/iata/{iata}/{fromLocal}/{toLocal}` with
 `withLeg=true&direction=Departure&withCancelled=false&withCargo=false&withPrivate=false&withCodeshared={IncludeCodeshares}`.
 
-Three things measured during the spike that the implementation must honour:
+Three things from the spike that the implementation must honour (the 12-hour limit in fact 2 is documented, not spike-measured):
 
 1. **`withCodeshared` maps directly onto `IncludeCodeshares`** — `true` adds `IsCodeshared` rows alongside the `IsOperator` ones (FRA, one hour: 42 rows → 158). Pass the flag through; do not filter client-side.
-2. **The window filters on *revised* time, not scheduled.** A flight scheduled 09:35 but revised to 10:01 is **absent** from a 09:00–10:00 window. So query the whole local day, then keep each row on its own **scheduled** local date. The endpoint rejects a window longer than 12 hours, so the day is two sequential windows, `T00:00`–`T11:59` and `T12:00`–`T23:59`, merged and deduped by flight number plus scheduled UTC. *(Amended; see Amendments above.)*
-3. **Rows carry both UTC and local times with the IANA zone inline**, so this provider needs **no timezone lookup** — none of `AeroApiAirportTimezoneLookup`'s machinery, and no `/airports/{id}` call.
+2. **The window filters on *revised* time, not scheduled.** A flight scheduled 09:35 but revised to 10:01 is **absent** from a 09:00–10:00 window. So query the whole local day, then keep each row on its own **scheduled** local date. The endpoint documents a 12-hour maximum window (quoted in #267; not measured), so the day is two sequential windows, `T00:00`–`T11:59` and `T12:00`–`T23:59`, merged and deduped by flight number plus scheduled UTC. *(Amended; see Amendments above.)*
+3. **Rows carry both UTC and local times, with the local time's UTC offset inline**, so this provider needs **no timezone lookup** — none of `AeroApiAirportTimezoneLookup`'s machinery, and no `/airports/{id}` call.
 
 Filter each row to the requested `ArrivalIata` client-side (AeroDataBox has no destination filter) and map to `FlightSearchResult`. Read the response's `departures` array; return an empty list when it is missing or not an array.
 
@@ -131,22 +133,23 @@ AeroApiFlightSearchCachingDecorator(
 Register the named client following the `"AeroApi"` pattern, with RapidAPI's two headers:
 
 ```csharp
-client.DefaultRequestHeaders.Add("X-RapidAPI-Key", options.ApiKey);
+if (options.IsConfigured)   // amended: never add the key header with a null value
+    client.DefaultRequestHeaders.Add("X-RapidAPI-Key", options.ApiKey);
 client.DefaultRequestHeaders.Add("X-RapidAPI-Host", AeroDataBoxOptions.RapidApiHost);
 ```
 
-**No throttle gate and no resilience pipeline** on this client — `AeroApiThrottleGate` exists to protect a metered tier's rate limit and is AeroAPI-specific. Say so in a comment.
+**No throttle gate and no resilience pipeline** on this client — `AeroApiThrottleGate` exists to protect a metered tier's rate limit and is AeroAPI-specific. Say so in a comment. *(Amended: automatic redirects are also disabled on this client, so the key header is never replayed to another host, and its options are validated on start.)*
 
 **Two consequences to state in comments, not discover later:**
 
-- **The cache key has no provider dimension** (`dep|arr|date|fn|cs`). That is safe *only because* the split is deterministic by criteria shape, so a given key always reaches the same provider. If anyone later routes the same shape to both, the key must gain one.
-- **A route search is no longer refused when the AeroAPI budget is exhausted**, because it no longer touches AeroAPI. That is an improvement, and it is a behaviour change — `AeroApiFlightSearchBudgetDecoratorTests` may assert the old behaviour; if a test there covers a route search, **stop and report** rather than editing it.
+- **The cache key has no provider dimension** (`dep|arr|date|fn|cs`). Routing depends on criteria shape **and** on whether the AeroDataBox key is configured. So after the key is added or removed, a cached route result from the other provider can be served until its TTL expires, and a rollback should flush the search-cache prefix. If anyone later routes the same shape to both providers at once, the key must gain a provider dimension. *(Amended: this originally said routing depended on shape alone.)*
+- **A route search is no longer refused when the AeroAPI budget is exhausted**, because it no longer touches AeroAPI. That is an improvement, and it is a behaviour change — `AeroApiFlightSearchBudgetDecoratorTests` may assert the old behaviour; if a test there covers a route search, **stop and report** rather than editing it. *(Amended: its tests do use route searches, but they construct the decorator directly rather than through the selector or DI, so routing cannot reach them. The chain-level change is pinned by new DI tests instead.)*
 
 - [ ] **Step 7: Document it**
 
 Add a CLAUDE.md paragraph covering: the split and why flight-number search stays on AeroAPI; that AeroDataBox needs no timezone lookup; the two ≤12h windows and the scheduled-date keeper (the server's window filters on revised time; rows are kept on scheduled local date); the error buckets; that the key is optional and its absence falls back to AeroAPI; and that the budget decorator deliberately wraps only the AeroAPI path.
 
-State only what this change makes true. **Do not write "every search…" or "all searches…"** — that class of sentence has been wrong four times in this repository's recent history.
+State only what this change makes true. **Do not write "every search…" or "all searches…"** — that class of sentence has repeatedly been wrong in this repository's recent history.
 
 - [ ] **Step 8: Full check and commit**
 
