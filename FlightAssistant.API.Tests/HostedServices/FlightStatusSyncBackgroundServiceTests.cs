@@ -114,12 +114,17 @@ public class FlightStatusSyncBackgroundServiceTests
         Assert.Empty(Sent());
     }
 
+    /// <summary>A stand-in sync result for the mediator stubs below. The loop discards what the
+    /// command returns — it counts attempts and failures — so only the type matters here.</summary>
+    private static readonly FlightSyncResult Synced =
+        new(FlightStatusSyncOutcome.StatusUpdated, null, null, null, null);
+
     [Fact]
     public async Task RunOnce_AFailingFlight_IsCounted_AndTheRestStillSync()
     {
         DueIds(1, 2, 3);
         _mediator.Send(Arg.Is<SyncFlightStatusCommand>(c => c.FlightId == 1), Arg.Any<CancellationToken>())
-            .Returns<bool>(_ => throw new InvalidOperationException("boom"));
+            .Returns<FlightSyncResult>(_ => throw new InvalidOperationException("boom"));
 
         var result = await Service().RunOnceAsync(CancellationToken.None);
 
@@ -186,7 +191,7 @@ public class FlightStatusSyncBackgroundServiceTests
         DueIds(1);
         _mediator
             .Send(Arg.Any<SyncFlightStatusCommand>(), Arg.Any<CancellationToken>())
-            .Returns(_ => { _clock.Advance(TimeSpan.FromSeconds(20)); return true; });
+            .Returns(_ => { _clock.Advance(TimeSpan.FromSeconds(20)); return Synced; });
 
         var logger = new CapturingLogger<FlightStatusSyncBackgroundService>();
         var service = Service(logger: logger);
@@ -224,7 +229,7 @@ public class FlightStatusSyncBackgroundServiceTests
                     advanced = true;
                     _clock.Advance(TimeSpan.FromMinutes(5));
                 }
-                return true;
+                return Synced;
             });
 
         var logger = new CapturingLogger<FlightStatusSyncBackgroundService>();

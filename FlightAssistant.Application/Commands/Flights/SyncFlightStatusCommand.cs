@@ -22,13 +22,59 @@ namespace FlightAssistant.Application.Commands.Flights
     }
 
     /// <summary>
+    /// What one flight's sync did (#349 §2.3). Before #443 all six of these came back as a single
+    /// bool, so a caller could not tell a flight nobody tracks from one the provider has no row for
+    /// yet from a call that ran and found nothing new — the admin panel needs them apart to say what
+    /// happened.
+    /// <para>
+    /// Named for the status sync rather than <c>FlightSyncOutcome</c>, which is taken by the API
+    /// layer's <c>FlightSyncHeartbeat</c> and means something different: that one describes a whole
+    /// background <em>cycle</em> (NeverRun/Running/Success/Failed), this one a single flight.
+    /// </para>
+    /// </summary>
+    public enum FlightStatusSyncOutcome
+    {
+        /// <summary>A live call recorded a new status event.</summary>
+        StatusUpdated,
+
+        /// <summary>A call ran and found nothing new, or a Stopped flight was skipped by the loop.</summary>
+        NoChange,
+
+        /// <summary>A live call returned no row for the service date.</summary>
+        NoDataYet,
+
+        /// <summary>The schedule check found changed scheduled times and saved them. Unreachable
+        /// until #349's step 2 (#444) implements the check.</summary>
+        ScheduleUpdated,
+
+        /// <summary>The schedule check didn't find the flight. Unreachable until #444, as above.</summary>
+        NotInSchedule,
+
+        /// <summary>No traveler tracks the flight, so no call was made and the plan was cleared.</summary>
+        NotTracked
+    }
+
+    /// <summary>
+    /// The outcome of a sync plus the plan it left behind, so a caller can report what happened and
+    /// when the next sync is due without re-reading the flight.
+    /// </summary>
+    /// <param name="ScheduleMissingSinceUtc">When the flight first went missing from the schedule;
+    /// always null until #444 implements the check that sets it.</param>
+    public record FlightSyncResult(
+        FlightStatusSyncOutcome Outcome,
+        DateTime? LastSyncedUtc,
+        DateTime? NextSyncDueUtc,
+        FlightSyncMode? SyncMode,
+        DateTime? ScheduleMissingSinceUtc);
+
+    /// <summary>
     /// Syncs one flight when its sync mode calls for it, then stores when it's next due (#356). Holds
     /// back calls as this month's AeroAPI spend nears the budget (#303).
     /// </summary>
     /// <param name="TravelerId">When set, enforces that the traveler is tracking the flight. Pass null for admin/background callers.</param>
-    public record SyncFlightStatusCommand(Guid? TravelerId, int FlightId, SyncTrigger Trigger) : IRequest<bool>; // true if a new event was recorded
+    public record SyncFlightStatusCommand(Guid? TravelerId, int FlightId, SyncTrigger Trigger) : IRequest<FlightSyncResult>;
 
-    public sealed class SyncFlightStatusCommandHandler : IRequestHandler<SyncFlightStatusCommand, bool>
+    public sealed class SyncFlightStatusCommandHandler : IRequestHandler<SyncFlightStatusCommand, FlightSyncResult>
     {
         // Set just before a traveler's sync calls the provider; see the cooldown guard in Handle.
         private const string TravelerAttemptKeyPrefix = "flight-sync:traveler-attempt:";
@@ -65,7 +111,7 @@ namespace FlightAssistant.Application.Commands.Flights
             _logger = logger;
         }
 
-        public async Task<bool> Handle(SyncFlightStatusCommand cmd, CancellationToken ct)
+        public async Task<FlightSyncResult> Handle(SyncFlightStatusCommand cmd, CancellationToken ct)
         {
             if (cmd.TravelerId is { } travelerId)
             {
@@ -82,7 +128,7 @@ namespace FlightAssistant.Application.Commands.Flights
             // The loop lists due flights, then syncs them 12 s apart; a manual sync in between may have
             // moved this one's next sync on, and the loop's call would be wasted.
             if (cmd.Trigger == SyncTrigger.Scheduled && flight.SyncMode is not null && flight.NextSyncDueUtc > now)
-                return false;
+                return Result(flight, FlightStatusSyncOutcome.NoChange);
 
             // A traveler pulling to refresh gets what the last sync stored: every call is billed, and
             // the loop already syncs a flight near departure every few minutes (#369). It reads the
@@ -92,7 +138,7 @@ namespace FlightAssistant.Application.Commands.Flights
             var travelerCooldown = cmd.Trigger == SyncTrigger.Traveler && _syncOptions.ManualSyncCooldown > TimeSpan.Zero;
             if (travelerCooldown &&
                 (flight.LastSyncedUtc > now - _syncOptions.ManualSyncCooldown || await TravelerAttemptMarkedAsync(flight.Id, ct)))
-                return false;
+                return Result(flight, FlightStatusSyncOutcome.NoChange);
 
             var options = FlightSyncPlanOptions.From(_syncOptions, _windowOptions);
             var isTracked = cmd.TravelerId is not null || await _flights.IsFlightTrackedAsync(flight.Id, ct);
@@ -103,20 +149,20 @@ namespace FlightAssistant.Application.Commands.Flights
                 case null:
                     flight.ApplySyncPlan(null, null);
                     await _flights.SaveChangesAsync(ct);
-                    return false;
+                    return Result(flight, FlightStatusSyncOutcome.NotTracked);
 
                 // The loop never calls for a finished flight (#345); a person asking still gets a call.
                 case FlightSyncMode.Stopped when cmd.Trigger == SyncTrigger.Scheduled:
                     flight.ApplySyncPlan(FlightSyncMode.Stopped, null);
                     await _flights.SaveChangesAsync(ct);
-                    return false;
+                    return Result(flight, FlightStatusSyncOutcome.NoChange);
 
                 // AeroAPI can't answer before Live starts (#343). Step 2 of #349 adds a daily
                 // /schedules check here; until then there is nothing to call.
                 case FlightSyncMode.Schedule:
                     flight.ApplySyncPlan(FlightSyncMode.Schedule, FlightSyncPlanner.LiveStartsAtUtc(flight, options));
                     await _flights.SaveChangesAsync(ct);
-                    return false;
+                    return Result(flight, FlightStatusSyncOutcome.NoChange);
             }
 
             // Before the budget read, which can wait on the AeroAPI throttle, so a second traveler request
@@ -151,15 +197,15 @@ namespace FlightAssistant.Application.Commands.Flights
 
                 flight.ApplySyncPlan(plan.Mode, plan.NextSyncDueUtc);
                 await _flights.SaveChangesAsync(ct);
-                return false;
+                return Result(flight, FlightStatusSyncOutcome.NoChange);
             }
 
             var kind = cmd.Trigger == SyncTrigger.Scheduled ? StatusCallKind.ScheduledPoll : StatusCallKind.Interactive;
 
-            bool recorded;
+            FlightStatusSyncOutcome outcome;
             try
             {
-                recorded = await ApplyLiveStatusAsync(flight, now, kind, ct);
+                outcome = await ApplyLiveStatusAsync(flight, now, kind, ct);
             }
             // A failed call can still be billed, so the loop waits one interval of the flight's mode
             // rather than retrying it every loop. A person's sync saves nothing.
@@ -177,8 +223,13 @@ namespace FlightAssistant.Application.Commands.Flights
             flight.ApplySyncPlan(next.Mode, next.NextSyncDueUtc);
 
             await _flights.SaveChangesAsync(ct);
-            return recorded;
+            return Result(flight, outcome);
         }
+
+        /// <summary>The outcome plus the plan the handler just stored, read from the flight itself so
+        /// the two can never disagree.</summary>
+        private static FlightSyncResult Result(Flight flight, FlightStatusSyncOutcome outcome) =>
+            new(outcome, flight.LastSyncedUtc, flight.NextSyncDueUtc, flight.SyncMode, flight.ScheduleMissingSinceUtc);
 
         /// <summary>
         /// Stores the pre-call plan (now + the mode's interval, capped) without marking the flight
@@ -249,12 +300,16 @@ namespace FlightAssistant.Application.Commands.Flights
         /// decides the push (#351, #352). Returns whether an event was recorded; a response with no matching
         /// row records nothing.
         /// </summary>
-        private async Task<bool> ApplyLiveStatusAsync(Flight flight, DateTime now, StatusCallKind kind, CancellationToken ct)
+        private async Task<FlightStatusSyncOutcome> ApplyLiveStatusAsync(Flight flight, DateTime now, StatusCallKind kind, CancellationToken ct)
         {
             var result = await _provider.GetStatusAsync(flight.FlightNumber, flight.ServiceDateUtc, kind, ct);
-            if (result is null) return false;
+            // The call ran and the provider has no row for this service date yet — a different thing
+            // from a call that ran and found nothing new, which the applier reports below.
+            if (result is null) return FlightStatusSyncOutcome.NoDataYet;
 
-            return await _applier.ApplyAsync(flight, result, _provider.ProviderName, now, ct);
+            return await _applier.ApplyAsync(flight, result, _provider.ProviderName, now, ct)
+                ? FlightStatusSyncOutcome.StatusUpdated
+                : FlightStatusSyncOutcome.NoChange;
         }
     }
 

@@ -20,7 +20,9 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
                 f.ServiceDateUtc, f.ScheduledDepartureUtc, f.ScheduledArrivalUtc,
                 f.EstimatedDepartureUtc, f.EstimatedArrivalUtc,
                 f.ActualDepartureUtc, f.ActualArrivalUtc,
-                f.EquipmentAircraftIcao
+                f.EquipmentAircraftIcao,
+                f.LastSyncedUtc, f.NextSyncDueUtc, f.SyncMode?.ToString(),
+                f.ScheduleMissingSinceUtc, f.CancelledAtUtc
             );
         }
     }

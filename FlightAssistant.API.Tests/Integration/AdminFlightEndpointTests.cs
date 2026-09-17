@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Contracts.Responses.Flights;
@@ -175,10 +176,15 @@ public class AdminFlightEndpointTests(FlightAssistantWebApplicationFactory facto
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
-    // ── Sync (#356): response shape unchanged; the real host resolves the new handler dependencies ──
+    // ── Sync (#356): the real host resolves the new handler dependencies ──
 
+    /// <summary>
+    /// The body this route answers. Until #443 it was a single <c>updated</c> boolean, asserted here
+    /// as the *only* member; it is now <see cref="AdminFlightSyncResultDto"/>, and <c>updated</c> is
+    /// gone rather than kept alongside — the traveler route is the one that still speaks that shape.
+    /// </summary>
     [Fact]
-    public async Task PostSync_Admin_UntrackedFlight_Returns200_WithOnlyUpdatedFalse()
+    public async Task PostSync_Admin_UntrackedFlight_Returns200_WithTheSyncResult()
     {
         // Untracked, so the handler plans "none" and makes no provider call.
         var flight = await SeedFlightAsync($"TK{Marker()}");
@@ -187,8 +193,11 @@ public class AdminFlightEndpointTests(FlightAssistantWebApplicationFactory facto
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("updated", Assert.Single(body.EnumerateObject()).Name);
-        Assert.Equal(JsonValueKind.False, body.GetProperty("updated").ValueKind);
+        Assert.False(body.TryGetProperty("updated", out _));
+        Assert.Equal("NotTracked", body.GetProperty("outcome").GetString());
+        // No plan survives an untracked flight, so the route reports nulls rather than omitting them.
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("syncMode").ValueKind);
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("nextSyncDueUtc").ValueKind);
     }
 
     [Fact]
@@ -207,5 +216,103 @@ public class AdminFlightEndpointTests(FlightAssistantWebApplicationFactory facto
         // and SyncFlightStatusCommandValidator requires FlightId > 0.
         var response = await factory.CreateAdminClient().PostAsync("admin/flights/0/sync", content: null);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    // ══════════════ The sync contract (#443) ══════════════
+
+    /// <summary>
+    /// The route used to answer an untyped <c>{ updated }</c>, which the published spec declared as
+    /// no body at all — so every generated client saw a void 200. It now answers
+    /// <see cref="AdminFlightSyncResultDto"/>. A seeded flight nobody tracks reports
+    /// <c>NotTracked</c> without the handler making any provider call, which is exactly one of the
+    /// situations the old boolean could not express.
+    /// </summary>
+    [Fact]
+    public async Task PostSync_Admin_ReturnsTheOutcome_NotABareBoolean()
+    {
+        var flight = await SeedFlightAsync($"TK{Marker()}");
+
+        var response = await factory.CreateAdminClient().PostAsync($"admin/flights/{flight.Id}/sync", content: null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var dto = await response.Content.ReadFromJsonAsync<AdminFlightSyncResultDto>();
+        Assert.NotNull(dto);
+        Assert.Equal("NotTracked", dto!.Outcome);
+    }
+
+    /// <summary>The outcome travels as its name, not its underlying number, so adding an outcome
+    /// later cannot silently renumber the ones a client already reads.</summary>
+    [Fact]
+    public async Task PostSync_Admin_SendsTheOutcomeAsAName()
+    {
+        var flight = await SeedFlightAsync($"TK{Marker()}");
+
+        var response = await factory.CreateAdminClient().PostAsync($"admin/flights/{flight.Id}/sync", content: null);
+
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var outcome = json.RootElement.GetProperty("outcome");
+        Assert.Equal(JsonValueKind.String, outcome.ValueKind);
+        // A JSON string is not enough on its own: serialising the underlying number would still
+        // produce one ("5"). What must hold is that the text is the member's name.
+        Assert.False(int.TryParse(outcome.GetString(), out _));
+        Assert.Contains(outcome.GetString(), Enum.GetNames<FlightStatusSyncOutcome>());
+    }
+
+    /// <summary>The five sync columns exist on the entity but were never projected, so the panel
+    /// could only see them through the raw data browser.</summary>
+    [Fact]
+    public async Task GetDetail_Admin_ReturnsTheSyncFields()
+    {
+        var flight = await SeedFlightAsync($"TK{Marker()}");
+        var syncedAt = new DateTime(2026, 9, 17, 9, 0, 0, DateTimeKind.Utc);
+        await WithFlightAsync(flight.Id, f =>
+        {
+            f.MarkSynced(syncedAt);
+            f.ApplySyncPlan(Domain.Flights.Enums.FlightSyncMode.Live, syncedAt.AddMinutes(30));
+        });
+
+        var response = await factory.CreateAdminClient().GetAsync($"admin/flights/{flight.Id}/detail");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var dto = await response.Content.ReadFromJsonAsync<AdminFlightDetailDto>();
+        Assert.NotNull(dto);
+        Assert.Equal(syncedAt, dto!.LastSyncedUtc);
+        Assert.Equal(syncedAt.AddMinutes(30), dto.NextSyncDueUtc);
+        Assert.Equal("Live", dto.SyncMode);
+        Assert.Null(dto.ScheduleMissingSinceUtc);
+        Assert.Null(dto.CancelledAtUtc);
+    }
+
+    /// <summary>The list row carries them too, so the grid can colour a row by how actively it
+    /// syncs without fetching every flight's detail.</summary>
+    [Fact]
+    public async Task GetById_Admin_ReturnsTheSyncFields()
+    {
+        var flight = await SeedFlightAsync($"TK{Marker()}");
+        var syncedAt = new DateTime(2026, 9, 17, 9, 0, 0, DateTimeKind.Utc);
+        await WithFlightAsync(flight.Id, f =>
+        {
+            f.MarkSynced(syncedAt);
+            f.ApplySyncPlan(Domain.Flights.Enums.FlightSyncMode.Fast, syncedAt.AddMinutes(3));
+        });
+
+        var response = await factory.CreateAdminClient().GetAsync($"admin/flights/{flight.Id}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var dto = await response.Content.ReadFromJsonAsync<AdminFlightDto>();
+        Assert.NotNull(dto);
+        Assert.Equal(syncedAt, dto!.LastSyncedUtc);
+        Assert.Equal("Fast", dto.SyncMode);
+    }
+
+    /// <summary>Loads the tracked entity and applies a change, so a test can put a flight into a
+    /// sync state the seeding factory method can't express.</summary>
+    private async Task WithFlightAsync(int flightId, Action<Flight> change)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        var flight = await db.Flights.FindAsync(flightId);
+        change(flight!);
+        await db.SaveChangesAsync();
     }
 }
