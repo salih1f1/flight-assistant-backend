@@ -507,19 +507,32 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         var cdg = CharlesDeGaulle();
         await SeedAsync(lhr, cdg);
 
-        // Four aeroapi requests, requested well before the two free-source ones below: plain
-        // requested_utc order alone (the admin-triggered variant) already puts them first, and the
-        // flight-triggered variant is ahead regardless of requested_utc too -- the top-tier predicate
-        // is (trigger = flight OR requested_utc &lt;= promotedAtOrBeforeUtc) DESC (#419), and its
-        // flight-triggered branch holds unconditionally on its own, promotion or not -- which is why
-        // #428's proof names a flight-triggered backlog specifically.
+        // Admin-triggered: four aeroapi requests old enough to be promoted (#419) rank ahead of the
+        // two free-source requests below by requested_utc alone -- the scenario this variant is named
+        // for, since #428's fix does not depend on the flight trigger's own priority in the claim's
+        // ORDER BY. Flight-triggered: every request below is kept inside the default 10-minute
+        // ClaimPromotionAge, so none of them is promoted -- what ranks the four aeroapi requests ahead
+        // here is the top-tier predicate's *trigger* branch (trigger = flight OR requested_utc <=
+        // promotedAtOrBeforeUtc) alone. The free-source requests are deliberately the chronologically
+        // *older* pair (still inside the window, so still unpromoted): age alone would put them first,
+        // so aeroapi landing ahead of them here can only be the trigger branch, not a coincidence of
+        // timestamps. If these requests were old enough to be promoted too, as the admin variant's
+        // are, both branches would hold for all six requests and this variant would no longer be
+        // distinguishable from the admin one (#419 broke this test's original timestamps the same way).
+        var isFlightVariant = backlogTrigger == VerificationTrigger.Flight;
+
         for (var i = 1; i <= 4; i++)
             await EnqueueAsync(
                 VerificationEntityType.Airline, i.ToString(CultureInfo.InvariantCulture), "aeroapi",
-                requestedUtc: T0.AddHours(-10 + i), trigger: backlogTrigger);
+                requestedUtc: isFlightVariant ? T0.AddMinutes(-5 + i) : T0.AddHours(-10 + i),
+                trigger: backlogTrigger);
 
-        var lhrRequest = await EnqueueAsync(VerificationEntityType.Airport, Key(lhr.Id), "ourairports", requestedUtc: T0.AddHours(-1));
-        var cdgRequest = await EnqueueAsync(VerificationEntityType.Airport, Key(cdg.Id), "ourairports", requestedUtc: T0.AddMinutes(-30));
+        var lhrRequest = await EnqueueAsync(
+            VerificationEntityType.Airport, Key(lhr.Id), "ourairports",
+            requestedUtc: isFlightVariant ? T0.AddMinutes(-8) : T0.AddHours(-1));
+        var cdgRequest = await EnqueueAsync(
+            VerificationEntityType.Airport, Key(cdg.Id), "ourairports",
+            requestedUtc: isFlightVariant ? T0.AddMinutes(-7) : T0.AddMinutes(-30));
 
         // The aeroapi lookup is never reached (paused before fetch); NotFound is just a harmless stub.
         var aeroApi = new FakeSource("aeroapi", VerificationEntityType.Airline, _ => VerificationSourceFetchResult.NotFound);
