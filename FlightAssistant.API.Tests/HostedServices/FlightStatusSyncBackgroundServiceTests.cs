@@ -310,6 +310,9 @@ public class FlightStatusSyncBackgroundServiceTests
         var handler = new SyncFlightStatusCommandHandler(_flights, provider,
             new FlightStatusApplier(_flights, NullLogger<FlightStatusApplier>.Instance), budget,
             Substitute.For<ICacheService>(), options, window, _clock,
+            // The loop's flights are inside the live window here, so the schedule check never runs;
+            // an unstubbed search returning no rows is enough to construct the handler.
+            Substitute.For<IFlightSearchProvider>(), Substitute.For<IRefDataRepository>(),
             NullLogger<SyncFlightStatusCommandHandler>.Instance);
         _mediator.Send(Arg.Any<SyncFlightStatusCommand>(), Arg.Any<CancellationToken>())
             .Returns(ci => handler.Handle(ci.ArgAt<SyncFlightStatusCommand>(0), CancellationToken.None).GetAwaiter().GetResult());

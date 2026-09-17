@@ -378,6 +378,75 @@ namespace FlightAssistant.Domain.Tests.Flights
             Assert.True(evt.ShouldNotify);
             Assert.Equal(20, evt.DelayMinutes);
         }
+        // ── The daily schedule check (#444) ──
+
+        [Fact]
+        public void ApplyScheduleUpdate_RetimedFlight_SavesTheNewTimes_AndReportsTheChange()
+        {
+            var flight = NewFlight();
+
+            var changed = flight.ApplyScheduleUpdate(Now.AddHours(3), Now.AddHours(11), Now.AddMinutes(5));
+
+            Assert.True(changed);
+            Assert.Equal(Now.AddHours(3), flight.ScheduledDepartureUtc);
+            Assert.Equal(Now.AddHours(11), flight.ScheduledArrivalUtc);
+            Assert.Equal(Now.AddMinutes(5), flight.UpdatedUtc);
+            // A schedule check is not a status: nothing here should push.
+            Assert.Empty(flight.DomainEvents);
+        }
+
+        [Fact]
+        public void ApplyScheduleUpdate_UnchangedTimes_ReportsNoChange_AndLeavesUpdatedUtc()
+        {
+            var flight = NewFlight();
+            var before = flight.UpdatedUtc;
+
+            var changed = flight.ApplyScheduleUpdate(flight.ScheduledDepartureUtc, flight.ScheduledArrivalUtc, Now.AddMinutes(5));
+
+            Assert.False(changed);
+            Assert.Equal(before, flight.UpdatedUtc);
+        }
+
+        // Found is found: the flag says "the airline stopped listing this flight", and it stops being
+        // true the moment the flight is listed again, whether or not its times moved.
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void ApplyScheduleUpdate_ClearsTheMissingFlag_WhetherOrNotTheTimesMoved(bool retimed)
+        {
+            var flight = NewFlight();
+            flight.MarkMissingFromSchedule(Now);
+            Assert.NotNull(flight.ScheduleMissingSinceUtc);
+
+            var departure = retimed ? flight.ScheduledDepartureUtc.AddHours(2) : flight.ScheduledDepartureUtc;
+            flight.ApplyScheduleUpdate(departure, flight.ScheduledArrivalUtc, Now.AddMinutes(5));
+
+            Assert.Null(flight.ScheduleMissingSinceUtc);
+        }
+
+        [Fact]
+        public void MarkMissingFromSchedule_RemembersWhenItFirstWentMissing()
+        {
+            var flight = NewFlight();
+
+            flight.MarkMissingFromSchedule(Now);
+            flight.MarkMissingFromSchedule(Now.AddDays(1));
+
+            // The first sighting, not the latest: "missing since" is how long it has been gone.
+            Assert.Equal(Now, flight.ScheduleMissingSinceUtc);
+        }
+
+        [Fact]
+        public void MarkMissingFromSchedule_IsNotAChangeToTheFlight()
+        {
+            var flight = NewFlight();
+            var before = flight.UpdatedUtc;
+
+            flight.MarkMissingFromSchedule(Now.AddMinutes(5));
+
+            Assert.Equal(before, flight.UpdatedUtc);
+            Assert.Empty(flight.DomainEvents);
+        }
     }
 
     public class TravelerFlightTests
@@ -482,5 +551,6 @@ namespace FlightAssistant.Domain.Tests.Flights
             Assert.Equal(FlightStatusEvent.ComputeDetailChangeHash(1, 2, at, "AeroAPI", "ext-1", 10, "B7", "T5", "7"), evt.DedupHash);
             Assert.Equal("7", evt.BaggageClaim);
         }
+
     }
 }

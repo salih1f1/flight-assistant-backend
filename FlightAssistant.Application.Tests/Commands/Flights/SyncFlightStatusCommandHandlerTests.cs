@@ -23,6 +23,8 @@ public class SyncFlightStatusCommandHandlerTests
     private readonly IFlightRepository _flights = Substitute.For<IFlightRepository>();
     private readonly IFlightStatusProvider _provider = Substitute.For<IFlightStatusProvider>();
     private readonly IProviderBudgetGuard _budget = Substitute.For<IProviderBudgetGuard>();
+    private readonly IFlightSearchProvider _search = Substitute.For<IFlightSearchProvider>();
+    private readonly IRefDataRepository _refData = Substitute.For<IRefDataRepository>();
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(Now));
     private readonly SyncFlightStatusCommandHandler _handler;
 
@@ -128,6 +130,7 @@ public class SyncFlightStatusCommandHandlerTests
         new(_flights, _provider,
             new FlightStatusApplier(_flights, applierLogger ?? NullLogger<FlightStatusApplier>.Instance),
             _budget, cache ?? _cache, syncOptions ?? new SyncOptions(), new WindowOptions(), _clock,
+            _search, _refData,
             logger ?? NullLogger<SyncFlightStatusCommandHandler>.Instance);
 
     public SyncFlightStatusCommandHandlerTests()
@@ -140,6 +143,8 @@ public class SyncFlightStatusCommandHandlerTests
         _flights.GetFlightStatusIdByCodeAsync("SCH", Arg.Any<CancellationToken>()).Returns(1);
         _flights.FlightStatusEventExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(false);
         _budget.GetStateAsync(Arg.Any<CancellationToken>()).Returns(ProviderBudgetState.Normal);
+        // The flight fixtures use departure airport id 10; the schedule check matches on its IATA.
+        _refData.GetAirportIataByIdAsync(10, Arg.Any<CancellationToken>()).Returns("LHR");
     }
 
     private Flight Given(Flight flight)
@@ -540,7 +545,7 @@ public class SyncFlightStatusCommandHandlerTests
     [Theory]
     [InlineData(SyncTrigger.Scheduled)]
     [InlineData(SyncTrigger.Admin)]
-    public async Task Schedule_MakesNoCall_NextSyncAtTheStartOfLive(SyncTrigger trigger)
+    public async Task Schedule_MakesNoLiveStatusCall_NextSyncAtTheStartOfLive(SyncTrigger trigger)
     {
         var departure = Now.AddDays(5);
         var flight = Given(Departing(departure));
@@ -550,7 +555,10 @@ public class SyncFlightStatusCommandHandlerTests
         await _provider.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
         Assert.Equal(FlightSyncMode.Schedule, flight.SyncMode);
         Assert.Equal(departure.AddDays(-1), flight.NextSyncDueUtc); // StatusWindowFutureDays = 1
-        Assert.Null(flight.LastSyncedUtc);
+        // Before #444 this asserted null: Schedule mode called nothing at all. The schedule check is
+        // a check, so the flight is now marked synced by it, exactly like a live call that found
+        // nothing. Which check ran is the mode's business, not LastSyncedUtc's.
+        Assert.Equal(Now, flight.LastSyncedUtc);
     }
 
     // ── Failures ──
@@ -1079,6 +1087,122 @@ public class SyncFlightStatusCommandHandlerTests
         Assert.Equal(Now.AddMinutes(3), flight.NextSyncDueUtc);
     }
 
+    // ── The daily schedule check (#444, spec §2.4) ──
+    //
+    // A flight further out than the live-status window is checked once a day against the airline's
+    // published schedule. Before this the Schedule branch stored its plan and called nothing at all.
+
+    /// <summary>A flight far enough out to be in Schedule mode, with its search row.</summary>
+    private Flight GivenScheduleMode(DateTime? departureUtc = null)
+    {
+        var departure = departureUtc ?? Now.AddDays(5);
+        return Given(Departing(departure));
+    }
+
+    private void SearchReturns(params FlightSearchResult[] results) =>
+        _search.SearchAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>()).Returns(results);
+
+    private static FlightSearchResult Row(Flight flight, DateTime departureUtc, DateTime arrivalUtc, string departureIata = "LHR") =>
+        new(flight.FlightNumber, flight.ServiceDateUtc, departureIata, "JFK", departureUtc, arrivalUtc);
+
+    [Fact]
+    public async Task Schedule_TimesChanged_SavesThemAndReportsScheduleUpdated()
+    {
+        var flight = GivenScheduleMode();
+        var retimed = flight.ScheduledDepartureUtc.AddHours(2);
+        SearchReturns(Row(flight, retimed, flight.ScheduledArrivalUtc.AddHours(2)));
+
+        var result = await Sync();
+
+        Assert.Equal(FlightStatusSyncOutcome.ScheduleUpdated, result.Outcome);
+        Assert.Equal(retimed, flight.ScheduledDepartureUtc);
+        await _flights.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Schedule_TimesUnchanged_ReportsNoChange()
+    {
+        var flight = GivenScheduleMode();
+        SearchReturns(Row(flight, flight.ScheduledDepartureUtc, flight.ScheduledArrivalUtc));
+
+        var result = await Sync();
+
+        Assert.Equal(FlightStatusSyncOutcome.NoChange, result.Outcome);
+    }
+
+    [Fact]
+    public async Task Schedule_FlightNotInTheResults_ReportsNotInSchedule_AndRemembersSince()
+    {
+        var flight = GivenScheduleMode();
+        SearchReturns();
+
+        var result = await Sync();
+
+        Assert.Equal(FlightStatusSyncOutcome.NotInSchedule, result.Outcome);
+        Assert.Equal(Now, flight.ScheduleMissingSinceUtc);
+        // Still tracked, still checked daily: missing from one day's schedule is not untracking.
+        Assert.Equal(FlightSyncMode.Schedule, flight.SyncMode);
+    }
+
+    // AeroAPI answers a flight-number search with every operation of that number, including the
+    // same number flying a different route. Matching on the number alone would silently adopt
+    // another airport's times.
+    [Fact]
+    public async Task Schedule_ARowForADifferentDepartureAirport_IsNotAMatch()
+    {
+        var flight = GivenScheduleMode();
+        SearchReturns(Row(flight, flight.ScheduledDepartureUtc.AddHours(2), flight.ScheduledArrivalUtc, departureIata: "CDG"));
+
+        var result = await Sync();
+
+        Assert.Equal(FlightStatusSyncOutcome.NotInSchedule, result.Outcome);
+        Assert.Equal(flight.ScheduledDepartureUtc, flight.ScheduledDepartureUtc);
+    }
+
+    [Fact]
+    public async Task Schedule_FoundAgainAfterGoingMissing_ClearsTheFlag()
+    {
+        var flight = GivenScheduleMode();
+        SearchReturns();
+        await Sync();
+        Assert.NotNull(flight.ScheduleMissingSinceUtc);
+
+        // The first check planned the next one for when Live starts, so a scheduled sync would be
+        // skipped as not due; an admin asking again is how a re-check happens before then.
+        SearchReturns(Row(flight, flight.ScheduledDepartureUtc, flight.ScheduledArrivalUtc));
+        await Sync(SyncTrigger.Admin);
+
+        Assert.Null(flight.ScheduleMissingSinceUtc);
+    }
+
+    [Fact]
+    public async Task Schedule_SearchesByFlightNumberAndServiceDate_WithoutARoute()
+    {
+        var flight = GivenScheduleMode();
+        SearchReturns(Row(flight, flight.ScheduledDepartureUtc, flight.ScheduledArrivalUtc));
+
+        await Sync();
+
+        await _search.Received(1).SearchAsync(
+            Arg.Is<FlightSearchCriteria>(c =>
+                c.FlightNumber == flight.FlightNumber && c.Date == flight.ServiceDateUtc
+                && c.DepartureIata == null && c.ArrivalIata == null),
+            Arg.Any<CancellationToken>());
+    }
+
+    // The status provider is the paid live-status call; a Schedule-mode flight is outside its window.
+    [Fact]
+    public async Task Schedule_MakesNoLiveStatusCall()
+    {
+        var flight = GivenScheduleMode();
+        SearchReturns(Row(flight, flight.ScheduledDepartureUtc, flight.ScheduledArrivalUtc));
+
+        await Sync();
+
+        await _provider.DidNotReceive().GetStatusAsync(
+            Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<StatusCallKind>(), Arg.Any<CancellationToken>());
+    }
+
     // ── Outcomes (#443) ──
     //
     // Six distinct situations used to come back as the single bool `false`, so a caller could not
@@ -1159,16 +1283,4 @@ public class SyncFlightStatusCommandHandlerTests
         Assert.Equal(flight.ScheduleMissingSinceUtc, result.ScheduleMissingSinceUtc);
     }
 
-    // Until #349's step 2 (#444) implements the daily /schedules check there is nothing to call, so
-    // the cycle stores the plan and reports NoChange rather than ScheduleUpdated or NotInSchedule.
-    [Fact]
-    public async Task ScheduleMode_WithNoCheckImplementedYet_ReportsNoChange()
-    {
-        Given(Departing(Now.AddDays(5)));
-
-        var result = await Sync();
-
-        Assert.Equal(FlightStatusSyncOutcome.NoChange, result.Outcome);
-        Assert.Equal(FlightSyncMode.Schedule, result.SyncMode);
-    }
 }
