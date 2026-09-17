@@ -19,7 +19,13 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
         DateTime? EstimatedArrivalUtc,
         DateTime? ActualDepartureUtc,
         DateTime? ActualArrivalUtc,
-        string? EquipmentAircraftIcao
+        string? EquipmentAircraftIcao,
+        // The flight's sync plan (#443); SyncMode is the FlightSyncMode name, null when untracked.
+        DateTime? LastSyncedUtc,
+        DateTime? NextSyncDueUtc,
+        string? SyncMode,
+        DateTime? ScheduleMissingSinceUtc,
+        DateTime? CancelledAtUtc
     );
 
     public record GetAllFlightsAdminQuery(PagedRequest Paging) : IRequest<PagedResult<AdminFlightResult>>;
@@ -45,7 +51,9 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
                 f.ServiceDateUtc, f.ScheduledDepartureUtc, f.ScheduledArrivalUtc,
                 f.EstimatedDepartureUtc, f.EstimatedArrivalUtc,
                 f.ActualDepartureUtc, f.ActualArrivalUtc,
-                f.EquipmentAircraftIcao
+                f.EquipmentAircraftIcao,
+                f.LastSyncedUtc, f.NextSyncDueUtc, f.SyncMode?.ToString(),
+                f.ScheduleMissingSinceUtc, f.CancelledAtUtc
             )).ToList();
             return new PagedResult<AdminFlightResult>(items, total, request.Paging.Page, request.Paging.PageSize);
         }

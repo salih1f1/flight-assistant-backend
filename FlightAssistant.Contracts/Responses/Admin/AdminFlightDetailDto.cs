@@ -35,5 +35,15 @@ namespace FlightAssistant.Contracts.Responses.Admin
         string? EquipmentAircraftIcao,
         AdminFlightStatusEventDto? CurrentStatus,
         IReadOnlyList<AdminFlightStatusEventDto> StatusHistory,
-        bool StatusHistoryTruncated);
+        bool StatusHistoryTruncated,
+        // The flight's sync plan (#349 step 3, #443). These five live on the entity and were
+        // previously visible only through the raw data browser, so no admin surface could say how
+        // actively a flight is polled or when it is next due. SyncMode is the FlightSyncMode name
+        // (Fast, Live, Schedule, Stopped), null when no traveler tracks the flight;
+        // ScheduleMissingSinceUtc stays null until #444 implements the check that sets it.
+        DateTime? LastSyncedUtc,
+        DateTime? NextSyncDueUtc,
+        string? SyncMode,
+        DateTime? ScheduleMissingSinceUtc,
+        DateTime? CancelledAtUtc);
 }

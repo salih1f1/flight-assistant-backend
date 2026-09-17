@@ -50,7 +50,13 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
         string? EquipmentAircraftIcao,
         AdminFlightStatusEventResult? CurrentStatus,
         IReadOnlyList<AdminFlightStatusEventResult> StatusHistory,
-        bool StatusHistoryTruncated);
+        bool StatusHistoryTruncated,
+        // The flight's sync plan (#443); SyncMode is the FlightSyncMode name, null when untracked.
+        DateTime? LastSyncedUtc,
+        DateTime? NextSyncDueUtc,
+        string? SyncMode,
+        DateTime? ScheduleMissingSinceUtc,
+        DateTime? CancelledAtUtc);
 
     public sealed record GetAdminFlightDetailQuery(int Id) : IRequest<AdminFlightDetailResult?>;
 
@@ -110,7 +116,12 @@ namespace FlightAssistant.Application.Queries.Admin.Flights
                 flight.EquipmentAircraftIcao,
                 history.Count > 0 ? history[0] : null,
                 history,
-                truncated);
+                truncated,
+                flight.LastSyncedUtc,
+                flight.NextSyncDueUtc,
+                flight.SyncMode?.ToString(),
+                flight.ScheduleMissingSinceUtc,
+                flight.CancelledAtUtc);
         }
 
         private static AdminFlightStatusEventResult ToResult(FlightStatusEvent e) => new(

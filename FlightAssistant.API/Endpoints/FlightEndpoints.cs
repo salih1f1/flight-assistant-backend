@@ -204,7 +204,9 @@ namespace FlightAssistant.API.Endpoints
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
-                var updated = await mediator.Send(new SyncFlightStatusCommand(travelerId, flightId, SyncTrigger.Traveler), ct);
+                var result = await mediator.Send(new SyncFlightStatusCommand(travelerId, flightId, SyncTrigger.Traveler), ct);
+                // The traveler contract is unchanged (#443): the richer outcome is the admin route's.
+                var updated = result.Outcome is FlightStatusSyncOutcome.StatusUpdated or FlightStatusSyncOutcome.ScheduleUpdated;
                 return Results.Ok(new { updated });
             })
             .WithName("SyncFlightStatus")
