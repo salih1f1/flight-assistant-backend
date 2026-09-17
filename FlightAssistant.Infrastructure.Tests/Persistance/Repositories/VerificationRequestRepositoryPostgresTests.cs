@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using FlightAssistant.Application.Administration;
+using FlightAssistant.Application.Commands.Admin.Verification;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Application.Verification;
@@ -9,6 +10,7 @@ using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Verification.Entities;
 using FlightAssistant.Domain.Verification.Enums;
+using FlightAssistant.Infrastructure.ExternalServices.Verification;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Configurations.Verification;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
@@ -17,6 +19,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Time.Testing;
 using Npgsql;
+using NSubstitute;
 
 namespace FlightAssistant.Infrastructure.Tests.Persistance.Repositories;
 
@@ -952,6 +955,88 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         Assert.Equal(baselineCommands.Count, zeroCooldownCommands.Count);
     }
 
+    // ── Real handlers over the real queue (#423) ─────────────────────────────
+
+    /// <summary>
+    /// #418 added the cooldown above, gated on <c>trigger == VerificationTrigger.Flight</c>. That
+    /// gate is covered at two layers today -- this file proves the repository directly, and
+    /// <c>Application.Tests</c> proves the admin handlers against <c>CooldownGatedFakeQueue</c>, a
+    /// fake that only mirrors the real gate, kept in sync with it by a code comment -- but no single
+    /// test spans both. This one does: the real <see cref="RetryVerificationRequestCommandHandler"/>
+    /// against the real <see cref="VerificationRequestRepository"/>, passed as both constructor
+    /// roles (<see cref="IVerificationRequestRepository"/> and <see cref="IVerificationQueue"/>)
+    /// since one instance is both (#423). A key whose entity errored inside the cooldown window must
+    /// still queue on an admin retry -- the handler turns any <c>Skipped &gt; 0</c> into a 409
+    /// claiming an open request already exists, which would be false for a cooldown skip.
+    /// </summary>
+    [Fact]
+    public async Task Handle_RetryVerificationRequestCommand_ThroughTheRealHandlerAndRepository_QueuesDespiteTheCooldownWindow()
+    {
+        var requestId = await SeedErroredKeyAsync("1", completedUtc: T0.AddHours(1));
+
+        // now = T0+2h, cooldown 6h -> cutoff = T0-4h. The error completed at T0+1h: inside the window.
+        await using var db = CreateDbContext();
+        var repository = Repository(db, now: T0.AddHours(2), errorCooldown: Cooldown);
+        var handler = new RetryVerificationRequestCommandHandler(repository, repository, BuildSourceRegistry());
+
+        var result = await handler.Handle(new RetryVerificationRequestCommand(requestId, "admin-oid"), CancellationToken.None);
+
+        Assert.Equal(new VerificationEnqueueResult(Queued: 1, Skipped: 0), result);
+
+        await using var verify = CreateDbContext();
+        var newRequest = Assert.Single(await verify.VerificationRequests.AsNoTracking()
+            .Where(r => r.EntityKey == "1" && r.Id != requestId)
+            .ToListAsync());
+        Assert.Equal(VerificationRequestStatus.Pending, newRequest.Status);
+        Assert.Equal(VerificationTrigger.Admin, newRequest.Trigger);
+    }
+
+    /// <summary>
+    /// The companion to the retry test above: the real <see cref="QueueVerificationRequestsCommandHandler"/>
+    /// against the same real repository, same seam (#423).
+    /// </summary>
+    [Fact]
+    public async Task Handle_QueueVerificationRequestsCommand_ThroughTheRealHandlerAndRepository_QueuesDespiteTheCooldownWindow()
+    {
+        await SeedErroredKeyAsync("2", completedUtc: T0.AddHours(1));
+
+        await using var db = CreateDbContext();
+        var repository = Repository(db, now: T0.AddHours(2), errorCooldown: Cooldown);
+        var handler = new QueueVerificationRequestsCommandHandler(repository, BuildSourceRegistry());
+
+        var result = await handler.Handle(
+            new QueueVerificationRequestsCommand("Airport", new[] { "2" }, OurAirports, "admin-oid"), CancellationToken.None);
+
+        Assert.Equal(new VerificationEnqueueResult(Queued: 1, Skipped: 0), result);
+
+        await using var verify = CreateDbContext();
+        var newRequest = Assert.Single(await verify.VerificationRequests.AsNoTracking()
+            .Where(r => r.EntityKey == "2" && r.Status == VerificationRequestStatus.Pending)
+            .ToListAsync());
+        Assert.Equal(VerificationTrigger.Admin, newRequest.Trigger);
+    }
+
+    /// <summary>
+    /// R2: the control that makes the two tests above mean something. The identical repository
+    /// configuration (<c>now</c>, <see cref="Cooldown"/>) and the identical seeded shape (an error
+    /// completed inside the cooldown window, via the same <see cref="SeedErroredKeyAsync"/> helper)
+    /// as both handler tests above, but enqueued directly with <see cref="VerificationTrigger.Flight"/>
+    /// instead of going through an admin handler: it must be skipped. Without this, "the admin call
+    /// queued" would pass vacuously whenever the cooldown isn't actually active in this setup (e.g.
+    /// a zero <c>ErrorCooldown</c>) -- this is what proves it is.
+    /// </summary>
+    [Fact]
+    public async Task EnqueueAsync_FlightTrigger_InTheSameSetupAsTheRealHandlerTestsAbove_IsSkipped()
+    {
+        await SeedErroredKeyAsync("3", completedUtc: T0.AddHours(1));
+
+        await using var db = CreateDbContext();
+        var result = await Repository(db, now: T0.AddHours(2), errorCooldown: Cooldown).EnqueueAsync(
+            VerificationEntityType.Airport, new[] { "3" }, OurAirports, VerificationTrigger.Flight, "system", 0m);
+
+        Assert.Equal(new VerificationEnqueueResult(Queued: 0, Skipped: 1), result);
+    }
+
     // ── Queries ─────────────────────────────────────────────────────────────
 
     [Fact]
@@ -1376,14 +1461,33 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     }
 
     /// <summary>Seeds one request for <paramref name="key"/>, requested at <c>T0</c>, claimed and
-    /// completed as <see cref="VerificationRequestStatus.Error"/> at <paramref name="completedUtc"/>.</summary>
-    private async Task SeedErroredKeyAsync(string key, DateTime completedUtc)
+    /// completed as <see cref="VerificationRequestStatus.Error"/> at <paramref name="completedUtc"/>.
+    /// Returns its id -- needed by the #423 real-handler retry test to name the request being
+    /// retried; every other caller here awaits it without capturing the result.</summary>
+    private async Task<long> SeedErroredKeyAsync(string key, DateTime completedUtc)
     {
-        await SeedEachAsync(Request(key, requestedUtc: T0));
+        var ids = await SeedEachAsync(Request(key, requestedUtc: T0));
         await using var db = CreateDbContext();
         var repository = Repository(db);
         Assert.Single(await repository.ClaimBatchAsync(1, T0)).MarkError("boom", completedUtc);
         await repository.SaveChangesAsync();
+        return ids[0];
+    }
+
+    /// <summary>#423: a minimal <see cref="IVerificationSourceRegistry"/> over the real
+    /// <see cref="VerificationSourceRegistry"/> implementation, registering just <c>"ourairports"</c>
+    /// for <see cref="VerificationEntityType.Airport"/> -- everything the real-handler tests above
+    /// enqueue. Not <c>FakeVerificationSourceRegistry</c>: that fixture is <c>internal</c> to
+    /// <c>Application.Tests</c> and not reachable from here (R5); <c>VerificationCyclePostgresTests</c>
+    /// in this project instead registers the real <see cref="VerificationSourceRegistry"/> over fake
+    /// <see cref="IVerificationSource"/> instances, the pattern mirrored here.</summary>
+    private static IVerificationSourceRegistry BuildSourceRegistry()
+    {
+        var source = Substitute.For<IVerificationSource>();
+        source.Name.Returns(OurAirports[0]);
+        source.CostPerRowUsd.Returns(0m);
+        source.SupportedEntityTypes.Returns(new[] { VerificationEntityType.Airport });
+        return new VerificationSourceRegistry(new[] { source });
     }
 
     /// <summary>#424: seeds one request of <paramref name="entityType"/>, claimed and completed as
