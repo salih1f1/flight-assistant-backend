@@ -254,12 +254,21 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             // scan (see CLAUDE.md). No explicit CompletedUtc != null check -- every Error row already
             // carries one (Complete() sets it), and a null CompletedUtc would compare false against
             // windowStartUtc anyway. AsNoTracking: a read, and grouped projections are never tracked
-            // regardless.
+            // regardless. OrderByDescending(Count) puts the worst offender first, with FailedSource
+            // then EntityType as a full tie-break: without an explicit order, Postgres can reshuffle
+            // groups between two identical polls (a HashAggregate, or a switch to a sort-based one),
+            // which would read to an admin panel as churn with no cause. The sort runs over a handful
+            // of already-aggregated groups after the index-only scan above has done the real work, so
+            // it adds no scan and does not change what the index serves.
             return await _db.VerificationRequests
                 .AsNoTracking()
                 .Where(r => r.Status == VerificationRequestStatus.Error && r.CompletedUtc >= windowStartUtc)
                 .GroupBy(r => new { r.FailedSource, r.EntityType })
-                .Select(g => new VerificationFailureGroup(g.Key.FailedSource, g.Key.EntityType, g.Count()))
+                .Select(g => new { g.Key.FailedSource, g.Key.EntityType, Count = g.Count() })
+                .OrderByDescending(g => g.Count)
+                .ThenBy(g => g.FailedSource)
+                .ThenBy(g => g.EntityType)
+                .Select(g => new VerificationFailureGroup(g.FailedSource, g.EntityType, g.Count))
                 .ToListAsync(ct);
         }
 

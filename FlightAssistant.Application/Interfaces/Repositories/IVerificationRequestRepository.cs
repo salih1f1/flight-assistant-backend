@@ -98,7 +98,10 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// <c>(FailedSource, EntityType)</c> with each group's count. A null <c>FailedSource</c> is its
         /// own group -- an unattributed failure (a deleted entity, an unexpected exception, an
         /// abandoned claim) is reported, not dropped (R3). Only non-empty groups come back; a
-        /// <c>GROUP BY</c> gives that for free (R5). <c>AsNoTracking</c>; not audited (a read).
+        /// <c>GROUP BY</c> gives that for free (R5). Ordered by <c>Count</c> descending, then
+        /// <c>FailedSource</c>, then <c>EntityType</c> as a full tie-break, so two identical polls
+        /// return groups in the same order (#424 fix wave) -- the database gives no order for free to
+        /// a <c>GROUP BY</c>. <c>AsNoTracking</c>; not audited (a read).
         /// </summary>
         Task<IReadOnlyList<VerificationFailureGroup>> GetRecentFailureGroupsAsync(CancellationToken ct = default);
 

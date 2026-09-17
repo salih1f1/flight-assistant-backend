@@ -1035,13 +1035,15 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         await using var db = CreateDbContext();
         var groups = await Repository(db, now: now).GetRecentFailureGroupsAsync();
 
+        // #424 fix wave: asserted in the order the read itself returns, not re-sorted client-side --
+        // Count descending puts the count-2 group first.
         Assert.Equal(
             new[]
             {
                 new VerificationFailureGroup("aeroapi", VerificationEntityType.Airport, 2),
                 new VerificationFailureGroup("mledoze", VerificationEntityType.Country, 1),
             },
-            groups.OrderBy(g => g.EntityType).ToList());
+            groups);
     }
 
     /// <summary>
@@ -1062,13 +1064,16 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         await using var db = CreateDbContext();
         var groups = await Repository(db, now: now).GetRecentFailureGroupsAsync();
 
+        // #424 fix wave: asserted in the order the read itself returns -- Count descending puts the
+        // unattributed count-2 group first here too, so this doesn't exercise the tie-break; see
+        // OrdersByCountDescending_ThenFailedSource_ThenEntityType below for that.
         Assert.Equal(
             new[]
             {
                 new VerificationFailureGroup(null, VerificationEntityType.Airport, 2),
                 new VerificationFailureGroup("aeroapi", VerificationEntityType.Airport, 1),
             },
-            groups.OrderBy(g => g.FailedSource, StringComparer.Ordinal).ToList());
+            groups);
     }
 
     /// <summary>The window's lower bound is inclusive ("at or after now − 24h"): a completion exactly
@@ -1088,6 +1093,47 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
 
         var group = Assert.Single(groups);
         Assert.Equal(new VerificationFailureGroup("aeroapi", VerificationEntityType.Airport, 1), group);
+    }
+
+    /// <summary>
+    /// #424 fix wave: with no ORDER BY, Postgres's GROUP BY plan (a HashAggregate) can return these
+    /// groups in a different order between two identical polls whenever a new group first appears or
+    /// the planner switches to a sort-based aggregate -- CLAUDE.md already treats that kind of shuffle,
+    /// for an admin panel re-rendering identical data, as churn with no cause. Count descending alone
+    /// doesn't order three groups tied at count 1, so this seeds exactly that tie to prove the
+    /// FailedSource/EntityType tie-break, not merely that a count-descending order exists. Break-proof:
+    /// dropping the two ThenBy clauses from GetRecentFailureGroupsAsync leaves the tied groups in
+    /// whatever order the database happens to produce, failing this assertion.
+    /// </summary>
+    [Fact]
+    public async Task GetRecentFailureGroupsAsync_OrdersByCountDescending_ThenFailedSourceThenEntityType()
+    {
+        var now = T0.AddDays(2);
+
+        // Count descending: aeroapi/Airport (2) outranks every count-1 group below it.
+        await SeedErrorAsync("1", VerificationEntityType.Airport, "aeroapi", now.AddHours(-1));
+        await SeedErrorAsync("2", VerificationEntityType.Airport, "aeroapi", now.AddHours(-2));
+
+        // Three groups tied at count 1: the tie-break orders them by FailedSource, then EntityType.
+        await SeedErrorAsync("FR", VerificationEntityType.Country, null, now.AddMinutes(-5));     // null, Country
+        await SeedErrorAsync("4", VerificationEntityType.Airline, "mledoze", now.AddMinutes(-6));  // mledoze, Airline
+        await SeedErrorAsync("5", VerificationEntityType.Airport, "mledoze", now.AddMinutes(-7));  // mledoze, Airport
+
+        await using var db = CreateDbContext();
+        var groups = await Repository(db, now: now).GetRecentFailureGroupsAsync();
+
+        // Postgres's default collation sorts ASC NULLS LAST, so the unattributed (null) group trails
+        // the two named "mledoze" groups here even though it ties them on Count -- empirically
+        // confirmed against the real database, not assumed from .NET string-ordering semantics.
+        Assert.Equal(
+            new[]
+            {
+                new VerificationFailureGroup("aeroapi", VerificationEntityType.Airport, 2),
+                new VerificationFailureGroup("mledoze", VerificationEntityType.Airline, 1),
+                new VerificationFailureGroup("mledoze", VerificationEntityType.Airport, 1),
+                new VerificationFailureGroup(null, VerificationEntityType.Country, 1),
+            },
+            groups);
     }
 
     /// <summary>
