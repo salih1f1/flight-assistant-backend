@@ -602,8 +602,7 @@ public class VerificationRequestProcessorTests
     /// crash. The claimed request here names two sources precisely so an accidental "use the first
     /// (or only) source name" shortcut would still be caught by this assertion. Break-proof: passing
     /// any non-null source at the <c>RecordSourceErrorAsync</c> call inside
-    /// <c>RecordUnexpectedFailureAsync</c> makes this fail (see task-2-report.md for the actual
-    /// failure output).
+    /// <c>RecordUnexpectedFailureAsync</c> makes this fail.
     /// </summary>
     [Fact]
     public async Task RecordUnexpectedFailureAsync_NamesNoSource_EvenThoughTheRequestNamesTwo()

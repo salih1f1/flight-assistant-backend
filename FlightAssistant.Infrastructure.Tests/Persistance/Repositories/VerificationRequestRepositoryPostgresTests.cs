@@ -441,7 +441,7 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     /// <c>failed_source</c> even though the request's last recorded failure was attributed to a real
     /// source -- abandonment is the final cause, not the source. Break-proof: dropping the
     /// <c>failed_source</c> <c>CASE</c> from the SQL (so it stays unchanged on both branches) makes
-    /// this fail (see task-2-report.md for the actual output).
+    /// this fail.
     /// </summary>
     [Fact]
     public async Task ResetStuckRunningAsync_ReachingMaxAttempts_NullsFailedSource()
@@ -479,7 +479,7 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     /// #424: the reset's other branch (attempts still below <c>maxAttempts</c>, request returns to
     /// Pending) leaves <c>failed_source</c> exactly as it leaves <c>error</c> -- unchanged, still
     /// mirroring the request's last recorded failure. Break-proof: nulling <c>failed_source</c>
-    /// unconditionally in the SQL makes this fail (see task-2-report.md for the actual output).
+    /// unconditionally in the SQL makes this fail.
     /// </summary>
     [Fact]
     public async Task ResetStuckRunningAsync_BelowMaxAttempts_LeavesFailedSourceUnchanged()

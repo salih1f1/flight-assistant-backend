@@ -484,7 +484,7 @@ namespace FlightAssistant.Domain.Tests.Verification
         /// <summary>#424 review: a well-formed <c>failedSource</c> is still rejected when it names a
         /// source this request never asked for. Break-proof: commenting out the
         /// <c>SourceNames.Contains</c> check in <c>EnsureValidFailedSource</c> makes this pass
-        /// spuriously and fail this test (see task-2-report.md for the actual failure output).</summary>
+        /// spuriously and fail this test.</summary>
         [Fact]
         public void RecordSourceError_FailedSourceNotAmongTheRequestsOwnSources_ThrowsNamingTheParameterAndChangesNothing()
         {
