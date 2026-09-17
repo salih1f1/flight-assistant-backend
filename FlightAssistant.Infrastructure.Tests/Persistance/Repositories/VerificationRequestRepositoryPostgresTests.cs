@@ -250,6 +250,37 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     }
 
     /// <summary>
+    /// Every promotion test above uses the default 10-minute <c>ClaimPromotionAge</c>, so a repository
+    /// that silently ignored <c>IVerificationJobOptions.ClaimPromotionAge</c> and always promoted at 10
+    /// minutes would still pass every one of them. This proves the option itself is read, not just its
+    /// default value, with a non-default 30-minute age: an admin request 20 minutes old is younger than
+    /// this custom cutoff, so it is <b>not</b> promoted and stays behind a younger flight-triggered
+    /// request -- something a hardcoded 10-minute cutoff would get wrong, since 20 minutes clears that
+    /// one. An admin request exactly 30 minutes old <b>is</b> promoted, ranking ahead of that same
+    /// flight request by age (the inclusive boundary is already covered above; this only needs one
+    /// promoted point to prove the custom age is honoured, not re-prove the boundary itself).
+    /// </summary>
+    [Fact]
+    public async Task ClaimBatchAsync_HonoursANonDefaultClaimPromotionAge()
+    {
+        const string oldAdmin = "141", youngAdmin = "142", flight = "143";
+        var now = T0.AddMinutes(40);
+        var customAge = TimeSpan.FromMinutes(30);
+
+        var oldAdminId = Assert.Single(await SeedEachAsync(Request(oldAdmin, VerificationTrigger.Admin, now - customAge)));
+        var youngAdminId = Assert.Single(await SeedEachAsync(Request(youngAdmin, VerificationTrigger.Admin, now.AddMinutes(-20))));
+        var flightId = Assert.Single(await SeedEachAsync(Request(flight, VerificationTrigger.Flight, now.AddMinutes(-5))));
+
+        await using var db = CreateDbContext();
+        var claimed = await Repository(db, now, claimPromotionAge: customAge).ClaimBatchAsync(10, now);
+
+        // oldAdmin (30 min old, at the custom cutoff) is promoted and ranks first by age; flight ranks
+        // next on its own unconditional trigger priority; youngAdmin (20 min old -- past the default
+        // 10-minute cutoff, but inside this custom 30-minute one) is not promoted and stays last.
+        Assert.Equal(new[] { oldAdminId, flightId, youngAdminId }, claimed.Select(r => r.Id));
+    }
+
+    /// <summary>
     /// Proves <c>excludeIds</c>'s SQL reaches the query, not just that the C# threads the parameter
     /// through: <c>NOT ("id" = ANY(...))</c> excludes the otherwise-first row by id, in real SQL. The
     /// excluded row stays Pending, untouched: exclusion is not the same as shrinking the batch.
@@ -1621,8 +1652,13 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
-    private static VerificationRequestRepository Repository(FlightAssistantDbContext db, DateTime? now = null, TimeSpan? errorCooldown = null) =>
-        new(db, new FakeTimeProvider(new DateTimeOffset(now ?? T0)), new FakeJobOptions(ErrorCooldown: errorCooldown ?? TimeSpan.Zero));
+    private static VerificationRequestRepository Repository(
+        FlightAssistantDbContext db, DateTime? now = null, TimeSpan? errorCooldown = null, TimeSpan? claimPromotionAge = null) =>
+        new(db, new FakeTimeProvider(new DateTimeOffset(now ?? T0)),
+            new FakeJobOptions(ErrorCooldown: errorCooldown ?? TimeSpan.Zero)
+            {
+                ClaimPromotionAge = claimPromotionAge ?? TimeSpan.FromMinutes(10)
+            });
 
     private static VerificationRequest Request(
         string key,
