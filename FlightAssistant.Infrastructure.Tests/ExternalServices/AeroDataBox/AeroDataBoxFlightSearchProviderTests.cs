@@ -269,6 +269,32 @@ public class AeroDataBoxFlightSearchProviderTests
     }
 
     [Fact]
+    public async Task SearchAsync_KeepsBothRows_WhenTheSameFlightNumberHasDifferentScheduledTimes()
+    {
+        // The dedupe key is (FlightNumber, ScheduledDepartureUtc) — the test above only proves the
+        // flight-number half discriminates (two different numbers, same time). This proves the time
+        // half discriminates too: the SAME flight number at two different scheduled departure times
+        // must both survive, not collapse into one (#422 fix round 3). Mutating the key
+        // to FlightNumber alone passes every other test in this class but fails this one.
+        var body = $$"""
+        {
+          "departures": [
+            {{Departure("TK 1028", "IsOperator", "2026-09-29T06:35:00Z", "2026-09-29T09:35:00+03:00")}},
+            {{Departure("TK 1028", "IsOperator", "2026-09-29T09:00:00Z", "2026-09-29T12:00:00+03:00")}}
+          ]
+        }
+        """;
+        var handler = new PerWindowHttpMessageHandler(_ => (HttpStatusCode.OK, body));
+        var provider = ProviderOver(handler);
+
+        var results = await provider.SearchAsync(SofToIst);
+
+        Assert.Equal(2, results.Count(r => r.FlightNumber == "TK1028"));
+        Assert.Contains(results, r => r.FlightNumber == "TK1028" && r.ScheduledDepartureUtc == new DateTime(2026, 9, 29, 6, 35, 0, DateTimeKind.Utc));
+        Assert.Contains(results, r => r.FlightNumber == "TK1028" && r.ScheduledDepartureUtc == new DateTime(2026, 9, 29, 9, 0, 0, DateTimeKind.Utc));
+    }
+
+    [Fact]
     public async Task SearchAsync_Throws_WhenTheSecondWindowFails_AndReturnsNoRows()
     {
         // Window 1 succeeds with a row; window 2 fails. The whole search must throw — one window's
@@ -325,7 +351,7 @@ public class AeroDataBoxFlightSearchProviderTests
     {
         // The origin is trimmed and uppercased in BuildUrl already; the arrival, compared only in
         // TryMapRow, needs the same trim — otherwise a padded FlightSearchCriteria.ArrivalIata
-        // returns zero rows silently (fix round 2, finding 13).
+        // returns zero rows silently (#422 fix round 2).
         var padded = SofToIst with { ArrivalIata = " IST " };
         var (provider, _) = Provider(HttpStatusCode.OK, ReadFixture("departures.json"));
 
@@ -363,7 +389,7 @@ public class AeroDataBoxFlightSearchProviderTests
     }
 
     // ------------------------------------------------------------------
-    // The scheduled-date keeper — never the revised time (unchanged from fix round 1)
+    // The scheduled-date keeper — never the revised time (#422 fix round 1, unchanged)
     // ------------------------------------------------------------------
 
     [Fact]
@@ -533,14 +559,17 @@ public class AeroDataBoxFlightSearchProviderTests
     }
 
     [Fact]
-    public async Task SearchAsync_ReturnsEmptyList_OnAnEmptyOrWhitespaceSuccessBody()
+    public async Task SearchAsync_Maps502_OnAnEmptyOrWhitespaceSuccessBody()
     {
-        // Defensive and unobserved, same reasoning as the 204 case above.
+        // An empty or whitespace 200 body is not valid JSON, so it is not "no data" either. Were it
+        // read as empty, one window could answer "no flights" while the other returned rows,
+        // presenting half a day as a full day (#422 fix round 3). A 204 is the only success status
+        // read as "no data".
         var (provider, _) = Provider(HttpStatusCode.OK, "   ");
 
-        var results = await provider.SearchAsync(SofToIst);
+        var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(SofToIst));
 
-        Assert.Empty(results);
+        Assert.Equal(502, ex.StatusCode);
     }
 
     [Fact]
@@ -578,6 +607,8 @@ public class AeroDataBoxFlightSearchProviderTests
         var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(SofToIst));
 
         Assert.Equal(502, ex.StatusCode);
+        Assert.IsType<TaskCanceledException>(ex.InnerException);
+        Assert.Equal("AeroDataBox did not respond before the client timeout.", ex.DiagnosticDetail);
     }
 
     [Fact]
@@ -604,6 +635,7 @@ public class AeroDataBoxFlightSearchProviderTests
         var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(SofToIst));
 
         Assert.Equal(500, ex.StatusCode);
+        Assert.Equal("Flight data is unavailable.", ex.Message);
     }
 
     [Fact]
@@ -614,6 +646,7 @@ public class AeroDataBoxFlightSearchProviderTests
         var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(SofToIst));
 
         Assert.Equal(500, ex.StatusCode);
+        Assert.Equal("Flight data is unavailable.", ex.Message);
     }
 
     [Fact]
@@ -634,12 +667,16 @@ public class AeroDataBoxFlightSearchProviderTests
     public async Task SearchAsync_Maps400_ToInternalServerError_WithoutInvitingARetry()
     {
         // #267's live example: the removed whole-day window earned exactly this from AeroDataBox.
+        // "Flight data is unavailable." (not "...temporarily unavailable.") because "temporarily"
+        // implies waiting helps, which is false for a request our own code built wrong — the
+        // precedent is GitHubCiRunProvider's "CI results are unavailable." for its own
+        // configuration-caused 500s (#422 fix round 3).
         var (provider, _) = Provider(HttpStatusCode.BadRequest, """{ "message": "range too long" }""");
 
         var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(SofToIst));
 
         Assert.Equal(500, ex.StatusCode);
-        Assert.DoesNotContain("try again", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Flight data is unavailable.", ex.Message);
     }
 
     [Fact]
@@ -714,7 +751,7 @@ public class AeroDataBoxFlightSearchProviderTests
     }
 
     // ------------------------------------------------------------------
-    // Guard: a route search needs both airports — our defect, once Task 2 lands (fix round 2, finding 9)
+    // Guard: a route search needs both airports — our defect, once Task 2 lands (#422 fix round 2)
     // ------------------------------------------------------------------
 
     [Theory]
@@ -728,6 +765,7 @@ public class AeroDataBoxFlightSearchProviderTests
             new FlightSearchCriteria(departureIata, arrivalIata, new DateOnly(2026, 9, 29), null)));
 
         Assert.Equal(500, ex.StatusCode);
+        Assert.Equal("Flight data is unavailable.", ex.Message);
         Assert.Contains("both a departure and an arrival airport", ex.DiagnosticDetail);
         Assert.Empty(handler.Requests);
     }

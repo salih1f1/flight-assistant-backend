@@ -30,7 +30,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
     /// </para>
     ///
     /// <para>
-    /// <b>Two ≤12-hour windows per search, not one whole day (fix round 2, finding 1).</b>
+    /// <b>Two ≤12-hour windows per search, not one whole day (#422 fix round 2).</b>
     /// AeroDataBox's own documentation for this endpoint's end-of-range parameter reads "Should be
     /// more than beginning of the search range, but not more than by 12 hours" — a limit this
     /// repository already hit once, in #267: commit <c>f89f95e</c> records that a single
@@ -79,17 +79,19 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
     /// </summary>
     public sealed class AeroDataBoxFlightSearchProvider : IFlightSearchProvider
     {
-        /// <summary>Named <see cref="HttpClient"/> this provider is registered against. Nothing in
-        /// this task uses it — Task 2's selector/DI wiring does — but it exists here (precedent:
-        /// <c>OurAirportsVerificationSource.HttpClientName</c>) so that name is not a bare string
-        /// literal repeated at every call site.</summary>
+        /// <summary>The named-client key this provider's <see cref="HttpClient"/> is registered
+        /// under — the same key the DI registration and this provider share so a caller resolves
+        /// the client this provider actually expects, rather than the name being a bare string
+        /// literal repeated at every call site (precedent:
+        /// <c>OurAirportsVerificationSource.HttpClientName</c>).</summary>
         public const string HttpClientName = "AeroDataBox";
 
         private const string Operation = "Flight search";
 
         // 500 Internal Server Error — our key or RapidAPI plan is the problem (401/403 from
-        // AeroDataBox), or the request THIS PROVIDER built was rejected (any other 4xx) — either
-        // way, not something the caller can retry their way out of.
+        // AeroDataBox), or an unclassified 4xx that cannot be told apart between our own request
+        // being malformed and the caller's input being well-formed but unknown to AeroDataBox (see
+        // ReadOrThrowAsync) — either way, not something the caller can retry their way out of.
         private const int StatusCode500InternalError = 500;
 
         // 502 Bad Gateway — AeroDataBox was unreachable, timed out, returned an unparseable body, or
@@ -141,12 +143,12 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
                 // without both airports — a flight-number search is never routed here. That makes
                 // this our defect, not the caller's, so it is a 500 with an operator-facing
                 // DiagnosticDetail naming the broken invariant, not a 400 that would blame the
-                // caller for a search shape they never sent (fix round 2, finding 9).
+                // caller for a search shape they never sent (#422 fix round 2).
                 _logger.LogError(
                     "AeroDataBoxFlightSearchProvider reached without both a departure and an arrival airport for {Criteria} — a route-search selector bug, not a caller error",
                     Describe(criteria));
                 throw new DomainException(
-                    "Flight data is temporarily unavailable.",
+                    "Flight data is unavailable.",
                     StatusCode500InternalError,
                     "AeroDataBoxFlightSearchProvider was invoked without both a departure and an arrival airport — a route search reached this provider without both, which is a selector routing bug.");
             }
@@ -182,19 +184,25 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
             {
                 response = await _http.GetAsync(url, ct);
             }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
             {
                 // HttpClient.Timeout throws TaskCanceledException, which IS an
                 // OperationCanceledException. This client is forbidden a resilience handler by the
                 // global constraints, so HttpClient.Timeout (from AeroDataBoxOptions.TimeoutSeconds)
                 // is its ONLY timeout — making this the most likely real-world "unreachable" case.
                 // Only genuine caller cancellation (ct itself signalled) is allowed to propagate as
-                // an OperationCanceledException; anything else maps to 502 (fix round 2, finding 2).
+                // an OperationCanceledException; anything else maps to 502 (#422 fix round 2), with
+                // the exception logged and carried as the DomainException's inner exception, the
+                // same as the unreachable-host branch below (#422 fix round 3). This provider does
+                // not own the client's timeout — Task 2 sets it in DI — so the DiagnosticDetail
+                // names no number of seconds.
                 _logger.LogError(
-                    "AeroDataBox flight search request timed out for {Criteria}", Describe(criteria));
+                    ex, "AeroDataBox flight search request timed out for {Criteria}", Describe(criteria));
                 throw new DomainException(
                     $"{Operation} is temporarily unavailable. Please try again shortly.",
-                    StatusCode502BadGateway);
+                    ex,
+                    StatusCode502BadGateway,
+                    "AeroDataBox did not respond before the client timeout.");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -293,7 +301,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
 
             // The origin is trimmed (and uppercased) in BuildUrl already; the arrival, compared only
             // here, needs the same trim so a padded FlightSearchCriteria.ArrivalIata does not
-            // silently return zero rows (fix round 2, finding 13).
+            // silently return zero rows (#422 fix round 2).
             if (!destinationIata.Trim().Equals(requestedArrivalIata.Trim(), StringComparison.OrdinalIgnoreCase)) return null;
 
             var scheduledOutUtc = TryGetTimeUtc(departure, "scheduledTime");
@@ -370,16 +378,21 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
 
         /// <summary>
         /// Reads an AeroDataBox response, throwing <see cref="DomainException"/> for any
-        /// provider-side failure, or returning <c>null</c> for a successful response with no usable
-        /// body — <c>204 No Content</c>, or an empty/whitespace body on any other success status
-        /// (defensive and unobserved: no spike ever hit an empty window, but the global constraint
-        /// is "no data is an empty list, never an error"). Follows
+        /// provider-side failure, or returning <c>null</c> for a successful response with no data
+        /// to report — <c>204 No Content</c> only. An empty or whitespace body on any OTHER success
+        /// status is deliberately NOT treated as "no data" (#422 fix round 3): it maps to
+        /// 502, logged like any other unparseable body, because letting one window silently answer
+        /// "empty" while the other returns rows would present half a day as a full day — exactly
+        /// what the partial-failure rule above exists to forbid. How AeroDataBox actually signals
+        /// "no departures in this window" is unmeasured: it could be a 204, a 200 with
+        /// <c>{"departures":[]}</c>, or something else — a 204 and an empty <c>departures</c> array
+        /// are both handled as empty, whichever it turns out to be. Follows
         /// <c>AeroApiResponse.ReadOrThrowAsync</c>'s shape without reusing that type, since its
-        /// messages name AeroAPI specifically. Four status buckets (fix round 2, finding/ruling B):
-        /// 401/403 (our credentials or plan) → 500; 429 (throttled) → 503 with Retry-After; any
-        /// other 4xx (a request THIS PROVIDER built wrong — #267 is a live example) → 500, with a
-        /// client message that does not invite a retry; 5xx, unreachable, timed-out or unparseable
-        /// → 502.
+        /// messages name AeroAPI specifically. Four status buckets (#422 fix round 2): 401/403 (our
+        /// credentials or plan) → 500; 429 (throttled) → 503 with Retry-After; any other 4xx → 500
+        /// — this cannot be told apart between our own request being malformed (#267 is a live
+        /// example) and the caller's input being well-formed but unknown to AeroDataBox, which is
+        /// unmeasured (#422 fix round 3); 5xx, unreachable, timed-out or unparseable → 502.
         /// </summary>
         private async Task<JsonDocument?> ReadOrThrowAsync(HttpResponseMessage response, string criteria, CancellationToken ct)
         {
@@ -390,7 +403,20 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
                 if (response.StatusCode == HttpStatusCode.NoContent) return null;
 
                 var body = await response.Content.ReadAsStringAsync(ct);
-                if (string.IsNullOrWhiteSpace(body)) return null;
+                if (string.IsNullOrWhiteSpace(body))
+                {
+                    // Reverses #422 fix round 2: an empty/whitespace 200 body is not valid JSON, so it
+                    // is not "no data" either — see the class remarks and this method's summary
+                    // (#422 fix round 3). Logged and mapped exactly like the JsonException case just
+                    // below.
+                    _logger.LogError(
+                        "AeroDataBox returned an empty {Operation} response body ({StatusCode}) for {Criteria}",
+                        Operation, status, criteria);
+                    throw new DomainException(
+                        $"{Operation} is temporarily unavailable. Please try again shortly.",
+                        StatusCode502BadGateway,
+                        $"AeroDataBox returned HTTP {status} with an empty or whitespace body.");
+                }
 
                 try
                 {
@@ -418,7 +444,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
                         "AeroDataBox rejected our credentials on {Operation} ({StatusCode}) for {Criteria}: {Body}",
                         Operation, status, criteria, upstreamBody);
                     throw new DomainException(
-                        "Flight data is temporarily unavailable.",
+                        "Flight data is unavailable.",
                         StatusCode500InternalError,
                         $"AeroDataBox returned HTTP {status}: {upstreamBody}");
 
@@ -437,18 +463,28 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
                 default:
                     if (status is >= 400 and < 500)
                     {
-                        // Any other 4xx means the request THIS PROVIDER built is wrong — our bug,
-                        // not something a retry fixes. #267 is a live example: the removed
-                        // whole-day window earned a 400 on every single call. The client-facing
-                        // message deliberately does not say "try again" — that would invite
-                        // retrying a request that fails identically forever, and point an operator
-                        // at AeroDataBox instead of our own URL builder. DiagnosticDetail still
-                        // carries the upstream status and the redacted body.
+                        // A 4xx here cannot be told apart between two causes (#422 fix round 3):
+                        // either our own request is malformed — #267's 12-hour cap is the live
+                        // example, where the removed whole-day window earned a 400 on every single
+                        // call — or the caller's input is well-formed but unknown to AeroDataBox.
+                        // The airport code reaching this URL is only format-checked
+                        // (SearchFlightsQueryValidator), and the date is bounded by AeroAPI's
+                        // horizon, not AeroDataBox's — neither has been confirmed against what this
+                        // endpoint actually accepts. It maps to 500 and logs at Error deliberately,
+                        // so that a systematic defect stays loud: #267's 400 was silent for that
+                        // provider's entire life. The accepted cost: a 4xx caused by the caller's
+                        // own input also surfaces as a 500 with an error log, rather than the 400
+                        // that input problem would otherwise deserve. Whether AeroDataBox actually
+                        // returns a 4xx for an unknown airport or an out-of-range date is
+                        // unmeasured. The client-facing message deliberately does not say "try
+                        // again" — that would invite retrying a request that, if the cause really is
+                        // ours, fails identically forever. DiagnosticDetail still carries the
+                        // upstream status and the redacted body.
                         _logger.LogError(
                             "AeroDataBox {Operation} rejected our request ({StatusCode}) for {Criteria}: {Body}",
                             Operation, status, criteria, upstreamBody);
                         throw new DomainException(
-                            "Flight data is temporarily unavailable.",
+                            "Flight data is unavailable.",
                             StatusCode500InternalError,
                             $"AeroDataBox returned HTTP {status}: {upstreamBody}");
                     }
