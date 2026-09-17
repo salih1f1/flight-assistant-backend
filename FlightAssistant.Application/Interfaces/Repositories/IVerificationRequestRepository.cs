@@ -55,7 +55,13 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// (<c>NextAttemptUtc</c> null or at or before <paramref name="nowUtc"/>), in one statement:
         /// sets them <c>Running</c> with <c>StartedUtc = nowUtc</c> and returns them. Picks
         /// <c>flight</c>-triggered requests first, then the oldest <c>RequestedUtc</c>, then the
-        /// lowest id, and returns them in that order.
+        /// lowest id, and returns them in that order -- except that a request of any trigger whose
+        /// <c>RequestedUtc</c> is at or before <c>nowUtc -</c>
+        /// <see cref="IVerificationJobOptions.ClaimPromotionAge"/> (inclusive) is <b>promoted</b>
+        /// (#419): it ranks with the flight-triggered requests, ordered by <c>RequestedUtc</c> then
+        /// id, ahead of every unpromoted admin request. Below that age, flight-first priority is
+        /// unchanged. This is what stops a sustained stream of flight-triggered checks from keeping
+        /// an admin-queued request waiting indefinitely.
         ///
         /// <para>
         /// Rows are selected <c>FOR UPDATE SKIP LOCKED</c>, so concurrent claims (another job

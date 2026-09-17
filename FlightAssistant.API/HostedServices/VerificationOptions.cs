@@ -51,6 +51,13 @@ namespace FlightAssistant.API.HostedServices
         [Range(typeof(TimeSpan), "00:00:00", "7.00:00:00")]
         public TimeSpan ErrorCooldown { get; set; } = TimeSpan.FromHours(6);
 
+        /// <summary>How long a request may wait before it is claimed ahead of every younger request,
+        /// whatever its trigger (#419) — a sustained stream of flight-triggered checks would otherwise
+        /// keep an admin-queued batch waiting indefinitely. <c>00:00:00</c> is excluded: it would
+        /// degenerate into strict oldest-first claiming, which was deliberately not chosen.</summary>
+        [Range(typeof(TimeSpan), "00:01:00", "1.00:00:00")]
+        public TimeSpan ClaimPromotionAge { get; set; } = TimeSpan.FromMinutes(10);
+
         /// <summary>The sources a check uses when its caller names none (steps 6 and 10). Not used by
         /// the job itself, which reads each request's own sources.</summary>
         public VerificationDefaultSources DefaultSources { get; set; } = new();

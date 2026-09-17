@@ -672,6 +672,11 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         int BatchSize, int MaxAttempts, TimeSpan IdleRelease, int StaleAfterDays = 180, TimeSpan ErrorCooldown = default)
         : IVerificationJobOptions
     {
+        /// <summary>Not a positional parameter: a <see cref="TimeSpan"/> default must be constant, and
+        /// <c>TimeSpan.FromMinutes(10)</c> isn't one. Matches <c>VerificationOptions</c>'s own default
+        /// (#419). A test that needs a different age sets it with an object initializer.</summary>
+        public TimeSpan ClaimPromotionAge { get; init; } = TimeSpan.FromMinutes(10);
+
         public IReadOnlyList<string> DefaultSourcesFor(VerificationEntityType entityType) => entityType switch
         {
             VerificationEntityType.Airport => new[] { "ourairports" },

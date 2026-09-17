@@ -198,6 +198,12 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             var running = nameof(VerificationRequestStatus.Running);
             var flight = VerificationRequestConfiguration.FlightTriggerValue;
 
+            // #419: a request is promoted once requested_utc is at or before this cutoff (inclusive
+            // -- <=, not <). Promoted requests of any trigger rank with flight-triggered requests, so
+            // a sustained stream of flight-triggered checks cannot keep an admin-queued request
+            // waiting forever. Below this age, today's flight-first priority is unchanged.
+            var promotedAtOrBeforeUtc = nowUtc - _options.ClaimPromotionAge;
+
             // Always concrete arrays, never null: ANY(NULL::bigint[]) is NULL, not false, and
             // array && NULL::text[] is likewise NULL, not false -- either would make its NOT(...)
             // predicate NULL too and silently exclude every row instead of none.
@@ -216,6 +222,10 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             // split names of the comma-joined "sources" column, never LIKE '%aeroapi%' -- a substring
             // match would also exclude an unrelated "aeroapi-v2" source. Sound because a source name
             // can never itself contain a comma (VerificationRequest.TryJoinSources forbids it).
+            //
+            // The top-tier predicate (flight-triggered OR promoted) must match the C# re-sort below
+            // exactly (#419 R2) -- this decides which rows get claimed, the re-sort decides the order
+            // they come back in, and a mismatch would claim the right rows but hand them back wrong.
             var claimed = await _db.VerificationRequests
                 .FromSql($"""
                     WITH claimable AS (
@@ -225,7 +235,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                           AND ("next_attempt_utc" IS NULL OR "next_attempt_utc" <= {nowUtc})
                           AND NOT ("id" = ANY({exclude}))
                           AND NOT (string_to_array("sources", ',') && {excludeSources})
-                        ORDER BY ("trigger" = {flight}) DESC, "requested_utc", "id"
+                        ORDER BY ("trigger" = {flight} OR "requested_utc" <= {promotedAtOrBeforeUtc}) DESC, "requested_utc", "id"
                         LIMIT {batchSize}
                         FOR UPDATE SKIP LOCKED
                     )
@@ -239,7 +249,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
 
             // RETURNING has no defined order; hand them back in claim order.
             return claimed
-                .OrderByDescending(r => r.Trigger == VerificationTrigger.Flight)
+                .OrderByDescending(r => r.Trigger == VerificationTrigger.Flight || r.RequestedUtc <= promotedAtOrBeforeUtc)
                 .ThenBy(r => r.RequestedUtc)
                 .ThenBy(r => r.Id)
                 .ToList();

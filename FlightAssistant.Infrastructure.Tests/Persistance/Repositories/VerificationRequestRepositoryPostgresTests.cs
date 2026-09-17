@@ -95,7 +95,10 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     /// <summary>
     /// Inserted so that neither id order nor <c>requested_utc</c> order alone produces the expected
     /// sequence. Each claim takes one row, so the sequence is decided by the SQL's
-    /// <c>ORDER BY … LIMIT</c>, not by the in-memory sort of the returned batch.
+    /// <c>ORDER BY … LIMIT</c>, not by the in-memory sort of the returned batch. Claimed 5 minutes
+    /// after the youngest request -- well inside the 10-minute default <c>ClaimPromotionAge</c> (#419)
+    /// -- so nothing here is promoted and today's flight-first priority is the only thing in play;
+    /// promotion itself is <c>ClaimBatchAsync_APromotedAdminRequest_*</c> below.
     /// </summary>
     [Fact]
     public async Task ClaimBatchAsync_ClaimsFlightTriggeredRequestsFirst_ThenTheOldestRequested()
@@ -106,18 +109,21 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         for (var i = 0; i < 4; i++)
         {
             await using var db = CreateDbContext();
-            var claimed = await Repository(db).ClaimBatchAsync(1, T0.AddHours(1));
+            var claimed = await Repository(db).ClaimBatchAsync(1, T0.AddMinutes(5));
             claimOrder.Add(Assert.Single(claimed).EntityKey);
         }
 
         Assert.Equal(new[] { FlightOld, FlightNew, AdminOld, AdminNew }, claimOrder);
     }
 
+    /// <summary>Same non-promoted window as the test above -- claimed well inside the default
+    /// <c>ClaimPromotionAge</c>, so this proves the C# re-sort matches today's flight-first SQL order,
+    /// not promotion (which has its own returned-order test below).</summary>
     [Fact]
     public async Task ClaimBatchAsync_ReturnsTheBatchInClaimOrder_AndMarksItRunning()
     {
         await SeedOrderingScenarioAsync();
-        var now = T0.AddHours(1);
+        var now = T0.AddMinutes(5);
 
         await using var db = CreateDbContext();
         var claimed = await Repository(db).ClaimBatchAsync(10, now);
@@ -128,6 +134,115 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
             Assert.Equal(VerificationRequestStatus.Running, r.Status);
             Assert.Equal(now, r.StartedUtc);
         });
+    }
+
+    // ── Age-based promotion (#419) ──────────────────────────────────────────
+
+    /// <summary>
+    /// The starvation this feature exists to fix: without promotion, a sustained stream of
+    /// flight-triggered requests keeps an admin-queued request waiting forever, because flight
+    /// always ranked first regardless of age. Aged 15 minutes at claim time -- past the default
+    /// 10-minute <c>ClaimPromotionAge</c> -- the admin request now reaches the head of the queue and
+    /// is claimed in the very first batch, even though there are exactly as many younger
+    /// flight-triggered requests as the batch size, which pre-#419 would have filled the batch
+    /// without it ever being reached.
+    /// </summary>
+    [Fact]
+    public async Task ClaimBatchAsync_AnAdminRequestAgedPastThePromotionWindow_IsClaimedInTheFirstBatch_DespiteEnoughYoungerFlightRequestsToFillIt()
+    {
+        const string oldAdmin = "101", flight1 = "102", flight2 = "103", flight3 = "104";
+        var oldAdminId = Assert.Single(await SeedEachAsync(Request(oldAdmin, VerificationTrigger.Admin, T0)));
+        await SeedEachAsync(
+            Request(flight1, VerificationTrigger.Flight, T0.AddMinutes(1)),
+            Request(flight2, VerificationTrigger.Flight, T0.AddMinutes(2)),
+            Request(flight3, VerificationTrigger.Flight, T0.AddMinutes(3)));
+        var now = T0.AddMinutes(15); // the admin request is 15 minutes old: past the default 10-minute ClaimPromotionAge
+
+        await using var db = CreateDbContext();
+        var claimed = await Repository(db).ClaimBatchAsync(3, now);
+
+        Assert.Contains(oldAdminId, claimed.Select(r => r.Id));
+    }
+
+    /// <summary>
+    /// Today's flight-first priority is unchanged below the promotion age (R1): a young admin
+    /// request does not sneak into a batch sized to exactly the number of flight-triggered requests
+    /// ahead of it, even though every one of them is chronologically older than it.
+    /// </summary>
+    [Fact]
+    public async Task ClaimBatchAsync_AnAdminRequestYoungerThanThePromotionWindow_IsNotClaimedAheadOfABatchOfFlightRequests()
+    {
+        const string youngAdmin = "111", flight1 = "112", flight2 = "113", flight3 = "114";
+        var youngAdminId = Assert.Single(await SeedEachAsync(Request(youngAdmin, VerificationTrigger.Admin, T0.AddMinutes(9))));
+        var flightIds = await SeedEachAsync(
+            Request(flight1, VerificationTrigger.Flight, T0),
+            Request(flight2, VerificationTrigger.Flight, T0.AddMinutes(1)),
+            Request(flight3, VerificationTrigger.Flight, T0.AddMinutes(2)));
+        var now = T0.AddMinutes(10); // the admin request is 1 minute old: inside the default 10-minute ClaimPromotionAge
+
+        await using var db = CreateDbContext();
+        var claimed = await Repository(db).ClaimBatchAsync(3, now);
+
+        Assert.Equal(flightIds, claimed.Select(r => r.Id));
+
+        await using var verify = CreateDbContext();
+        var untouched = await verify.VerificationRequests.AsNoTracking().SingleAsync(r => r.Id == youngAdminId);
+        Assert.Equal(VerificationRequestStatus.Pending, untouched.Status);
+    }
+
+    /// <summary>
+    /// R2: the SQL <c>ORDER BY</c> decides which rows are claimed; this proves the C# re-sort after
+    /// <c>RETURNING</c> (which has no defined order) puts a promoted admin request in its correct
+    /// age-ordered position among the flight-triggered rows, not merely somewhere in the returned
+    /// list. Break-proof: a re-sort left at the old "flight first, then age" rule would still claim
+    /// these same three rows but hand them back as flight-1, flight-2, old-admin -- silently
+    /// contradicting the interface doc's "hand them back in claim order."
+    /// </summary>
+    [Fact]
+    public async Task ClaimBatchAsync_APromotedAdminRequest_IsReturnedInItsAgeOrderedPositionAmongTheFlightRequests()
+    {
+        const string oldAdmin = "121", flight1 = "122", flight2 = "123";
+        await SeedEachAsync(
+            Request(oldAdmin, VerificationTrigger.Admin, T0),
+            Request(flight1, VerificationTrigger.Flight, T0.AddMinutes(1)),
+            Request(flight2, VerificationTrigger.Flight, T0.AddMinutes(2)));
+        var now = T0.AddMinutes(15);
+
+        await using var db = CreateDbContext();
+        var claimed = await Repository(db).ClaimBatchAsync(10, now);
+
+        Assert.Equal(new[] { oldAdmin, flight1, flight2 }, claimed.Select(r => r.EntityKey));
+    }
+
+    /// <summary>
+    /// The boundary is inclusive (R1): a request whose <c>requested_utc</c> is exactly at the cutoff
+    /// (<c>nowUtc - ClaimPromotionAge</c>) is promoted and beats a flight-triggered request several
+    /// minutes younger than it -- something it otherwise never would. One microsecond younger --
+    /// <c>timestamptz</c>'s own resolution, and so the smallest age difference that survives a round
+    /// trip through PostgreSQL at all -- it is not promoted and loses even to that same
+    /// flight-triggered request, despite being chronologically older than it.
+    /// </summary>
+    [Fact]
+    public async Task ClaimBatchAsync_TheBoundaryIsInclusive_ExactlyAtTheCutoffIsPromoted_OneMicrosecondYoungerIsNot()
+    {
+        const string atCutoff = "131", oneMicrosecondYounger = "132", flightMiddle = "133";
+        var now = T0.AddMinutes(30);
+        var cutoff = now - TimeSpan.FromMinutes(10); // the default ClaimPromotionAge
+
+        await SeedEachAsync(
+            Request(atCutoff, VerificationTrigger.Admin, cutoff),
+            Request(oneMicrosecondYounger, VerificationTrigger.Admin, cutoff.AddTicks(10)), // 10 ticks = 1 microsecond
+            Request(flightMiddle, VerificationTrigger.Flight, cutoff.AddMinutes(5)));
+
+        var claimOrder = new List<string>();
+        for (var i = 0; i < 3; i++)
+        {
+            await using var db = CreateDbContext();
+            var claimed = await Repository(db).ClaimBatchAsync(1, now);
+            claimOrder.Add(Assert.Single(claimed).EntityKey);
+        }
+
+        Assert.Equal(new[] { atCutoff, flightMiddle, oneMicrosecondYounger }, claimOrder);
     }
 
     /// <summary>

@@ -33,6 +33,16 @@ namespace FlightAssistant.Application.Verification
         /// claims whatever is <c>Pending</c> regardless of any prior <c>Error</c> outcome.</summary>
         TimeSpan ErrorCooldown { get; }
 
+        /// <summary>How long a request may wait before it is claimed ahead of every younger request,
+        /// whatever its trigger (#419) — read by <c>VerificationRequestRepository.ClaimBatchAsync</c>.
+        /// A request is promoted once its <c>requested_utc</c> is at or before <c>nowUtc -
+        /// ClaimPromotionAge</c> (inclusive). Promoted requests of any trigger rank with
+        /// flight-triggered requests, ordered by <c>requested_utc</c> then <c>id</c>; an unpromoted
+        /// admin request still ranks below every flight-triggered request, exactly as before this
+        /// option existed. Never <see cref="TimeSpan.Zero"/> — that would degenerate into strict
+        /// oldest-first claiming, which is not what was chosen.</summary>
+        TimeSpan ClaimPromotionAge { get; }
+
         /// <summary>The source names a check for <paramref name="entityType"/> uses when a caller
         /// names none — read by the flight-tracking trigger (#410) to build its own
         /// <c>EnqueueAsync</c> call. Not read by the job itself, which uses each request's own

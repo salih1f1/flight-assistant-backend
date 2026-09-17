@@ -43,6 +43,7 @@ public class VerificationOptionsTests
         Assert.Equal(180, options.StaleAfterDays);
         Assert.Equal(TimeSpan.FromMinutes(30), options.IdleRelease);
         Assert.Equal(TimeSpan.FromHours(6), options.ErrorCooldown);
+        Assert.Equal(TimeSpan.FromMinutes(10), options.ClaimPromotionAge);
         Assert.Equal(new[] { "ourairports" }, options.DefaultSources.For(VerificationEntityType.Airport));
         Assert.Equal(new[] { "aeroapi" }, options.DefaultSources.For(VerificationEntityType.Airline));
         Assert.Equal(new[] { "mledoze" }, options.DefaultSources.For(VerificationEntityType.Country));
@@ -88,6 +89,7 @@ public class VerificationOptionsTests
             ["Verification:StaleAfterDays"] = "30",
             ["Verification:IdleRelease"] = "00:05:00",
             ["Verification:ErrorCooldown"] = "12:00:00",
+            ["Verification:ClaimPromotionAge"] = "00:20:00",
             ["Verification:DefaultSources:Airport"] = "ourairports,aeroapi"
         });
 
@@ -101,6 +103,7 @@ public class VerificationOptionsTests
         Assert.Equal(30, options.StaleAfterDays);
         Assert.Equal(TimeSpan.FromMinutes(5), options.IdleRelease);
         Assert.Equal(TimeSpan.FromHours(12), options.ErrorCooldown);
+        Assert.Equal(TimeSpan.FromMinutes(20), options.ClaimPromotionAge);
         Assert.Equal(new[] { "ourairports", "aeroapi" }, options.DefaultSources.For(VerificationEntityType.Airport));
         Assert.Equal(new[] { "mledoze" }, options.DefaultSources.For(VerificationEntityType.Country));
     }
@@ -118,6 +121,9 @@ public class VerificationOptionsTests
     [InlineData("IdleRelease", "1.00:00:01")]
     [InlineData("ErrorCooldown", "-00:00:01")]
     [InlineData("ErrorCooldown", "7.00:00:01")]
+    [InlineData("ClaimPromotionAge", "00:00:59")]
+    [InlineData("ClaimPromotionAge", "00:00:00")]
+    [InlineData("ClaimPromotionAge", "1.00:00:01")]
     [InlineData("DefaultSources:Airport", "")]
     [InlineData("DefaultSources:Airline", "aero api")]
     [InlineData("DefaultSources:Country", "mledoze,")]
@@ -144,6 +150,8 @@ public class VerificationOptionsTests
     [InlineData("IdleRelease", "1.00:00:00")]
     [InlineData("ErrorCooldown", "00:00:00")]
     [InlineData("ErrorCooldown", "7.00:00:00")]
+    [InlineData("ClaimPromotionAge", "00:01:00")]
+    [InlineData("ClaimPromotionAge", "1.00:00:00")]
     public void TheBoundaryValues_PassValidationOnStart(string key, string value)
     {
         using var provider = Build(new Dictionary<string, string?> { [$"Verification:{key}"] = value });
