@@ -87,6 +87,8 @@ namespace FlightAssistant.Application.Commands.Flights
         private readonly IFlightSyncOptions _syncOptions;
         private readonly IFlightStatusWindowOptions _windowOptions;
         private readonly TimeProvider _timeProvider;
+        private readonly IFlightSearchProvider _search;
+        private readonly IRefDataRepository _refData;
         private readonly ILogger<SyncFlightStatusCommandHandler> _logger;
 
         public SyncFlightStatusCommandHandler(
@@ -98,6 +100,8 @@ namespace FlightAssistant.Application.Commands.Flights
             IFlightSyncOptions syncOptions,
             IFlightStatusWindowOptions windowOptions,
             TimeProvider timeProvider,
+            IFlightSearchProvider search,
+            IRefDataRepository refData,
             ILogger<SyncFlightStatusCommandHandler> logger)
         {
             _flights = flights;
@@ -108,6 +112,8 @@ namespace FlightAssistant.Application.Commands.Flights
             _syncOptions = syncOptions;
             _windowOptions = windowOptions;
             _timeProvider = timeProvider;
+            _search = search;
+            _refData = refData;
             _logger = logger;
         }
 
@@ -157,12 +163,17 @@ namespace FlightAssistant.Application.Commands.Flights
                     await _flights.SaveChangesAsync(ct);
                     return Result(flight, FlightStatusSyncOutcome.NoChange);
 
-                // AeroAPI can't answer before Live starts (#343). Step 2 of #349 adds a daily
-                // /schedules check here; until then there is nothing to call.
+                // AeroAPI can't answer a live-status call before Live starts (#343), so this far out the
+                // check is against the published schedule instead (#444, §2.4) — which catches a retime
+                // before the flight ever reaches the live window.
                 case FlightSyncMode.Schedule:
+                {
+                    var scheduleOutcome = await CheckScheduleAsync(flight, now, ct);
+                    flight.MarkSynced(now);
                     flight.ApplySyncPlan(FlightSyncMode.Schedule, FlightSyncPlanner.LiveStartsAtUtc(flight, options));
                     await _flights.SaveChangesAsync(ct);
-                    return Result(flight, FlightStatusSyncOutcome.NoChange);
+                    return Result(flight, scheduleOutcome);
+                }
             }
 
             // Before the budget read, which can wait on the AeroAPI throttle, so a second traveler request
@@ -224,6 +235,41 @@ namespace FlightAssistant.Application.Commands.Flights
 
             await _flights.SaveChangesAsync(ct);
             return Result(flight, outcome);
+        }
+
+        /// <summary>
+        /// The daily schedule check (#444, §2.4). Searches by flight number and service date — never by
+        /// route, which would send the search to a provider that resolves a marketing number to its
+        /// operator and could match a different flight entirely (#422) — then looks for a row that also
+        /// departs the airport this flight departs.
+        ///
+        /// <para>
+        /// A row for the same number on a different route is not this flight: AeroAPI answers a
+        /// flight-number search with every operation of that number, so matching on the number alone
+        /// would adopt another airport's times.
+        /// </para>
+        /// </summary>
+        private async Task<FlightStatusSyncOutcome> CheckScheduleAsync(Flight flight, DateTime now, CancellationToken ct)
+        {
+            var departureIata = await _refData.GetAirportIataByIdAsync(flight.DepartureAirportId, ct);
+            var criteria = new FlightSearchCriteria(null, null, flight.ServiceDateUtc, flight.FlightNumber);
+            var rows = await _search.SearchAsync(criteria, ct);
+
+            var match = rows.FirstOrDefault(r =>
+                string.Equals(r.FlightNumber, flight.FlightNumber, StringComparison.OrdinalIgnoreCase)
+                && r.ServiceDate == flight.ServiceDateUtc
+                && departureIata is not null
+                && string.Equals(r.DepartureAirportIata, departureIata, StringComparison.OrdinalIgnoreCase));
+
+            if (match is null)
+            {
+                flight.MarkMissingFromSchedule(now);
+                return FlightStatusSyncOutcome.NotInSchedule;
+            }
+
+            return flight.ApplyScheduleUpdate(match.ScheduledDepartureUtc, match.ScheduledArrivalUtc, now)
+                ? FlightStatusSyncOutcome.ScheduleUpdated
+                : FlightStatusSyncOutcome.NoChange;
         }
 
         /// <summary>The outcome plus the plan the handler just stored, read from the flight itself so

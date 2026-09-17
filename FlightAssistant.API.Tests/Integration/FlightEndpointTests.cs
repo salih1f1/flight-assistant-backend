@@ -174,7 +174,9 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
         factory.Services.GetRequiredService<IConfiguration>().GetValue("RateLimiting:FlightSync:PermitLimit", 6);
 
     /// <summary>A registered traveler tracking a flight 30 days out: Schedule mode, so a sync makes
-    /// no provider call. A fresh traveler id each time, so tests never share a rate-limit bucket.</summary>
+    /// no live-status call — since #444 it does run the daily schedule check, which the factory
+    /// answers with no rows. A fresh traveler id each time, so tests never share a rate-limit
+    /// bucket.</summary>
     private async Task<(HttpClient Client, Flight Flight)> TravelerTrackingAFlightDaysAwayAsync()
     {
         var userId = Guid.NewGuid();

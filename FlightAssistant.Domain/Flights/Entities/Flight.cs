@@ -213,6 +213,43 @@ namespace FlightAssistant.Domain.Flights.Entities
             Raise(new FlightTracked(Id, AirlineId, DepartureAirportId, ArrivalAirportId, nowUtc));
 
         /// <summary>
+        /// The daily schedule check found the flight (#444, #349 §2.4): stores the airline's current
+        /// scheduled times and clears <see cref="ScheduleMissingSinceUtc"/>. Returns whether the times
+        /// actually moved, which is what separates the caller's ScheduleUpdated outcome from NoChange.
+        ///
+        /// <para>
+        /// The flag is cleared on any sighting, retimed or not: it means "the airline stopped listing
+        /// this flight", and that stops being true the moment it is listed again. <see cref="UpdatedUtc"/>
+        /// moves only when a time changed, matching <see cref="ApplyProviderTimes"/>. Raises no event —
+        /// a schedule check is not a status, so it must never push.
+        /// </para>
+        /// </summary>
+        public bool ApplyScheduleUpdate(DateTime scheduledDepartureUtc, DateTime scheduledArrivalUtc, DateTime nowUtc)
+        {
+            ScheduleMissingSinceUtc = null;
+
+            var changed = ScheduledDepartureUtc != scheduledDepartureUtc || ScheduledArrivalUtc != scheduledArrivalUtc;
+            if (!changed) return false;
+
+            ScheduledDepartureUtc = scheduledDepartureUtc;
+            ScheduledArrivalUtc = scheduledArrivalUtc;
+            UpdatedUtc = nowUtc;
+            return true;
+        }
+
+        /// <summary>
+        /// The daily schedule check didn't find the flight (#444). Remembers when it <em>first</em> went
+        /// missing and keeps that moment on every later check, because the useful fact is how long it has
+        /// been gone, not that it is still gone. The flight stays tracked and keeps its daily check.
+        ///
+        /// <para>
+        /// Leaves <see cref="UpdatedUtc"/> alone, like <see cref="ApplySyncPlan"/> below: this is the
+        /// check's own bookkeeping, not a change to the flight the airline published.
+        /// </para>
+        /// </summary>
+        public void MarkMissingFromSchedule(DateTime nowUtc) => ScheduleMissingSinceUtc ??= nowUtc;
+
+        /// <summary>
         /// Stores the planner's mode and next due time. Leaves <see cref="UpdatedUtc"/> alone: this
         /// changes every few minutes and isn't a change to the flight.
         /// </summary>

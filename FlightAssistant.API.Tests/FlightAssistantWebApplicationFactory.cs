@@ -1,3 +1,4 @@
+using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Infrastructure.ExternalServices.Verification;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.AspNetCore.Authentication;
@@ -122,7 +123,28 @@ public class FlightAssistantWebApplicationFactory : WebApplicationFactory<Progra
             foreach (var d in loggerFactoryDescs)
                 services.Remove(d);
             services.TryAddSingleton<ILoggerFactory>(new LoggerFactory());
+
+            // ── No test reaches a real flight search ─────────────────────────
+            // Same posture as the verification download handler below. Since #444 the daily schedule
+            // check calls IFlightSearchProvider, and that runs on the ordinary "traveler syncs a
+            // flight weeks out" path — so without this, tests that have nothing to do with searching
+            // would attempt a real AeroAPI call and fail slowly on its timeout.
+            // Answering no rows means an unstubbed schedule check reports NotInSchedule; a test that
+            // cares what the schedule says overrides this registration with its own provider.
+            var searchDescs = services
+                .Where(d => d.ServiceType == typeof(IFlightSearchProvider))
+                .ToList();
+            foreach (var d in searchDescs)
+                services.Remove(d);
+            services.AddScoped<IFlightSearchProvider, NoRowsFlightSearchProvider>();
         });
+    }
+
+    /// <summary>Answers every search with no rows, so no test makes a real one. See the note above.</summary>
+    private sealed class NoRowsFlightSearchProvider : IFlightSearchProvider
+    {
+        public Task<IReadOnlyList<FlightSearchResult>> SearchAsync(FlightSearchCriteria criteria, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<FlightSearchResult>>([]);
     }
 
     /// <summary>The message a test gets when anything tries to download a verification dataset.</summary>
