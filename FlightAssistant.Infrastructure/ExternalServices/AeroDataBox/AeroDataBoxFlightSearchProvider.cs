@@ -270,8 +270,18 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
 
             foreach (var element in departures.EnumerateArray())
             {
-                if (element.ValueKind != JsonValueKind.Object) continue;
                 totalRows++;
+
+                // A non-object array element (null, a scalar, ...) is structurally unmappable in
+                // the same sense as an object missing a required field — it counts toward
+                // unmappableCount rather than being skipped before totalRows is even incremented,
+                // otherwise a departures array containing only non-object elements never sets
+                // totalRows > 0 and the all-unmappable guard below never engages.
+                if (element.ValueKind != JsonValueKind.Object)
+                {
+                    unmappableCount++;
+                    continue;
+                }
 
                 var (row, isUnmappable) = TryMapRow(element, requestedOriginIata, requestedArrivalIata, criteria.Date);
                 if (isUnmappable)

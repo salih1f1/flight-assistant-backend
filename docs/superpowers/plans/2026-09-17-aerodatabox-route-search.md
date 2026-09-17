@@ -50,7 +50,7 @@ Several statements in this plan were wrong as first written, and a live measurem
 
 - [ ] **Step 1: Options, optional by design**
 
-`AeroDataBox--ApiKey` exists in Key Vault but, when this plan was written, was wired into nothing. Follow the **`GitHubOptions` precedent** (`GitHubOptions.cs:34`), not the `AeroApiOptions` one: the key is **optional**, the app still starts without it, and an unconfigured provider degrades rather than crashing.
+`AeroDataBox--ApiKey` exists in Key Vault but, when this plan was written, was wired into nothing. Follow the **`GitHubOptions` precedent** (`GitHubOptions.cs:34`), not the `AeroApiOptions` one: the key is **optional**, the app still starts without it, and with no key the selector sends route searches to AeroAPI instead.
 
 ```csharp
 namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox

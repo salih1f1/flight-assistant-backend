@@ -582,6 +582,23 @@ public class AeroDataBoxFlightSearchProviderTests
     }
 
     [Fact]
+    public async Task SearchAsync_Throws502_WhenDeparturesIsNonEmpty_ButEveryElementIsNonObject()
+    {
+        // Closes a gap in the all-unmappable guard (residual #422 fix): totalRows used to skip a
+        // non-object array element entirely (`continue` before the increment), so a departures
+        // array containing ONLY non-object elements left totalRows at 0 and the `totalRows > 0`
+        // guard below never engaged — the window silently returned [], cacheable as "no data" for
+        // up to 12h. That is exactly the silent-shape-change failure the structurally-unmappable
+        // guard exists to make loud.
+        const string body = """{ "departures": [null, null] }""";
+        var (provider, _) = Provider(HttpStatusCode.OK, body);
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(SofToIst));
+
+        Assert.Equal(502, ex.StatusCode);
+    }
+
+    [Fact]
     public async Task SearchAsync_SkipsMalformedRows_RatherThanThrowing()
     {
         // TK 1031's departure carries an empty "airport" object — no iata at all. #422 final review
@@ -684,7 +701,63 @@ public class AeroDataBoxFlightSearchProviderTests
         var ex = await Assert.ThrowsAsync<DomainException>(() => provider.SearchAsync(SofToIst));
 
         Assert.Equal(502, ex.StatusCode);
-        Assert.Contains("2", ex.DiagnosticDetail);
+        // The exact count phrase, not just "2" — DiagnosticDetail also embeds the search date
+        // (2026-09-29), so a bare Assert.Contains("2", ...) would pass even if the interpolated row
+        // count were wrong, since "2" appears in "2026" regardless of totalRows.
+        Assert.Contains("returned 2 departures rows", ex.DiagnosticDetail);
+    }
+
+    [Fact]
+    public async Task SearchAsync_ReturnsEmptyList_WhenEveryRowIsStructurallyValidButHasADifferentArrivalAirport()
+    {
+        // Permanent misfire guard for the all-unmappable rule (residual #422 fix): every row here
+        // is structurally complete (number, departure/arrival sections, arrival airport, both
+        // scheduled times, a parseable scheduled local date) but is filtered out because none of
+        // them is bound for the requested arrival — a legitimate "not this row" outcome, never a
+        // structural-mapping failure. A window where every row is filtered this way must still
+        // return an empty list, not 502.
+        const string body = """
+        {
+          "departures": [
+            {
+              "number": "BA 249",
+              "codeshareStatus": "IsOperator",
+              "departure": { "airport": { "iata": "SOF" }, "scheduledTime": { "utc": "2026-09-29T06:35:00Z", "local": "2026-09-29T09:35:00+03:00" } },
+              "arrival": { "airport": { "iata": "LHR" }, "scheduledTime": { "utc": "2026-09-29T09:05:00Z", "local": "2026-09-29T10:05:00+01:00" } }
+            }
+          ]
+        }
+        """;
+        var (provider, _) = Provider(HttpStatusCode.OK, body);
+
+        var results = await provider.SearchAsync(SofToIst);
+
+        Assert.Empty(results);
+    }
+
+    [Fact]
+    public async Task SearchAsync_ReturnsEmptyList_WhenEveryRowIsStructurallyValidButHasADifferentScheduledLocalDate()
+    {
+        // Permanent misfire guard, the date-filter half: every row is structurally complete but its
+        // own scheduled local date is the 28th, not the requested 29th — a legitimate date-filter
+        // exclusion, never a structural-mapping failure. Must return an empty list, not 502.
+        const string body = """
+        {
+          "departures": [
+            {
+              "number": "TK 1028",
+              "codeshareStatus": "IsOperator",
+              "departure": { "airport": { "iata": "SOF" }, "scheduledTime": { "utc": "2026-09-28T06:35:00Z", "local": "2026-09-28T09:35:00+03:00" } },
+              "arrival": { "airport": { "iata": "IST" }, "scheduledTime": { "utc": "2026-09-28T08:05:00Z", "local": "2026-09-28T11:05:00+03:00" } }
+            }
+          ]
+        }
+        """;
+        var (provider, _) = Provider(HttpStatusCode.OK, body);
+
+        var results = await provider.SearchAsync(SofToIst);
+
+        Assert.Empty(results);
     }
 
     [Fact]
