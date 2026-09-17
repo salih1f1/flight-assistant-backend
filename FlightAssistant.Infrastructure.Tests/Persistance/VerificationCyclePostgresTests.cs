@@ -509,8 +509,10 @@ public class VerificationCyclePostgresTests : PostgresTestBase
 
         // Four aeroapi requests, requested well before the two free-source ones below: plain
         // requested_utc order alone (the admin-triggered variant) already puts them first, and the
-        // flight-triggered variant is ahead regardless of requested_utc (ORDER BY trigger = Flight
-        // DESC first) -- which is why #428's proof names a flight-triggered backlog specifically.
+        // flight-triggered variant is ahead regardless of requested_utc too -- the top-tier predicate
+        // is (trigger = flight OR requested_utc &lt;= promotedAtOrBeforeUtc) DESC (#419), and its
+        // flight-triggered branch holds unconditionally on its own, promotion or not -- which is why
+        // #428's proof names a flight-triggered backlog specifically.
         for (var i = 1; i <= 4; i++)
             await EnqueueAsync(
                 VerificationEntityType.Airline, i.ToString(CultureInfo.InvariantCulture), "aeroapi",
@@ -557,6 +559,89 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         });
     }
 
+    // ── #419 × #401/#428: promotion does not reopen the starvation #428 closed ───
+
+    /// <summary>
+    /// R4 (#419): a deep, promoted, paused admin <c>aeroapi</c> backlog does not starve the younger
+    /// flight-triggered free-source work behind it, now that the replacement claim excludes by
+    /// source name (#428) rather than by the ids the initial batch just paused (#401's original G1).
+    /// Seven admin-triggered <c>aeroapi</c> requests, each an hour old -- promoted, since the default
+    /// <c>ClaimPromotionAge</c> is 10 minutes -- rank ahead of two younger flight-triggered
+    /// <c>ourairports</c> requests for real seeded airports. <c>BatchSize</c> is 3, so the backlog (7)
+    /// is more than <c>2 * BatchSize</c> deep: with the AeroAPI budget Exhausted from the first read,
+    /// the initial claim pauses three of the promoted <c>aeroapi</c> requests, and #428's replacement
+    /// claim -- excluding the whole <c>aeroapi</c> source rather than just those three ids -- reaches
+    /// past the four still-untried <c>aeroapi</c> requests straight to the two free-source ones,
+    /// which are both actually verified, not merely "not excluded by id". The other four
+    /// <c>aeroapi</c> requests are never claimed at all this cycle.
+    ///
+    /// <para>
+    /// The break-proof reverts the replacement claim to id-only exclusion (#401's original G1) and
+    /// captures that this test then fails: with only the three just-paused ids excluded, the
+    /// replacement batch fills on the next three oldest pending requests -- three more promoted
+    /// <c>aeroapi</c> requests -- pausing them too and leaving both free-source requests unreached
+    /// for the whole cycle, the exact shape #428 fixed.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task RunCycle_ManyPromotedPausedAeroApiRequests_TheReplacementClaimStillReachesYoungerFlightTriggeredFreeSourceWork()
+    {
+        await SeedAsync(UnitedKingdom(), France());
+        var lhr = Heathrow();
+        var cdg = CharlesDeGaulle();
+        await SeedAsync(lhr, cdg);
+
+        var oldAdminAeroApiIds = new List<long>();
+        for (var i = 0; i < 7; i++)
+            oldAdminAeroApiIds.Add(await EnqueueAsync(
+                VerificationEntityType.Airline, (300 + i).ToString(CultureInfo.InvariantCulture), "aeroapi",
+                requestedUtc: T0.AddHours(-1).AddSeconds(i))); // all promoted: an hour old vs. the default 10-minute ClaimPromotionAge
+
+        var lhrRequest = await EnqueueAsync(VerificationEntityType.Airport, Key(lhr.Id), "ourairports", requestedUtc: T0, trigger: VerificationTrigger.Flight);
+        var cdgRequest = await EnqueueAsync(VerificationEntityType.Airport, Key(cdg.Id), "ourairports", requestedUtc: T0.AddSeconds(1), trigger: VerificationTrigger.Flight);
+
+        // The aeroapi lookup is never reached (paused, or not claimed at all, before fetch); NotFound
+        // is just a harmless stub.
+        var aeroApi = new FakeSource("aeroapi", VerificationEntityType.Airline, _ => VerificationSourceFetchResult.NotFound);
+        var ourAirports = new FakeSource("ourairports", VerificationEntityType.Airport, key =>
+            key.Iata == "LHR" ? Found(VerificationCheckedColumns.Project(Heathrow())) : Found(VerificationCheckedColumns.Project(CharlesDeGaulle())));
+        await using var job = BuildJob(
+            new IVerificationSource[] { aeroApi, ourAirports }, batchSize: 3, budgetState: ProviderBudgetState.Exhausted);
+
+        var result = await RunCycleAsync(job);
+
+        // The initial batch (3) pauses three promoted aeroapi requests; the replacement batch (up to
+        // 3, but only two requests remain once aeroapi is excluded entirely) reaches both free-source
+        // requests instead of pausing three more of the four still-untried aeroapi requests.
+        Assert.Equal(
+            new VerificationCycleResult(StuckReset: 0, StuckAbandoned: 0, RequestsProcessed: 5, RequestsFailed: 0, ClaimsLost: 0, FailuresUnrecorded: 0, Paused: 3),
+            result);
+        Assert.Empty(aeroApi.Lookups);
+
+        await using var verify = CreateDbContext();
+        var requests = await verify.VerificationRequests.AsNoTracking().ToDictionaryAsync(r => r.Id);
+        Assert.Equal(VerificationRequestStatus.Verified, requests[lhrRequest].Status);
+        Assert.Equal(VerificationRequestStatus.Verified, requests[cdgRequest].Status);
+        Assert.True((await verify.Airports.AsNoTracking().SingleAsync(a => a.Id == lhr.Id)).IsVerified);
+        Assert.True((await verify.Airports.AsNoTracking().SingleAsync(a => a.Id == cdg.Id)).IsVerified);
+        // Both free-source requests were actually claimed and looked up, not merely left alone by
+        // accident -- real airports are seeded, so (unlike an unseeded request, which would end
+        // Error "Entity no longer exists" without ever reaching the source) this is only possible if
+        // the replacement claim reached them.
+        Assert.Equal(2, ourAirports.Lookups.Count);
+
+        // All seven aeroapi requests -- the three paused, and the four the replacement claim never
+        // even touched -- are left exactly as they were: still Pending, no attempt, no error.
+        Assert.Equal(7, oldAdminAeroApiIds.Count);
+        Assert.All(oldAdminAeroApiIds, id =>
+        {
+            var r = requests[id];
+            Assert.Equal(VerificationRequestStatus.Pending, r.Status);
+            Assert.Equal(0, r.Attempts);
+            Assert.Null(r.Error);
+        });
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     /// <summary>The job's services as the API host wires them, minus what a cycle doesn't touch.</summary>
@@ -576,7 +661,8 @@ public class VerificationCyclePostgresTests : PostgresTestBase
         // Normal by default: most of these tests are not about the budget gate (#401 task 2,
         // Application-level tests own that); a fixed guard just satisfies
         // VerificationRequestProcessor's DI dependency without ever reaching AeroAPI. The #428
-        // replacement-claim tests below pass Exhausted to exercise the real pause-and-replace path.
+        // replacement-claim tests and the #419/#401 interaction test below pass Exhausted to
+        // exercise the real pause-and-replace path.
         services.AddSingleton<IProviderBudgetGuard>(new FixedBudgetGuard(budgetState));
 
         // Program.cs's DbContext registration: the audit interceptor reads the scope's IAdminContext.
