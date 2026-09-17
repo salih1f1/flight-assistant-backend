@@ -15,8 +15,8 @@ namespace FlightAssistant.API.Tests.Integration;
 public class ApplicationInsightsWiringTests(FlightAssistantWebApplicationFactory factory)
 {
     // LiveEndpoint is pinned alongside IngestionEndpoint (#440 fix round 1, finding 5):
-    // EnableQuickPulseMetricStream defaults to true, so resolving TelemetryConfiguration (as both
-    // tests here do) initializes a Live Metrics module whose default target is a real Microsoft
+    // EnableQuickPulseMetricStream defaults to true, so resolving TelemetryConfiguration (as
+    // PlatformKeyOnly_EnablesTheSdk below does) initializes a Live Metrics module whose default target is a real Microsoft
     // endpoint unless LiveEndpoint is also redirected to loopback.
     private const string Dummy = "InstrumentationKey=00000000-0000-0000-0000-000000000000;IngestionEndpoint=http://127.0.0.1:9/;LiveEndpoint=http://127.0.0.1:9/";
 
