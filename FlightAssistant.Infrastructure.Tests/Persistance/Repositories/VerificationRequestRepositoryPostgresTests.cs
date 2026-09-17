@@ -1001,6 +1001,95 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         Assert.Equal(1, commands.Count);
     }
 
+    // ── Error attribution report (#424) ─────────────────────────────────────
+
+    /// <summary>
+    /// R4/R5: Error completions inside the 24-hour window are counted and grouped by
+    /// <c>(FailedSource, EntityType)</c> -- two requests share the <c>(aeroapi, Airport)</c> group to
+    /// prove grouping actually aggregates rather than returning one row per request. A same-shaped
+    /// completion just outside the window, and a non-Error completion inside it, are both excluded
+    /// (proving the status filter and the window cutoff are both load-bearing, not merely that
+    /// *something* was excluded). R5's "only non-zero groups" needs no separate assertion: a
+    /// <c>GROUP BY</c> cannot produce an empty group in the first place.
+    /// </summary>
+    [Fact]
+    public async Task GetRecentFailureGroupsAsync_CountsAndGroupsErrorsInsideTheWindow_ExcludingOutsideAndNonError()
+    {
+        var now = T0.AddDays(2);
+        var windowStart = now - TimeSpan.FromHours(IVerificationRequestRepository.ErrorAttributionWindowHours);
+
+        // Inside the window: two aeroapi/Airport failures (one group, count 2), one mledoze/Country.
+        await SeedErrorAsync("1", VerificationEntityType.Airport, "aeroapi", now.AddHours(-1));
+        await SeedErrorAsync("2", VerificationEntityType.Airport, "aeroapi", now.AddHours(-2));
+        await SeedErrorAsync("GB", VerificationEntityType.Country, "mledoze", now.AddMinutes(-5));
+
+        // Outside the window, same shape as an inside row: a bug that ignored the cutoff would
+        // inflate the aeroapi/Airport group's count instead of merely adding an extra group.
+        await SeedErrorAsync("4", VerificationEntityType.Airport, "aeroapi", windowStart.AddTicks(-1));
+        await SeedErrorAsync("5", VerificationEntityType.Airport, "aeroapi", now.AddDays(-10));
+
+        // Inside the window, but not Error -- must not be counted even though it completed at the
+        // same instant an in-window Error row did.
+        await SeedVerifiedAsync("6", VerificationEntityType.Airport, now.AddMinutes(-1));
+
+        await using var db = CreateDbContext();
+        var groups = await Repository(db, now: now).GetRecentFailureGroupsAsync();
+
+        Assert.Equal(
+            new[]
+            {
+                new VerificationFailureGroup("aeroapi", VerificationEntityType.Airport, 2),
+                new VerificationFailureGroup("mledoze", VerificationEntityType.Country, 1),
+            },
+            groups.OrderBy(g => g.EntityType).ToList());
+    }
+
+    /// <summary>
+    /// R3: a failure not attributable to one named source (e.g. the entity was deleted, or an
+    /// unexpected exception) is reported as its own "unattributed" group -- a null
+    /// <see cref="VerificationFailureGroup.FailedSource"/>, counted like any other group and never
+    /// dropped -- alongside an attributed group sharing the same entity type in the same window.
+    /// </summary>
+    [Fact]
+    public async Task GetRecentFailureGroupsAsync_NullFailedSource_IsItsOwnUnattributedGroup()
+    {
+        var now = T0.AddDays(2);
+
+        await SeedErrorAsync("1", VerificationEntityType.Airport, "aeroapi", now.AddHours(-1));
+        await SeedErrorAsync("2", VerificationEntityType.Airport, null, now.AddHours(-2)); // e.g. "Entity no longer exists"
+        await SeedErrorAsync("3", VerificationEntityType.Airport, null, now.AddMinutes(-5));
+
+        await using var db = CreateDbContext();
+        var groups = await Repository(db, now: now).GetRecentFailureGroupsAsync();
+
+        Assert.Equal(
+            new[]
+            {
+                new VerificationFailureGroup(null, VerificationEntityType.Airport, 2),
+                new VerificationFailureGroup("aeroapi", VerificationEntityType.Airport, 1),
+            },
+            groups.OrderBy(g => g.FailedSource, StringComparer.Ordinal).ToList());
+    }
+
+    /// <summary>The window's lower bound is inclusive ("at or after now − 24h"): a completion exactly
+    /// at the cutoff counts; one tick earlier does not. Mirrors #418's own inclusive-boundary pin for
+    /// the cooldown window.</summary>
+    [Fact]
+    public async Task GetRecentFailureGroupsAsync_WindowLowerBoundIsInclusive()
+    {
+        var now = T0.AddDays(2);
+        var windowStart = now - TimeSpan.FromHours(IVerificationRequestRepository.ErrorAttributionWindowHours);
+
+        await SeedErrorAsync("1", VerificationEntityType.Airport, "aeroapi", windowStart); // exactly at the cutoff
+        await SeedErrorAsync("2", VerificationEntityType.Airline, "aeroapi", windowStart.AddTicks(-1)); // one tick earlier
+
+        await using var db = CreateDbContext();
+        var groups = await Repository(db, now: now).GetRecentFailureGroupsAsync();
+
+        var group = Assert.Single(groups);
+        Assert.Equal(new VerificationFailureGroup("aeroapi", VerificationEntityType.Airport, 1), group);
+    }
+
     /// <summary>
     /// Accept-source's guard (#378): only a Pending or Running request for that exact entity type and key
     /// counts as open.
@@ -1228,6 +1317,33 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         await using var db = CreateDbContext();
         var repository = Repository(db);
         Assert.Single(await repository.ClaimBatchAsync(1, T0)).MarkError("boom", completedUtc);
+        await repository.SaveChangesAsync();
+    }
+
+    /// <summary>#424: seeds one request of <paramref name="entityType"/>, claimed and completed as
+    /// <see cref="VerificationRequestStatus.Error"/> at <paramref name="completedUtc"/>, attributed to
+    /// <paramref name="failedSource"/> (or unattributed when null). When a source is given, it becomes
+    /// the request's own (sole) source, since <c>MarkError</c> validates <c>failedSource</c> against
+    /// <c>SourceNames</c>.</summary>
+    private async Task SeedErrorAsync(string key, VerificationEntityType entityType, string? failedSource, DateTime completedUtc)
+    {
+        var sources = failedSource is null ? OurAirports : new[] { failedSource };
+        await SeedEachAsync(Request(key, requestedUtc: T0, entityType: entityType, sources: sources));
+        await using var db = CreateDbContext();
+        var repository = Repository(db);
+        Assert.Single(await repository.ClaimBatchAsync(1, T0)).MarkError("boom", completedUtc, failedSource);
+        await repository.SaveChangesAsync();
+    }
+
+    /// <summary>#424: seeds one request of <paramref name="entityType"/>, claimed and completed as
+    /// <see cref="VerificationRequestStatus.Verified"/> at <paramref name="completedUtc"/> -- used to
+    /// prove a non-Error completion inside the report's window is excluded.</summary>
+    private async Task SeedVerifiedAsync(string key, VerificationEntityType entityType, DateTime completedUtc)
+    {
+        await SeedEachAsync(Request(key, requestedUtc: T0, entityType: entityType));
+        await using var db = CreateDbContext();
+        var repository = Repository(db);
+        Assert.Single(await repository.ClaimBatchAsync(1, T0)).MarkVerified(completedUtc);
         await repository.SaveChangesAsync();
     }
 
