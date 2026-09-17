@@ -151,7 +151,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Verification
             // index cannot serve that other query). Leads on CompletedUtc, the query's only range
             // predicate, so Postgres seeks the last-24-hours slice of Error rows directly instead of
             // scanning every Error row the (never-purged) table has ever accumulated. FailedSource and
-            // EntityType ride as INCLUDE columns, not key columns, so the index-only scan Task 3's
+            // EntityType ride as INCLUDE columns, not key columns, so the index-only scan the report's
             // GROUP BY wants doesn't need them in the key -- they carry no ordering value of their own
             // since the query has no equality predicate on either.
             b.HasIndex(x => x.CompletedUtc)
