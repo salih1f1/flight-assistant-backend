@@ -8,12 +8,15 @@ using NSubstitute;
 namespace FlightAssistant.Infrastructure.Tests.ExternalServices;
 
 /// <summary>
-/// Proves <see cref="FlightSearchProviderSelector"/> routes a search by criteria shape alone
-/// (#422): a full route with no usable flight number goes to AeroDataBox; everything else —
-/// including every shape <c>AeroApiFlightSearchProvider</c>'s own guard rejects — goes to AeroAPI,
-/// so that guard keeps producing the same error for the same input. Both targets are NSubstitute
-/// fakes; every test asserts which one received the call AND that the other received none, since a
-/// selector that calls both (or neither) would still let the "answer" assertion alone pass.
+/// Proves <see cref="FlightSearchProviderSelector"/> routes a search by criteria shape AND by
+/// whether AeroDataBox is configured (#422 final review, finding 4 — not "by criteria shape alone":
+/// <see cref="SearchAsync_FullRouteNoFlightNumber_AeroDataBoxUnconfigured_FallsBackToAeroApi"/>
+/// below is exactly the configuration dimension, in this same file): a full route with no usable
+/// flight number goes to AeroDataBox only when it is configured; everything else — including every
+/// shape <c>AeroApiFlightSearchProvider</c>'s own guard rejects — goes to AeroAPI, so that guard
+/// keeps producing the same error for the same input. Both targets are NSubstitute fakes; every
+/// test asserts which one received the call AND that the other received none, since a selector that
+/// calls both (or neither) would still let the "answer" assertion alone pass.
 /// </summary>
 public class FlightSearchProviderSelectorTests
 {
@@ -98,4 +101,36 @@ public class FlightSearchProviderSelectorTests
     [Fact]
     public Task SearchAsync_FullRouteNoFlightNumber_AeroDataBoxUnconfigured_FallsBackToAeroApi() =>
         AssertRoutesToAeroApiAsync(new FlightSearchCriteria("IST", "JFK", Date, null, false), aeroDataBoxConfigured: false);
+
+    // ------------------------------------------------------------------
+    // Cancellation forwarding (#422 final review, finding 10): the helpers above verify with
+    // Arg.Any<CancellationToken>(), which a selector that drops ct entirely would still satisfy —
+    // these pin a REAL, non-default token reaching the chosen provider.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task SearchAsync_ForwardsTheRealCancellationToken_WhenRoutedToAeroDataBox()
+    {
+        using var cts = new CancellationTokenSource();
+        var criteria = new FlightSearchCriteria("IST", "JFK", Date, null, false);
+        _aeroDataBox.SearchAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>())
+            .Returns(new List<FlightSearchResult> { AeroDataBoxRow });
+
+        await Selector().SearchAsync(criteria, cts.Token);
+
+        await _aeroDataBox.Received(1).SearchAsync(criteria, cts.Token);
+    }
+
+    [Fact]
+    public async Task SearchAsync_ForwardsTheRealCancellationToken_WhenRoutedToAeroApi()
+    {
+        using var cts = new CancellationTokenSource();
+        var criteria = new FlightSearchCriteria(null, null, Date, "BA123", false);
+        _aeroApi.SearchAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>())
+            .Returns(new List<FlightSearchResult> { AeroApiRow });
+
+        await Selector().SearchAsync(criteria, cts.Token);
+
+        await _aeroApi.Received(1).SearchAsync(criteria, cts.Token);
+    }
 }
