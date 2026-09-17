@@ -15,6 +15,13 @@ internal sealed record FakeJobOptions(
     TimeSpan ErrorCooldown = default)
     : IVerificationJobOptions
 {
+    /// <summary>Not a positional parameter: a <see cref="TimeSpan"/> default must be constant, and
+    /// <c>TimeSpan.FromMinutes(10)</c> isn't one. Matches
+    /// <see cref="FlightAssistant.API.HostedServices.VerificationOptions"/>'s own default (#419), so a
+    /// test that isn't about promotion sees claim ordering unaffected at realistic ages. A test that
+    /// needs a different age sets it with an object initializer.</summary>
+    public TimeSpan ClaimPromotionAge { get; init; } = TimeSpan.FromMinutes(10);
+
     public IReadOnlyList<string> DefaultSourcesFor(VerificationEntityType entityType) => entityType switch
     {
         VerificationEntityType.Airport => new[] { "ourairports" },

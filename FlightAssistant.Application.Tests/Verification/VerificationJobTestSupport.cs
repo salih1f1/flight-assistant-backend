@@ -15,6 +15,12 @@ internal sealed record FakeJobOptions(
     TimeSpan ErrorCooldown = default)
     : IVerificationJobOptions
 {
+    /// <summary>Not a positional parameter: a <see cref="TimeSpan"/> default must be constant, and
+    /// <c>TimeSpan.FromMinutes(10)</c> isn't one. Matches <c>VerificationOptions</c>'s own default
+    /// (#419): these tests mock <c>ClaimBatchAsync</c> entirely, so this value is never read by the
+    /// real claim SQL, only present to satisfy the interface.</summary>
+    public TimeSpan ClaimPromotionAge { get; init; } = TimeSpan.FromMinutes(10);
+
     public IReadOnlyList<string> DefaultSourcesFor(VerificationEntityType entityType) => entityType switch
     {
         VerificationEntityType.Airport => new[] { "ourairports" },

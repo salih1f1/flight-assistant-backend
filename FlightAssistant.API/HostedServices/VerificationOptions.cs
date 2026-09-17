@@ -51,6 +51,23 @@ namespace FlightAssistant.API.HostedServices
         [Range(typeof(TimeSpan), "00:00:00", "7.00:00:00")]
         public TimeSpan ErrorCooldown { get; set; } = TimeSpan.FromHours(6);
 
+        /// <summary>How long a request may wait before it is claimed ahead of every younger request,
+        /// whatever its trigger (#419) — a sustained stream of flight-triggered checks would otherwise
+        /// keep an admin-queued batch waiting indefinitely. <c>00:00:00</c> is excluded: it would
+        /// degenerate into strict oldest-first claiming, which was deliberately not chosen.
+        /// <para>
+        /// The cost: promoting old work delays younger flight-triggered work behind it, linearly, at
+        /// about <c>PollInterval / BatchSize</c> per promoted request queued ahead (≈3 s at defaults) —
+        /// measured at 1,000 already-promoted admin requests, 50 minutes. A retried request re-promotes
+        /// on every attempt (<c>requested_utc</c> is untouched by a source error), up to
+        /// <see cref="MaxAttempts"/> — measured at 1,000 requests with every attempt failing, 2 h 28 min.
+        /// None of this is traveler-visible: the queue only verifies reference data (airports, airlines,
+        /// countries), read by admin exports and stats, never a traveler-facing endpoint. Raise this
+        /// (up to <c>1.00:00:00</c>; needs a restart) to trade the delay back.
+        /// </para></summary>
+        [Range(typeof(TimeSpan), "00:01:00", "1.00:00:00")]
+        public TimeSpan ClaimPromotionAge { get; set; } = TimeSpan.FromMinutes(10);
+
         /// <summary>The sources a check uses when its caller names none (steps 6 and 10). Not used by
         /// the job itself, which reads each request's own sources.</summary>
         public VerificationDefaultSources DefaultSources { get; set; } = new();
