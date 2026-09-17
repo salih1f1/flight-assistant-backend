@@ -503,7 +503,7 @@ public class MledozeCountriesVerificationSourceTests
 
         await Task.Delay(GateHold);
         handler.Release();
-        var results = await Task.WhenAll(first, second);
+        var results = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(1, handler.CallCount);
         Assert.True(results[0].Lookup!.IsFound);
