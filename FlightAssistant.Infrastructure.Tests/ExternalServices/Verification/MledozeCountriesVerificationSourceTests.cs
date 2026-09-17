@@ -21,24 +21,28 @@ public class MledozeCountriesVerificationSourceTests
     private static readonly string FixtureJson =
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Verification", "countries-slice.json"));
 
-    /// <summary>A short, test-only download timeout -- <see cref="MledozeCountriesVerificationSource.DownloadTimeout"/>
-    /// (30 seconds) would make a timeout test noticeably slow.</summary>
-    private static readonly TimeSpan TestTimeout = TimeSpan.FromMilliseconds(100);
+    /// <summary>
+    /// The download deadline every test gets unless it passes its own (#433). The source enforces it
+    /// on the wall clock, and it covers sending the request AND parsing the response, so it must be
+    /// far longer than a slow CI runner can take for either. At 100 ms it timed out ordinary lookups
+    /// (#431, #433). Tests that exist to watch the deadline fire pass <see cref="ShortDeadline"/>.
+    /// </summary>
+    private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// The download deadline for the tests that hold <see cref="GatedHandler"/> closed (#431).
-    /// Those tests are about joining a shared download and per-caller cancellation, not about the
-    /// deadline. With <see cref="TestTimeout"/>'s 100 ms, a loaded CI runner could keep the gate
-    /// closed past it: the shared load then timed out, and the joined caller got a source error.
+    /// A deadline short enough to fire quickly, for the tests that exist to watch it fire:
+    /// <c>LookupAsync_ReturnsASourceError_WhenNothingAnswers</c> and
+    /// <c>LookupAsync_ReturnsASourceError_WhenTheBodyStalls</c>. Pass it explicitly, and never make
+    /// it the default again (#433).
     /// </summary>
-    private static readonly TimeSpan GatedDownloadTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ShortDeadline = TimeSpan.FromMilliseconds(100);
 
     /// <summary>
     /// How long the gated tests deliberately keep the gate closed before releasing it: longer than
-    /// <see cref="TestTimeout"/>, so a gated test that loses its own deadline fails on every run
-    /// rather than only on a slow one (#431).
+    /// <see cref="ShortDeadline"/>, so if the default deadline ever shrinks back to a short value,
+    /// the gated tests fail on every run rather than only on a slow one (#431, #433).
     /// </summary>
-    private static readonly TimeSpan GateHold = TestTimeout * 3;
+    private static readonly TimeSpan GateHold = ShortDeadline * 3;
 
     private sealed class StaticHandler(HttpStatusCode status, string body) : HttpMessageHandler
     {
@@ -51,6 +55,16 @@ public class MledozeCountriesVerificationSourceTests
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json")
             });
+        }
+    }
+
+    /// <summary>Answers like <see cref="StaticHandler"/>, but only after <paramref name="delay"/> (#433).</summary>
+    private sealed class SlowStaticHandler(HttpStatusCode status, string body, TimeSpan delay) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(delay, cancellationToken);
+            return new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
         }
     }
 
@@ -196,12 +210,29 @@ public class MledozeCountriesVerificationSourceTests
         Assert.False(result.Lookup!.IsFound);
     }
 
+    [Fact]
+    public async Task LookupAsync_Succeeds_WhenTheResponseIsSlowerThanTheShortDeadline()
+    {
+        // #433: the default download deadline covers send AND parse, on the wall clock. At 100 ms a
+        // slow CI runner timed out ordinary lookups with no gate involved. This response is slower
+        // than that on purpose, so a default that shrinks back fails here on every run.
+        // Fixture, entity type and key copied from LookupAsync_MapsAllSixColumns_UsingNameCommon_NotOfficial,
+        // which already asserts IsFound for this key.
+        var source = Source(new SlowStaticHandler(HttpStatusCode.OK, FixtureJson, ShortDeadline * 3));
+
+        var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(result.IsError);
+        Assert.True(result.Lookup!.IsFound);
+    }
+
     // ── Source errors ───────────────────────────────────────────────────────
 
     [Fact]
     public async Task LookupAsync_ReturnsASourceError_WhenNothingAnswers()
     {
-        var source = Source(new NeverRespondingHandler());
+        var source = Source(new NeverRespondingHandler(), downloadTimeout: ShortDeadline);
 
         var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"))
             .WaitAsync(TimeSpan.FromSeconds(5));
@@ -214,7 +245,7 @@ public class MledozeCountriesVerificationSourceTests
     public async Task LookupAsync_ReturnsASourceError_WhenTheBodyStalls()
     {
         // Fix round 1, item 1: see the OurAirports equivalent for the full rationale.
-        var source = Source(new StalledBodyHandler());
+        var source = Source(new StalledBodyHandler(), downloadTimeout: ShortDeadline);
 
         var result = await source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"))
             .WaitAsync(TimeSpan.FromSeconds(5));
@@ -495,7 +526,7 @@ public class MledozeCountriesVerificationSourceTests
         // remark): deterministic via GatedHandler, waiting for proof the transport was actually
         // reached rather than an arbitrary sleep.
         var handler = new GatedHandler();
-        var source = Source(handler, downloadTimeout: GatedDownloadTimeout);
+        var source = Source(handler);
 
         var first = source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
         await handler.WaitUntilEnteredAsync();
@@ -517,7 +548,7 @@ public class MledozeCountriesVerificationSourceTests
         // must not be aborted just because one of the callers joined on it gave up. Test-level
         // timeouts on the two key awaits so a regression fails fast.
         var handler = new GatedHandler();
-        var source = Source(handler, downloadTimeout: GatedDownloadTimeout);
+        var source = Source(handler);
         using var firstCts = new CancellationTokenSource();
 
         var first = source.LookupAsync(
