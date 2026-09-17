@@ -25,6 +25,21 @@ public class MledozeCountriesVerificationSourceTests
     /// (30 seconds) would make a timeout test noticeably slow.</summary>
     private static readonly TimeSpan TestTimeout = TimeSpan.FromMilliseconds(100);
 
+    /// <summary>
+    /// The download deadline for the tests that hold <see cref="GatedHandler"/> closed (#431).
+    /// Those tests are about joining a shared download and per-caller cancellation, not about the
+    /// deadline. With <see cref="TestTimeout"/>'s 100 ms, a loaded CI runner could keep the gate
+    /// closed past it: the shared load then timed out, and the joined caller got a source error.
+    /// </summary>
+    private static readonly TimeSpan GatedDownloadTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// How long the gated tests deliberately keep the gate closed before releasing it: longer than
+    /// <see cref="TestTimeout"/>, so a gated test that loses its own deadline fails on every run
+    /// rather than only on a slow one (#431).
+    /// </summary>
+    private static readonly TimeSpan GateHold = TestTimeout * 3;
+
     private sealed class StaticHandler(HttpStatusCode status, string body) : HttpMessageHandler
     {
         public int CallCount { get; private set; }
@@ -480,12 +495,13 @@ public class MledozeCountriesVerificationSourceTests
         // remark): deterministic via GatedHandler, waiting for proof the transport was actually
         // reached rather than an arbitrary sleep.
         var handler = new GatedHandler();
-        var source = Source(handler);
+        var source = Source(handler, downloadTimeout: GatedDownloadTimeout);
 
         var first = source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("TR"));
         await handler.WaitUntilEnteredAsync();
         var second = source.LookupAsync(VerificationEntityType.Country, VerificationSourceLookupKey.ForCountry("CI"));
 
+        await Task.Delay(GateHold);
         handler.Release();
         var results = await Task.WhenAll(first, second);
 
@@ -501,7 +517,7 @@ public class MledozeCountriesVerificationSourceTests
         // must not be aborted just because one of the callers joined on it gave up. Test-level
         // timeouts on the two key awaits so a regression fails fast.
         var handler = new GatedHandler();
-        var source = Source(handler);
+        var source = Source(handler, downloadTimeout: GatedDownloadTimeout);
         using var firstCts = new CancellationTokenSource();
 
         var first = source.LookupAsync(
@@ -512,6 +528,7 @@ public class MledozeCountriesVerificationSourceTests
         firstCts.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first).WaitAsync(TimeSpan.FromSeconds(5));
 
+        await Task.Delay(GateHold);
         handler.Release();
         var secondResult = await second.WaitAsync(TimeSpan.FromSeconds(5));
 
