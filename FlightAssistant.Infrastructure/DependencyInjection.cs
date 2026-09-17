@@ -237,26 +237,37 @@ namespace FlightAssistant.Infrastructure
 
             // AeroDataBox (#422): route searches (both airports, no usable flight number) move here
             // from AeroAPI's per-search-billed /schedules call, onto AeroDataBox's free tier.
-            // ApiKey is deliberately NOT [Required]/ValidateOnStart, unlike AeroApiOptions — the app
-            // must still start without it (GitHubOptions.IsConfigured precedent), and
-            // FlightSearchProviderSelector below falls back to AeroAPI when it is unset.
+            // ApiKey is deliberately NOT [Required], unlike AeroApiOptions — the app must still
+            // start without it (GitHubOptions.IsConfigured precedent), and FlightSearchProviderSelector
+            // below falls back to AeroAPI when it is unset. Every OTHER property (TimeoutSeconds) IS
+            // validated on start (#422 final review, finding 3): an invalid value used to throw only
+            // when a search first resolved the client — via the eagerly-constructed provider below —
+            // taking down every GET /flights/search request, not just route searches.
             services.AddOptions<AeroDataBoxOptions>()
-                .BindConfiguration("AeroDataBox");
+                .BindConfiguration("AeroDataBox")
+                .ValidateDataAnnotations()
+                .ValidateOnStart();
 
             // No AeroApiThrottleGate and no resilience handler on this client: the gate exists to
             // stay inside a METERED tier's rate limit, and every resilience timeout in this repo is
             // derived from AeroApi:MinRequestInterval — neither applies to a free, quota-based API.
             // TimeoutSeconds -> client.Timeout is this client's ONLY timeout as a result. The key is
             // sent only when configured, never as a null/empty header value.
+            //
+            // The primary handler disables redirects (#422 final review, finding 2 — the GitHub
+            // clients' own precedent below): the default SocketsHttpHandler follows a 3xx, and .NET
+            // strips only the Authorization header on redirect, not a custom one, so X-RapidAPI-Key
+            // would otherwise be replayed to whatever host the redirect names.
             services.AddHttpClient(AeroDataBoxFlightSearchProvider.HttpClientName, (sp, client) =>
             {
                 var options = sp.GetRequiredService<IOptions<AeroDataBoxOptions>>().Value;
-                client.BaseAddress = new Uri(options.BaseUrl);
+                client.BaseAddress = new Uri(AeroDataBoxOptions.ApiBaseUrl);
                 if (options.IsConfigured)
                     client.DefaultRequestHeaders.Add("X-RapidAPI-Key", options.ApiKey);
                 client.DefaultRequestHeaders.Add("X-RapidAPI-Host", AeroDataBoxOptions.RapidApiHost);
                 client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
-            });
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
 
             services.AddScoped(sp => new AeroDataBoxFlightSearchProvider(
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient(AeroDataBoxFlightSearchProvider.HttpClientName),

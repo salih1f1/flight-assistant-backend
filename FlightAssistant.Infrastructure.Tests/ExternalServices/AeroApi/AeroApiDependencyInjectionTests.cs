@@ -13,6 +13,7 @@ using FlightAssistant.Infrastructure.ExternalServices.AeroDataBox;
 using FluentValidation;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.Validators;
 using NSubstitute;
@@ -267,6 +268,77 @@ public class AeroApiDependencyInjectionTests
         Assert.True(client.DefaultRequestHeaders.Contains("X-RapidAPI-Host"));
         Assert.Equal(AeroDataBoxOptions.RapidApiHost, client.DefaultRequestHeaders.GetValues("X-RapidAPI-Host").Single());
         Assert.Equal(TimeSpan.FromSeconds(30), client.Timeout);
+    }
+
+    /// <summary>
+    /// #422 final review, finding 8 (carried D2): a null `Add(name, null)` still produces a header
+    /// that IS present (per the GitHub client's own precedent test), so the `IsConfigured` guard at
+    /// the AeroDataBox client registration is load-bearing. Green today; a mutation that adds the
+    /// header unconditionally would turn this red.
+    /// </summary>
+    [Fact]
+    public void AddInfrastructure_AeroDataBoxHttpClient_KeyUnset_SendsNoKeyHeader()
+    {
+        using var provider = BuildContainer();
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+
+        using var client = factory.CreateClient(AeroDataBoxFlightSearchProvider.HttpClientName);
+
+        Assert.False(client.DefaultRequestHeaders.Contains("X-RapidAPI-Key"));
+        Assert.True(client.DefaultRequestHeaders.Contains("X-RapidAPI-Host"));
+    }
+
+    /// <summary>
+    /// #422 final review, finding 2 (security): the primary handler must not follow redirects, or
+    /// X-RapidAPI-Key would be replayed to whatever host a 3xx names — mirrors
+    /// GitHubDependencyInjectionTests.NeitherClient_FollowsRedirects.
+    /// </summary>
+    [Fact]
+    public void AddInfrastructure_AeroDataBoxClient_DoesNotFollowRedirects()
+    {
+        using var provider = BuildContainer();
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>()
+            .CreateHandler(AeroDataBoxFlightSearchProvider.HttpClientName);
+        while (handler is DelegatingHandler delegating)
+            handler = delegating.InnerHandler!;
+
+        var primary = Assert.IsType<SocketsHttpHandler>(handler);
+        Assert.False(primary.AllowAutoRedirect);
+    }
+
+    /// <summary>
+    /// #422 final review, finding 3 (carried D1): TimeoutSeconds=0 must fail
+    /// AddOptions&lt;AeroDataBoxOptions&gt;()'s validation, the same [Range] precedent as
+    /// AeroApiOptions.TimeoutSeconds. Accessing .Value runs the data-annotation validation
+    /// ValidateOnStart runs at startup — same pattern as GitHubDependencyInjectionTests.
+    /// </summary>
+    [Fact]
+    public void AddInfrastructure_AeroDataBoxTimeoutSecondsZero_FailsOptionsValidation()
+    {
+        using var provider = BuildContainer(new Dictionary<string, string?>
+        {
+            ["AeroDataBox:ApiKey"] = "adb-dummy-test-key",
+            ["AeroDataBox:TimeoutSeconds"] = "0",
+        });
+
+        Assert.Throws<OptionsValidationException>(
+            () => provider.GetRequiredService<IOptions<AeroDataBoxOptions>>().Value);
+    }
+
+    /// <summary>
+    /// #422 final review, finding 3 (carried D1): the key stays deliberately NOT [Required] — an
+    /// unset key with otherwise-valid options must not stop IFlightSearchProvider (and therefore
+    /// every GET /flights/search request, route or flight-number) from resolving.
+    /// </summary>
+    [Fact]
+    public void AddInfrastructure_AeroDataBoxKeyUnset_ValidOtherwise_IFlightSearchProviderStillResolves()
+    {
+        using var provider = BuildContainer();
+
+        var search = provider.GetRequiredService<IFlightSearchProvider>();
+
+        Assert.NotNull(search);
     }
 
     [Fact]
