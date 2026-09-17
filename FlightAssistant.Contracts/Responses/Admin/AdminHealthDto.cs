@@ -191,7 +191,13 @@ namespace FlightAssistant.Contracts.Responses.Admin
     /// abandoned claim) -- reported as its own "unattributed" group, never dropped.</param>
     /// <param name="EntityType">The <c>VerificationEntityType</c> name the failing checks targeted
     /// (e.g. <c>"Airport"</c>).</param>
-    /// <param name="Count">How many Error completions in the window matched this group.</param>
+    /// <param name="Count">How many Error completions in the window matched this group -- not source
+    /// calls and not distinct entities. A fetch-failure completion represents <c>Verification:MaxAttempts</c>
+    /// (default 3) consecutive failed lookups, each billed for a metered source; an unregistered or
+    /// unsupported source completes after none. #418's error cooldown then holds back an affected
+    /// entity's re-queue for hours, so a source failing for everything shows only about 1-4 completions
+    /// per affected entity per day here, however severe the outage -- a small count is not a small
+    /// outage.</param>
     public sealed record AdminHealthVerificationFailureDto(
         string? FailedSource,
         string EntityType,
