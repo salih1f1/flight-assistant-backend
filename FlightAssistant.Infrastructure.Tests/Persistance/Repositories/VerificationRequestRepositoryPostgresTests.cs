@@ -165,20 +165,23 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     }
 
     /// <summary>
-    /// Today's flight-first priority is unchanged below the promotion age (R1): a young admin
-    /// request does not sneak into a batch sized to exactly the number of flight-triggered requests
-    /// ahead of it, even though every one of them is chronologically older than it.
+    /// Today's flight-first priority is unchanged below the promotion age (R1): an unpromoted admin
+    /// request does not get claimed ahead of a batch of flight-triggered requests, even though it is
+    /// chronologically <b>older</b> than every one of them. The admin row is deliberately the oldest
+    /// by <c>requested_utc</c> here (#419 review M1) -- a plain FIFO <c>ORDER BY requested_utc, id</c>
+    /// would claim it in this batch too, so a seed where the admin row is younger than the flight
+    /// rows cannot tell flight-first priority apart from FIFO; this seed can.
     /// </summary>
     [Fact]
     public async Task ClaimBatchAsync_AnAdminRequestYoungerThanThePromotionWindow_IsNotClaimedAheadOfABatchOfFlightRequests()
     {
-        const string youngAdmin = "111", flight1 = "112", flight2 = "113", flight3 = "114";
-        var youngAdminId = Assert.Single(await SeedEachAsync(Request(youngAdmin, VerificationTrigger.Admin, T0.AddMinutes(9))));
+        const string admin = "111", flight1 = "112", flight2 = "113", flight3 = "114";
+        var adminId = Assert.Single(await SeedEachAsync(Request(admin, VerificationTrigger.Admin, T0)));
         var flightIds = await SeedEachAsync(
-            Request(flight1, VerificationTrigger.Flight, T0),
-            Request(flight2, VerificationTrigger.Flight, T0.AddMinutes(1)),
-            Request(flight3, VerificationTrigger.Flight, T0.AddMinutes(2)));
-        var now = T0.AddMinutes(10); // the admin request is 1 minute old: inside the default 10-minute ClaimPromotionAge
+            Request(flight1, VerificationTrigger.Flight, T0.AddMinutes(1)),
+            Request(flight2, VerificationTrigger.Flight, T0.AddMinutes(2)),
+            Request(flight3, VerificationTrigger.Flight, T0.AddMinutes(3)));
+        var now = T0.AddMinutes(9); // the admin request is 9 minutes old: inside the default 10-minute ClaimPromotionAge
 
         await using var db = CreateDbContext();
         var claimed = await Repository(db).ClaimBatchAsync(3, now);
@@ -186,7 +189,7 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         Assert.Equal(flightIds, claimed.Select(r => r.Id));
 
         await using var verify = CreateDbContext();
-        var untouched = await verify.VerificationRequests.AsNoTracking().SingleAsync(r => r.Id == youngAdminId);
+        var untouched = await verify.VerificationRequests.AsNoTracking().SingleAsync(r => r.Id == adminId);
         Assert.Equal(VerificationRequestStatus.Pending, untouched.Status);
     }
 
