@@ -23,26 +23,46 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
     /// withCodeshared={IncludeCodeshares}</c>.
     ///
     /// <para>
-    /// <b>No timezone lookup, unlike AeroAPI.</b> Every row carries both UTC and local times with
-    /// the IANA zone already resolved server-side, so this needs none of
-    /// <c>AeroApiAirportTimezoneLookup</c>'s machinery and makes no separate <c>/airports/{id}</c>
-    /// call — most of why this path costs nothing.
+    /// <b>No timezone lookup, unlike AeroAPI.</b> Every row carries both UTC and local times, the
+    /// local one with its UTC offset embedded directly (e.g. <c>+03:00</c> — no separate IANA zone
+    /// name is ever read), so this needs none of <c>AeroApiAirportTimezoneLookup</c>'s machinery
+    /// and makes no separate <c>/airports/{id}</c> call. That matters for latency, not cost: this
+    /// path costs nothing because it runs on AeroDataBox's free plan, not because of what it skips
+    /// (#422 final review, finding 11 — on this feature's own recorded prices, the timezone lookup
+    /// this avoids is a minority of an AeroAPI search's cost, and it is cached 365 days anyway).
+    /// </para>
+    ///
+    /// <para>
+    /// <b>The origin comes from the search criteria, not from the row (#422 final review, finding
+    /// 1).</b> A live measurement on 2026-09-17 found <c>departure.airport</c> absent from all 36
+    /// rows of a real departures response — the endpoint is anchored on the airport being queried,
+    /// so this is true by construction, not an assumption. If a row ever DOES carry
+    /// <c>departure.airport.iata</c> and it disagrees with the requested origin, that row is
+    /// dropped as a defensive measure — the same bucket as a destination or date mismatch, not a
+    /// missing-field failure. A row missing a field the mapping genuinely needs (the flight number,
+    /// either the <c>departure</c> or <c>arrival</c> section, the arrival airport, or either
+    /// scheduled time) is "structurally unmappable": if a window's <c>departures</c> array is
+    /// non-empty but not one row is structurally mappable, the whole search fails loud — 502 with
+    /// an Error log naming the row count — rather than being cached as an empty "no data" result,
+    /// because that is precisely the silent-failure shape a wrong guess about the payload would
+    /// otherwise take. When only some rows are unmappable, the rest are kept and a Warning names
+    /// the count.
     /// </para>
     ///
     /// <para>
     /// <b>Two ≤12-hour windows per search, not one whole day (#422 fix round 2).</b>
     /// AeroDataBox's own documentation for this endpoint's end-of-range parameter reads "Should be
-    /// more than beginning of the search range, but not more than by 12 hours" — a limit this
-    /// repository already hit once, in #267: commit <c>f89f95e</c> records that a single
-    /// <c>T00:00</c>–<c>T23:59</c> window "caused every flight-search request to fail with HTTP
-    /// 400". So a requested local day is queried as two consecutive windows,
-    /// <c>T00:00</c>–<c>T11:59</c> and <c>T12:00</c>–<c>T23:59</c> (see <see cref="DayWindows"/>),
-    /// sent <i>sequentially</i> — a free RapidAPI plan's per-second limit is unmeasured, and two
-    /// concurrent requests are the likeliest way to trip it — then merged and deduped by
-    /// <c>(FlightNumber, ScheduledDepartureUtc)</c>. If either window fails, the whole search fails
-    /// with that window's mapped <see cref="DomainException"/>: one window's rows are never
-    /// returned as if they were the full day, because a silent half-day answer is exactly the kind
-    /// of failure that hid #267 for its entire life.
+    /// more than beginning of the search range, but not more than by 12 hours" — a documented limit
+    /// this repository already hit once, in #267, which quotes that same documentation. The removed
+    /// provider logged nothing on failure, so the HTTP 400 #267 names was inferred from the
+    /// documentation, never actually observed. So a requested local day is queried as two
+    /// consecutive windows, <c>T00:00</c>–<c>T11:59</c> and <c>T12:00</c>–<c>T23:59</c> (see
+    /// <see cref="DayWindows"/>), sent <i>sequentially</i> — a free RapidAPI plan's per-second limit
+    /// is unmeasured, and two concurrent requests are the likeliest way to trip it — then merged and
+    /// deduped by <c>(FlightNumber, ScheduledDepartureUtc)</c>. If either window fails, the whole
+    /// search fails with that window's mapped <see cref="DomainException"/> and the other window is
+    /// never sent: one window's rows are never returned as if they were the full day, because a
+    /// silent half-day answer is exactly the kind of failure that hid #267 for its entire life.
     /// </para>
     ///
     /// <para>
@@ -213,23 +233,79 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
                     StatusCode502BadGateway);
             }
 
-            using var doc = await ReadOrThrowAsync(response, Describe(criteria), ct);
+            var criteriaDescription = Describe(criteria);
+            using var doc = await ReadOrThrowAsync(response, criteriaDescription, ct);
+
+            // A 204 is the only success status read as "no data" (see ReadOrThrowAsync) — doc is
+            // null only for that case, and there is nothing further to parse.
+            if (doc is null) return [];
+
+            // #422 final review, finding 6: the measured "no data" signal is a 204. A 200 body that
+            // is not an object, or that has no "departures" array, is an unrecognised response
+            // shape — not "zero flights" — so it is loud (502), exactly like the empty/unparseable
+            // body case ReadOrThrowAsync already handles.
+            if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+                !doc.RootElement.TryGetProperty("departures", out var departures) ||
+                departures.ValueKind != JsonValueKind.Array)
+            {
+                _logger.LogError(
+                    "AeroDataBox {Operation} returned a 200 response for {Criteria} whose body is not a JSON object with a \"departures\" array",
+                    Operation, criteriaDescription);
+                throw new DomainException(
+                    $"{Operation} is temporarily unavailable. Please try again shortly.",
+                    StatusCode502BadGateway,
+                    "AeroDataBox returned HTTP 200 with a body that is not an object carrying a \"departures\" array.");
+            }
 
             var rows = new List<Row>();
-            if (doc is not null &&
-                doc.RootElement.ValueKind == JsonValueKind.Object &&
-                doc.RootElement.TryGetProperty("departures", out var departures) &&
-                departures.ValueKind == JsonValueKind.Array)
+            var totalRows = 0;
+            var unmappableCount = 0;
+            var mappableCount = 0;
+
+            // Non-null by construction: SearchAsync's guard already rejected a missing
+            // DepartureIata/ArrivalIata before any window request was ever built, matching the
+            // existing `criteria.DepartureIata!.Trim()` in BuildUrl.
+            var requestedOriginIata = criteria.DepartureIata!.Trim();
+            var requestedArrivalIata = criteria.ArrivalIata!.Trim();
+
+            foreach (var element in departures.EnumerateArray())
             {
-                foreach (var element in departures.EnumerateArray())
+                if (element.ValueKind != JsonValueKind.Object) continue;
+                totalRows++;
+
+                var (row, isUnmappable) = TryMapRow(element, requestedOriginIata, requestedArrivalIata, criteria.Date);
+                if (isUnmappable)
                 {
-                    if (element.ValueKind != JsonValueKind.Object) continue;
-                    // Non-null by construction: SearchAsync's guard already rejected a missing
-                    // ArrivalIata before any window request was ever built, matching the existing
-                    // `criteria.DepartureIata!.Trim()` in BuildUrl.
-                    var row = TryMapRow(element, criteria.ArrivalIata!, criteria.Date);
-                    if (row is not null) rows.Add(row);
+                    unmappableCount++;
+                    continue;
                 }
+
+                // Structurally fine either way — kept, or filtered out by destination/date/origin,
+                // which is a legitimate "not this row", not a mapping failure.
+                mappableCount++;
+                if (row is not null) rows.Add(row);
+            }
+
+            // #422 final review, finding 1: "structurally unmappable" means a row is missing a
+            // field the mapping needs — never that a destination or date filter excluded it. A
+            // non-empty departures array with not one structurally mappable row is a shape change,
+            // and must be loud rather than cached as an empty "no data" answer.
+            if (totalRows > 0 && mappableCount == 0)
+            {
+                _logger.LogError(
+                    "AeroDataBox {Operation} returned {RowCount} departures rows for {Criteria}, but none were structurally mappable — every row was missing a field the mapping requires",
+                    Operation, totalRows, criteriaDescription);
+                throw new DomainException(
+                    $"{Operation} is temporarily unavailable. Please try again shortly.",
+                    StatusCode502BadGateway,
+                    $"AeroDataBox returned {totalRows} departures rows for {criteriaDescription}; none were structurally mappable (all missing a required field).");
+            }
+
+            if (unmappableCount > 0)
+            {
+                _logger.LogWarning(
+                    "AeroDataBox {Operation} returned {UnmappableCount} of {RowCount} departures rows for {Criteria} that were structurally unmappable — skipped, not treated as a shape failure since {MappableCount} other rows mapped fine",
+                    Operation, unmappableCount, totalRows, criteriaDescription, mappableCount);
             }
 
             return rows;
@@ -281,32 +357,45 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
                 ScheduledArrivalUtc: row.ScheduledInUtc);
 
         /// <summary>
-        /// Maps one raw departures-array element, or returns null to skip it silently — either
-        /// because it is missing something required to place it, because it is not for the
-        /// requested arrival airport (AeroDataBox has no destination filter server-side, so this is
-        /// applied here), or because its own scheduled local departure date is not the requested
-        /// date (see the class remarks for why the revised time plays no part in this filter).
+        /// Maps one raw departures-array element against the requested origin/arrival/date, or
+        /// returns a null <c>Row</c> to skip it — either because it is <b>structurally
+        /// unmappable</b> (missing a field the mapping needs: the flight number, the
+        /// <c>departure</c>/<c>arrival</c> section, the arrival airport, or either scheduled time —
+        /// see <c>IsStructurallyUnmappable</c> in the return tuple, which the caller uses to decide
+        /// whether a whole window has failed, per the class remarks) or because it is structurally
+        /// fine but does not belong in the result: its own departure airport disagrees with the one
+        /// requested (defensive; no real row has ever carried one — see the class remarks), it is
+        /// not for the requested arrival airport (AeroDataBox has no destination filter
+        /// server-side, so this is applied here), or its own scheduled local departure date is not
+        /// the requested date (see the class remarks for why the revised time plays no part in this
+        /// filter).
         /// </summary>
-        private static Row? TryMapRow(JsonElement element, string requestedArrivalIata, DateOnly requestedDate)
+        private static (Row? Row, bool IsStructurallyUnmappable) TryMapRow(
+            JsonElement element, string requestedOriginIata, string requestedArrivalIata, DateOnly requestedDate)
         {
             var numberRaw = TryGetString(element, "number");
-            if (string.IsNullOrWhiteSpace(numberRaw)) return null;
+            if (string.IsNullOrWhiteSpace(numberRaw)) return (null, true);
 
-            if (!TryGetSection(element, "departure", out var departure)) return null;
-            if (!TryGetSection(element, "arrival", out var arrival)) return null;
+            if (!TryGetSection(element, "departure", out var departure)) return (null, true);
+            if (!TryGetSection(element, "arrival", out var arrival)) return (null, true);
 
-            var originIata = TryGetNestedString(departure, "airport", "iata");
+            // The origin comes from the requested criteria (#422 final review, finding 1) — the
+            // endpoint is anchored on it, and a live measurement found departure.airport absent
+            // from every real row. If a row DOES carry one and it disagrees, that is not a
+            // missing-field problem; it is dropped the same way a destination/date mismatch is.
+            var ownOriginIata = TryGetNestedString(departure, "airport", "iata");
+            if (!string.IsNullOrWhiteSpace(ownOriginIata) &&
+                !ownOriginIata.Trim().Equals(requestedOriginIata, StringComparison.OrdinalIgnoreCase))
+            {
+                return (null, false);
+            }
+
             var destinationIata = TryGetNestedString(arrival, "airport", "iata");
-            if (string.IsNullOrWhiteSpace(originIata) || string.IsNullOrWhiteSpace(destinationIata)) return null;
-
-            // The origin is trimmed (and uppercased) in BuildUrl already; the arrival, compared only
-            // here, needs the same trim so a padded FlightSearchCriteria.ArrivalIata does not
-            // silently return zero rows (#422 fix round 2).
-            if (!destinationIata.Trim().Equals(requestedArrivalIata.Trim(), StringComparison.OrdinalIgnoreCase)) return null;
+            if (string.IsNullOrWhiteSpace(destinationIata)) return (null, true);
 
             var scheduledOutUtc = TryGetTimeUtc(departure, "scheduledTime");
             var scheduledInUtc = TryGetTimeUtc(arrival, "scheduledTime");
-            if (scheduledOutUtc is null || scheduledInUtc is null) return null;
+            if (scheduledOutUtc is null || scheduledInUtc is null) return (null, true);
 
             // Keep on the row's own SCHEDULED local date — the revised time plays no part in this
             // filter. ServiceDate is the origin-local date of the SCHEDULED departure system-wide
@@ -315,15 +404,25 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
             // here on revised time would reassign a delayed flight to a service date its own status
             // syncs can never match — see the class remarks. This also makes ToResult's
             // `ServiceDate: criteria.Date` true by construction: every row this method returns has
-            // its own scheduled local date equal to requestedDate.
+            // its own scheduled local date equal to requestedDate. A row whose local date cannot be
+            // determined at all is structurally unmappable — ServiceDate has nothing to be built
+            // from — never a silent "not this date" filter.
             var scheduledLocalDate = TryGetLocalDate(departure, "scheduledTime");
-            if (scheduledLocalDate is null || scheduledLocalDate.Value != requestedDate) return null;
+            if (scheduledLocalDate is null) return (null, true);
+
+            // The arrival, compared only here, needs the same trim/case-insensitive treatment as
+            // the origin above so a padded FlightSearchCriteria.ArrivalIata does not silently
+            // return zero rows (#422 fix round 2).
+            if (!destinationIata.Trim().Equals(requestedArrivalIata, StringComparison.OrdinalIgnoreCase))
+                return (null, false);
+
+            if (scheduledLocalDate.Value != requestedDate) return (null, false);
 
             // AeroDataBox's "number" is space-separated ("TK 1028"); every other provider and the
             // domain's own FlightNumberFormat use no space ("TK1028").
             var flightNumber = numberRaw.Replace(" ", "").ToUpperInvariant();
 
-            return new Row(flightNumber, originIata, destinationIata, scheduledOutUtc.Value, scheduledInUtc.Value);
+            return (new Row(flightNumber, requestedOriginIata, destinationIata, scheduledOutUtc.Value, scheduledInUtc.Value), false);
         }
 
         private static bool TryGetSection(JsonElement el, string field, out JsonElement section)
@@ -379,20 +478,26 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
         /// <summary>
         /// Reads an AeroDataBox response, throwing <see cref="DomainException"/> for any
         /// provider-side failure, or returning <c>null</c> for a successful response with no data
-        /// to report — <c>204 No Content</c> only. An empty or whitespace body on any OTHER success
-        /// status is deliberately NOT treated as "no data" (#422 fix round 3): it maps to
-        /// 502, logged like any other unparseable body, because letting one window silently answer
-        /// "empty" while the other returns rows would present half a day as a full day — exactly
-        /// what the partial-failure rule above exists to forbid. How AeroDataBox actually signals
-        /// "no departures in this window" is unmeasured: it could be a 204, a 200 with
-        /// <c>{"departures":[]}</c>, or something else — a 204 and an empty <c>departures</c> array
-        /// are both handled as empty, whichever it turns out to be. Follows
-        /// <c>AeroApiResponse.ReadOrThrowAsync</c>'s shape without reusing that type, since its
-        /// messages name AeroAPI specifically. Four status buckets (#422 fix round 2): 401/403 (our
-        /// credentials or plan) → 500; 429 (throttled) → 503 with Retry-After; any other 4xx → 500
-        /// — this cannot be told apart between our own request being malformed (#267 is a live
-        /// example) and the caller's input being well-formed but unknown to AeroDataBox, which is
-        /// unmeasured (#422 fix round 3); 5xx, unreachable, timed-out or unparseable → 502.
+        /// to report — <c>204 No Content</c> only, now measured (2026-09-17, #422 final review) as
+        /// what AeroDataBox actually sends both for a quiet window and for an unknown airport. An
+        /// empty or whitespace body on any OTHER success status is deliberately NOT treated as "no
+        /// data" (#422 fix round 3): it maps to 502, logged like any other unparseable body, because
+        /// letting one window silently answer "empty" while the other returns rows would present
+        /// half a day as a full day — exactly what the partial-failure rule above exists to forbid.
+        /// A non-null return here is a parsed <see cref="JsonDocument"/> of unknown shape — the
+        /// caller (<see cref="SearchWindowAsync"/>) is what rejects a body that parses but is not an
+        /// object carrying a <c>departures</c> array, since that is a mapping-shape concern, not a
+        /// transport one. Follows <c>AeroApiResponse.ReadOrThrowAsync</c>'s shape without reusing
+        /// that type, since its messages name AeroAPI specifically. Three output status buckets from
+        /// four input cases (#422 fix round 2): 401/403 (our credentials or plan) → 500; 429
+        /// (throttled) → 503 with Retry-After; any other 4xx → 500 — this cannot be told apart
+        /// between our own request being malformed (#267's 12-hour cap is the closest example, and
+        /// even that 400 was only ever inferred from AeroDataBox's own documentation, never
+        /// observed — the removed provider logged nothing) and well-formed caller input AeroDataBox
+        /// happens not to recognise, which for an unknown-but-well-formed airport is now measured as
+        /// a 204, not a 4xx — only an out-of-range date remains unmeasured; 5xx, unreachable,
+        /// timed-out, unparseable, or any other non-4xx status (a 3xx included, since this client's
+        /// redirects are disabled at the transport — see DI) → 502.
         /// </summary>
         private async Task<JsonDocument?> ReadOrThrowAsync(HttpResponseMessage response, string criteria, CancellationToken ct)
         {
@@ -464,22 +569,22 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroDataBox
                     if (status is >= 400 and < 500)
                     {
                         // A 4xx here cannot be told apart between two causes (#422 fix round 3):
-                        // either our own request is malformed — #267's 12-hour cap is the live
-                        // example, where the removed whole-day window earned a 400 on every single
-                        // call — or the caller's input is well-formed but unknown to AeroDataBox.
-                        // The airport code reaching this URL is only format-checked
-                        // (SearchFlightsQueryValidator), and the date is bounded by AeroAPI's
-                        // horizon, not AeroDataBox's — neither has been confirmed against what this
-                        // endpoint actually accepts. It maps to 500 and logs at Error deliberately,
-                        // so that a systematic defect stays loud: #267's 400 was silent for that
-                        // provider's entire life. The accepted cost: a 4xx caused by the caller's
-                        // own input also surfaces as a 500 with an error log, rather than the 400
-                        // that input problem would otherwise deserve. Whether AeroDataBox actually
-                        // returns a 4xx for an unknown airport or an out-of-range date is
-                        // unmeasured. The client-facing message deliberately does not say "try
-                        // again" — that would invite retrying a request that, if the cause really is
-                        // ours, fails identically forever. DiagnosticDetail still carries the
-                        // upstream status and the redacted body.
+                        // either our own request is malformed — #267's 12-hour cap is the closest
+                        // example, though even that 400 was never actually observed: the removed
+                        // provider logged nothing, so #267 only ever quotes AeroDataBox's own
+                        // parameter documentation, not a recorded response — or the caller's input
+                        // is well-formed but unknown to AeroDataBox. For an unknown-but-well-formed
+                        // airport this is now measured (2026-09-17, #422 final review): AeroDataBox
+                        // answers 204, not a 4xx, so this branch would only ever be reached today by
+                        // an out-of-range date, which remains unmeasured, or a genuine defect of
+                        // ours. It maps to 500 and logs at Error deliberately, so that a systematic
+                        // defect stays loud: #267's inferred 400 was silent for that provider's
+                        // entire life. The accepted cost: a 4xx caused by the caller's own input
+                        // also surfaces as a 500 with an error log, rather than the 400 that input
+                        // problem would otherwise deserve. The client-facing message deliberately
+                        // does not say "try again" — that would invite retrying a request that, if
+                        // the cause really is ours, fails identically forever. DiagnosticDetail
+                        // still carries the upstream status and the redacted body.
                         _logger.LogError(
                             "AeroDataBox {Operation} rejected our request ({StatusCode}) for {Criteria}: {Body}",
                             Operation, status, criteria, upstreamBody);

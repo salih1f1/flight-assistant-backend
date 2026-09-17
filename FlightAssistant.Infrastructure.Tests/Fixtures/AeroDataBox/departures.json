@@ -4,8 +4,7 @@
       "number": "TK 1028",
       "codeshareStatus": "IsOperator",
       "departure": {
-        "airport": { "iata": "SOF" },
-        "scheduledTime": { "utc": "2026-09-29T06:35:00Z", "local": "2026-09-29T09:35:00+03:00" }
+        "scheduledTime": { "utc": "2026-09-29 06:35Z", "local": "2026-09-29 09:35+03:00" }
       },
       "arrival": {
         "airport": { "iata": "IST" },
@@ -17,7 +16,6 @@
       "number": "6E 4120",
       "codeshareStatus": "IsCodeshared",
       "departure": {
-        "airport": { "iata": "SOF" },
         "scheduledTime": { "utc": "2026-09-29T06:35:00Z", "local": "2026-09-29T09:35:00+03:00" }
       },
       "arrival": {
@@ -30,7 +28,6 @@
       "number": "BA 249",
       "codeshareStatus": "IsOperator",
       "departure": {
-        "airport": { "iata": "SOF" },
         "scheduledTime": { "utc": "2026-09-29T05:00:00Z", "local": "2026-09-29T08:00:00+03:00" }
       },
       "arrival": {
@@ -43,7 +40,6 @@
       "number": "TK 1030",
       "codeshareStatus": "IsOperator",
       "departure": {
-        "airport": { "iata": "SOF" },
         "scheduledTime": { "utc": "2026-09-29T06:00:00Z", "local": "2026-09-29T09:00:00+03:00" },
         "revisedTime": { "utc": "2026-09-29T06:26:00Z", "local": "2026-09-29T09:26:00+03:00" }
       },
@@ -57,7 +53,6 @@
       "number": "TK 1032",
       "codeshareStatus": "IsOperator",
       "departure": {
-        "airport": { "iata": "SOF" },
         "scheduledTime": { "utc": "2026-09-29T20:50:00Z", "local": "2026-09-29T23:50:00+03:00" },
         "revisedTime": { "utc": "2026-09-29T21:20:00Z", "local": "2026-09-30T00:20:00+03:00" }
       },
@@ -71,7 +66,6 @@
       "number": "TK 1026",
       "codeshareStatus": "IsOperator",
       "departure": {
-        "airport": { "iata": "SOF" },
         "scheduledTime": { "utc": "2026-09-28T20:40:00Z", "local": "2026-09-28T23:40:00+03:00" },
         "revisedTime":   { "utc": "2026-09-28T21:30:00Z", "local": "2026-09-29T00:30:00+03:00" }
       },
