@@ -117,17 +117,17 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// <c>TimeProvider</c>) minus <see cref="ErrorAttributionWindowHours"/> hours, grouped by
         /// <c>(FailedSource, EntityType)</c> with each group's count. A null <c>FailedSource</c> is its
         /// own group -- an unattributed failure (a deleted entity, an unexpected exception, an
-        /// abandoned claim) is reported, not dropped (R3). Only non-empty groups come back; a
-        /// <c>GROUP BY</c> gives that for free (R5). Ordered by <c>Count</c> descending, then
+        /// abandoned claim) is reported, not dropped. Only non-empty groups come back; a
+        /// <c>GROUP BY</c> gives that for free. Ordered by <c>Count</c> descending, then
         /// <c>FailedSource</c>, then <c>EntityType</c> as a full tie-break, so two identical polls
-        /// return groups in the same order (#424 fix wave) -- the database gives no order for free to
+        /// return groups in the same order -- the database gives no order for free to
         /// a <c>GROUP BY</c>. <c>AsNoTracking</c>; not audited (a read).
         /// </summary>
         Task<IReadOnlyList<VerificationFailureGroup>> GetRecentFailureGroupsAsync(CancellationToken ct = default);
 
         /// <summary>
         /// The rolling window <see cref="GetRecentFailureGroupsAsync"/> reports over. A fixed constant,
-        /// not configuration (R4): this is a reporting window, not a behaviour tunable, so changing it
+        /// not configuration: this is a reporting window, not a behaviour tunable, so changing it
         /// needs a deploy rather than a config edit.
         /// </summary>
         public const int ErrorAttributionWindowHours = 24;
@@ -194,7 +194,7 @@ namespace FlightAssistant.Application.Interfaces.Repositories
     /// <c>Error</c> completion in the report's window sharing one <c>(FailedSource, EntityType)</c> pair.
     /// </summary>
     /// <param name="FailedSource">The source attributable for the failure, or null when it isn't
-    /// attributable to one named source (R3: reported as its own "unattributed" group, never dropped).</param>
+    /// attributable to one named source (reported as its own "unattributed" group, never dropped).</param>
     /// <param name="EntityType">The entity type the failing checks targeted.</param>
     /// <param name="Count">How many Error completions in the window matched this group.</param>
     public sealed record VerificationFailureGroup(string? FailedSource, VerificationEntityType EntityType, int Count);

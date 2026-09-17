@@ -162,15 +162,14 @@ public class VerificationDatasetCacheTests
         Assert.Equal("value", await second);
     }
 
-    // Fix round 2, item 3a: a deterministic test for "the eviction continuation observes a fault so
+    // A deterministic test for "the eviction continuation observes a fault so
     // TaskScheduler.UnobservedTaskException never fires" was attempted here (cancel the only
     // caller, fault the load, force GC.Collect()+WaitForPendingFinalizers() twice, assert the event
     // did not fire) and found NOT reliably distinguishing in this test host: the event did not fire
     // even with the `_ = completed.Exception;` fix in VerificationDatasetCache temporarily removed
-    // (tried 3x). Per the review's own "explain rather than add a flaky test" allowance, no test is
-    // committed for this; see task-3-report.md's fix round 2 section for the full account. The
-    // one-line production fix itself is kept regardless -- it is cheap, correct by inspection, and
-    // does not depend on the test working to be worth having.
+    // (tried 3x). So no test is committed for this. The one-line production fix itself is kept
+    // regardless -- it is cheap, correct by inspection, and does not depend on the test working to
+    // be worth having.
 
     [Fact]
     public async Task HasCachedData_TracksALoadedDataset_ACachedFailure_AndRelease()
