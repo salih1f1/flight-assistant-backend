@@ -2,6 +2,7 @@ using FlightAssistant.API.Endpoints.Admin;
 using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Contracts.Responses.Admin;
+using FlightAssistant.Domain.Verification.Enums;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
@@ -66,10 +67,15 @@ public class AdminHealthReportBuilderTests
 
     private static readonly DateTime T0 = new(2026, 9, 15, 12, 0, 0, DateTimeKind.Utc);
 
-    private static IVerificationRequestRepository PendingCount(int count)
+    /// <summary>A substitute reporting <paramref name="count"/> pending and, by default, an empty
+    /// (successfully read, nothing failing) recent-failures list -- stubbed explicitly rather than
+    /// left to NSubstitute's default, so tests using this helper get a deterministic, non-null
+    /// <c>RecentFailures</c> instead of accidentally exercising the degrade-to-null path.</summary>
+    private static IVerificationRequestRepository PendingCount(int count, IReadOnlyList<VerificationFailureGroup>? failureGroups = null)
     {
         var requests = Substitute.For<IVerificationRequestRepository>();
         requests.CountPendingAsync(Arg.Any<CancellationToken>()).Returns(count);
+        requests.GetRecentFailureGroupsAsync(Arg.Any<CancellationToken>()).Returns(failureGroups ?? Array.Empty<VerificationFailureGroup>());
         return requests;
     }
 
@@ -95,7 +101,15 @@ public class AdminHealthReportBuilderTests
         var dto = await AdminHealthReportBuilder.BuildVerificationAsync(
             heartbeat, enabled: true, PendingCount(7), includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
 
-        Assert.Equal(new AdminHealthVerificationDto(true, T0, T0, "Success", 5, 2, 4, 1, T0.AddSeconds(30), null, 7), dto);
+        // RecentFailures compared separately below (Assert.Equal on a record can't deep-compare a
+        // list field -- two equal-content List<T> instances aren't reference-equal, so the field is
+        // fed back from dto itself here to isolate this assertion to the other fields, exactly the
+        // way it already pinned RequestsFailed/StuckAbandoned/FailuresUnrecorded ordering).
+        Assert.Equal(
+            new AdminHealthVerificationDto(true, T0, T0, "Success", 5, 2, 4, 1, T0.AddSeconds(30), null, 7, RecentFailures: dto.RecentFailures),
+            dto);
+        Assert.NotNull(dto.RecentFailures);
+        Assert.Empty(dto.RecentFailures!);
     }
 
     [Fact]
@@ -105,7 +119,11 @@ public class AdminHealthReportBuilderTests
             new VerificationJobHeartbeat(TimeProvider.System), enabled: false, PendingCount(0),
             includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
 
-        Assert.Equal(new AdminHealthVerificationDto(false, null, null, "NeverRun", 0, 0, 0, 0, null, null, 0), dto);
+        Assert.Equal(
+            new AdminHealthVerificationDto(false, null, null, "NeverRun", 0, 0, 0, 0, null, null, 0, RecentFailures: dto.RecentFailures),
+            dto);
+        Assert.NotNull(dto.RecentFailures);
+        Assert.Empty(dto.RecentFailures!);
     }
 
     [Fact]
@@ -140,7 +158,11 @@ public class AdminHealthReportBuilderTests
         var dto = await AdminHealthReportBuilder.BuildVerificationAsync(
             heartbeat, enabled: true, PendingCount(2), includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
 
-        Assert.Equal(new AdminHealthVerificationDto(true, null, T0, "Paused", 6, 1, 0, 0, T0.AddSeconds(30), null, 2, RequestsPaused: 4), dto);
+        Assert.Equal(
+            new AdminHealthVerificationDto(true, null, T0, "Paused", 6, 1, 0, 0, T0.AddSeconds(30), null, 2, RequestsPaused: 4, RecentFailures: dto.RecentFailures),
+            dto);
+        Assert.NotNull(dto.RecentFailures);
+        Assert.Empty(dto.RecentFailures!);
     }
 
     [Fact]
@@ -149,6 +171,7 @@ public class AdminHealthReportBuilderTests
         var requests = Substitute.For<IVerificationRequestRepository>();
         requests.CountPendingAsync(Arg.Any<CancellationToken>())
             .Returns(_ => Task.FromException<int>(new InvalidOperationException("database unreachable")));
+        requests.GetRecentFailureGroupsAsync(Arg.Any<CancellationToken>()).Returns(Array.Empty<VerificationFailureGroup>());
 
         var dto = await AdminHealthReportBuilder.BuildVerificationAsync(
             FailedCycle(), enabled: true, requests, includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
@@ -156,5 +179,53 @@ public class AdminHealthReportBuilderTests
         Assert.Null(dto.PendingCount);
         Assert.Equal("Failed", dto.LastOutcome);
         Assert.Equal("InvalidOperationException: verification boom", dto.LastError);
+    }
+
+    // ── Recent failures (#424) ──────────────────────────────────────────────
+
+    /// <summary>R3: a null <c>FailedSource</c> group is mapped through as its own "unattributed"
+    /// entry, not dropped -- alongside a normal, source-attributed group, so the mapping is proven to
+    /// carry every group the repository returns rather than only the ones with a source.</summary>
+    [Fact]
+    public async Task BuildVerificationAsync_RecentFailuresRead_MapsEveryGroup_IncludingTheUnattributedOne()
+    {
+        var groups = new List<VerificationFailureGroup>
+        {
+            new("aeroapi", VerificationEntityType.Airport, 3),
+            new(null, VerificationEntityType.Airline, 1),
+        };
+        var requests = Substitute.For<IVerificationRequestRepository>();
+        requests.CountPendingAsync(Arg.Any<CancellationToken>()).Returns(0);
+        requests.GetRecentFailureGroupsAsync(Arg.Any<CancellationToken>()).Returns(groups);
+
+        var dto = await AdminHealthReportBuilder.BuildVerificationAsync(
+            new VerificationJobHeartbeat(TimeProvider.System), enabled: true, requests,
+            includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
+
+        Assert.Equal(
+            new[]
+            {
+                new AdminHealthVerificationFailureDto("aeroapi", "Airport", 3),
+                new AdminHealthVerificationFailureDto(null, "Airline", 1),
+            },
+            dto.RecentFailures);
+    }
+
+    /// <summary>R7, paired with the three tests above that already prove the success-with-nothing-failing
+    /// shape (a non-null, empty list): a throwing read degrades to <c>null</c> ("cannot tell") instead,
+    /// so the two outcomes are provably distinct rather than both collapsing to "nothing is wrong".</summary>
+    [Fact]
+    public async Task BuildVerificationAsync_RecentFailuresReadThrows_ReportsNull_DistinctFromAnEmptyList()
+    {
+        var requests = Substitute.For<IVerificationRequestRepository>();
+        requests.CountPendingAsync(Arg.Any<CancellationToken>()).Returns(0);
+        requests.GetRecentFailureGroupsAsync(Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromException<IReadOnlyList<VerificationFailureGroup>>(new InvalidOperationException("database unreachable")));
+
+        var dto = await AdminHealthReportBuilder.BuildVerificationAsync(
+            new VerificationJobHeartbeat(TimeProvider.System), enabled: true, requests,
+            includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
+
+        Assert.Null(dto.RecentFailures);
     }
 }

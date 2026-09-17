@@ -4973,6 +4973,31 @@
           "requestsPaused": {
             "type": "integer",
             "format": "int32"
+          },
+          "recentFailures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminHealthVerificationFailureDto"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminHealthVerificationFailureDto": {
+        "type": "object",
+        "properties": {
+          "failedSource": {
+            "type": "string",
+            "nullable": true
+          },
+          "entityType": {
+            "type": "string",
+            "nullable": true
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32"
           }
         },
         "additionalProperties": false

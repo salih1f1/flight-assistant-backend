@@ -248,6 +248,23 @@ namespace FlightAssistant.API.Endpoints.Admin
                 pendingCount = null;
             }
 
+            // #424: the 24-hour Error-attribution report. Degrades to null ("cannot tell") on a
+            // throwing read, exactly like pendingCount above -- distinct from an empty list, which
+            // means the read succeeded and nothing failed in the window (R7).
+            IReadOnlyList<AdminHealthVerificationFailureDto>? recentFailures;
+            try
+            {
+                var groups = await requests.GetRecentFailureGroupsAsync(ct);
+                recentFailures = groups
+                    .Select(g => new AdminHealthVerificationFailureDto(g.FailedSource, g.EntityType.ToString(), g.Count))
+                    .ToList();
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                logger.LogWarning(ex, "Failed to read recent verification failures for /admin/health.");
+                recentFailures = null;
+            }
+
             return new AdminHealthVerificationDto(
                 enabled,
                 snapshot.LastRunStartedUtc,
@@ -260,7 +277,8 @@ namespace FlightAssistant.API.Endpoints.Admin
                 snapshot.NextRunDueUtc,
                 includeDiagnostics ? snapshot.LastError : null,
                 pendingCount,
-                snapshot.RequestsPaused);
+                snapshot.RequestsPaused,
+                recentFailures);
         }
     }
 }

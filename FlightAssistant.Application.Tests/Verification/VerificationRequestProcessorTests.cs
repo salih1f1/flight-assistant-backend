@@ -215,6 +215,7 @@ public class VerificationRequestProcessorTests
         Assert.Equal(1, request.Attempts);
         Assert.Equal(Now.AddMinutes(1), request.NextAttemptUtc);
         Assert.Equal("ourairports: HTTP 503", request.Error);
+        Assert.Equal("ourairports", request.FailedSource); // #424: the upstream failure names its source
         Assert.Null(request.CompletedUtc);
 
         AssertStillManuallyVerified(airport, verifiedAt);
@@ -269,6 +270,7 @@ public class VerificationRequestProcessorTests
         Assert.Equal(VerificationRequestStatus.Error, request.Status);
         Assert.Equal(3, request.Attempts);
         Assert.Equal("ourairports: HTTP 500", request.Error);
+        Assert.Equal("ourairports", request.FailedSource); // #424: still attributed once it gives up
         Assert.Equal(Now, request.CompletedUtc);
         Assert.Null(request.NextAttemptUtc);
 
@@ -287,6 +289,31 @@ public class VerificationRequestProcessorTests
             .ProcessAsync(Claim);
 
         Assert.Empty(healthy.Lookups);
+    }
+
+    /// <summary>
+    /// #424 fix wave: the only other multi-source fetch-error test above (<c>TheFirstSourceErrors</c>)
+    /// has its <em>first</em> source fail, so <c>request.SourceNames[0]</c> would name the failing
+    /// source by coincidence there too. This one puts the healthy source first and the failing one
+    /// second, so an attribution bug that names the first source instead of the one that actually
+    /// failed shows up as a wrong <c>FailedSource</c>, not a passing test. Break-proof: replacing
+    /// <c>source.Name</c> with <c>request.SourceNames[0]</c> at the <c>RecordSourceErrorAsync</c> call
+    /// in <c>ProcessAsync</c> makes this fail.
+    /// </summary>
+    [Fact]
+    public async Task ProcessAsync_TheSecondSourceErrors_NamesIt_NotTheFirst()
+    {
+        _airports.GetByIdAsync(42, Arg.Any<CancellationToken>()).Returns(Heathrow());
+        var request = ClaimedAirportRequest(new[] { "healthy", "broken" });
+        var healthy = AirportSource("healthy", VerificationSourceFetchResult.NotFound);
+        var broken = AirportSource("broken", VerificationSourceFetchResult.SourceError("HTTP 503"));
+
+        var outcome = await Processor(new FakeVerificationSourceRegistry(healthy, broken)).ProcessAsync(Claim);
+
+        Assert.Equal(VerificationProcessOutcome.RetryScheduled, outcome);
+        Assert.Equal("broken: HTTP 503", request.Error);
+        Assert.Equal("broken", request.FailedSource); // #424 fix wave: names the source that actually failed
+        Assert.Single(healthy.Lookups);
     }
 
     [Theory]
@@ -479,6 +506,7 @@ public class VerificationRequestProcessorTests
         Assert.Equal(VerificationProcessOutcome.Error, outcome);
         Assert.Equal(VerificationRequestStatus.Error, request.Status);
         Assert.Equal("Entity no longer exists", request.Error);
+        Assert.Null(request.FailedSource); // #424: a deleted entity isn't any source's fault
         Assert.Equal(0, request.Attempts);
         Assert.Equal(Now, request.CompletedUtc);
         Assert.Empty(ourAirports.Lookups);
@@ -500,6 +528,7 @@ public class VerificationRequestProcessorTests
         Assert.Equal(VerificationProcessOutcome.Error, outcome);
         Assert.Equal(VerificationRequestStatus.Error, request.Status);
         Assert.Equal("Source 'aeroapi' is not registered.", request.Error);
+        Assert.Equal("aeroapi", request.FailedSource); // #424: names the unregistered source itself
         Assert.Equal(0, request.Attempts);
         Assert.Null(request.NextAttemptUtc);
         Assert.Equal(Now, request.CompletedUtc);
@@ -521,9 +550,35 @@ public class VerificationRequestProcessorTests
 
         Assert.Equal(VerificationProcessOutcome.Error, outcome);
         Assert.Equal("Source 'ourairports' does not support Country.", request.Error);
+        Assert.Equal("ourairports", request.FailedSource); // #424: names the unsupported source
         Assert.Equal(0, request.Attempts);
         Assert.Empty(ourAirports.Lookups);
         await _countries.DidNotReceiveWithAnyArgs().FindByCodeAsync(default!, default);
+    }
+
+    /// <summary>
+    /// #424 fix wave: the test above uses a single-source request, so
+    /// <c>request.SourceNames[0]</c> would coincidentally name the same source that fails there too.
+    /// This one puts a source that supports Country first and one that doesn't second, so a
+    /// first-source shortcut would name the wrong source. Break-proof: replacing <c>name</c> with
+    /// <c>request.SourceNames[0]</c> at this site's <c>CompleteAsErrorAsync</c> call in
+    /// <c>ProcessAsync</c> makes this fail.
+    /// </summary>
+    [Fact]
+    public async Task ProcessAsync_TheSecondSourceDoesNotSupportTheEntityType_NamesIt_NotTheFirst()
+    {
+        var request = ClaimedRequests.Create(
+            RequestId, VerificationEntityType.Country, "GB", new[] { "mledoze", "ourairports" }, ClaimedAt);
+        _requests.GetByIdAsync(RequestId, Arg.Any<CancellationToken>()).Returns(request);
+        var mledoze = new FakeVerificationSource("mledoze", VerificationEntityType.Country, VerificationSourceFetchResult.NotFound);
+        var ourAirports = AirportSource("ourairports", VerificationSourceFetchResult.NotFound); // supports Airport, not Country
+
+        var outcome = await Processor(new FakeVerificationSourceRegistry(mledoze, ourAirports)).ProcessAsync(Claim);
+
+        Assert.Equal(VerificationProcessOutcome.Error, outcome);
+        Assert.Equal("Source 'ourairports' does not support Country.", request.Error);
+        Assert.Equal("ourairports", request.FailedSource); // #424 fix wave: names the second source, not the first
+        Assert.Empty(mledoze.Lookups);
     }
 
     // ── Lost claims ─────────────────────────────────────────────────────────
@@ -585,7 +640,30 @@ public class VerificationRequestProcessorTests
         Assert.Equal(1, request.Attempts);
         Assert.Equal(Now.AddMinutes(1), request.NextAttemptUtc);
         Assert.Equal("Unexpected error (InvalidOperationException); see logs", request.Error);
+        Assert.Null(request.FailedSource); // #424: not attributable to a source
         await _requests.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// #424: <see cref="VerificationRequestProcessor.RecordUnexpectedFailureAsync"/> travels through
+    /// the same private <c>RecordSourceErrorAsync</c> helper the genuine upstream failure (the
+    /// request's own source, faulted while fetching) uses -- so it would be very easy to thread the
+    /// claimed request's source through by mistake and blame a healthy provider for a processor
+    /// crash. The claimed request here names two sources precisely so an accidental "use the first
+    /// (or only) source name" shortcut would still be caught by this assertion. Break-proof: passing
+    /// any non-null source at the <c>RecordSourceErrorAsync</c> call inside
+    /// <c>RecordUnexpectedFailureAsync</c> makes this fail.
+    /// </summary>
+    [Fact]
+    public async Task RecordUnexpectedFailureAsync_NamesNoSource_EvenThoughTheRequestNamesTwo()
+    {
+        var request = ClaimedAirportRequest(new[] { "ourairports", "aeroapi" });
+
+        var outcome = await Processor(new FakeVerificationSourceRegistry())
+            .RecordUnexpectedFailureAsync(Claim, new InvalidOperationException("boom"));
+
+        Assert.Equal(VerificationProcessOutcome.RetryScheduled, outcome);
+        Assert.Null(request.FailedSource);
     }
 
     /// <summary>

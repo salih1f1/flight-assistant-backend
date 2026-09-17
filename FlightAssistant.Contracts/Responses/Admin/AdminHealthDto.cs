@@ -161,6 +161,16 @@ namespace FlightAssistant.Contracts.Responses.Admin
     /// exactly like <see cref="RequestsProcessed"/> -- so a cycle that fails before finishing its own
     /// batch leaves this at whatever an earlier paused cycle last reported, the same way it leaves
     /// <see cref="RequestsProcessed"/> and the other counts.</param>
+    /// <param name="RecentFailures">Every request that completed as Error in the last 24 hours (#424),
+    /// grouped by the source that failed and the entity type it failed for -- unlike every other field
+    /// on this record, this spans many cycles, not just the last completed one. A group whose
+    /// <see cref="AdminHealthVerificationFailureDto.FailedSource"/> is <c>null</c> is <em>unattributed</em>
+    /// (a deleted entity, an unexpected exception, an abandoned claim), not dropped. A row that
+    /// completed <c>Error</c> before #424's migration also carries a null <c>FailedSource</c> whatever
+    /// its actual cause, so for the first 24 hours after deploy the unattributed group includes those
+    /// too, until they age out of this window. <c>null</c> means the read itself failed ("cannot tell",
+    /// e.g. the database is unreachable) and is distinct from an empty list, which means the read
+    /// succeeded and nothing failed in the window.</param>
     public sealed record AdminHealthVerificationDto(
         bool Enabled,
         DateTime? LastRunStartedUtc,
@@ -173,6 +183,29 @@ namespace FlightAssistant.Contracts.Responses.Admin
         DateTime? NextRunDueUtc,
         string? LastError,
         int? PendingCount,
-        int RequestsPaused = 0
+        int RequestsPaused = 0,
+        IReadOnlyList<AdminHealthVerificationFailureDto>? RecentFailures = null
+    );
+
+    /// <summary>One group from <see cref="AdminHealthVerificationDto.RecentFailures"/>: every check
+    /// that completed as Error in the report's 24-hour window sharing one source and entity type.</summary>
+    /// <param name="FailedSource">The source attributable for the failure, or <c>null</c> when the
+    /// failure isn't attributable to one named source (a deleted entity, an unexpected exception, an
+    /// abandoned claim) -- reported as its own "unattributed" group, never dropped. Also null for any
+    /// row that completed <c>Error</c> before #424's migration, regardless of its real cause: this
+    /// column exists only from that point on.</param>
+    /// <param name="EntityType">The <c>VerificationEntityType</c> name the failing checks targeted
+    /// (e.g. <c>"Airport"</c>).</param>
+    /// <param name="Count">How many Error completions in the window matched this group -- not source
+    /// calls and not distinct entities. A fetch-failure completion represents <c>Verification:MaxAttempts</c>
+    /// (default 3) consecutive failed lookups, each billed for a metered source; an unregistered or
+    /// unsupported source completes after none. #418's error cooldown then holds back an affected
+    /// entity's re-queue for hours, so a source failing for everything shows only about 1-4 completions
+    /// per affected entity per day here, however severe the outage -- a small count is not a small
+    /// outage.</param>
+    public sealed record AdminHealthVerificationFailureDto(
+        string? FailedSource,
+        string EntityType,
+        int Count
     );
 }

@@ -436,6 +436,81 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         Assert.Empty(await laterRepository.GetSourceNamesInUseAsync());
     }
 
+    /// <summary>
+    /// #424: the reset's abandoned-claim branch (attempts reach <c>maxAttempts</c>) nulls
+    /// <c>failed_source</c> even though the request's last recorded failure was attributed to a real
+    /// source -- abandonment is the final cause, not the source. Break-proof: dropping the
+    /// <c>failed_source</c> <c>CASE</c> from the SQL (so it stays unchanged on both branches) makes
+    /// this fail.
+    /// </summary>
+    [Fact]
+    public async Task ResetStuckRunningAsync_ReachingMaxAttempts_NullsFailedSource()
+    {
+        var now = T0.AddHours(1);
+        await SeedEachAsync(Request("1", sources: new[] { "aeroapi" }));
+
+        // Two claims ended in recorded source errors attributed to aeroapi, each due again at once...
+        for (var i = 0; i < 2; i++)
+        {
+            var at = now.AddMinutes(-40 + i);
+            await using var db = CreateDbContext();
+            var repository = Repository(db);
+            Assert.Single(await repository.ClaimBatchAsync(1, at))
+                .RecordSourceError("HTTP 503", at, maxAttempts: 3, backoff: TimeSpan.Zero, failedSource: "aeroapi");
+            await repository.SaveChangesAsync();
+        }
+        // ...and a third claim recorded nothing.
+        await using (var db = CreateDbContext())
+            Assert.Single(await Repository(db).ClaimBatchAsync(1, now.AddMinutes(-11)));
+
+        VerificationStuckResetResult reset;
+        await using (var db = CreateDbContext())
+            reset = await Repository(db).ResetStuckRunningAsync(now - TimeSpan.FromMinutes(10), maxAttempts: 3, now);
+
+        Assert.Equal(new VerificationStuckResetResult(ReturnedToPending: 0, Abandoned: 1), reset);
+        await using var verify = CreateDbContext();
+        var row = await verify.VerificationRequests.AsNoTracking().SingleAsync();
+        Assert.Equal(VerificationRequestStatus.Error, row.Status);
+        Assert.Equal("Claim abandoned: no result recorded after 3 attempts", row.Error);
+        Assert.Null(row.FailedSource);
+    }
+
+    /// <summary>
+    /// #424: the reset's other branch (attempts still below <c>maxAttempts</c>, request returns to
+    /// Pending) leaves <c>failed_source</c> exactly as it leaves <c>error</c> -- unchanged, still
+    /// mirroring the request's last recorded failure. Break-proof: nulling <c>failed_source</c>
+    /// unconditionally in the SQL makes this fail.
+    /// </summary>
+    [Fact]
+    public async Task ResetStuckRunningAsync_BelowMaxAttempts_LeavesFailedSourceUnchanged()
+    {
+        var now = T0.AddHours(1);
+        await SeedEachAsync(Request("1", sources: new[] { "aeroapi" }));
+
+        // One recorded source error attributed to aeroapi, leaving attempts to spare...
+        await using (var db = CreateDbContext())
+        {
+            var repository = Repository(db);
+            Assert.Single(await repository.ClaimBatchAsync(1, now.AddMinutes(-40)))
+                .RecordSourceError("HTTP 503", now.AddMinutes(-40), maxAttempts: 5, backoff: TimeSpan.Zero, failedSource: "aeroapi");
+            await repository.SaveChangesAsync();
+        }
+        // ...then a second claim gets stuck without recording anything.
+        await using (var db = CreateDbContext())
+            Assert.Single(await Repository(db).ClaimBatchAsync(1, now.AddMinutes(-11)));
+
+        VerificationStuckResetResult reset;
+        await using (var db = CreateDbContext())
+            reset = await Repository(db).ResetStuckRunningAsync(now - TimeSpan.FromMinutes(10), maxAttempts: 5, now);
+
+        Assert.Equal(new VerificationStuckResetResult(ReturnedToPending: 1, Abandoned: 0), reset);
+        await using var verify = CreateDbContext();
+        var row = await verify.VerificationRequests.AsNoTracking().SingleAsync();
+        Assert.Equal(VerificationRequestStatus.Pending, row.Status);
+        Assert.Equal("HTTP 503", row.Error); // left unchanged by the reset's Pending branch
+        Assert.Equal("aeroapi", row.FailedSource); // mirrors error: unchanged on this branch too
+    }
+
     /// <summary>Starts from a claimed request, whose <c>StartedUtc</c> is set, so clearing it is
     /// what is exercised. A request fresh from <c>Create</c> has it null already.</summary>
     [Fact]
@@ -926,6 +1001,161 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         Assert.Equal(1, commands.Count);
     }
 
+    // ── Error attribution report (#424) ─────────────────────────────────────
+
+    /// <summary>
+    /// R4/R5: Error completions inside the 24-hour window are counted and grouped by
+    /// <c>(FailedSource, EntityType)</c> -- two requests share the <c>(aeroapi, Airport)</c> group to
+    /// prove grouping actually aggregates rather than returning one row per request. A same-shaped
+    /// completion just outside the window, and a non-Error completion inside it, are both excluded
+    /// (proving the status filter and the window cutoff are both load-bearing, not merely that
+    /// *something* was excluded). R5's "only non-zero groups" needs no separate assertion: a
+    /// <c>GROUP BY</c> cannot produce an empty group in the first place.
+    /// </summary>
+    [Fact]
+    public async Task GetRecentFailureGroupsAsync_CountsAndGroupsErrorsInsideTheWindow_ExcludingOutsideAndNonError()
+    {
+        var now = T0.AddDays(2);
+        var windowStart = now - TimeSpan.FromHours(IVerificationRequestRepository.ErrorAttributionWindowHours);
+
+        // Inside the window: two aeroapi/Airport failures (one group, count 2), one mledoze/Country.
+        await SeedErrorAsync("1", VerificationEntityType.Airport, "aeroapi", now.AddHours(-1));
+        await SeedErrorAsync("2", VerificationEntityType.Airport, "aeroapi", now.AddHours(-2));
+        await SeedErrorAsync("GB", VerificationEntityType.Country, "mledoze", now.AddMinutes(-5));
+
+        // Outside the window, same shape as an inside row: a bug that ignored the cutoff would
+        // inflate the aeroapi/Airport group's count instead of merely adding an extra group.
+        await SeedErrorAsync("4", VerificationEntityType.Airport, "aeroapi", windowStart.AddTicks(-1));
+        await SeedErrorAsync("5", VerificationEntityType.Airport, "aeroapi", now.AddDays(-10));
+
+        // Inside the window, but not Error -- must not be counted even though it completed at the
+        // same instant an in-window Error row did.
+        await SeedVerifiedAsync("6", VerificationEntityType.Airport, now.AddMinutes(-1));
+
+        await using var db = CreateDbContext();
+        var groups = await Repository(db, now: now).GetRecentFailureGroupsAsync();
+
+        // #424 fix wave: asserted in the order the read itself returns, not re-sorted client-side --
+        // Count descending puts the count-2 group first.
+        Assert.Equal(
+            new[]
+            {
+                new VerificationFailureGroup("aeroapi", VerificationEntityType.Airport, 2),
+                new VerificationFailureGroup("mledoze", VerificationEntityType.Country, 1),
+            },
+            groups);
+    }
+
+    /// <summary>
+    /// R3: a failure not attributable to one named source (e.g. the entity was deleted, or an
+    /// unexpected exception) is reported as its own "unattributed" group -- a null
+    /// <see cref="VerificationFailureGroup.FailedSource"/>, counted like any other group and never
+    /// dropped -- alongside an attributed group sharing the same entity type in the same window.
+    /// </summary>
+    [Fact]
+    public async Task GetRecentFailureGroupsAsync_NullFailedSource_IsItsOwnUnattributedGroup()
+    {
+        var now = T0.AddDays(2);
+
+        await SeedErrorAsync("1", VerificationEntityType.Airport, "aeroapi", now.AddHours(-1));
+        await SeedErrorAsync("2", VerificationEntityType.Airport, null, now.AddHours(-2)); // e.g. "Entity no longer exists"
+        await SeedErrorAsync("3", VerificationEntityType.Airport, null, now.AddMinutes(-5));
+
+        await using var db = CreateDbContext();
+        var groups = await Repository(db, now: now).GetRecentFailureGroupsAsync();
+
+        // #424 fix wave: asserted in the order the read itself returns -- Count descending puts the
+        // unattributed count-2 group first here too, so this doesn't exercise the tie-break; see
+        // OrdersByCountDescending_ThenFailedSource_ThenEntityType below for that.
+        Assert.Equal(
+            new[]
+            {
+                new VerificationFailureGroup(null, VerificationEntityType.Airport, 2),
+                new VerificationFailureGroup("aeroapi", VerificationEntityType.Airport, 1),
+            },
+            groups);
+    }
+
+    /// <summary>The window's lower bound is inclusive ("at or after now − 24h"): a completion exactly
+    /// at the cutoff counts; one tick earlier does not. Mirrors #418's own inclusive-boundary pin for
+    /// the cooldown window.</summary>
+    [Fact]
+    public async Task GetRecentFailureGroupsAsync_WindowLowerBoundIsInclusive()
+    {
+        var now = T0.AddDays(2);
+        var windowStart = now - TimeSpan.FromHours(IVerificationRequestRepository.ErrorAttributionWindowHours);
+
+        await SeedErrorAsync("1", VerificationEntityType.Airport, "aeroapi", windowStart); // exactly at the cutoff
+        await SeedErrorAsync("2", VerificationEntityType.Airline, "aeroapi", windowStart.AddTicks(-1)); // one tick earlier
+
+        await using var db = CreateDbContext();
+        var groups = await Repository(db, now: now).GetRecentFailureGroupsAsync();
+
+        var group = Assert.Single(groups);
+        Assert.Equal(new VerificationFailureGroup("aeroapi", VerificationEntityType.Airport, 1), group);
+    }
+
+    /// <summary>
+    /// #424 fix wave: with no ORDER BY, an admin panel could see these groups reorder between two
+    /// identical polls -- CLAUDE.md already treats that, for a panel re-rendering identical data
+    /// differently, as churn with no cause. This proves the primary sort genuinely is Count
+    /// descending, not merely that *some* order comes out matching it: <c>"zzz-source"</c> has the
+    /// highest count (3) but sorts alphabetically last, and <c>"aaa-source"</c> has a lower count (1)
+    /// but sorts alphabetically first, so a query that (mistakenly) ordered by <c>FailedSource</c>
+    /// before <c>Count</c> would put <c>aaa-source</c> ahead of <c>zzz-source</c> -- the reverse of
+    /// the required order. Verified break-proof: dropping <c>OrderByDescending(Count)</c> (replacing
+    /// it with plain <c>OrderBy(FailedSource).ThenBy(EntityType)</c>, since <c>ThenBy</c> cannot
+    /// follow nothing) reliably fails this assertion, confirmed across three separate runs against
+    /// real PostgreSQL.
+    ///
+    /// <para>
+    /// <b>What this test does not prove.</b> The <c>FailedSource</c>/<c>EntityType</c> tie-break among
+    /// equal-count groups (<c>aaa-source</c>, <c>mledoze</c> and the null/unattributed group all tie at
+    /// count 1 below) is asserted here, but dropping only the two <c>ThenBy</c> clauses does **not**
+    /// reliably fail this test: at this table's scale <c>EXPLAIN</c> shows Postgres always choosing a
+    /// <c>GroupAggregate</c> plan, which requires its input pre-sorted by <c>(failed_source,
+    /// entity_type)</c> and gets that via its own <c>Sort</c> node -- so the tied groups already come
+    /// out in that order as a structural side effect of the query plan, independent of whether
+    /// <c>GetRecentFailureGroupsAsync</c> asks for it. No seed data at unit-test scale changes this:
+    /// it would take a table large enough to flip the planner to a <c>HashAggregate</c>, which is
+    /// impractical to seed reliably in a unit test and would make the test's passing depend on a cost
+    /// threshold that could shift with a Postgres version. The tie-break is still correct C# — it just
+    /// isn't provable by mutation at this scale; the assertion stays as documentation of the intended
+    /// behaviour.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task GetRecentFailureGroupsAsync_OrdersByCountDescending_ThenFailedSourceThenEntityType()
+    {
+        var now = T0.AddDays(2);
+
+        // Highest count (3), but alphabetically last: must still sort first.
+        await SeedErrorAsync("1", VerificationEntityType.Airport, "zzz-source", now.AddHours(-1));
+        await SeedErrorAsync("2", VerificationEntityType.Airport, "zzz-source", now.AddHours(-2));
+        await SeedErrorAsync("3", VerificationEntityType.Airport, "zzz-source", now.AddHours(-3));
+
+        // Three groups tied at count 1, alphabetically ahead of "zzz-source": must still sort after it.
+        await SeedErrorAsync("4", VerificationEntityType.Airport, "aaa-source", now.AddMinutes(-5));
+        await SeedErrorAsync("5", VerificationEntityType.Airline, "mledoze", now.AddMinutes(-6));
+        await SeedErrorAsync("FR", VerificationEntityType.Country, null, now.AddMinutes(-7));
+
+        await using var db = CreateDbContext();
+        var groups = await Repository(db, now: now).GetRecentFailureGroupsAsync();
+
+        // Postgres's default collation sorts ASC NULLS LAST, so the unattributed (null) group trails
+        // the two named count-1 groups here too -- empirically confirmed against the real database,
+        // not assumed from .NET string-ordering semantics.
+        Assert.Equal(
+            new[]
+            {
+                new VerificationFailureGroup("zzz-source", VerificationEntityType.Airport, 3),
+                new VerificationFailureGroup("aaa-source", VerificationEntityType.Airport, 1),
+                new VerificationFailureGroup("mledoze", VerificationEntityType.Airline, 1),
+                new VerificationFailureGroup(null, VerificationEntityType.Country, 1),
+            },
+            groups);
+    }
+
     /// <summary>
     /// Accept-source's guard (#378): only a Pending or Running request for that exact entity type and key
     /// counts as open.
@@ -1153,6 +1383,33 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
         await using var db = CreateDbContext();
         var repository = Repository(db);
         Assert.Single(await repository.ClaimBatchAsync(1, T0)).MarkError("boom", completedUtc);
+        await repository.SaveChangesAsync();
+    }
+
+    /// <summary>#424: seeds one request of <paramref name="entityType"/>, claimed and completed as
+    /// <see cref="VerificationRequestStatus.Error"/> at <paramref name="completedUtc"/>, attributed to
+    /// <paramref name="failedSource"/> (or unattributed when null). When a source is given, it becomes
+    /// the request's own (sole) source, since <c>MarkError</c> validates <c>failedSource</c> against
+    /// <c>SourceNames</c>.</summary>
+    private async Task SeedErrorAsync(string key, VerificationEntityType entityType, string? failedSource, DateTime completedUtc)
+    {
+        var sources = failedSource is null ? OurAirports : new[] { failedSource };
+        await SeedEachAsync(Request(key, requestedUtc: T0, entityType: entityType, sources: sources));
+        await using var db = CreateDbContext();
+        var repository = Repository(db);
+        Assert.Single(await repository.ClaimBatchAsync(1, T0)).MarkError("boom", completedUtc, failedSource);
+        await repository.SaveChangesAsync();
+    }
+
+    /// <summary>#424: seeds one request of <paramref name="entityType"/>, claimed and completed as
+    /// <see cref="VerificationRequestStatus.Verified"/> at <paramref name="completedUtc"/> -- used to
+    /// prove a non-Error completion inside the report's window is excluded.</summary>
+    private async Task SeedVerifiedAsync(string key, VerificationEntityType entityType, DateTime completedUtc)
+    {
+        await SeedEachAsync(Request(key, requestedUtc: T0, entityType: entityType));
+        await using var db = CreateDbContext();
+        var repository = Repository(db);
+        Assert.Single(await repository.ClaimBatchAsync(1, T0)).MarkVerified(completedUtc);
         await repository.SaveChangesAsync();
     }
 

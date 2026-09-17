@@ -34,6 +34,20 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Verification
         public const string ErrorCooldownIndexName = "ix_verification_requests_error_cooldown";
 
         /// <summary>
+        /// The 24-hour Error-attribution report's supporting index (#424): which source is failing,
+        /// grouped with the entity type it's failing for, among completions in the last day. Partial
+        /// on <c>status = 'Error'</c> — unlike <see cref="ErrorCooldownIndexName"/>, this query only
+        /// ever wants Error rows, so filtering on status here is correct and does not repeat that
+        /// index's defect (an Error-only partial index that couldn't serve a query needing completions
+        /// of every status). Leads on <c>completed_utc</c>, the query's only range predicate, so
+        /// Postgres can seek straight to the last-24-hours slice of Error rows instead of scanning
+        /// every Error row ever recorded (the table is never purged); <c>failed_source</c> and
+        /// <c>entity_type</c> ride along as <c>INCLUDE</c> columns so the report's GROUP BY can read
+        /// them from the index alone. Not unique: many Error rows share a window.
+        /// </summary>
+        public const string ErrorAttributionIndexName = "ix_verification_requests_error_attribution";
+
+        /// <summary>
         /// Shadow property mapped to PostgreSQL's <c>xmin</c> system column: the row's concurrency
         /// token. The claim SQL has to return <c>xmin</c> explicitly, because <c>RETURNING *</c>
         /// never includes system columns.
@@ -84,6 +98,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Verification
             b.Property(x => x.SourceValuesJson).HasColumnName("source_values").HasColumnType("jsonb");
 
             b.Property(x => x.Error).HasColumnName("error").HasMaxLength(VerificationRequest.MaxErrorLength);
+            b.Property(x => x.FailedSource).HasColumnName("failed_source").HasMaxLength(VerificationRequest.MaxFailedSourceLength);
             b.Property(x => x.EstimatedCostUsd).HasColumnName("estimated_cost_usd").HasPrecision(10, 4);
             b.Property(x => x.RequestedBy).HasColumnName("requested_by").IsRequired().HasMaxLength(VerificationRequest.MaxRequestedByLength);
 
@@ -128,6 +143,21 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Verification
             b.HasIndex(x => new { x.EntityType, x.EntityKey, x.CompletedUtc })
                 .HasFilter("\"completed_utc\" IS NOT NULL")
                 .HasDatabaseName(ErrorCooldownIndexName);
+
+            // #424: the 24-hour Error-attribution report reads "WHERE status = 'Error' AND
+            // completed_utc >= @windowStart GROUP BY failed_source, entity_type" -- unlike the
+            // cooldown lookup above, this query only ever wants Error rows, so a status filter is
+            // correct here (do not "unify" the two: #418 already documents why an Error-only partial
+            // index cannot serve that other query). Leads on CompletedUtc, the query's only range
+            // predicate, so Postgres seeks the last-24-hours slice of Error rows directly instead of
+            // scanning every Error row the (never-purged) table has ever accumulated. FailedSource and
+            // EntityType ride as INCLUDE columns, not key columns, so the index-only scan the report's
+            // GROUP BY wants doesn't need them in the key -- they carry no ordering value of their own
+            // since the query has no equality predicate on either.
+            b.HasIndex(x => x.CompletedUtc)
+                .HasFilter($"\"status\" = '{nameof(VerificationRequestStatus.Error)}'")
+                .IncludeProperties(x => new { x.FailedSource, x.EntityType })
+                .HasDatabaseName(ErrorAttributionIndexName);
         }
 
         /// <summary>The stored value for <paramref name="trigger"/>.</summary>

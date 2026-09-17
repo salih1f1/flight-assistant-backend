@@ -48,4 +48,31 @@ public class VerificationRequestIndexConfigurationTests
         Assert.False(index.IsUnique);
         Assert.Equal("\"completed_utc\" IS NOT NULL", index.GetFilter());
     }
+
+    /// <summary>
+    /// The 24-hour Error-attribution report's supporting index (#424): leads on CompletedUtc (the
+    /// query's only range predicate: "WHERE status = 'Error' AND completed_utc >= @windowStart GROUP
+    /// BY failed_source, entity_type"), partial on <c>status = 'Error'</c> -- correct here, unlike
+    /// <see cref="VerificationRequestConfiguration.ErrorCooldownIndexName"/>, because this query only
+    /// ever wants Error rows. FailedSource and EntityType ride as INCLUDE columns so the GROUP BY can
+    /// be answered from the index alone. Break-proof: dropping the status filter from the
+    /// configuration fails this test's filter assertion.
+    /// </summary>
+    [Fact]
+    public void ErrorAttributionIndex_IsPartialOnErrorRows_LeadingOnCompletedUtc_WithFailedSourceAndEntityTypeIncluded()
+    {
+        using var ctx = CreateContext();
+
+        var entity = ctx.Model.FindEntityType(typeof(VerificationRequest))!;
+
+        var index = entity.GetIndexes().Single(ix =>
+            ix.Properties.Select(p => p.Name).SequenceEqual(new[] { nameof(VerificationRequest.CompletedUtc) }));
+
+        Assert.Equal(VerificationRequestConfiguration.ErrorAttributionIndexName, index.GetDatabaseName());
+        Assert.False(index.IsUnique);
+        Assert.Equal("\"status\" = 'Error'", index.GetFilter());
+        Assert.Equal(
+            new[] { nameof(VerificationRequest.FailedSource), nameof(VerificationRequest.EntityType) },
+            index.GetIncludeProperties());
+    }
 }

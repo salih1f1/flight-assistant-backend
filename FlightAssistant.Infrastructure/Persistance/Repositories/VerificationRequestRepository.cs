@@ -159,6 +159,11 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             // same pre-increment attempts. RETURNING reports what each row became; AsNoTracking keeps
             // the rows out of this context (it composes no SQL). xmin is returned explicitly because
             // RETURNING v.* never includes system columns. Every value is a parameter.
+            //
+            // failed_source (#424): nulled on the same branch that overwrites error with the
+            // abandoned-claim text -- abandonment is the final cause, not the source. Left unchanged
+            // (v."failed_source", like v."error" beside it) on the branch that returns to Pending,
+            // so it keeps mirroring error rather than drifting from it.
             var reset = await _db.VerificationRequests
                 .FromSql($"""
                     UPDATE "verification_requests" AS v
@@ -167,6 +172,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                         "error" = CASE WHEN v."attempts" + 1 >= {maxAttempts}
                             THEN {abandonedPrefix} || (v."attempts" + 1) || {abandonedSuffix}
                             ELSE v."error" END,
+                        "failed_source" = CASE WHEN v."attempts" + 1 >= {maxAttempts} THEN NULL ELSE v."failed_source" END,
                         "completed_utc" = CASE WHEN v."attempts" + 1 >= {maxAttempts} THEN {nowUtc} ELSE v."completed_utc" END,
                         "next_attempt_utc" = CASE WHEN v."attempts" + 1 >= {maxAttempts} THEN NULL ELSE v."next_attempt_utc" END,
                         "started_utc" = NULL
@@ -232,6 +238,39 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
 
         public Task<int> CountPendingAsync(CancellationToken ct = default) =>
             _db.VerificationRequests.CountAsync(r => r.Status == VerificationRequestStatus.Pending, ct);
+
+        public async Task<IReadOnlyList<VerificationFailureGroup>> GetRecentFailureGroupsAsync(CancellationToken ct = default)
+        {
+            // now from this repository's own TimeProvider (never DateTime.UtcNow), so the window is
+            // testable with a FakeTimeProvider like every other time-dependent read here. UtcDateTime
+            // carries DateTimeKind.Utc, which Npgsql requires against timestamptz.
+            var windowStartUtc = _timeProvider.GetUtcNow().UtcDateTime
+                - TimeSpan.FromHours(IVerificationRequestRepository.ErrorAttributionWindowHours);
+
+            // Written to match, LINQ-side, the hand-written statement the index was proven against:
+            // "WHERE status = 'Error' AND completed_utc >= @windowStart GROUP BY failed_source,
+            // entity_type". The statement EF generates for this query is served by
+            // ix_verification_requests_error_attribution as an index-only scan, with no sequential
+            // scan (see CLAUDE.md). No explicit CompletedUtc != null check -- every Error row already
+            // carries one (Complete() sets it), and a null CompletedUtc would compare false against
+            // windowStartUtc anyway. AsNoTracking: a read, and grouped projections are never tracked
+            // regardless. OrderByDescending(Count) puts the worst offender first, with FailedSource
+            // then EntityType as a full tie-break: without an explicit order, Postgres can reshuffle
+            // groups between two identical polls (a HashAggregate, or a switch to a sort-based one),
+            // which would read to an admin panel as churn with no cause. The sort runs over a handful
+            // of already-aggregated groups after the index-only scan above has done the real work, so
+            // it adds no scan and does not change what the index serves.
+            return await _db.VerificationRequests
+                .AsNoTracking()
+                .Where(r => r.Status == VerificationRequestStatus.Error && r.CompletedUtc >= windowStartUtc)
+                .GroupBy(r => new { r.FailedSource, r.EntityType })
+                .Select(g => new { g.Key.FailedSource, g.Key.EntityType, Count = g.Count() })
+                .OrderByDescending(g => g.Count)
+                .ThenBy(g => g.FailedSource)
+                .ThenBy(g => g.EntityType)
+                .Select(g => new VerificationFailureGroup(g.FailedSource, g.EntityType, g.Count))
+                .ToListAsync(ct);
+        }
 
         public async Task<IReadOnlyCollection<string>> GetSourceNamesInUseAsync(CancellationToken ct = default)
         {
