@@ -22,6 +22,7 @@ using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.Resource;
 using Microsoft.OpenApi.Models;
 using Serilog;
+using Serilog.Events;
 using System.Security.Claims;
 using System.Threading.RateLimiting;
 
@@ -47,12 +48,17 @@ builder.Host.UseSerilog((ctx, svc, logCfg) =>
     if (ctx.HostingEnvironment.IsDevelopment())
         logCfg.WriteTo.Console();
 
-    var aiConnectionString = ctx.Configuration["ApplicationInsights:ConnectionString"];
-    if (!string.IsNullOrWhiteSpace(aiConnectionString))
+    // Warning and above only (#440). In Development, Information (including EF Core's per-command
+    // logs and every background cycle) goes to the console sink above instead. Other environments
+    // register no console sink, so there Information reaches no sink. Shipping it to Application
+    // Insights would bill for that noise.
+    var aiConnectionString = ApplicationInsightsConnection.Resolve(ctx.Configuration);
+    if (aiConnectionString is not null)
     {
         logCfg.WriteTo.ApplicationInsights(
             new TelemetryConfiguration { ConnectionString = aiConnectionString },
-            TelemetryConverter.Traces);
+            TelemetryConverter.Traces,
+            restrictedToMinimumLevel: LogEventLevel.Warning);
     }
 });
 
@@ -121,10 +127,16 @@ builder.Services.AddApplication();
 // Infrastructure layer (repositories, external services)
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.IsDevelopment());
 
-var aiConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"];
-if (!string.IsNullOrWhiteSpace(aiConnectionString))
+var aiConnectionString = ApplicationInsightsConnection.Resolve(builder.Configuration);
+if (aiConnectionString is not null)
 {
-    builder.Services.AddApplicationInsightsTelemetry();
+    // Adaptive sampling is the SDK default. It is stated explicitly because it is one of #440's
+    // cost guards: it thins request and dependency telemetry under load instead of billing all of it.
+    builder.Services.AddApplicationInsightsTelemetry(options =>
+    {
+        options.ConnectionString = aiConnectionString;
+        options.EnableAdaptiveSampling = true;
+    });
 }
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
