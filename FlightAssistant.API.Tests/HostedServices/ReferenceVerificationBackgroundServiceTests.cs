@@ -76,10 +76,11 @@ public class ReferenceVerificationBackgroundServiceTests
         await using var job = Job.Create(script, _time);
 
         await job.Service.StartAsync(CancellationToken.None);
-        await WaitUntilAsync(() => job.Heartbeat.Current.LastOutcome != VerificationJobOutcome.Running
-            && job.Heartbeat.Current.LastOutcome != VerificationJobOutcome.NeverRun);
-
-        var snapshot = job.Heartbeat.Current;
+        // One read per poll, and the asserts use the snapshot that ended the wait (#438). The old
+        // condition read Current twice, so NeverRun on the first read and Running on the second
+        // satisfied both halves while the cycle was still running.
+        var snapshot = await WaitForSnapshotAsync(job.Heartbeat,
+            s => s.LastOutcome is not (VerificationJobOutcome.Running or VerificationJobOutcome.NeverRun));
         Assert.Equal(VerificationJobOutcome.Paused, snapshot.LastOutcome);
         Assert.Equal(5, snapshot.RequestsProcessed);
         Assert.Equal(1, snapshot.RequestsFailed);
@@ -201,6 +202,25 @@ public class ReferenceVerificationBackgroundServiceTests
         var deadline = DateTime.UtcNow + WaitLimit;
         while (!condition())
         {
+            if (DateTime.UtcNow > deadline) Assert.Fail("The background service did not reach the expected state in time.");
+            await Task.Delay(10);
+        }
+    }
+
+    /// <summary>
+    /// Polls <paramref name="heartbeat"/> until one snapshot satisfies <paramref name="predicate"/>, and
+    /// returns that snapshot (#438). It reads <see cref="VerificationJobHeartbeat.Current"/> exactly once
+    /// per poll. Each access can return a newer snapshot, so a condition that reads it twice can pass on
+    /// two different states, and re-reading it after the wait can return a later state.
+    /// </summary>
+    private static async Task<VerificationJobSnapshot> WaitForSnapshotAsync(
+        VerificationJobHeartbeat heartbeat, Func<VerificationJobSnapshot, bool> predicate)
+    {
+        var deadline = DateTime.UtcNow + WaitLimit;
+        while (true)
+        {
+            var snapshot = heartbeat.Current;
+            if (predicate(snapshot)) return snapshot;
             if (DateTime.UtcNow > deadline) Assert.Fail("The background service did not reach the expected state in time.");
             await Task.Delay(10);
         }
