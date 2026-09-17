@@ -286,13 +286,21 @@ namespace FlightAssistant.Infrastructure
             // free AeroDataBox path in it would refuse free searches for no reason, and the cache
             // must stay outermost so a cached result is still answered past the budget (#303). A
             // consequence worth stating rather than discovering later: a route search is no longer
-            // refused when the AeroAPI budget is Exhausted, because it never touches AeroAPI once
-            // AeroDataBox is configured — an improvement, and a real behaviour change.
+            // refused once the AeroAPI budget leaves Normal (AeroApiFlightSearchBudgetDecorator
+            // refuses from SoftLimit onward, not only Exhausted), because it never touches AeroAPI
+            // once AeroDataBox is configured — an improvement, and a real behaviour change.
             //
             // The cache key (AeroApiFlightSearchCachingDecorator.BuildCacheKey) has no provider
-            // dimension. That is safe ONLY because the selector's routing is deterministic by
-            // criteria shape — a given key always reaches the same provider. If a shape is ever
-            // routed to both providers, the key must gain one.
+            // dimension. #422 final review, finding 4: that is NOT safe merely because routing is
+            // deterministic by criteria shape — it also depends on whether AeroDataBox:ApiKey is
+            // configured (AeroDataBoxOptions.IsConfigured), which is fixed for a process's lifetime
+            // but not across a restart or an instance sharing Redis. After the key is added or
+            // removed, a route-search key can be served the OTHER provider's cached rows until the
+            // TTL runs out (AeroApiOptions.SearchCacheTtlPastOrToday 5 min / SearchCacheTtlFuture
+            // 12h). On a rollback — pulling the key because AeroDataBox rows turned out wrong or
+            // empty — flush the "aeroapi:flight-search:" cache prefix rather than waiting out the
+            // TTL. If a shape is ever routed to both providers AT ONCE (not merely at different
+            // times), the key must gain a provider dimension.
             //
             // AeroApiFlightSearchProvider itself stays registered and resolvable — the decorator
             // wraps it, it does not replace it.
