@@ -103,7 +103,11 @@ namespace FlightAssistant.Domain.Verification.Entities
         /// changes exactly when <see cref="Error"/> changes: set alongside it there, cleared alongside
         /// it by <see cref="MarkVerified"/>, <see cref="MarkMismatch"/> and <see cref="MarkNotFound"/>.
         /// Null for a failure not attributable to one named source (an unexpected exception, a
-        /// deleted entity, an abandoned claim).
+        /// deleted entity, an abandoned claim). That "if and only if" holds only going forward: this
+        /// column did not exist before #424, so a request loaded from a row that completed
+        /// <see cref="VerificationRequestStatus.Error"/> beforehand carries a null
+        /// <see cref="FailedSource"/> here regardless of what actually caused it -- the same value a
+        /// genuinely unattributed failure produces.
         /// </summary>
         public string? FailedSource { get; private set; }
 

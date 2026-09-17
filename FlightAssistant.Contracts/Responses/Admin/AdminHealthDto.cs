@@ -165,9 +165,12 @@ namespace FlightAssistant.Contracts.Responses.Admin
     /// grouped by the source that failed and the entity type it failed for -- unlike every other field
     /// on this record, this spans many cycles, not just the last completed one. A group whose
     /// <see cref="AdminHealthVerificationFailureDto.FailedSource"/> is <c>null</c> is <em>unattributed</em>
-    /// (a deleted entity, an unexpected exception, an abandoned claim), not dropped. <c>null</c> means
-    /// the read itself failed ("cannot tell", e.g. the database is unreachable) and is distinct from an
-    /// empty list, which means the read succeeded and nothing failed in the window.</param>
+    /// (a deleted entity, an unexpected exception, an abandoned claim), not dropped. A row that
+    /// completed <c>Error</c> before #424's migration also carries a null <c>FailedSource</c> whatever
+    /// its actual cause, so for the first 24 hours after deploy the unattributed group includes those
+    /// too, until they age out of this window. <c>null</c> means the read itself failed ("cannot tell",
+    /// e.g. the database is unreachable) and is distinct from an empty list, which means the read
+    /// succeeded and nothing failed in the window.</param>
     public sealed record AdminHealthVerificationDto(
         bool Enabled,
         DateTime? LastRunStartedUtc,
@@ -188,7 +191,9 @@ namespace FlightAssistant.Contracts.Responses.Admin
     /// that completed as Error in the report's 24-hour window sharing one source and entity type.</summary>
     /// <param name="FailedSource">The source attributable for the failure, or <c>null</c> when the
     /// failure isn't attributable to one named source (a deleted entity, an unexpected exception, an
-    /// abandoned claim) -- reported as its own "unattributed" group, never dropped.</param>
+    /// abandoned claim) -- reported as its own "unattributed" group, never dropped. Also null for any
+    /// row that completed <c>Error</c> before #424's migration, regardless of its real cause: this
+    /// column exists only from that point on.</param>
     /// <param name="EntityType">The <c>VerificationEntityType</c> name the failing checks targeted
     /// (e.g. <c>"Airport"</c>).</param>
     /// <param name="Count">How many Error completions in the window matched this group -- not source
