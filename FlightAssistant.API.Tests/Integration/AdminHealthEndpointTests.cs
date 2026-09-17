@@ -514,14 +514,15 @@ public class AdminHealthEndpointTests(FlightAssistantWebApplicationFactory facto
 
     /// <summary>
     /// #424: proves the endpoint actually surfaces a seeded Error completion's group through the full
-    /// pipeline (repository read -> builder mapping -> JSON). This is wiring/shape evidence only --
-    /// InMemory has no real index to prove an index-only scan against, and (R7's trap) a read that
-    /// failed to translate here would come back as a silent null the same way a genuinely unreachable
-    /// database does, telling this test nothing either way. The real evidence that the query performs
-    /// -- captured SQL, EXPLAIN (ANALYZE, BUFFERS), no sequential scan -- is
-    /// VerificationRequestRepositoryPostgresTests's job. A random entity key and a GUID-valued
-    /// FailedSource keep this resilient to whatever other rows the shared InMemory database in this
-    /// xUnit collection accumulates from other test classes.
+    /// pipeline (repository read -> builder mapping -> JSON) -- the wiring, and that a real seeded row
+    /// comes back correctly shaped as JSON. This is wiring/shape evidence only: InMemory has no real
+    /// index to prove an index-only scan against, and that proof isn't a test at all -- it's the
+    /// EXPLAIN (ANALYZE, BUFFERS) measurement against a seeded PostgreSQL container recorded in
+    /// CLAUDE.md, next to `ix_verification_requests_error_attribution`. A read that silently failed to
+    /// translate here would come back as the same null RecentFailures a genuinely unreachable database
+    /// produces, which the NotNull/Single assertions below would catch, not let through unnoticed. A
+    /// random entity key and a GUID-valued FailedSource keep this resilient to whatever other rows the
+    /// shared InMemory database in this xUnit collection accumulates from other test classes.
     /// </summary>
     [Fact]
     public async Task GetHealth_Admin_RecentFailuresReflectsASeededErrorCompletion()
