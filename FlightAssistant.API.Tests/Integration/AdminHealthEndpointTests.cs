@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FlightAssistant.API.HostedServices;
+using FlightAssistant.API.Infrastructure;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Domain.Verification.Entities;
 using FlightAssistant.Domain.Verification.Enums;
@@ -605,5 +606,41 @@ public class AdminHealthEndpointTests(FlightAssistantWebApplicationFactory facto
         Assert.NotNull(dto);
         Assert.True(dto!.System.RedisConfigured);
         Assert.True(dto.System.AppInsightsConfigured);
+    }
+
+    /// <summary>
+    /// #440 fix round 1, finding 1: only <see cref="ApplicationInsightsConnection.PlatformKey"/>
+    /// (App Service's own <c>APPLICATIONINSIGHTS_CONNECTION_STRING</c>) is set here — nothing under
+    /// the documented <c>ApplicationInsights:ConnectionString</c> key. This is the exact scenario
+    /// #440 exists to fix: telemetry now flows in it (see <c>ApplicationInsightsWiringTests</c>),
+    /// so this operator-facing boolean must agree, not still read the documented key raw.
+    /// </summary>
+    private static WebApplicationFactory<Program> WithAppInsightsPlatformKeyOnlyConfigured(
+        FlightAssistantWebApplicationFactory factory)
+    {
+        return factory.WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, cfg) =>
+                cfg.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    [ApplicationInsightsConnection.PlatformKey] = AppInsightsConnectionStringSentinel,
+                })));
+    }
+
+    [Fact]
+    public async Task GetHealth_AppInsightsPlatformKeyOnlyConfigured_ReportsAppInsightsConfiguredTrue()
+    {
+        using var scopedFactory = WithAppInsightsPlatformKeyOnlyConfigured(factory);
+        var client = AdminClient(scopedFactory);
+
+        var response = await client.GetAsync("admin/health");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(AppInsightsConnectionStringSentinel, body);
+
+        var dto = JsonSerializer.Deserialize<AdminHealthDto>(
+            body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(dto);
+        Assert.True(dto!.System.AppInsightsConfigured);
     }
 }

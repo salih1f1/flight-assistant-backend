@@ -48,8 +48,10 @@ builder.Host.UseSerilog((ctx, svc, logCfg) =>
     if (ctx.HostingEnvironment.IsDevelopment())
         logCfg.WriteTo.Console();
 
-    // Warning and above only (#440): Information, including EF Core's per-command logs and every
-    // background cycle, stays in the console sink above. Shipping it would bill for dev noise.
+    // Warning and above only (#440). In Development, Information (including EF Core's per-command
+    // logs and every background cycle) goes to the console sink above instead. Other environments
+    // register no console sink, so there Information reaches no sink. Shipping it to Application
+    // Insights would bill for that noise.
     var aiConnectionString = ApplicationInsightsConnection.Resolve(ctx.Configuration);
     if (aiConnectionString is not null)
     {

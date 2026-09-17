@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using FlightAssistant.API.HostedServices;
+using FlightAssistant.API.Infrastructure;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Infrastructure.Persistance;
@@ -101,11 +102,12 @@ namespace FlightAssistant.API.Endpoints.Admin
             // Same instant backs both fields so they cannot disagree.
             var uptime = DateTime.UtcNow - ProcessStartedUtc;
 
-            // Booleans only — the same two lookups Program.cs already does at startup. Never echo
-            // the connection string itself through a diagnostics endpoint.
+            // Booleans only. Never echo the connection string itself through a diagnostics
+            // endpoint. Redis is the same lookup Program.cs does at startup; App Insights uses
+            // ApplicationInsightsConnection.Resolve, the same resolver both Program.cs startup
+            // guards use (#440), so this agrees with them on the platform-key fallback too.
             var redisConfigured = !string.IsNullOrWhiteSpace(configuration.GetConnectionString("Redis"));
-            var appInsightsConfigured =
-                !string.IsNullOrWhiteSpace(configuration["ApplicationInsights:ConnectionString"]);
+            var appInsightsConfigured = ApplicationInsightsConnection.Resolve(configuration) is not null;
 
             return new AdminHealthSystemDto(
                 env.EnvironmentName,
