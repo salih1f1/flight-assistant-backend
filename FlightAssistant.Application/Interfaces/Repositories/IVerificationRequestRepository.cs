@@ -79,7 +79,10 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// <param name="batchSize">At least 1.</param>
         /// <param name="nowUtc">Must have <see cref="DateTimeKind.Utc"/>.</param>
         /// <param name="excludeIds">Ids never claimed by this call, however otherwise eligible. Null
-        /// or empty excludes nothing.</param>
+        /// or empty excludes nothing. Was the G1 replacement-batch mechanism (#401 final fix); #428
+        /// replaced that with <paramref name="excludeSourceNames"/> instead (see there for why), so
+        /// this parameter has no production caller today. Kept because the claim's underlying
+        /// id-exclusion SQL had to stay untouched (#428 R5) and it is still directly tested.</param>
         /// <param name="excludeSourceNames">Source names never claimed by this call: a request is
         /// skipped when any one of its own (comma-joined) source names exactly matches one of these,
         /// e.g. excluding <c>"aeroapi"</c> skips a request naming <c>"aeroapi"</c> alone or
