@@ -247,15 +247,14 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             var windowStartUtc = _timeProvider.GetUtcNow().UtcDateTime
                 - TimeSpan.FromHours(IVerificationRequestRepository.ErrorAttributionWindowHours);
 
-            // Written to match, LINQ-side, the hand-written statement Task 1's index was proven
-            // against: "WHERE status = 'Error' AND completed_utc >= @windowStart GROUP BY
-            // failed_source, entity_type". Whether EF actually *generates* that shape -- and whether
-            // the generated statement is still index-only against ix_verification_requests_error_attribution
-            // -- is verified separately with a captured EXPLAIN (ANALYZE, BUFFERS); see
-            // VerificationRequestRepositoryPostgresTests. No explicit CompletedUtc != null check --
-            // every Error row already carries one (Complete() sets it), and a null CompletedUtc would
-            // compare false against windowStartUtc anyway. AsNoTracking: a read, and grouped
-            // projections are never tracked regardless.
+            // Written to match, LINQ-side, the hand-written statement the index was proven against:
+            // "WHERE status = 'Error' AND completed_utc >= @windowStart GROUP BY failed_source,
+            // entity_type". The statement EF generates for this query is served by
+            // ix_verification_requests_error_attribution as an index-only scan, with no sequential
+            // scan (see CLAUDE.md). No explicit CompletedUtc != null check -- every Error row already
+            // carries one (Complete() sets it), and a null CompletedUtc would compare false against
+            // windowStartUtc anyway. AsNoTracking: a read, and grouped projections are never tracked
+            // regardless.
             return await _db.VerificationRequests
                 .AsNoTracking()
                 .Where(r => r.Status == VerificationRequestStatus.Error && r.CompletedUtc >= windowStartUtc)
