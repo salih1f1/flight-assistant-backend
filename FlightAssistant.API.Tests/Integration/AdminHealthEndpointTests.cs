@@ -4,6 +4,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using FlightAssistant.API.HostedServices;
 using FlightAssistant.Contracts.Responses.Admin;
+using FlightAssistant.Domain.Verification.Entities;
+using FlightAssistant.Domain.Verification.Enums;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -508,6 +510,42 @@ public class AdminHealthEndpointTests(FlightAssistantWebApplicationFactory facto
         Assert.NotNull(dto.Verification.PendingCount);
         Assert.Equal(0, dto.Verification.StuckAbandoned);
         Assert.Equal(0, dto.Verification.FailuresUnrecorded);
+    }
+
+    /// <summary>
+    /// #424: proves the endpoint actually surfaces a seeded Error completion's group through the full
+    /// pipeline (repository read -> builder mapping -> JSON). This is wiring/shape evidence only --
+    /// InMemory has no real index to prove an index-only scan against, and (R7's trap) a read that
+    /// failed to translate here would come back as a silent null the same way a genuinely unreachable
+    /// database does, telling this test nothing either way. The real evidence that the query performs
+    /// -- captured SQL, EXPLAIN (ANALYZE, BUFFERS), no sequential scan -- is
+    /// VerificationRequestRepositoryPostgresTests's job. A random entity key and a GUID-valued
+    /// FailedSource keep this resilient to whatever other rows the shared InMemory database in this
+    /// xUnit collection accumulates from other test classes.
+    /// </summary>
+    [Fact]
+    public async Task GetHealth_Admin_RecentFailuresReflectsASeededErrorCompletion()
+    {
+        var nonce = "probe-" + Guid.NewGuid().ToString("N");
+        var entityKey = Random.Shared.Next(10_000_000, 99_999_999).ToString();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+            var request = VerificationRequest.Create(
+                VerificationEntityType.Airport, entityKey, new[] { nonce }, VerificationTrigger.Admin, "admin-oid", 0m,
+                DateTime.UtcNow.AddMinutes(-10));
+            request.MarkError("boom", DateTime.UtcNow.AddMinutes(-1), nonce);
+            db.VerificationRequests.Add(request);
+            await db.SaveChangesAsync();
+        }
+
+        var dto = await (await factory.CreateAdminClient().GetAsync("admin/health")).Content.ReadFromJsonAsync<AdminHealthDto>();
+
+        Assert.NotNull(dto);
+        Assert.NotNull(dto!.Verification.RecentFailures);
+        var group = Assert.Single(dto.Verification.RecentFailures!, g => g.FailedSource == nonce);
+        Assert.Equal("Airport", group.EntityType);
+        Assert.Equal(1, group.Count);
     }
 
     [Fact]
