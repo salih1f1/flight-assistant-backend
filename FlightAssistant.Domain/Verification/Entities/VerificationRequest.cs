@@ -442,26 +442,21 @@ namespace FlightAssistant.Domain.Verification.Entities
         }
 
         /// <summary>
-        /// Validates an optional <c>failedSource</c> argument against the same shape
-        /// <see cref="TryJoinSources"/> requires of every name in <see cref="Sources"/> — no blank,
-        /// no whitespace, <see cref="SourceSeparator"/> or <c>+</c> — plus <see cref="MaxFailedSourceLength"/>,
-        /// and (#424 review) that it names one of this request's own <see cref="SourceNames"/>: every
-        /// caller that attributes a failure to a source resolves that name from
+        /// Validates an optional <c>failedSource</c> argument: null (no attributable source) is
+        /// always valid; otherwise it must name one of this request's own <see cref="SourceNames"/>
+        /// (#424 review) — every caller that attributes a failure to a source resolves that name from
         /// <see cref="SourceNames"/> in the first place, so a mismatch here means a caller is naming a
-        /// source this request never asked for. A null <paramref name="failedSource"/> (no
-        /// attributable source) is always valid.
+        /// source this request never asked for. Containment alone is sufficient: it implies every
+        /// shape rule <see cref="TryJoinSources"/> already enforced on every name in
+        /// <see cref="Sources"/> (no blank, no whitespace, no <see cref="SourceSeparator"/> or
+        /// <c>+</c>) and <see cref="MaxFailedSourceLength"/> (a single name can never be longer than
+        /// the joined <see cref="Sources"/> column that holds it) — a name violating any of those could
+        /// never be in <see cref="SourceNames"/> to begin with, so re-checking them here was dead code
+        /// for every request this type can construct (#424 fix wave).
         /// </summary>
         private void EnsureValidFailedSource(string? failedSource, string paramName)
         {
             if (failedSource is null) return;
-
-            if (string.IsNullOrWhiteSpace(failedSource))
-                throw new ArgumentException("A failed source name cannot be blank.", paramName);
-            if (failedSource.Any(c => c == SourceSeparator || c == '+' || char.IsWhiteSpace(c)))
-                throw new ArgumentException(
-                    $"Failed source '{failedSource}' cannot contain whitespace, '{SourceSeparator}' or '+'.", paramName);
-
-            EnsureMaxLength(failedSource, MaxFailedSourceLength, paramName);
 
             if (!SourceNames.Contains(failedSource, StringComparer.Ordinal))
                 throw new ArgumentException(

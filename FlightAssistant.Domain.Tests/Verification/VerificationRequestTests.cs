@@ -450,37 +450,6 @@ namespace FlightAssistant.Domain.Tests.Verification
             Assert.Equal("ourairports", request.FailedSource);
         }
 
-        [Theory]
-        [InlineData("")]
-        [InlineData(" ")]
-        [InlineData("aero api")]
-        [InlineData("aero,api")]
-        [InlineData("aero+api")]
-        public void RecordSourceError_InvalidFailedSource_ThrowsNamingTheParameterAndChangesNothing(string failedSource)
-        {
-            var request = NewRequest();
-
-            var ex = Assert.Throws<ArgumentException>(() =>
-                request.RecordSourceError("timeout", NowUtc, maxAttempts: 3, backoff: TimeSpan.FromMinutes(1), failedSource: failedSource));
-
-            Assert.Equal("failedSource", ex.ParamName);
-            Assert.Equal(0, request.Attempts);
-            Assert.Null(request.Error);
-            Assert.Null(request.FailedSource);
-        }
-
-        [Fact]
-        public void RecordSourceError_FailedSourceOverTheLimit_Throws()
-        {
-            var request = NewRequest();
-
-            var ex = Assert.Throws<ArgumentException>(() =>
-                request.RecordSourceError("timeout", NowUtc, maxAttempts: 3, backoff: TimeSpan.FromMinutes(1),
-                    failedSource: new string('s', VerificationRequest.MaxFailedSourceLength + 1)));
-
-            Assert.Equal("failedSource", ex.ParamName);
-        }
-
         /// <summary>#424 review: a well-formed <c>failedSource</c> is still rejected when it names a
         /// source this request never asked for. Break-proof: commenting out the
         /// <c>SourceNames.Contains</c> check in <c>EnsureValidFailedSource</c> makes this pass
@@ -530,17 +499,6 @@ namespace FlightAssistant.Domain.Tests.Verification
             request.MarkError("boom", NowUtc, failedSource: name);
 
             Assert.Equal(name, request.FailedSource);
-        }
-
-        [Fact]
-        public void MarkError_FailedSourceOverTheLimit_Throws()
-        {
-            var request = NewRequest();
-
-            var ex = Assert.Throws<ArgumentException>(() =>
-                request.MarkError("boom", NowUtc, failedSource: new string('s', VerificationRequest.MaxFailedSourceLength + 1)));
-
-            Assert.Equal("failedSource", ex.ParamName);
         }
 
         /// <summary>#424 review: same guard as <see cref="RecordSourceError"/>'s, proved independently
