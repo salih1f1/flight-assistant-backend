@@ -562,13 +562,13 @@ public class VerificationCyclePostgresTests : PostgresTestBase
     // ── #419 × #401/#428: promotion does not reopen the starvation #428 closed ───
 
     /// <summary>
-    /// R4 (#419): a deep, promoted, paused admin <c>aeroapi</c> backlog does not starve the younger
+    /// A deep, promoted, paused admin <c>aeroapi</c> backlog does not starve the younger
     /// flight-triggered free-source work behind it, now that the replacement claim excludes by
     /// source name (#428) rather than by the ids the initial batch just paused (#401's original G1).
     /// Seven admin-triggered <c>aeroapi</c> requests, each an hour old -- promoted, since the default
     /// <c>ClaimPromotionAge</c> is 10 minutes -- rank ahead of two younger flight-triggered
-    /// <c>ourairports</c> requests for real seeded airports. <c>BatchSize</c> is 3, so the backlog (7)
-    /// is more than <c>2 * BatchSize</c> deep: with the AeroAPI budget Exhausted from the first read,
+    /// <c>ourairports</c> requests for real seeded airports. <c>BatchSize</c> is 3, so P (7) &gt;= 2 x
+    /// BatchSize (6): with the AeroAPI budget Exhausted from the first read,
     /// the initial claim pauses three of the promoted <c>aeroapi</c> requests, and #428's replacement
     /// claim -- excluding the whole <c>aeroapi</c> source rather than just those three ids -- reaches
     /// past the four still-untried <c>aeroapi</c> requests straight to the two free-source ones,

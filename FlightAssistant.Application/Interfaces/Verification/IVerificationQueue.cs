@@ -50,7 +50,10 @@ namespace FlightAssistant.Application.Interfaces.Verification
         /// <see cref="ArgumentException"/>. Keys that canonicalise to the same value count as repeats.
         /// </param>
         /// <param name="sources">Source names to check against, e.g. <c>ourairports</c>.</param>
-        /// <param name="trigger">What asked for the checks; <see cref="VerificationTrigger.Flight"/> is claimed first.</param>
+        /// <param name="trigger">What asked for the checks; <see cref="VerificationTrigger.Flight"/> is
+        /// claimed first only among requests younger than <c>Verification:ClaimPromotionAge</c> — an
+        /// older request of any trigger is promoted ahead of it (#419). See
+        /// <c>IVerificationRequestRepository.ClaimBatchAsync</c>.</param>
         /// <param name="requestedBy">The admin's id, or <c>system</c>.</param>
         /// <param name="estimatedCostUsd">The estimated cost of <b>one</b> request: the sum of the selected
         /// sources' per-row cost (0 for the free sources). Stored on every queued request.</param>

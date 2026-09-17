@@ -224,7 +224,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             // can never itself contain a comma (VerificationRequest.TryJoinSources forbids it).
             //
             // The top-tier predicate (flight-triggered OR promoted) must match the C# re-sort below
-            // exactly (#419 R2) -- this decides which rows get claimed, the re-sort decides the order
+            // exactly -- this decides which rows get claimed, the re-sort decides the order
             // they come back in, and a mismatch would claim the right rows but hand them back wrong.
             var claimed = await _db.VerificationRequests
                 .FromSql($"""

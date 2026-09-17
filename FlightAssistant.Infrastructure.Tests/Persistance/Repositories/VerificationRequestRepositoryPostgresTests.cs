@@ -165,12 +165,13 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     }
 
     /// <summary>
-    /// Today's flight-first priority is unchanged below the promotion age (R1): an unpromoted admin
+    /// Today's flight-first priority is unchanged below the promotion age: an unpromoted admin
     /// request does not get claimed ahead of a batch of flight-triggered requests, even though it is
     /// chronologically <b>older</b> than every one of them. The admin row is deliberately the oldest
-    /// by <c>requested_utc</c> here (#419 review M1) -- a plain FIFO <c>ORDER BY requested_utc, id</c>
-    /// would claim it in this batch too, so a seed where the admin row is younger than the flight
-    /// rows cannot tell flight-first priority apart from FIFO; this seed can.
+    /// by <c>requested_utc</c> here -- the flight rows are younger than the admin row, so pure
+    /// oldest-first ordering would claim the admin row first, and this test fails under FIFO: with
+    /// <c>BatchSize</c> 3 it would return the admin row plus the two oldest flight rows, not the
+    /// three flight rows this test asserts.
     /// </summary>
     [Fact]
     public async Task ClaimBatchAsync_AnAdminRequestYoungerThanThePromotionWindow_IsNotClaimedAheadOfABatchOfFlightRequests()
@@ -194,7 +195,7 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     }
 
     /// <summary>
-    /// R2: the SQL <c>ORDER BY</c> decides which rows are claimed; this proves the C# re-sort after
+    /// The SQL <c>ORDER BY</c> decides which rows are claimed; this proves the C# re-sort after
     /// <c>RETURNING</c> (which has no defined order) puts a promoted admin request in its correct
     /// age-ordered position among the flight-triggered rows, not merely somewhere in the returned
     /// list. Break-proof: a re-sort left at the old "flight first, then age" rule would still claim
@@ -218,7 +219,7 @@ public class VerificationRequestRepositoryPostgresTests : PostgresTestBase
     }
 
     /// <summary>
-    /// The boundary is inclusive (R1): a request whose <c>requested_utc</c> is exactly at the cutoff
+    /// The boundary is inclusive: a request whose <c>requested_utc</c> is exactly at the cutoff
     /// (<c>nowUtc - ClaimPromotionAge</c>) is promoted and beats a flight-triggered request several
     /// minutes younger than it -- something it otherwise never would. One microsecond younger --
     /// <c>timestamptz</c>'s own resolution, and so the smallest age difference that survives a round

@@ -40,7 +40,17 @@ namespace FlightAssistant.Application.Verification
         /// flight-triggered requests, ordered by <c>requested_utc</c> then <c>id</c>; an unpromoted
         /// admin request still ranks below every flight-triggered request, exactly as before this
         /// option existed. Never <see cref="TimeSpan.Zero"/> — that would degenerate into strict
-        /// oldest-first claiming, which is not what was chosen.</summary>
+        /// oldest-first claiming, which is not what was chosen.
+        /// <para>
+        /// The cost: this delays younger flight-triggered work behind whatever it promotes, linearly,
+        /// at about <c>PollInterval / BatchSize</c> per promoted request queued ahead (≈3 s at
+        /// defaults) — measured at 1,000 already-promoted admin requests, 50 minutes (versus cycle 1
+        /// without promotion). A retried request re-promotes on every attempt, since a source error
+        /// leaves <c>requested_utc</c> untouched, up to <see cref="MaxAttempts"/> — measured at 1,000
+        /// requests with every attempt failing, 2 h 28 min. None of this reaches a traveler: the queue
+        /// only verifies reference data (airports, airlines, countries), read only by admin exports
+        /// and stats. Raising this value is the lever, but it needs a restart to take effect.
+        /// </para></summary>
         TimeSpan ClaimPromotionAge { get; }
 
         /// <summary>The source names a check for <paramref name="entityType"/> uses when a caller
