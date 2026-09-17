@@ -92,6 +92,24 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         Task<int> CountPendingAsync(CancellationToken ct = default);
 
         /// <summary>
+        /// The 24-hour Error-attribution report (#424): every request that completed as
+        /// <see cref="VerificationRequestStatus.Error"/> at or after <c>now</c> (this repository's own
+        /// <c>TimeProvider</c>) minus <see cref="ErrorAttributionWindowHours"/> hours, grouped by
+        /// <c>(FailedSource, EntityType)</c> with each group's count. A null <c>FailedSource</c> is its
+        /// own group -- an unattributed failure (a deleted entity, an unexpected exception, an
+        /// abandoned claim) is reported, not dropped (R3). Only non-empty groups come back; a
+        /// <c>GROUP BY</c> gives that for free (R5). <c>AsNoTracking</c>; not audited (a read).
+        /// </summary>
+        Task<IReadOnlyList<VerificationFailureGroup>> GetRecentFailureGroupsAsync(CancellationToken ct = default);
+
+        /// <summary>
+        /// The rolling window <see cref="GetRecentFailureGroupsAsync"/> reports over. A fixed constant,
+        /// not configuration (R4): this is a reporting window, not a behaviour tunable, so changing it
+        /// needs a deploy rather than a config edit.
+        /// </summary>
+        public const int ErrorAttributionWindowHours = 24;
+
+        /// <summary>
         /// Every source name that at least one open (<c>Pending</c>/<c>Running</c>) request names, in
         /// one query: each request's comma-joined <c>sources</c> split into whole names, so
         /// <c>ourairports</c> never stands in for <c>ourairports2</c>. The job drops the cached dataset
@@ -147,4 +165,14 @@ namespace FlightAssistant.Application.Interfaces.Repositories
     /// <param name="ReturnedToPending">Stuck requests returned to Pending, one attempt added.</param>
     /// <param name="Abandoned">Stuck requests that ran out of attempts and completed as Error.</param>
     public sealed record VerificationStuckResetResult(int ReturnedToPending, int Abandoned);
+
+    /// <summary>
+    /// One group from <see cref="IVerificationRequestRepository.GetRecentFailureGroupsAsync"/>: every
+    /// <c>Error</c> completion in the report's window sharing one <c>(FailedSource, EntityType)</c> pair.
+    /// </summary>
+    /// <param name="FailedSource">The source attributable for the failure, or null when it isn't
+    /// attributable to one named source (R3: reported as its own "unattributed" group, never dropped).</param>
+    /// <param name="EntityType">The entity type the failing checks targeted.</param>
+    /// <param name="Count">How many Error completions in the window matched this group.</param>
+    public sealed record VerificationFailureGroup(string? FailedSource, VerificationEntityType EntityType, int Count);
 }

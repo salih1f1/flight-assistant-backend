@@ -239,6 +239,31 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         public Task<int> CountPendingAsync(CancellationToken ct = default) =>
             _db.VerificationRequests.CountAsync(r => r.Status == VerificationRequestStatus.Pending, ct);
 
+        public async Task<IReadOnlyList<VerificationFailureGroup>> GetRecentFailureGroupsAsync(CancellationToken ct = default)
+        {
+            // now from this repository's own TimeProvider (never DateTime.UtcNow), so the window is
+            // testable with a FakeTimeProvider like every other time-dependent read here. UtcDateTime
+            // carries DateTimeKind.Utc, which Npgsql requires against timestamptz.
+            var windowStartUtc = _timeProvider.GetUtcNow().UtcDateTime
+                - TimeSpan.FromHours(IVerificationRequestRepository.ErrorAttributionWindowHours);
+
+            // Written to match, LINQ-side, the hand-written statement Task 1's index was proven
+            // against: "WHERE status = 'Error' AND completed_utc >= @windowStart GROUP BY
+            // failed_source, entity_type". Whether EF actually *generates* that shape -- and whether
+            // the generated statement is still index-only against ix_verification_requests_error_attribution
+            // -- is verified separately with a captured EXPLAIN (ANALYZE, BUFFERS); see
+            // VerificationRequestRepositoryPostgresTests. No explicit CompletedUtc != null check --
+            // every Error row already carries one (Complete() sets it), and a null CompletedUtc would
+            // compare false against windowStartUtc anyway. AsNoTracking: a read, and grouped
+            // projections are never tracked regardless.
+            return await _db.VerificationRequests
+                .AsNoTracking()
+                .Where(r => r.Status == VerificationRequestStatus.Error && r.CompletedUtc >= windowStartUtc)
+                .GroupBy(r => new { r.FailedSource, r.EntityType })
+                .Select(g => new VerificationFailureGroup(g.Key.FailedSource, g.Key.EntityType, g.Count()))
+                .ToListAsync(ct);
+        }
+
         public async Task<IReadOnlyCollection<string>> GetSourceNamesInUseAsync(CancellationToken ct = default)
         {
             // One query for the distinct joined lists (one per combination of sources in use, so few),
