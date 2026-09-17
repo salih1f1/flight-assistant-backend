@@ -436,7 +436,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi
         /// prefix. Shared by the unfiltered-query guard and <see cref="BuildUrl"/> so the guard can
         /// never accept a value the URL builder then silently ignores.
         /// </summary>
-        private static bool HasUsableFlightNumber(string? flightNumber) =>
+        internal static bool HasUsableFlightNumber(string? flightNumber) =>
             !string.IsNullOrWhiteSpace(flightNumber) && flightNumber.Trim().Length >= 2;
 
         private static string Describe(FlightSearchCriteria criteria)
