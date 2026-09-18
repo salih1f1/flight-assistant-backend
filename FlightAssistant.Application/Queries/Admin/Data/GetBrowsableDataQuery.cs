@@ -62,6 +62,13 @@ namespace FlightAssistant.Application.Queries.Admin.Data
         public bool SortDescending => !string.IsNullOrEmpty(Sort) && Sort[0] == '-';
 
         /// <summary>
+        /// The most criteria one request may carry. A bound on how much query a single URL can
+        /// compose, set far above what the panel's filter form — which adds one criterion at a
+        /// time — will ever produce.
+        /// </summary>
+        public const int MaxFilters = 10;
+
+        /// <summary>
         /// Each of <see cref="Filters"/> split into its column and value halves on the first
         /// <c>:</c>, in the order given. A criterion that is empty or carries no colon at all is
         /// dropped here — a malformed filter, which <see cref="GetBrowsableDataQueryValidator"/>
@@ -80,6 +87,11 @@ namespace FlightAssistant.Application.Queries.Admin.Data
         public GetBrowsableDataQueryValidator()
         {
             RuleFor(x => x.Paging).SetValidator(new PagedRequestValidator());
+
+            RuleFor(x => x.Filters)
+                .Must(filters => filters is null || filters.Count <= GetBrowsableDataQuery.MaxFilters)
+                .WithName("filter")
+                .WithMessage($"At most {GetBrowsableDataQuery.MaxFilters} filters may be applied at once.");
 
             RuleForEach(x => x.Filters)
                 .Must(filter => !string.IsNullOrEmpty(filter) && filter.Contains(':'))

@@ -81,6 +81,33 @@ public class GetBrowsableDataQueryValidatorTests
         Assert.Contains("Naem", message);
     }
 
+    [Fact]
+    public void TheMaximumNumberOfCriteria_IsValid()
+    {
+        var filters = Enumerable.Range(0, GetBrowsableDataQuery.MaxFilters)
+            .Select(i => $"{nameof(Traveler.DisplayName)}:{i}")
+            .ToArray();
+
+        Assert.True(_validator.Validate(Query(filters)).IsValid);
+    }
+
+    /// <summary>
+    /// A bound on how much query one URL can compose. Nothing the filter form produces comes near
+    /// it — this is about a hand-written URL, not about the panel.
+    /// </summary>
+    [Fact]
+    public void MoreThanTheMaximumNumberOfCriteria_IsRejected()
+    {
+        var filters = Enumerable.Range(0, GetBrowsableDataQuery.MaxFilters + 1)
+            .Select(i => $"{nameof(Traveler.DisplayName)}:{i}")
+            .ToArray();
+
+        var result = _validator.Validate(Query(filters));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.ErrorMessage.Contains(GetBrowsableDataQuery.MaxFilters.ToString()));
+    }
+
     /// <summary>
     /// Each criterion is split on its first colon only, so an ISO-8601 value keeps its own.
     /// </summary>
