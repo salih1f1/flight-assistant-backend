@@ -154,6 +154,14 @@ namespace FlightAssistant.Contracts.Responses.Admin
     /// <param name="PendingCount">Requests in <c>Pending</c>, due now or waiting to retry. <c>null</c>
     /// when the count could not be read (e.g. the database is unreachable): "cannot tell", not
     /// zero.</param>
+    /// <param name="StaleAfterDays">Mirrors <c>Verification:StaleAfterDays</c> (default 180): how old a
+    /// row's verification may be before tracking a flight re-queues the entity
+    /// (<c>FlightTrackedVerificationEventHandler</c>). Reported even when <see cref="Enabled"/> is
+    /// <c>false</c> -- the window describes the data, and it is the flight-tracking trigger, not the
+    /// job, that reads it. Never null: the option is bound and validated on start (1..3650), so unlike
+    /// <see cref="PendingCount"/> there is no "cannot tell" state. Published for the panel (#447),
+    /// which pairs it with each row's own <c>VerifiedAt</c> to tell "verified" from "verified but
+    /// old".</param>
     /// <param name="RequestsPaused">The subset of the last completed cycle left exactly as they
     /// were -- still Pending, no attempt counted, no error recorded -- because they named the AeroAPI
     /// source while this month's budget was exhausted (#401 task 2, R4/R5). Not part of
@@ -183,6 +191,7 @@ namespace FlightAssistant.Contracts.Responses.Admin
         DateTime? NextRunDueUtc,
         string? LastError,
         int? PendingCount,
+        int StaleAfterDays,
         int RequestsPaused = 0,
         IReadOnlyList<AdminHealthVerificationFailureDto>? RecentFailures = null
     );

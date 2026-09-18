@@ -67,6 +67,11 @@ public class AdminHealthReportBuilderTests
 
     private static readonly DateTime T0 = new(2026, 9, 15, 12, 0, 0, DateTimeKind.Utc);
 
+    /// <summary>Deliberately not <c>VerificationOptions</c>'s own default of 180 (#447): a builder that
+    /// hardcoded the default, or read it from anywhere but its caller, would still satisfy every
+    /// assertion below if this matched it.</summary>
+    private const int StaleAfterDays = 45;
+
     /// <summary>A substitute reporting <paramref name="count"/> pending and, by default, an empty
     /// (successfully read, nothing failing) recent-failures list -- stubbed explicitly rather than
     /// left to NSubstitute's default, so tests using this helper get a deterministic, non-null
@@ -99,14 +104,14 @@ public class AdminHealthReportBuilderTests
         heartbeat.MarkRunSucceeded(processed: 5, failed: 2, stuckAbandoned: 4, failuresUnrecorded: 1, nextRunDueUtc: T0.AddSeconds(30));
 
         var dto = await AdminHealthReportBuilder.BuildVerificationAsync(
-            heartbeat, enabled: true, PendingCount(7), includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
+            heartbeat, enabled: true, StaleAfterDays, PendingCount(7), includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
 
         // RecentFailures compared separately below (Assert.Equal on a record can't deep-compare a
         // list field -- two equal-content List<T> instances aren't reference-equal, so the field is
         // fed back from dto itself here to isolate this assertion to the other fields, exactly the
         // way it already pinned RequestsFailed/StuckAbandoned/FailuresUnrecorded ordering).
         Assert.Equal(
-            new AdminHealthVerificationDto(true, T0, T0, "Success", 5, 2, 4, 1, T0.AddSeconds(30), null, 7, RecentFailures: dto.RecentFailures),
+            new AdminHealthVerificationDto(true, T0, T0, "Success", 5, 2, 4, 1, T0.AddSeconds(30), null, 7, StaleAfterDays, RecentFailures: dto.RecentFailures),
             dto);
         Assert.NotNull(dto.RecentFailures);
         Assert.Empty(dto.RecentFailures!);
@@ -116,11 +121,11 @@ public class AdminHealthReportBuilderTests
     public async Task BuildVerificationAsync_Disabled_ReportsNeverRunWithNullTimestamps()
     {
         var dto = await AdminHealthReportBuilder.BuildVerificationAsync(
-            new VerificationJobHeartbeat(TimeProvider.System), enabled: false, PendingCount(0),
+            new VerificationJobHeartbeat(TimeProvider.System), enabled: false, StaleAfterDays, PendingCount(0),
             includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
 
         Assert.Equal(
-            new AdminHealthVerificationDto(false, null, null, "NeverRun", 0, 0, 0, 0, null, null, 0, RecentFailures: dto.RecentFailures),
+            new AdminHealthVerificationDto(false, null, null, "NeverRun", 0, 0, 0, 0, null, null, 0, StaleAfterDays, RecentFailures: dto.RecentFailures),
             dto);
         Assert.NotNull(dto.RecentFailures);
         Assert.Empty(dto.RecentFailures!);
@@ -130,7 +135,7 @@ public class AdminHealthReportBuilderTests
     public async Task BuildVerificationAsync_OutsideProduction_IncludesTheLastError()
     {
         var dto = await AdminHealthReportBuilder.BuildVerificationAsync(
-            FailedCycle(), enabled: true, PendingCount(3), includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
+            FailedCycle(), enabled: true, StaleAfterDays, PendingCount(3), includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
 
         Assert.Equal("Failed", dto.LastOutcome);
         Assert.Equal("InvalidOperationException: verification boom", dto.LastError);
@@ -140,7 +145,7 @@ public class AdminHealthReportBuilderTests
     public async Task BuildVerificationAsync_InProduction_NullsTheLastError_ButStillReportsTheFailedOutcome()
     {
         var dto = await AdminHealthReportBuilder.BuildVerificationAsync(
-            FailedCycle(), enabled: true, PendingCount(3), includeDiagnostics: false, NullLogger.Instance, CancellationToken.None);
+            FailedCycle(), enabled: true, StaleAfterDays, PendingCount(3), includeDiagnostics: false, NullLogger.Instance, CancellationToken.None);
 
         Assert.Equal("Failed", dto.LastOutcome);
         Assert.Null(dto.LastError);
@@ -156,10 +161,10 @@ public class AdminHealthReportBuilderTests
         heartbeat.MarkRunPaused(processed: 6, failed: 1, stuckAbandoned: 0, failuresUnrecorded: 0, paused: 4, nextRunDueUtc: T0.AddSeconds(30));
 
         var dto = await AdminHealthReportBuilder.BuildVerificationAsync(
-            heartbeat, enabled: true, PendingCount(2), includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
+            heartbeat, enabled: true, StaleAfterDays, PendingCount(2), includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
 
         Assert.Equal(
-            new AdminHealthVerificationDto(true, null, T0, "Paused", 6, 1, 0, 0, T0.AddSeconds(30), null, 2, RequestsPaused: 4, RecentFailures: dto.RecentFailures),
+            new AdminHealthVerificationDto(true, null, T0, "Paused", 6, 1, 0, 0, T0.AddSeconds(30), null, 2, StaleAfterDays, RequestsPaused: 4, RecentFailures: dto.RecentFailures),
             dto);
         Assert.NotNull(dto.RecentFailures);
         Assert.Empty(dto.RecentFailures!);
@@ -174,7 +179,7 @@ public class AdminHealthReportBuilderTests
         requests.GetRecentFailureGroupsAsync(Arg.Any<CancellationToken>()).Returns(Array.Empty<VerificationFailureGroup>());
 
         var dto = await AdminHealthReportBuilder.BuildVerificationAsync(
-            FailedCycle(), enabled: true, requests, includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
+            FailedCycle(), enabled: true, StaleAfterDays, requests, includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
 
         Assert.Null(dto.PendingCount);
         Assert.Equal("Failed", dto.LastOutcome);
@@ -199,7 +204,7 @@ public class AdminHealthReportBuilderTests
         requests.GetRecentFailureGroupsAsync(Arg.Any<CancellationToken>()).Returns(groups);
 
         var dto = await AdminHealthReportBuilder.BuildVerificationAsync(
-            new VerificationJobHeartbeat(TimeProvider.System), enabled: true, requests,
+            new VerificationJobHeartbeat(TimeProvider.System), enabled: true, StaleAfterDays, requests,
             includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
 
         Assert.Equal(
@@ -223,7 +228,7 @@ public class AdminHealthReportBuilderTests
             .Returns(_ => Task.FromException<IReadOnlyList<VerificationFailureGroup>>(new InvalidOperationException("database unreachable")));
 
         var dto = await AdminHealthReportBuilder.BuildVerificationAsync(
-            new VerificationJobHeartbeat(TimeProvider.System), enabled: true, requests,
+            new VerificationJobHeartbeat(TimeProvider.System), enabled: true, StaleAfterDays, requests,
             includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
 
         Assert.Null(dto.RecentFailures);

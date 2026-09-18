@@ -626,6 +626,33 @@ public class AdminHealthEndpointTests(FlightAssistantWebApplicationFactory facto
                 })));
     }
 
+    /// <summary>
+    /// #447: the stale window the panel needs to tell "verified" from "verified but old" apart.
+    /// Configured here to a value that is neither <c>VerificationOptions</c>'s default (180) nor a
+    /// count any other field could supply, so this fails if the endpoint ever reports a constant
+    /// instead of what <c>Verification:StaleAfterDays</c> is bound to. The raw-JSON read is the same
+    /// #385 D4 point the pending-count test makes: deserialising into <c>AdminHealthDto</c> alone
+    /// would rename both ends together and pin nothing.
+    /// </summary>
+    [Fact]
+    public async Task GetHealth_Admin_ReportsTheConfiguredStaleWindow()
+    {
+        using var scopedFactory = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, cfg) =>
+                cfg.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Verification:StaleAfterDays"] = "45",
+                })));
+        var client = AdminClient(scopedFactory);
+
+        var response = await client.GetAsync("admin/health");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(body);
+        Assert.Equal(45, doc.RootElement.GetProperty("verification").GetProperty("staleAfterDays").GetInt32());
+    }
+
     [Fact]
     public async Task GetHealth_AppInsightsPlatformKeyOnlyConfigured_ReportsAppInsightsConfiguredTrue()
     {
