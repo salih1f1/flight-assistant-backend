@@ -5595,6 +5595,27 @@
         },
         "additionalProperties": false
       },
+      "BrowsableColumnDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "kind": {
+            "type": "string",
+            "nullable": true
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "BrowsableTableDto": {
         "type": "object",
         "properties": {
@@ -5609,6 +5630,13 @@
           "rowCount": {
             "type": "integer",
             "format": "int32"
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowsableColumnDto"
+            },
+            "nullable": true
           }
         },
         "additionalProperties": false

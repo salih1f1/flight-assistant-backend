@@ -1,12 +1,19 @@
+using System.Reflection;
 using FlightAssistant.Application.Administration;
 using FlightAssistant.Application.Interfaces.Repositories;
 using MediatR;
 
 namespace FlightAssistant.Application.Queries.Admin.Data
 {
-    /// <summary>One row of <c>GET /admin/data/tables</c>: a browsable table's slug, display name
-    /// and current row count.</summary>
-    public sealed record BrowsableTableSummary(string Slug, string DisplayName, int RowCount);
+    /// <summary>One row of <c>GET /admin/data/tables</c>: a browsable table's slug, display name,
+    /// current row count and exposed columns.</summary>
+    /// <param name="Columns">Described from the entity type's real properties (#451), in the
+    /// registry's own order, so nothing about a column's kind is hand-maintained here.</param>
+    public sealed record BrowsableTableSummary(
+        string Slug,
+        string DisplayName,
+        int RowCount,
+        IReadOnlyList<BrowsableColumn> Columns);
 
     /// <summary>
     /// Lists every table the admin data browser can read, with a live row count for each. Backs
@@ -33,10 +40,23 @@ namespace FlightAssistant.Application.Queries.Admin.Data
             foreach (var table in BrowsableTables.All)
             {
                 var count = await _repository.CountAsync(table, ct);
-                summaries.Add(new BrowsableTableSummary(table.Slug, table.DisplayName, count));
+                summaries.Add(new BrowsableTableSummary(table.Slug, table.DisplayName, count, Describe(table)));
             }
 
             return summaries;
         }
+
+        /// <summary>
+        /// Every exposed column, described from the property it names. The registry's column names
+        /// are <c>nameof</c>-captured against the same entity type and <c>BrowsableTablesTests</c>
+        /// fails the build if one stops resolving, so a null property here is impossible rather than
+        /// merely unlikely — hence the null-forgiving lookup rather than a skip that would silently
+        /// shorten the list.
+        /// </summary>
+        private static IReadOnlyList<BrowsableColumn> Describe(BrowsableTable table) =>
+            table.Columns
+                .Select(name => BrowsableColumnKinds.Describe(
+                    table.EntityType.GetProperty(name, BindingFlags.Public | BindingFlags.Instance)!.PropertyType, name))
+                .ToList();
     }
 }
