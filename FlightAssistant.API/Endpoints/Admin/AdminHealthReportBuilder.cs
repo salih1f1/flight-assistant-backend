@@ -33,7 +33,7 @@ namespace FlightAssistant.API.Endpoints.Admin
         }
 
         /// <summary>
-        /// Runs every registered health check (no predicate — <c>aeroapi</c> and <c>apns</c>,
+        /// Runs every registered health check (no predicate — <c>apns</c>,
         /// tagged <c>external</c>, are included) and shapes the full report.
         /// </summary>
         public static async Task<AdminHealthDto> BuildAsync(
@@ -172,7 +172,7 @@ namespace FlightAssistant.API.Endpoints.Admin
         /// <para>
         /// <b>#453:</b> that catch declines a cancelled request, exactly as
         /// <see cref="BuildVerificationAsync"/>'s does. <c>/admin/health</c> runs every health check
-        /// with no predicate, the external <c>aeroapi</c> and <c>apns</c> ones included, so it is the
+        /// with no predicate, the external <c>apns</c> one included, so it is the
         /// likeliest route in the API to be abandoned mid-flight; the read then throws an
         /// <see cref="OperationCanceledException"/> carrying the caller's own token, and swallowing
         /// it logged a migration-read failure that never happened while the builder went on

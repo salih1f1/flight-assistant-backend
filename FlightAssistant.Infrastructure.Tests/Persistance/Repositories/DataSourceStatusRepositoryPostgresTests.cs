@@ -62,7 +62,7 @@ public class DataSourceStatusRepositoryPostgresTests : PostgresTestBase
         Assert.Equal("aeroapi returned HTTP 401", stored.LastError);
 
         var all = await readRepo.GetAllAsync(CancellationToken.None);
-        Assert.Single(all.Where(r => r.Key == "aeroapi"));
+        Assert.Single(all, r => r.Key == "aeroapi");
     }
 
     /// <summary>

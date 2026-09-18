@@ -143,14 +143,7 @@ builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddScoped<TravelerContext>();
 
-var hcBuilder = builder.Services.AddHealthChecks()
-    .AddCheck<DatabaseHealthCheck>("database")
-    .AddCheck<AeroApiHealthCheck>("aeroapi", tags: ["external"])
-    .AddCheck<ApnsHealthCheck>("apns", tags: ["external"]);
-
-var redisConnStr = builder.Configuration.GetConnectionString("Redis");
-if (!string.IsNullOrWhiteSpace(redisConnStr))
-    hcBuilder.AddRedis(redisConnStr);
+builder.Services.AddAppHealthChecks(builder.Configuration);
 
 // Hosted services
 
