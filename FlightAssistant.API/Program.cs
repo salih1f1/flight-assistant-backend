@@ -421,6 +421,7 @@ adminGroup.MapAdminTravelerEndpoints();
 adminGroup.MapAdminFlightEndpoints();
 adminGroup.MapAdminAirlineEndpoints();
 adminGroup.MapAdminAirportEndpoints();
+adminGroup.MapAdminAllianceEndpoints();
 adminGroup.MapAdminRefDataEndpoints();
 adminGroup.MapAdminLoyaltyEndpoints();
 adminGroup.MapAdminLoungeEndpoints();

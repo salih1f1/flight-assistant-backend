@@ -15,6 +15,9 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         public Task<Alliance?> FindByCodeAsync(string code, CancellationToken ct = default) =>
             _db.Alliances.FirstOrDefaultAsync(a => a.Code == code.ToUpperInvariant(), ct);
 
+        public Task<Alliance?> FindByIdAsync(int id, CancellationToken ct = default) =>
+            _db.Alliances.FirstOrDefaultAsync(a => a.Id == id, ct);
+
         public async Task AddAsync(Alliance alliance, CancellationToken ct = default) =>
             await _db.Alliances.AddAsync(alliance, ct);
 

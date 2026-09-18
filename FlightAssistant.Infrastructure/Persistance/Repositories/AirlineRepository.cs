@@ -27,6 +27,17 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         public Task<Airline?> FindByIcaoAsync(string icao, CancellationToken ct = default) =>
             _db.Airlines.FirstOrDefaultAsync(a => a.Icao == icao.ToUpperInvariant(), ct);
 
+        public async Task<IReadOnlyList<Airline>> GetByAllianceCodeAsync(
+            string allianceCode, CancellationToken ct = default) =>
+            // Read-only drill-down (#457), so AsNoTracking. Id tiebreaker for the same reason
+            // GetAllAsync has one: Name is not unique, and ties otherwise order arbitrarily.
+            await _db.Airlines
+                .AsNoTracking()
+                .Where(a => a.AllianceCode == allianceCode.ToUpperInvariant())
+                .OrderBy(a => a.Name)
+                .ThenBy(a => a.Id)
+                .ToListAsync(ct);
+
         public async Task AddAsync(Airline airline, CancellationToken ct = default) =>
             await _db.Airlines.AddAsync(airline, ct);
 
