@@ -4,6 +4,7 @@ using System.Text.Json;
 using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Contracts.Paging;
 using FlightAssistant.Contracts.Requests.Flights;
+using FlightAssistant.Contracts.Requests.Loyalty;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
@@ -519,5 +520,204 @@ public class AdminTravelerEndpointTests(FlightAssistantWebApplicationFactory fac
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Empty(await TrackingRowsForAsync(traveler.Id));
+    }
+
+    // ══════════════ POST /admin/travelers/{id}/memberships (#475) ══════════════
+    // Its audit rows aren't tested here either, for the reason in the class summary.
+
+    /// <summary>
+    /// A loyalty program with <paramref name="tierCount"/> tiers, and the kind its foreign key
+    /// needs. Codes are unique per call: the "Integration" collection shares one in-memory database
+    /// across every class in it, so a fixed code would collide with another test's program.
+    /// </summary>
+    private async Task<(LoyaltyProgram Program, List<LoyaltyTier> Tiers)> SeedLoyaltyProgramAsync(int tierCount = 2)
+    {
+        var kind = LoyaltyProgramKind.Create($"K{Marker()[..8]}", "Membership test kind");
+        await SeedAsync(db => db.LoyaltyProgramKinds.Add(kind));
+
+        var program = LoyaltyProgram.Create($"P{Marker()[..8]}", "Membership test program", kind.Id);
+        await SeedAsync(db => db.LoyaltyPrograms.Add(program));
+
+        var tiers = Enumerable.Range(1, tierCount)
+            .Select(rank => LoyaltyTier.Create(program.Id, $"T{rank}", $"Tier {rank}", rank))
+            .ToList();
+        await SeedAsync(db => db.LoyaltyTiers.AddRange(tiers));
+
+        return (program, tiers);
+    }
+
+    private async Task<List<TravelerLoyaltyMembership>> MembershipsForAsync(Guid travelerId)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        return await db.TravelerLoyaltyMemberships.Where(m => m.TravelerId == travelerId).ToListAsync();
+    }
+
+    [Fact]
+    public async Task AddMembership_Anonymous_Returns401()
+    {
+        var response = await factory.CreateClient()
+            .PostAsJsonAsync($"admin/travelers/{Guid.NewGuid()}/memberships", new { });
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task AddMembership_AuthenticatedWithoutTheAdminRole_Returns403()
+    {
+        var response = await factory.CreateUserClient()
+            .PostAsJsonAsync($"admin/travelers/{Guid.NewGuid()}/memberships", new { });
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    /// <summary>
+    /// The point of the route: the membership goes to the traveler in the URL. The admin's own id is
+    /// checked too, since <c>POST /loyalty/memberships</c> files it under whoever is signed in, and a
+    /// copy of that would still return 201.
+    /// </summary>
+    [Fact]
+    public async Task AddMembership_Admin_AddsItForTheTravelerInTheUrl_NotForTheCaller()
+    {
+        var traveler = await SeedTravelerAsync();
+        var (program, tiers) = await SeedLoyaltyProgramAsync();
+        var tierExpiry = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(200));
+        var adminId = Guid.NewGuid();
+
+        var response = await factory.CreateAdminClient(adminId.ToString()).PostAsJsonAsync(
+            $"admin/travelers/{traveler.Id}/memberships",
+            new AddMembershipRequest(program.Id, "ACC-475", tiers[1].Id, tierExpiry, null));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var membership = Assert.Single(await MembershipsForAsync(traveler.Id));
+        Assert.Equal(program.Id, membership.ProgramId);
+        Assert.Equal(tiers[1].Id, membership.TierId);
+        Assert.Equal("ACC-475", membership.AccountNumber);
+        Assert.Equal(tierExpiry, membership.TierExpiryDate);
+        Assert.Empty(await MembershipsForAsync(adminId));
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(membership.Id, body.GetProperty("id").GetGuid());
+    }
+
+    /// <summary>The tier is optional — <c>TravelerLoyaltyMembership.TierId</c> is nullable.</summary>
+    [Fact]
+    public async Task AddMembership_Admin_NoTier_Returns201_AndStoresNoTier()
+    {
+        var traveler = await SeedTravelerAsync();
+        var (program, _) = await SeedLoyaltyProgramAsync();
+
+        var response = await factory.CreateAdminClient().PostAsJsonAsync(
+            $"admin/travelers/{traveler.Id}/memberships",
+            new AddMembershipRequest(program.Id, "ACC-NO-TIER", null, null, null));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var membership = Assert.Single(await MembershipsForAsync(traveler.Id));
+        Assert.Null(membership.TierId);
+    }
+
+    /// <summary>
+    /// No foreign key on <c>traveler_loyalty_memberships.TravelerId</c> would stop a membership for a
+    /// traveler who doesn't exist, so the endpoint checks — same guard as the track-flight route.
+    /// </summary>
+    [Fact]
+    public async Task AddMembership_Admin_UnknownTraveler_Returns404_AndWritesNothing()
+    {
+        var (program, _) = await SeedLoyaltyProgramAsync();
+        var travelerId = Guid.NewGuid();
+
+        var response = await factory.CreateAdminClient().PostAsJsonAsync(
+            $"admin/travelers/{travelerId}/memberships",
+            new AddMembershipRequest(program.Id, "ACC-GHOST", null, null, null));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Empty(await MembershipsForAsync(travelerId));
+    }
+
+    [Fact]
+    public async Task AddMembership_Admin_UnknownProgram_Returns409_AndWritesNothing()
+    {
+        var traveler = await SeedTravelerAsync();
+
+        var response = await factory.CreateAdminClient().PostAsJsonAsync(
+            $"admin/travelers/{traveler.Id}/memberships",
+            new AddMembershipRequest(987654, "ACC-NO-PROGRAM", null, null, null));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains("987654", problem.GetProperty("title").GetString());
+        Assert.Empty(await MembershipsForAsync(traveler.Id));
+    }
+
+    /// <summary>
+    /// A tier id that exists but belongs to another program: the panel's picker can only offer the
+    /// chosen program's tiers, so this is a caller that skipped it, and the pair would be nonsense.
+    /// </summary>
+    [Fact]
+    public async Task AddMembership_Admin_TierFromAnotherProgram_Returns409_AndWritesNothing()
+    {
+        var traveler = await SeedTravelerAsync();
+        var (program, _) = await SeedLoyaltyProgramAsync();
+        var (_, otherTiers) = await SeedLoyaltyProgramAsync();
+
+        var response = await factory.CreateAdminClient().PostAsJsonAsync(
+            $"admin/travelers/{traveler.Id}/memberships",
+            new AddMembershipRequest(program.Id, "ACC-WRONG-TIER", otherTiers[0].Id, null, null));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains(otherTiers[0].Id.ToString(), problem.GetProperty("title").GetString());
+        Assert.Empty(await MembershipsForAsync(traveler.Id));
+    }
+
+    /// <summary>
+    /// The rules on <c>AddLoyaltyMembershipCommand</c> apply here unchanged — the admin route sends
+    /// the same command, so it inherits the same validator.
+    /// </summary>
+    [Fact]
+    public async Task AddMembership_Admin_PastTierExpiry_Returns400_AndWritesNothing()
+    {
+        var traveler = await SeedTravelerAsync();
+        var (program, _) = await SeedLoyaltyProgramAsync();
+        var yesterday = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
+
+        var response = await factory.CreateAdminClient().PostAsJsonAsync(
+            $"admin/travelers/{traveler.Id}/memberships",
+            new AddMembershipRequest(program.Id, "ACC-PAST", null, yesterday, null));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("TierExpiryDate", body, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(await MembershipsForAsync(traveler.Id));
+    }
+
+    [Fact]
+    public async Task AddMembership_Admin_EmptyAccountNumber_Returns400_AndWritesNothing()
+    {
+        var traveler = await SeedTravelerAsync();
+        var (program, _) = await SeedLoyaltyProgramAsync();
+
+        var response = await factory.CreateAdminClient().PostAsJsonAsync(
+            $"admin/travelers/{traveler.Id}/memberships",
+            new AddMembershipRequest(program.Id, "", null, null, null));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty(await MembershipsForAsync(traveler.Id));
+    }
+
+    /// <summary>The membership shows up where the panel reads it back from.</summary>
+    [Fact]
+    public async Task AddMembership_Admin_ThenGetDetail_ShowsTheMembership()
+    {
+        var traveler = await SeedTravelerAsync();
+        var (program, tiers) = await SeedLoyaltyProgramAsync();
+        var client = factory.CreateAdminClient();
+
+        await client.PostAsJsonAsync(
+            $"admin/travelers/{traveler.Id}/memberships",
+            new AddMembershipRequest(program.Id, "ACC-DETAIL", tiers[0].Id, null, null));
+
+        var dto = await client.GetFromJsonAsync<AdminTravelerDetailDto>($"admin/travelers/{traveler.Id}/detail");
+        var membership = Assert.Single(dto!.LoyaltyMemberships);
+        Assert.Equal(program.Id, membership.ProgramId);
+        Assert.Equal(tiers[0].Id, membership.TierId);
     }
 }

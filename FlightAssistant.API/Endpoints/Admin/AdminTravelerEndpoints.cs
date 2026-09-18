@@ -1,8 +1,10 @@
 using FlightAssistant.Application.Commands.Admin.Travelers;
 using FlightAssistant.Application.Commands.Flights;
+using FlightAssistant.Application.Commands.Loyalty;
 using FlightAssistant.Application.Queries.Admin.Travelers;
 using FlightAssistant.Contracts.Paging;
 using FlightAssistant.Contracts.Requests.Flights;
+using FlightAssistant.Contracts.Requests.Loyalty;
 using FlightAssistant.Contracts.Responses.Admin;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
@@ -122,6 +124,42 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "Tracking a flight the traveler already tracks changes nothing and still returns 201 with " +
                 "its flightId. An unknown traveler is a 404 and writes nothing. " +
                 "The same cap as POST /flights applies: at the traveler's limit of flights tracked at a time, tracking another returns 409 and writes nothing.")
+            .Produces(201)
+            .ProducesValidationProblem()
+            .ProducesProblem(404)
+            .ProducesProblem(409);
+
+            // POST /admin/travelers/{id}/memberships — add a loyalty membership for this traveler
+            // (#475), so an operator can set one up for a traveler without that traveler's own
+            // sign-in. The sibling of the track-flight route above, and the same shape.
+            group.MapPost("{id:guid}/memberships", async (Guid id, [FromBody] AddMembershipRequest req, IMediator mediator, CancellationToken ct) =>
+            {
+                // AddLoyaltyMembershipCommand trusts its TravelerId: POST /loyalty/memberships takes
+                // it from the caller's own token. Here it comes from the URL, and no foreign key on
+                // traveler_loyalty_memberships would stop a membership for a traveler who doesn't
+                // exist — the same reason the track-flight route checks first.
+                if (await mediator.Send(new GetAdminTravelerByIdQuery(id), ct) is null) return Results.NotFound();
+
+                var membershipId = await mediator.Send(new AddLoyaltyMembershipCommand(
+                    id,
+                    req.ProgramId,
+                    req.AccountNumber,
+                    req.TierId,
+                    req.TierExpiryDate,
+                    req.PointsExpiryDate), ct);
+
+                return Results.Created($"/admin/travelers/{id}/detail", new { id = membershipId });
+            })
+            .WithName("AdminAddMembershipForTraveler")
+            .WithSummary("Add a loyalty membership for a traveler")
+            .WithDescription(
+                "Links a loyalty program membership to this traveler, exactly as POST /loyalty/memberships does " +
+                "for the signed-in traveler. Body fields: ProgramId (from GET /admin/loyalty/programs), " +
+                "AccountNumber, TierId (optional, from that program's tier list), TierExpiryDate (optional, " +
+                "YYYY-MM-DD, today or later), PointsExpiryDate (same). An unknown traveler is a 404 and writes " +
+                "nothing. A ProgramId we don't have, or a TierId belonging to another program, is a 409 and " +
+                "writes nothing. Adding a membership the traveler already has is not refused: the same program " +
+                "can be added twice, as it can through POST /loyalty/memberships.")
             .Produces(201)
             .ProducesValidationProblem()
             .ProducesProblem(404)

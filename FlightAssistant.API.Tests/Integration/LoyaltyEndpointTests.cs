@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using FlightAssistant.Domain.Loyalty.Entities;
+using FlightAssistant.Infrastructure.Persistance;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace FlightAssistant.API.Tests.Integration;
 
@@ -92,11 +95,50 @@ public class LoyaltyEndpointTests(FlightAssistantWebApplicationFactory factory)
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    /// <summary>
+    /// A loyalty program to hold a membership against, with a code no other test uses — the
+    /// "Integration" collection shares one in-memory database across every class in it. Since #475
+    /// the add refuses a program we don't have, so a membership needs a real one.
+    /// </summary>
+    private async Task<int> SeedLoyaltyProgramAsync()
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+
+        var marker = Guid.NewGuid().ToString("N")[..8];
+        var kind = LoyaltyProgramKind.Create($"K{marker}", "Loyalty test kind");
+        db.LoyaltyProgramKinds.Add(kind);
+        await db.SaveChangesAsync();
+
+        var program = LoyaltyProgram.Create($"P{marker}", "Loyalty test program", kind.Id);
+        db.LoyaltyPrograms.Add(program);
+        await db.SaveChangesAsync();
+        return program.Id;
+    }
+
+    [Fact]
+    public async Task AddMembership_UnknownProgram_Returns409()
+    {
+        var client = factory.CreateUserClient();
+
+        var response = await client.PostAsJsonAsync("loyalty/memberships", new
+        {
+            programId = 987654,
+            accountNumber = "ACC123",
+            tierId = (int?)null,
+            tierExpiryDate = (string?)null,
+            pointsExpiryDate = (string?)null
+        });
+
+        // Before #475 this reached Postgres and failed its foreign key as a 500.
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
     private async Task<Guid> AddMembershipAsAsync(HttpClient client)
     {
         var response = await client.PostAsJsonAsync("loyalty/memberships", new
         {
-            programId = 1,
+            programId = await SeedLoyaltyProgramAsync(),
             accountNumber = "ACC123",
             tierId = (int?)null,
             tierExpiryDate = (string?)null,
