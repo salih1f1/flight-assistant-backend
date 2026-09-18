@@ -5,9 +5,12 @@ using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Configuration.Entities;
+using FlightAssistant.Domain.DataSources.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
+using FlightAssistant.Domain.Verification.Entities;
+using FlightAssistant.Domain.Verification.Enums;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.EntityFrameworkCore;
 
@@ -31,6 +34,71 @@ public class AdminAuditInterceptorTests
 
     private static AdminContext AdminActor(string actorId = "admin-oid-1", string? actorName = "Ada Admin") =>
         new() { ActorId = actorId, ActorName = actorName };
+
+    // ── Types this interceptor never audits ─────────────────────────────────────
+    // Stated in NotAuditedTypes and, until #469, pinned by nothing.
+
+    /// <summary>
+    /// #460: the health observer flushes these rows on a background timer, once per source per
+    /// coalescing window. Auditing them would put a row in the admin audit log for every outbound
+    /// HTTP call the application makes — the log an operator reads for "who changed what" would be
+    /// mostly machine bookkeeping. An admin actor is set here precisely because that is the case
+    /// that would otherwise write one: the flush can run inside a scope an admin request opened.
+    /// </summary>
+    [Fact]
+    public async Task SaveChangesAsync_DataSourceStatus_WritesNoAuditRow()
+    {
+        var dbName = Guid.NewGuid().ToString();
+
+        using var db = CreateContext(dbName, AdminActor());
+        db.DataSourceStatuses.Add(new DataSourceStatus { Key = "aeroapi", LastOutcome = "Ok" });
+        await db.SaveChangesAsync();
+
+        Assert.Empty(await db.AdminAuditLogs.ToListAsync());
+    }
+
+    /// <summary>
+    /// An update is the shape the flush actually writes — one row per source, overwritten again and
+    /// again — so the exclusion has to hold for a modification, not just an insert.
+    /// </summary>
+    [Fact]
+    public async Task SaveChangesAsync_UpdatedDataSourceStatus_WritesNoAuditRow()
+    {
+        var dbName = Guid.NewGuid().ToString();
+
+        using (var seed = CreateContext(dbName, AdminActor()))
+        {
+            seed.DataSourceStatuses.Add(new DataSourceStatus { Key = "aeroapi", LastOutcome = "Ok" });
+            await seed.SaveChangesAsync();
+        }
+
+        using var db = CreateContext(dbName, AdminActor());
+        var row = await db.DataSourceStatuses.SingleAsync(r => r.Key == "aeroapi");
+        row.LastOutcome = "Failed";
+        row.ConsecutiveFailures = 1;
+        await db.SaveChangesAsync();
+
+        Assert.Empty(await db.AdminAuditLogs.ToListAsync());
+    }
+
+    /// <summary>
+    /// The queue table is its own history (#367, spec §4.5); auditing it would add an Update row per
+    /// status change of every request, under the verification job's system actor.
+    /// </summary>
+    [Fact]
+    public async Task SaveChangesAsync_VerificationRequest_WritesNoAuditRow()
+    {
+        var dbName = Guid.NewGuid().ToString();
+
+        using var db = CreateContext(dbName, AdminActor());
+        db.VerificationRequests.Add(VerificationRequest.Create(
+            VerificationEntityType.Airport, "42", ["ourairports"], VerificationTrigger.Admin,
+            requestedBy: "admin-oid-1", estimatedCostUsd: 0m,
+            requestedUtc: new DateTime(2026, 9, 18, 12, 0, 0, DateTimeKind.Utc)));
+        await db.SaveChangesAsync();
+
+        Assert.Empty(await db.AdminAuditLogs.ToListAsync());
+    }
 
     // ── No actor ⇒ no row ───────────────────────────────────────────────────────
 
