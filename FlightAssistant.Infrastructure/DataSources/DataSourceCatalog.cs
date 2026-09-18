@@ -66,7 +66,7 @@ namespace FlightAssistant.Infrastructure.DataSources
                 new(DataSourceKeys.GitHub, "GitHub API", DataSourceKind.Infrastructure,
                     DataSourceCriticality.Optional,
                     "Reads the rate-limit endpoint with the configured token, which GitHub does not meter.",
-                    "https://github.com/salih1f/flight-assistant-backend/actions",
+                    "https://github.com/salih1f1/flight-assistant-backend/actions",
                     GitHubCiRunProvider.ApiClientName, SupportsProbe: true, ProbeCostNote: null),
 
                 // The download client shares the GitHub row: it is the same host and the same
