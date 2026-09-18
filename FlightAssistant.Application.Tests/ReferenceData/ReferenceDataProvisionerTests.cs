@@ -132,8 +132,14 @@ public class ReferenceDataProvisionerTests
     public ReferenceDataProvisionerTests()
     {
         _budget.GetStateAsync(Arg.Any<CancellationToken>()).Returns(ProviderBudgetState.Normal);
-        _countries.FindByCodeAsync("GB", Arg.Any<CancellationToken>())
-            .Returns(Country.Create("GB", "United Kingdom"));
+
+        // Every airport FoundAirport() below returns is in "GB", so this is the default "the
+        // country is already on file" case for every test that doesn't care about country
+        // provisioning -- EnsureCountriesAsync reads countries in a batch via FindByCodesAsync,
+        // never the single-code FindByCodeAsync, which nothing in the provisioner calls. Tests
+        // about an unknown or missing country override this themselves.
+        _countries.FindByCodesAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns([Country.Create("GB", "United Kingdom")]);
     }
 
     [Fact]
@@ -275,5 +281,119 @@ public class ReferenceDataProvisionerTests
 
         Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
         await _airports.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    private static VerificationSourceFetchResult FoundCountry(string code, string name) =>
+        VerificationSourceFetchResult.Found(new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            [nameof(Country.Code)] = code,
+            [nameof(Country.Name)] = name,
+            [nameof(Country.Alpha3)] = "GBR",
+            [nameof(Country.NumericCode)] = "826",
+            [nameof(Country.Region)] = "Europe",
+            [nameof(Country.Subregion)] = "Northern Europe"
+        });
+
+    [Fact]
+    public async Task AirportInAnUnknownCountry_ProvisionsTheCountryToo()
+    {
+        _countries.FindByCodesAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns([]);
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR")));
+        _registry.TryGet("mledoze").Returns(
+            new FakeSource("mledoze", 0m, [VerificationEntityType.Country], _ => FoundCountry("GB", "United Kingdom")));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+        await _countries.Received(1).AddAsync(
+            Arg.Is<Country>(c =>
+                c.Code == "GB" &&
+                c.Name == "United Kingdom" &&
+                c.Alpha3 == "GBR" &&
+                c.NumericCode == 826 &&
+                c.IsVerified &&
+                c.VerificationSource == "mledoze"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AirportInAKnownCountry_DoesNotTouchTheCountrySource()
+    {
+        _countries.FindByCodesAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns([Country.Create("GB", "United Kingdom")]);
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR")));
+        var countrySource = new FakeSource("mledoze", 0m, [VerificationEntityType.Country],
+            _ => FoundCountry("GB", "United Kingdom"));
+        _registry.TryGet("mledoze").Returns(countrySource);
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+        Assert.Equal(0, countrySource.Calls);
+        await _countries.DidNotReceive().AddAsync(Arg.Any<Country>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TwoAirportsInOneCountry_ResolveThatCountryOnce()
+    {
+        _countries.FindByCodesAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns([]);
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], key => FoundAirport(key.Iata!)));
+        var countrySource = new FakeSource("mledoze", 0m, [VerificationEntityType.Country],
+            _ => FoundCountry("GB", "United Kingdom"));
+        _registry.TryGet("mledoze").Returns(countrySource);
+
+        await CreateProvisioner().ProvisionAsync(
+            [
+                new MissingReference(VerificationEntityType.Airport, "LHR"),
+                new MissingReference(VerificationEntityType.Airport, "LGW")
+            ],
+            CancellationToken.None);
+
+        Assert.Equal(1, countrySource.Calls);
+        await _countries.Received(1).AddAsync(Arg.Any<Country>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AirportWhoseCountryTheSourceDoesNotHave_IsNotFoundOnTheCountry()
+    {
+        // The airport exists but we cannot satisfy its foreign key, so the failure is reported
+        // against the country — that is the row that is genuinely absent everywhere.
+        _countries.FindByCodesAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns([]);
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR")));
+        _registry.TryGet("mledoze").Returns(
+            new FakeSource("mledoze", 0m, [VerificationEntityType.Country],
+                _ => VerificationSourceFetchResult.NotFound));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.NotFound, result.Status);
+        Assert.Equal(VerificationEntityType.Country, result.FailedType);
+        Assert.Equal("GB", result.FailedCode);
+        await _airports.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ACountryAskedForDirectly_IsProvisioned()
+    {
+        _countries.FindByCodesAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns([]);
+        _registry.TryGet("mledoze").Returns(
+            new FakeSource("mledoze", 0m, [VerificationEntityType.Country], _ => FoundCountry("GB", "United Kingdom")));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Country, "GB")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+        await _countries.Received(1).AddAsync(Arg.Any<Country>(), Arg.Any<CancellationToken>());
     }
 }

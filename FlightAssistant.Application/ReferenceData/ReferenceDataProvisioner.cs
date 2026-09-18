@@ -83,28 +83,108 @@ namespace FlightAssistant.Application.ReferenceData
 
             using var scope = VerificationJobActor.CreateScope(_scopeFactory);
             var airports = scope.ServiceProvider.GetRequiredService<IAirportRepository>();
+            var countries = scope.ServiceProvider.GetRequiredService<ICountryRepository>();
 
-            var created = new List<Airport>();
-            foreach (var entry in missing.Where(m => m.Type == VerificationEntityType.Airport))
+            var createdAirports = new List<Airport>();
+
+            // Case-insensitive: a source may report "gb" where another reports "GB", and the country
+            // code is canonicalised by Country.Create anyway.
+            var requiredCountryCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var wroteAnything = false;
+
+            // One loop over every missing entry, dispatched by type -- not a loop per type. A
+            // Country entry just contributes its code to the required set and moves on; anything
+            // else is fetched here, and the single early-return below (shared by every type) is
+            // where the all-or-nothing guarantee lives. Task 6 extends the switch with Airline
+            // rather than adding a second loop, which would need its own copy of that return.
+            foreach (var entry in missing)
             {
+                if (entry.Type == VerificationEntityType.Country)
+                {
+                    requiredCountryCodes.Add(entry.Code);
+                    continue;
+                }
+
                 var fetch = await FetchAsync(entry.Type, entry.Code, ct).ConfigureAwait(false);
                 if (fetch.Status != FetchStatus.Found)
                     return fetch.ToProvisionResult(entry.Type, entry.Code);
 
-                var airport = BuildAirport(entry.Code, fetch.SourceName!, fetch.Values!);
-                if (airport is null)
-                    return ReferenceProvisionResult.NotFound(entry.Type, entry.Code);
+                switch (entry.Type)
+                {
+                    case VerificationEntityType.Airport:
+                    {
+                        var airport = BuildAirport(entry.Code, fetch.SourceName!, fetch.Values!);
+                        if (airport is null)
+                            return ReferenceProvisionResult.NotFound(entry.Type, entry.Code);
 
-                created.Add(airport);
+                        createdAirports.Add(airport);
+                        requiredCountryCodes.Add(airport.CountryCode);
+                        break;
+                    }
+
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(entry.Type), entry.Type, "Unknown entity type.");
+                }
             }
 
-            foreach (var airport in created)
-                await airports.AddAsync(airport, ct).ConfigureAwait(false);
+            // Countries first: airports.CountryCode is a foreign key into countries, and the country a
+            // row needs is only known once its source has answered.
+            var countryFailure = await EnsureCountriesAsync(
+                countries, requiredCountryCodes, () => wroteAnything = true, ct).ConfigureAwait(false);
+            if (countryFailure is not null)
+                return countryFailure;
 
-            if (created.Count > 0)
+            foreach (var airport in createdAirports)
+            {
+                await airports.AddAsync(airport, ct).ConfigureAwait(false);
+                wroteAnything = true;
+            }
+
+            // Every repository resolved from this scope shares its DbContext, so one save commits
+            // every row in a single transaction, and EF orders the INSERTs by the foreign-key graph.
+            // ReferenceProvisioningPostgresTests (a later task) proves that ordering against real
+            // PostgreSQL, which the InMemory provider cannot (it enforces no foreign key at all).
+            // Saved via `airports`, not `countries`: interchangeable in production since both wrap
+            // the same DbContext, but the happy-path regression test's `_airports` double is the
+            // one that actually observes this call.
+            if (wroteAnything)
                 await airports.SaveChangesAsync(ct).ConfigureAwait(false);
 
             return ReferenceProvisionResult.Provisioned;
+        }
+
+        /// <summary>
+        /// Creates any of <paramref name="codes"/> that <c>countries</c> does not already hold.
+        /// Returns null when every code is now present, or the failure that stopped it. One batched
+        /// read for the whole set, then at most one source lookup per genuinely missing code -- so
+        /// two airports in the same country cost one lookup, not two.
+        /// </summary>
+        private async Task<ReferenceProvisionResult?> EnsureCountriesAsync(
+            ICountryRepository countries,
+            IReadOnlyCollection<string> codes,
+            Action markWrote,
+            CancellationToken ct)
+        {
+            if (codes.Count == 0)
+                return null;
+
+            var existing = await countries.FindByCodesAsync(codes, ct).ConfigureAwait(false);
+            var present = existing.Select(c => c.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var code in codes)
+            {
+                if (present.Contains(code))
+                    continue;
+
+                var fetch = await FetchAsync(VerificationEntityType.Country, code, ct).ConfigureAwait(false);
+                if (fetch.Status != FetchStatus.Found)
+                    return fetch.ToProvisionResult(VerificationEntityType.Country, code);
+
+                await countries.AddAsync(BuildCountry(code, fetch.SourceName!, fetch.Values!), ct).ConfigureAwait(false);
+                markWrote();
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -134,6 +214,21 @@ namespace FlightAssistant.Application.ReferenceData
 
             Stamp(airport, sourceName);
             return airport;
+        }
+
+        private static Country BuildCountry(
+            string requestedCode, string sourceName, IReadOnlyDictionary<string, string?> values)
+        {
+            var country = Country.Create(
+                code: Value(values, nameof(Country.Code)) ?? requestedCode,
+                name: Value(values, nameof(Country.Name)) ?? requestedCode,
+                alpha3: Value(values, nameof(Country.Alpha3)),
+                numericCode: ParseInt(Value(values, nameof(Country.NumericCode))),
+                region: Value(values, nameof(Country.Region)),
+                subregion: Value(values, nameof(Country.Subregion)));
+
+            Stamp(country, sourceName);
+            return country;
         }
 
         /// <summary>Marks a freshly-created row as verified by the source it came from. The row *is*
