@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Infrastructure.Caching;
+using FlightAssistant.Infrastructure.Tests.TestSupport;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Memory;
@@ -217,7 +218,9 @@ public class AeroApiAirportTimezoneLookupTests
         // standing in for Redis: "" must come back as a cached miss, not as an absent key.
         var handler = new StubHttpMessageHandler(HttpStatusCode.NotFound, """{ "title": "not found" }""");
         var cache = new RedisCacheService(
-            new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions())));
+            new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions())),
+            new NoOpDataSourceObserver(),
+            TimeProvider.System);
         var lookup = Lookup(handler, cache);
 
         Assert.Null(await lookup.TryGetTimezoneAsync("ZZZ"));

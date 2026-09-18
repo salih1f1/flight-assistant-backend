@@ -2,6 +2,7 @@ using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Infrastructure.Caching;
+using FlightAssistant.Infrastructure.Tests.TestSupport;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
 using Microsoft.Extensions.Caching.Distributed;
@@ -192,7 +193,7 @@ public class AeroApiFlightSearchCachingDecoratorTests
         // fields survive that serialization exactly, using a real in-process IDistributedCache
         // (MemoryDistributedCache) rather than requiring a live Redis instance.
         var distributed = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
-        var cache = new RedisCacheService(distributed);
+        var cache = new RedisCacheService(distributed, new NoOpDataSourceObserver(), TimeProvider.System);
         var preciseResult = new FlightSearchResult(
             FlightNumber: "QF1",
             ServiceDate: new DateOnly(2028, 2, 29), // leap day — an easy DateOnly edge case

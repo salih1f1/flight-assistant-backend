@@ -3,6 +3,7 @@ using System.Text.Json;
 using FlightAssistant.Application.Administration;
 using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Domain.Administration.Entities;
+using FlightAssistant.Domain.DataSources.Entities;
 using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.Common.Interfaces;
 using FlightAssistant.Domain.Verification.Entities;
@@ -60,11 +61,17 @@ namespace FlightAssistant.Infrastructure.Persistance
         // - VerificationRequest (#367): the queue table is its own history (spec §4.5). Auditing it
         //   under the verification job's system actor would add an Update row per status change of
         //   every request. The job's writes to the entities it checks are still audited.
+        // - DataSourceStatus (#460): written by the buffered health observer on a background flush, not
+        //   by an admin. Auditing it would put a row in the audit log for every outbound HTTP call the
+        //   application makes. The one operator action against this table — pressing "Check now" — writes
+        //   its own audit row explicitly in ProbeDataSourceCommandHandler, so the deliberate act is
+        //   audited while the automatic bookkeeping is not.
         // The append-only guard below is separate and still covers AdminAuditLog only.
         private static readonly HashSet<Type> NotAuditedTypes = new()
         {
             typeof(AdminAuditLog),
-            typeof(VerificationRequest)
+            typeof(VerificationRequest),
+            typeof(DataSourceStatus)
         };
 
         private readonly IAdminContext _adminContext;

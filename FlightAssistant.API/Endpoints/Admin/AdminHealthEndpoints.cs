@@ -1,7 +1,10 @@
 using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Commands.Admin.DataSources;
+using FlightAssistant.Application.Queries.Admin.DataSources;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Infrastructure.Persistance;
+using MediatR;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 
@@ -74,6 +77,40 @@ namespace FlightAssistant.API.Endpoints.Admin
             // database outage — final review C1); this stays reachable for anything unexpected,
             // e.g. HealthCheckService itself throwing.
             .ProducesProblem(500);
+
+            // GET /admin/health/sources
+            admin.MapGet("health/sources", async (IMediator mediator, IHostEnvironment env, CancellationToken ct) =>
+                // Same non-Production rule the report above applies to its own diagnostics: a
+                // sanitized LastError is still exception-shaped detail.
+                Results.Ok(await mediator.Send(new GetDataSourcesQuery(IncludeDiagnostics: !env.IsProduction()), ct)))
+            .WithTags("Admin - Health")
+            .WithName("AdminGetDataSources")
+            .WithSummary("Every outside data source and its observed status")
+            .WithDescription(
+                "One row per catalogued dependency: its current status, when it was last seen working, when " +
+                "it was last observed at all, a sentence saying what that status is based on, and where to " +
+                "check it yourself. Reads a small table and runs no checks — unlike GET /admin/health, which " +
+                "runs every registered health check live. A source that has never been observed is reported " +
+                "as Unknown, never as healthy.")
+            .Produces<List<AdminDataSourceDto>>(200);
+
+            // POST /admin/health/sources/{key}/probe
+            admin.MapPost("health/sources/{key}/probe", async (
+                string key, IMediator mediator, IHostEnvironment env, CancellationToken ct) =>
+                Results.Ok(await mediator.Send(new ProbeDataSourceCommand(key, IncludeDiagnostics: !env.IsProduction()), ct)))
+            .WithTags("Admin - Health")
+            .WithName("AdminProbeDataSource")
+            .WithSummary("Check one data source now")
+            .WithDescription(
+                "Runs this source's check immediately and returns its refreshed row. Verifies credentials " +
+                "where that is free and reachability where it is not — each source's 'whatIsChecked' says " +
+                "which. Rate limited to one probe per source every 30 seconds, and audited. 400 when the " +
+                "source has no probe, 404 when the key is not catalogued.")
+            .RequireRateLimiting("health-probe")
+            .Produces<AdminDataSourceDto>(200)
+            .ProducesProblem(400)
+            .ProducesProblem(404)
+            .ProducesProblem(429);
         }
     }
 }

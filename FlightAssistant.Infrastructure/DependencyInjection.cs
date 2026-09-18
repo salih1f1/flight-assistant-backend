@@ -4,12 +4,15 @@ using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
+using FlightAssistant.Application.Interfaces.DataSources;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Infrastructure.ExternalServices;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
+using FlightAssistant.Infrastructure.DataSources;
+using FlightAssistant.Infrastructure.DataSources.Probes;
 using FlightAssistant.Infrastructure.ExternalServices.AeroDataBox;
 using FlightAssistant.Infrastructure.ExternalServices.GitHub;
 using FlightAssistant.Infrastructure.ExternalServices.Verification;
@@ -60,6 +63,28 @@ namespace FlightAssistant.Infrastructure
             // its own port rather than living on IRefDataRepository or IVerificationRequestRepository.
             services.AddScoped<IVerificationNeedsAttentionRepository, VerificationNeedsAttentionRepository>();
 
+            // Data-source health (#460): the status table behind the /health page, the catalog of
+            // what is watched, and the in-memory observer every seam records into. The observer is
+            // registered under its own type and under IDataSourceObserver as the SAME instance —
+            // the pattern AeroApiThrottleGate uses — since a second copy would buffer into nothing.
+            services.AddScoped<IDataSourceStatusRepository, DataSourceStatusRepository>();
+            services.AddSingleton<IDataSourceCatalog, DataSourceCatalog>();
+            services.AddSingleton<BufferedDataSourceObserver>();
+            services.AddSingleton<IDataSourceObserver>(sp => sp.GetRequiredService<BufferedDataSourceObserver>());
+
+            // The "Check now" probes, one per source that supports one. Scoped, because the
+            // Postgres probe needs the request's DbContext; the command resolves them all and
+            // picks by key. The App Insights probe is registered in the API layer instead, beside
+            // the connection-string resolver it has to agree with (#440).
+            services.AddScoped<IDataSourceProbe, PostgresProbe>();
+            services.AddScoped<IDataSourceProbe, RedisProbe>();
+            services.AddScoped<IDataSourceProbe, ApnsProbe>();
+            services.AddScoped<IDataSourceProbe, AeroApiProbe>();
+            services.AddScoped<IDataSourceProbe, GitHubProbe>();
+            services.AddScoped<IDataSourceProbe, OurAirportsProbe>();
+            services.AddScoped<IDataSourceProbe, MledozeProbe>();
+            services.AddScoped<IDataSourceProbe, AeroDataBoxProbe>();
+
             // Verification sources (#367 task 3): the two free outside datasets an automated check
             // can name. Both hold no credentials — OurAirports and mledoze's raw GitHub file are
             // public, unauthenticated URLs — so, unlike the GitHub clients below, following a
@@ -88,13 +113,15 @@ namespace FlightAssistant.Infrastructure
             {
                 client.DefaultRequestHeaders.UserAgent.ParseAdd("FlightAssistant-VerificationJob");
                 client.Timeout = OurAirportsVerificationSource.DownloadTimeout + TimeSpan.FromSeconds(30);
-            });
+            })
+                .AddDataSourceObservation(DataSourceKeys.OurAirports);
 
             services.AddHttpClient(MledozeCountriesVerificationSource.HttpClientName, client =>
             {
                 client.DefaultRequestHeaders.UserAgent.ParseAdd("FlightAssistant-VerificationJob");
                 client.Timeout = MledozeCountriesVerificationSource.DownloadTimeout + TimeSpan.FromSeconds(30);
-            });
+            })
+                .AddDataSourceObservation(DataSourceKeys.Mledoze);
 
             services.AddSingleton(sp => new OurAirportsVerificationSource(
                 sp.GetRequiredService<IHttpClientFactory>(),
@@ -168,7 +195,7 @@ namespace FlightAssistant.Infrastructure
             services.AddSingleton<IAeroApiThrottleObserver>(sp =>
                 sp.GetRequiredService<AeroApiThrottleGate>());
 
-            var aeroApiClientBuilder = services.AddHttpClient("AeroApi", (sp, client) =>
+            var aeroApiClientBuilder = services.AddHttpClient(AeroApiVerificationSource.HttpClientName, (sp, client) =>
             {
                 var options = sp.GetRequiredService<IOptions<AeroApiOptions>>().Value;
                 client.BaseAddress = new Uri(options.BaseUrl);
@@ -222,15 +249,16 @@ namespace FlightAssistant.Infrastructure
             });
 
             aeroApiClientBuilder.AddHttpMessageHandler<AeroApiThrottlingHandler>();
+            aeroApiClientBuilder.AddDataSourceObservation(DataSourceKeys.AeroApi);
 
             services.AddScoped(sp => new AeroApiAirportTimezoneLookup(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(AeroApiVerificationSource.HttpClientName),
                 sp.GetRequiredService<ICacheService>(),
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
                 sp.GetRequiredService<ILogger<AeroApiAirportTimezoneLookup>>()));
 
             services.AddScoped(sp => new AeroApiFlightSearchProvider(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(AeroApiVerificationSource.HttpClientName),
                 sp.GetRequiredService<AeroApiAirportTimezoneLookup>(),
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
                 sp.GetRequiredService<ILogger<AeroApiFlightSearchProvider>>()));
@@ -267,7 +295,8 @@ namespace FlightAssistant.Infrastructure
                 client.DefaultRequestHeaders.Add("X-RapidAPI-Host", AeroDataBoxOptions.RapidApiHost);
                 client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
             })
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+            .AddDataSourceObservation(DataSourceKeys.AeroDataBox);
 
             services.AddScoped(sp => new AeroDataBoxFlightSearchProvider(
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient(AeroDataBoxFlightSearchProvider.HttpClientName),
@@ -325,7 +354,7 @@ namespace FlightAssistant.Infrastructure
             // emit one duplicate status event the first time it is synced after this deploy.
             // Accepted, not migrated; see AeroApiFlightStatusProviderTests for the documenting test.
             services.AddScoped(sp => new AeroApiFlightStatusProvider(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(AeroApiVerificationSource.HttpClientName),
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
                 sp.GetRequiredService<TimeProvider>(),
                 sp.GetRequiredService<ILogger<AeroApiFlightStatusProvider>>()));
@@ -337,7 +366,7 @@ namespace FlightAssistant.Infrastructure
             // report is throttled, retried and authenticated identically. The endpoint it proxies
             // is itself billed at $0.00.
             services.AddScoped(sp => new AeroApiAccountUsageProvider(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(AeroApiVerificationSource.HttpClientName),
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
                 sp.GetRequiredService<ILogger<AeroApiAccountUsageProvider>>()));
 
@@ -374,11 +403,13 @@ namespace FlightAssistant.Infrastructure
                         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.Token);
                     client.Timeout = TimeSpan.FromSeconds(30);
                 })
-                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+                .AddDataSourceObservation(DataSourceKeys.GitHub);
 
             services.AddHttpClient(GitHubCiRunProvider.DownloadClientName, client =>
                     client.Timeout = TimeSpan.FromSeconds(60))
-                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+                .AddDataSourceObservation($"{DataSourceKeys.GitHub}-download");
 
             services.AddScoped<ICiRunProvider>(sp =>
             {

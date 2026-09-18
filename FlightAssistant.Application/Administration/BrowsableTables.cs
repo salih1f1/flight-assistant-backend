@@ -1,5 +1,6 @@
 using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.Configuration.Entities;
+using FlightAssistant.Domain.DataSources.Entities;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
@@ -349,6 +350,22 @@ namespace FlightAssistant.Application.Administration
                 nameof(VerificationRequest.RequestedUtc),
                 nameof(VerificationRequest.StartedUtc),
                 nameof(VerificationRequest.CompletedUtc),
+            }),
+
+            // #460. Written by the health observer's background flush, never by an admin, and the
+            // /health page renders a friendlier view of the same nine rows — but browsable all the
+            // same, following this registry's "default to including things" rule: the raw row is
+            // where consecutive_failures and the verbatim last_error can be read.
+            new("data-source-status", typeof(DataSourceStatus), "Data Source Status", new[]
+            {
+                nameof(DataSourceStatus.Key),
+                nameof(DataSourceStatus.LastOutcome),
+                nameof(DataSourceStatus.LastOutcomeUtc),
+                nameof(DataSourceStatus.LastOkUtc),
+                nameof(DataSourceStatus.LastError),
+                nameof(DataSourceStatus.ConsecutiveFailures),
+                nameof(DataSourceStatus.LastProbeUtc),
+                nameof(DataSourceStatus.LastProbeBy),
             }),
         };
 

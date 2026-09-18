@@ -14,6 +14,13 @@ namespace FlightAssistant.Domain.Administration.Enums
         Delete,
         Verify,
         Import,
-        Reveal
+        Reveal,
+
+        /// <summary>
+        /// An operator pressing "Check now" on a data source (#460). The automatic observations
+        /// behind that page are not audited — one row per outbound call would drown the log — so
+        /// this records the deliberate act only.
+        /// </summary>
+        Probe
     }
 }

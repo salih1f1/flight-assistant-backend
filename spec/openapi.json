@@ -1624,6 +1624,93 @@
         }
       }
     },
+    "/admin/health/sources": {
+      "get": {
+        "tags": [
+          "Admin - Health"
+        ],
+        "summary": "Every outside data source and its observed status",
+        "description": "One row per catalogued dependency: its current status, when it was last seen working, when it was last observed at all, a sentence saying what that status is based on, and where to check it yourself. Reads a small table and runs no checks — unlike GET /admin/health, which runs every registered health check live. A source that has never been observed is reported as Unknown, never as healthy.",
+        "operationId": "AdminGetDataSources",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminDataSourceDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/health/sources/{key}/probe": {
+      "post": {
+        "tags": [
+          "Admin - Health"
+        ],
+        "summary": "Check one data source now",
+        "description": "Runs this source's check immediately and returns its refreshed row. Verifies credentials where that is free and reachability where it is not — each source's 'whatIsChecked' says which. Rate limited to one probe per source every 30 seconds, and audited. 400 when the source has no probe, 404 when the key is not catalogued.",
+        "operationId": "AdminProbeDataSource",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminDataSourceDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/import/alliances": {
       "post": {
         "tags": [
@@ -4536,7 +4623,8 @@
           2,
           3,
           4,
-          5
+          5,
+          6
         ],
         "type": "integer",
         "format": "int32"
@@ -4610,6 +4698,78 @@
           "pageSize": {
             "type": "integer",
             "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminDataSourceDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "nullable": true
+          },
+          "displayName": {
+            "type": "string",
+            "nullable": true
+          },
+          "kind": {
+            "type": "string",
+            "nullable": true
+          },
+          "criticality": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "whatIsChecked": {
+            "type": "string",
+            "nullable": true
+          },
+          "externalUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastOutcome": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastOutcomeUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastOkUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastError": {
+            "type": "string",
+            "nullable": true
+          },
+          "consecutiveFailures": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "canProbe": {
+            "type": "boolean"
+          },
+          "probeCostNote": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastProbeUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastProbeBy": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false

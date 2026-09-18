@@ -99,6 +99,49 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.ToTable("seed_versions", (string)null);
                 });
 
+            modelBuilder.Entity("FlightAssistant.Domain.DataSources.Entities.DataSourceStatus", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("key");
+
+                    b.Property<int>("ConsecutiveFailures")
+                        .HasColumnType("integer")
+                        .HasColumnName("consecutive_failures");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("last_error");
+
+                    b.Property<DateTime?>("LastOkUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_ok_utc");
+
+                    b.Property<string>("LastOutcome")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("last_outcome");
+
+                    b.Property<DateTime?>("LastOutcomeUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_outcome_utc");
+
+                    b.Property<string>("LastProbeBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("last_probe_by");
+
+                    b.Property<DateTime?>("LastProbeUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_probe_utc");
+
+                    b.HasKey("Key");
+
+                    b.ToTable("data_source_status", (string)null);
+                });
+
             modelBuilder.Entity("FlightAssistant.Domain.Flights.Entities.Flight", b =>
                 {
                     b.Property<int>("Id")
