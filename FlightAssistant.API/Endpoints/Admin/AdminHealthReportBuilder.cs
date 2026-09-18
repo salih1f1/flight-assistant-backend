@@ -168,8 +168,23 @@ namespace FlightAssistant.API.Endpoints.Admin
         /// <c>try</c>/<c>catch</c> below makes migrations degrade the same "cannot tell" way the
         /// non-relational branch already does, instead of taking the whole page down with it.
         /// </para>
+        ///
+        /// <para>
+        /// <b>#453:</b> that catch declines a cancelled request, exactly as
+        /// <see cref="BuildVerificationAsync"/>'s does. <c>/admin/health</c> runs every health check
+        /// with no predicate, the external <c>aeroapi</c> and <c>apns</c> ones included, so it is the
+        /// likeliest route in the API to be abandoned mid-flight; the read then throws an
+        /// <see cref="OperationCanceledException"/> carrying the caller's own token, and swallowing
+        /// it logged a migration-read failure that never happened while the builder went on
+        /// assembling a report for a connection that had already gone. A client hang-up is not
+        /// "cannot tell" — there is no longer anyone to tell. Nothing downstream turns this into a
+        /// 500: ASP.NET Core recognises the abort, never reaches <c>GlobalExceptionHandler</c>, and
+        /// finishes the request as 499. Public and static for the same reason
+        /// <see cref="BuildVerificationAsync"/> is — so both halves of that filter are testable
+        /// without a host.
+        /// </para>
         /// </summary>
-        private static async Task<AdminHealthMigrationsDto> BuildMigrationsAsync(
+        public static async Task<AdminHealthMigrationsDto> BuildMigrationsAsync(
             FlightAssistantDbContext db, bool includeDiagnostics, ILogger logger, CancellationToken ct)
         {
             if (!db.Database.IsRelational())
@@ -191,7 +206,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                     pending,
                     null);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 logger.LogWarning(ex, "Failed to read EF Core migration state for /admin/health.");
                 return new AdminHealthMigrationsDto(
