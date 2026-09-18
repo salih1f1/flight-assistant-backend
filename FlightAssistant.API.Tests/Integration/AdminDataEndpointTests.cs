@@ -158,6 +158,30 @@ public class AdminDataEndpointTests(FlightAssistantWebApplicationFactory factory
         Assert.Equal(JsonValueKind.Null, columns.Single(c => c.GetProperty("name").GetString() == "RequestedUtc").GetProperty("values").ValueKind);
     }
 
+    /// <summary>
+    /// A masked column says so, so a client need not infer it from a page of redacted values (#485).
+    /// Inference works only where there are rows: a page filtered down to nothing has none, and a
+    /// panel that then offers the column can only ever be answered with "Column 'Email' is sensitive
+    /// and cannot be filtered on". The kind stays the column's real type — sensitivity is a separate
+    /// fact from what shape the value is.
+    /// </summary>
+    [Fact]
+    public async Task GetTables_SaysWhichColumnsAreSensitive()
+    {
+        var response = await factory.CreateAdminClient().GetAsync("admin/data/tables");
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var travelers = doc.RootElement.EnumerateArray().Single(t => t.GetProperty("slug").GetString() == "travelers");
+        var columns = travelers.GetProperty("columns").EnumerateArray().ToList();
+
+        var email = columns.Single(c => c.GetProperty("name").GetString() == nameof(Traveler.Email));
+        Assert.True(email.GetProperty("sensitive").GetBoolean());
+        Assert.Equal("Text", email.GetProperty("kind").GetString());
+
+        var displayName = columns.Single(c => c.GetProperty("name").GetString() == nameof(Traveler.DisplayName));
+        Assert.False(displayName.GetProperty("sensitive").GetBoolean());
+    }
+
     /// <summary>Every table publishes its columns in the registry's own order — the order the grid
     /// shows them in, so the filter picker and the grid agree.</summary>
     [Fact]
