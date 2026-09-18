@@ -18,12 +18,18 @@ namespace FlightAssistant.Application.Commands.Admin.Airlines
     public sealed class UpdateAirlineCommandHandler : IRequestHandler<UpdateAirlineCommand>
     {
         private readonly IAirlineRepository _repo;
-        public UpdateAirlineCommandHandler(IAirlineRepository repo) => _repo = repo;
+        private readonly IAllianceRepository _alliances;
+        public UpdateAirlineCommandHandler(IAirlineRepository repo, IAllianceRepository alliances)
+        {
+            _repo = repo;
+            _alliances = alliances;
+        }
 
         public async Task Handle(UpdateAirlineCommand cmd, CancellationToken ct)
         {
             var airline = await _repo.GetByIdAsync(cmd.Id, ct)
                 ?? throw new DomainException($"Airline {cmd.Id} not found.", 404);
+            await AllianceReference.EnsureExistsAsync(_alliances, cmd.AllianceCode, ct);
             airline.Update(cmd.Iata, cmd.Icao, cmd.Name, cmd.CountryCode, cmd.AllianceCode);
             await _repo.SaveChangesAsync(ct);
         }

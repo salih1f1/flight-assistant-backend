@@ -17,10 +17,16 @@ namespace FlightAssistant.Application.Commands.Admin.Airlines
     public sealed class CreateAirlineCommandHandler : IRequestHandler<CreateAirlineCommand, int>
     {
         private readonly IAirlineRepository _repo;
-        public CreateAirlineCommandHandler(IAirlineRepository repo) => _repo = repo;
+        private readonly IAllianceRepository _alliances;
+        public CreateAirlineCommandHandler(IAirlineRepository repo, IAllianceRepository alliances)
+        {
+            _repo = repo;
+            _alliances = alliances;
+        }
 
         public async Task<int> Handle(CreateAirlineCommand cmd, CancellationToken ct)
         {
+            await AllianceReference.EnsureExistsAsync(_alliances, cmd.AllianceCode, ct);
             var airline = Airline.Create(cmd.Iata, cmd.Icao, cmd.Name, cmd.CountryCode, cmd.AllianceCode);
             await _repo.AddAsync(airline, ct);
             await _repo.SaveChangesAsync(ct);

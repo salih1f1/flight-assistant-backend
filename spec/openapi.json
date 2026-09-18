@@ -103,6 +103,7 @@
           "Admin - Airlines"
         ],
         "summary": "Create airline",
+        "description": "409 when AllianceCode names an alliance that is not in the alliances table.",
         "operationId": "AdminCreateAirline",
         "requestBody": {
           "content": {
@@ -124,6 +125,16 @@
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
                 }
               }
             }
@@ -177,6 +188,7 @@
           "Admin - Airlines"
         ],
         "summary": "Update airline",
+        "description": "409 when AllianceCode names an alliance that is not in the alliances table.",
         "operationId": "AdminUpdateAirline",
         "parameters": [
           {
@@ -215,6 +227,16 @@
           },
           "404": {
             "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
             "content": {
               "application/problem+json": {
                 "schema": {

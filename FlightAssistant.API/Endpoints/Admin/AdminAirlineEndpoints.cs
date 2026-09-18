@@ -47,8 +47,10 @@ namespace FlightAssistant.API.Endpoints.Admin
             })
             .WithName("AdminCreateAirline")
             .WithSummary("Create airline")
+            .WithDescription("409 when AllianceCode names an alliance that is not in the alliances table.")
             .Produces(201)
-            .ProducesValidationProblem();
+            .ProducesValidationProblem()
+            .ProducesProblem(409);
 
             // PUT /admin/airlines/{id}
             group.MapPut("{id:int}", async (int id, [FromBody] UpdateAirlineRequest req, IMediator mediator, CancellationToken ct) =>
@@ -58,9 +60,11 @@ namespace FlightAssistant.API.Endpoints.Admin
             })
             .WithName("AdminUpdateAirline")
             .WithSummary("Update airline")
+            .WithDescription("409 when AllianceCode names an alliance that is not in the alliances table.")
             .Produces(204)
             .ProducesValidationProblem()
-            .ProducesProblem(404);
+            .ProducesProblem(404)
+            .ProducesProblem(409);
 
             // DELETE /admin/airlines/{id}
             group.MapDelete("{id:int}", async (int id, IMediator mediator, CancellationToken ct) =>

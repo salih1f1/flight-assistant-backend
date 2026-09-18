@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using FlightAssistant.Application.Commands.Admin.Airlines;
 using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.ReferenceData.Entities;
@@ -45,11 +46,14 @@ public sealed class ImportAirlinesCommandHandler : IRequestHandler<ImportAirline
 {
     private readonly IAirlineRepository _repo;
     private readonly IAdminContext _adminContext;
+    private readonly IAllianceRepository _alliances;
 
-    public ImportAirlinesCommandHandler(IAirlineRepository repo, IAdminContext adminContext)
+    public ImportAirlinesCommandHandler(
+        IAirlineRepository repo, IAdminContext adminContext, IAllianceRepository alliances)
     {
         _repo = repo;
         _adminContext = adminContext;
+        _alliances = alliances;
     }
 
     public async Task<ImportResult> Handle(ImportAirlinesCommand request, CancellationToken ct)
@@ -69,6 +73,11 @@ public sealed class ImportAirlinesCommandHandler : IRequestHandler<ImportAirline
                     errors.Add($"Airline '{dto.Iata ?? dto.Icao ?? dto.Name}': {verification.RejectionReason}");
                     continue;
                 }
+
+                // Inside the per-row try on purpose (#449): the guard's 409 becomes this row's
+                // error, where the constraint failure it replaces could not — SaveChangesAsync
+                // runs once after the loop, so one bad code used to fail every row with a 500.
+                await AllianceReference.EnsureExistsAsync(_alliances, dto.AllianceCode, ct);
 
                 Airline? existing = null;
                 if (!string.IsNullOrWhiteSpace(dto.Iata))
