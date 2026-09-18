@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using FlightAssistant.Application.Administration;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Contracts.Paging;
 using FlightAssistant.Contracts.Requests.Admin;
@@ -122,6 +123,55 @@ public class AdminDataEndpointTests(FlightAssistantWebApplicationFactory factory
         Assert.NotNull(tables);
         var travelers = Assert.Single(tables!, t => t.Slug == "travelers");
         Assert.Equal("Travelers", travelers.DisplayName);
+    }
+
+    /// <summary>
+    /// #451: the listing carries each table's columns, so the panel can offer a picker for a column
+    /// with fixed values instead of a text box that 400s on a typo. Read as raw JSON, not through
+    /// <c>BrowsableTableDto</c>: a C# round trip renames both ends together, so only the literal
+    /// camelCase names pin the contract the panel reads. The kind is asserted as a name — a number
+    /// here would be a kind nobody could act on without the enum's declaration order.
+    /// </summary>
+    [Fact]
+    public async Task GetTables_CarriesEachColumnsKind_AndAnEnumColumnsValues()
+    {
+        var client = factory.CreateAdminClient();
+
+        var response = await client.GetAsync("admin/data/tables");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var queue = doc.RootElement.EnumerateArray().Single(t => t.GetProperty("slug").GetString() == "verification-requests");
+        var columns = queue.GetProperty("columns").EnumerateArray().ToList();
+
+        var status = columns.Single(c => c.GetProperty("name").GetString() == "Status");
+        Assert.Equal("Enum", status.GetProperty("kind").GetString());
+        Assert.Contains("Pending", status.GetProperty("values").EnumerateArray().Select(v => v.GetString()));
+
+        // A date and a text column alongside it: the kinds are read off the real property types, not
+        // a list that happens to name Status.
+        Assert.Equal("Date", columns.Single(c => c.GetProperty("name").GetString() == "RequestedUtc").GetProperty("kind").GetString());
+        Assert.Equal("Text", columns.Single(c => c.GetProperty("name").GetString() == "EntityKey").GetProperty("kind").GetString());
+
+        // Values belong to enum columns alone; every other kind sends null, which is what tells the
+        // panel to render something other than a picker.
+        Assert.Equal(JsonValueKind.Null, columns.Single(c => c.GetProperty("name").GetString() == "RequestedUtc").GetProperty("values").ValueKind);
+    }
+
+    /// <summary>Every table publishes its columns in the registry's own order — the order the grid
+    /// shows them in, so the filter picker and the grid agree.</summary>
+    [Fact]
+    public async Task GetTables_PublishesColumnsInRegistryOrder()
+    {
+        var client = factory.CreateAdminClient();
+
+        var tables = await (await client.GetAsync("admin/data/tables")).Content.ReadFromJsonAsync<List<BrowsableTableDto>>();
+
+        foreach (var expected in BrowsableTables.All)
+        {
+            var published = Assert.Single(tables!, t => t.Slug == expected.Slug);
+            Assert.Equal(expected.Columns, published.Columns.Select(c => c.Name));
+        }
     }
 
     /// <summary>

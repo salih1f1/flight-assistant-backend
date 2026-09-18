@@ -324,7 +324,11 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 typeof(EF), nameof(EF.Property), new[] { propertyType }, parameter, Expression.Constant(columnName));
 
             Expression body;
-            if (propertyType == typeof(string))
+            // The same classifier GET /admin/data/tables advertises this column with (#451), rather
+            // than a second judgement about the type here: a kind the panel renders a control for
+            // and a branch this method takes must be one decision, or the control promises a filter
+            // that answers 400.
+            if (BrowsableColumnKinds.Classify(propertyType) == BrowsableColumnKind.Text)
             {
                 // A null string column is never a match either way, and skipping the null check
                 // would let EF Core's null-semantics rewriting turn this into something that no
@@ -355,7 +359,7 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 var underlyingType = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
                 // "On or after" (#334): a leading ">=" is an operator on a date column only. Any other
                 // non-string column still takes an exact value, so a ">=" there fails to parse: a 400.
-                var onOrAfter = IsDateType(underlyingType) && rawValue.StartsWith(">=", StringComparison.Ordinal);
+                var onOrAfter = BrowsableColumnKinds.IsDate(underlyingType) && rawValue.StartsWith(">=", StringComparison.Ordinal);
                 var typedValue = ConvertFilterValue(onOrAfter ? rawValue[2..] : rawValue, underlyingType);
                 Expression valueExpression = Expression.Constant(typedValue, underlyingType);
                 if (underlyingType != propertyType)
@@ -370,10 +374,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             var predicate = Expression.Lambda<Func<TEntity, bool>>(body, parameter);
             return query.Where(predicate);
         }
-
-        /// <summary>The column types a <c>&gt;=</c> filter compares as dates rather than rejecting.</summary>
-        private static bool IsDateType(Type type) =>
-            type == typeof(DateTime) || type == typeof(DateTimeOffset) || type == typeof(DateOnly);
 
         /// <summary>
         /// Converts the raw filter value string to <paramref name="targetType"/> for an exact-match

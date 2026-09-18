@@ -25,7 +25,12 @@ namespace FlightAssistant.API.Endpoints.Admin
             {
                 var summaries = await mediator.Send(new GetBrowsableTablesQuery(), ct);
                 var dtos = summaries
-                    .Select(s => new BrowsableTableDto(s.Slug, s.DisplayName, s.RowCount))
+                    .Select(s => new BrowsableTableDto(
+                        s.Slug,
+                        s.DisplayName,
+                        s.RowCount,
+                        // The kind goes out as its name, never its number: the panel keys off it.
+                        s.Columns.Select(c => new BrowsableColumnDto(c.Name, c.Kind.ToString(), c.Values)).ToList()))
                     .ToList();
                 return Results.Ok(dtos);
             })
