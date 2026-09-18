@@ -12,6 +12,7 @@ using FlightAssistant.Infrastructure.ExternalServices;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
 using FlightAssistant.Infrastructure.DataSources;
+using FlightAssistant.Infrastructure.DataSources.Probes;
 using FlightAssistant.Infrastructure.ExternalServices.AeroDataBox;
 using FlightAssistant.Infrastructure.ExternalServices.GitHub;
 using FlightAssistant.Infrastructure.ExternalServices.Verification;
@@ -70,6 +71,19 @@ namespace FlightAssistant.Infrastructure
             services.AddSingleton<IDataSourceCatalog, DataSourceCatalog>();
             services.AddSingleton<BufferedDataSourceObserver>();
             services.AddSingleton<IDataSourceObserver>(sp => sp.GetRequiredService<BufferedDataSourceObserver>());
+
+            // The "Check now" probes, one per source that supports one. Scoped, because the
+            // Postgres probe needs the request's DbContext; the command resolves them all and
+            // picks by key. The App Insights probe is registered in the API layer instead, beside
+            // the connection-string resolver it has to agree with (#440).
+            services.AddScoped<IDataSourceProbe, PostgresProbe>();
+            services.AddScoped<IDataSourceProbe, RedisProbe>();
+            services.AddScoped<IDataSourceProbe, ApnsProbe>();
+            services.AddScoped<IDataSourceProbe, AeroApiProbe>();
+            services.AddScoped<IDataSourceProbe, GitHubProbe>();
+            services.AddScoped<IDataSourceProbe, OurAirportsProbe>();
+            services.AddScoped<IDataSourceProbe, MledozeProbe>();
+            services.AddScoped<IDataSourceProbe, AeroDataBoxProbe>();
 
             // Verification sources (#367 task 3): the two free outside datasets an automated check
             // can name. Both hold no credentials — OurAirports and mledoze's raw GitHub file are

@@ -1649,6 +1649,68 @@
         }
       }
     },
+    "/admin/health/sources/{key}/probe": {
+      "post": {
+        "tags": [
+          "Admin - Health"
+        ],
+        "summary": "Check one data source now",
+        "description": "Runs this source's check immediately and returns its refreshed row. Verifies credentials where that is free and reachability where it is not — each source's 'whatIsChecked' says which. Rate limited to one probe per source every 30 seconds, and audited. 400 when the source has no probe, 404 when the key is not catalogued.",
+        "operationId": "AdminProbeDataSource",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminDataSourceDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/import/alliances": {
       "post": {
         "tags": [
@@ -4561,7 +4623,8 @@
           2,
           3,
           4,
-          5
+          5,
+          6
         ],
         "type": "integer",
         "format": "int32"

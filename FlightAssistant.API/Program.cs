@@ -3,6 +3,7 @@ using Azure.Identity;
 using FlightAssistant.API.Endpoints;
 using FlightAssistant.API.Endpoints.Admin;
 using FlightAssistant.API.HostedServices;
+using FlightAssistant.Application.Interfaces.DataSources;
 using FlightAssistant.API.Infrastructure;
 using FlightAssistant.API.Middleware;
 using FlightAssistant.Application;
@@ -164,6 +165,9 @@ builder.Services.AddHostedService<DataSourceFlushService>();
 // only. Required sources stay Unknown until something actually calls them.
 builder.Services.AddHostedService<DataSourceSeeder>();
 
+// #460: the one probe that lives outside Infrastructure, beside the resolver it must agree with.
+builder.Services.AddScoped<IDataSourceProbe, AppInsightsDataSourceProbe>();
+
 // ------------------------------------------------------------
 // 3. Authentication & Authorization
 // ------------------------------------------------------------
@@ -292,6 +296,21 @@ builder.Services.AddRateLimiter(rl =>
         {
             PermitLimit = revealLimit,
             Window = TimeSpan.FromSeconds(revealWindow),
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 0
+        }));
+
+    // "Check now" on the health page (#460). Partitioned by admin and by source: an operator
+    // working down the page checks several sources in a row, but must not be able to hold a button
+    // down against one — a probe is the only thing in that feature that starts outbound traffic.
+    var probeLimit = builder.Configuration.GetValue("RateLimiting:HealthProbe:PermitLimit", 1);
+    var probeWindow = builder.Configuration.GetValue("RateLimiting:HealthProbe:WindowSeconds", 30);
+    rl.AddPolicy("health-probe", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        partitionKey: $"{CallerPartitionKey(ctx)}:{ctx.Request.RouteValues["key"]}",
+        factory: _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = probeLimit,
+            Window = TimeSpan.FromSeconds(probeWindow),
             QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
             QueueLimit = 0
         }));

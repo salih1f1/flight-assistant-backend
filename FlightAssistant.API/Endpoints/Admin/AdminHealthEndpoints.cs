@@ -1,5 +1,6 @@
 using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Commands.Admin.DataSources;
 using FlightAssistant.Application.Queries.Admin.DataSources;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Infrastructure.Persistance;
@@ -92,6 +93,24 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "runs every registered health check live. A source that has never been observed is reported " +
                 "as Unknown, never as healthy.")
             .Produces<List<AdminDataSourceDto>>(200);
+
+            // POST /admin/health/sources/{key}/probe
+            admin.MapPost("health/sources/{key}/probe", async (
+                string key, IMediator mediator, IHostEnvironment env, CancellationToken ct) =>
+                Results.Ok(await mediator.Send(new ProbeDataSourceCommand(key, IncludeDiagnostics: !env.IsProduction()), ct)))
+            .WithTags("Admin - Health")
+            .WithName("AdminProbeDataSource")
+            .WithSummary("Check one data source now")
+            .WithDescription(
+                "Runs this source's check immediately and returns its refreshed row. Verifies credentials " +
+                "where that is free and reachability where it is not — each source's 'whatIsChecked' says " +
+                "which. Rate limited to one probe per source every 30 seconds, and audited. 400 when the " +
+                "source has no probe, 404 when the key is not catalogued.")
+            .RequireRateLimiting("health-probe")
+            .Produces<AdminDataSourceDto>(200)
+            .ProducesProblem(400)
+            .ProducesProblem(404)
+            .ProducesProblem(429);
         }
     }
 }
