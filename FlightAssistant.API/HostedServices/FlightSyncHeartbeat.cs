@@ -1,6 +1,9 @@
 namespace FlightAssistant.API.HostedServices
 {
-    public enum FlightSyncOutcome { NeverRun, Running, Success, Failed }
+    // SwitchedOff (#471): an admin stopped this job from the panel. Distinct from Paused on the
+    // verification job, which means the cycle RAN and held work back because the AeroAPI budget is
+    // exhausted -- "we chose not to spend" and "an operator stopped us" need different responses.
+    public enum FlightSyncOutcome { NeverRun, Running, Success, Failed, SwitchedOff }
 
     public sealed record FlightSyncSnapshot(
         DateTime? LastRunStartedUtc,
@@ -114,6 +117,23 @@ namespace FlightAssistant.API.HostedServices
                     NextRunDueUtc = nextRunDueUtc,
                     LastError = $"{ex.GetType().Name}: {ex.Message}",
                     LastRunDuration = duration,
+                };
+            }
+        }
+
+        /// <summary>
+        /// Marks a tick that did no work because an admin switched this job off from the panel
+        /// (#471). Every other field carries over unchanged: the counts, timestamps and duration
+        /// still describe the last real run, so a switched-off tick is never mistaken for one that
+        /// ran and processed nothing.
+        /// </summary>
+        public void MarkSwitchedOff()
+        {
+            lock (_lock)
+            {
+                _snapshot = _snapshot with
+                {
+                    LastOutcome = FlightSyncOutcome.SwitchedOff,
                 };
             }
         }
