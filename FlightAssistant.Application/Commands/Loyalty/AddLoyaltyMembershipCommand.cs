@@ -10,8 +10,7 @@ namespace FlightAssistant.Application.Commands.Loyalty
         int ProgramId,
         string AccountNumber,
         int? TierId,
-        DateOnly? TierExpiryDate,
-        DateOnly? PointsExpiryDate
+        DateOnly? TierExpiryDate
     ) : IRequest<Guid>;
 
     public sealed class AddLoyaltyMembershipCommandHandler : IRequestHandler<AddLoyaltyMembershipCommand, Guid>
@@ -28,7 +27,7 @@ namespace FlightAssistant.Application.Commands.Loyalty
 
             var membership = TravelerLoyaltyMembership.Create(
                 cmd.TravelerId, cmd.ProgramId, cmd.AccountNumber,
-                cmd.TierId, cmd.TierExpiryDate, cmd.PointsExpiryDate);
+                cmd.TierId, cmd.TierExpiryDate);
 
             await _loyalty.AddMembershipAsync(membership, ct);
             await _loyalty.SaveChangesAsync(ct);

@@ -229,7 +229,6 @@ namespace FlightAssistant.Application.Administration
                 nameof(TravelerLoyaltyMembership.TierId),
                 nameof(TravelerLoyaltyMembership.AccountNumber),
                 nameof(TravelerLoyaltyMembership.TierExpiryDate),
-                nameof(TravelerLoyaltyMembership.PointsExpiryDate),
                 nameof(TravelerLoyaltyMembership.CreatedUtc),
                 nameof(TravelerLoyaltyMembership.UpdatedUtc),
             }),

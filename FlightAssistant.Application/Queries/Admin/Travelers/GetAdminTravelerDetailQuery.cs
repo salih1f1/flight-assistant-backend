@@ -34,8 +34,7 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
         int ProgramId,
         string AccountNumber,
         int? TierId,
-        DateOnly? TierExpiryDate,
-        DateOnly? PointsExpiryDate);
+        DateOnly? TierExpiryDate);
 
     /// <summary>
     /// The traveler with every relationship a generic browser (#315) can't assemble in one call:
@@ -148,8 +147,7 @@ namespace FlightAssistant.Application.Queries.Admin.Travelers
                     m.ProgramId,
                     Mask<TravelerLoyaltyMembership>(nameof(TravelerLoyaltyMembership.AccountNumber), m.AccountNumber),
                     m.TierId,
-                    m.TierExpiryDate,
-                    m.PointsExpiryDate)).ToList());
+                    m.TierExpiryDate)).ToList());
         }
 
         private static string Mask<TEntity>(string propertyName, string value) =>

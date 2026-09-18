@@ -18,11 +18,6 @@ namespace FlightAssistant.Application.Validators
                 .GreaterThanOrEqualTo(DateOnly.FromDateTime(DateTime.UtcNow))
                 .WithMessage("Tier expiry date must be today or in the future.")
                 .When(x => x.TierExpiryDate.HasValue);
-
-            RuleFor(x => x.PointsExpiryDate)
-                .GreaterThanOrEqualTo(DateOnly.FromDateTime(DateTime.UtcNow))
-                .WithMessage("Points expiry date must be today or in the future.")
-                .When(x => x.PointsExpiryDate.HasValue);
         }
     }
 }

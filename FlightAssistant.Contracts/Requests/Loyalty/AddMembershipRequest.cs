@@ -4,7 +4,6 @@ namespace FlightAssistant.Contracts.Requests.Loyalty
         int ProgramId,
         string AccountNumber,
         int? TierId,
-        DateOnly? TierExpiryDate,
-        DateOnly? PointsExpiryDate
+        DateOnly? TierExpiryDate
     );
 }

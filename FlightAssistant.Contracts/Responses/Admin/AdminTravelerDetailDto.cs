@@ -26,8 +26,7 @@ namespace FlightAssistant.Contracts.Responses.Admin
         int ProgramId,
         string AccountNumber,
         int? TierId,
-        DateOnly? TierExpiryDate,
-        DateOnly? PointsExpiryDate);
+        DateOnly? TierExpiryDate);
 
     /// <summary>The traveler with its device tokens, tracked flights and loyalty memberships in one
     /// response. Backs <c>GET /admin/travelers/{id}/detail</c>. <c>Email</c> arrives masked as

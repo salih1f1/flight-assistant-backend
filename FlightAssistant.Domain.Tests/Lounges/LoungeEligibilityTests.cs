@@ -233,7 +233,7 @@ namespace FlightAssistant.Domain.Tests.Lounges
         {
             var travelerId = Guid.NewGuid();
             var membership = TravelerLoyaltyMembership.Create(travelerId, 1, "ABC123", 5,
-                new DateOnly(2026, 12, 31), null);
+                new DateOnly(2026, 12, 31));
 
             Assert.Equal(travelerId, membership.TravelerId);
             Assert.Equal(1, membership.ProgramId);
@@ -246,7 +246,7 @@ namespace FlightAssistant.Domain.Tests.Lounges
         public void TravelerLoyaltyMembership_Update_ChangesFields()
         {
             var membership = TravelerLoyaltyMembership.Create(Guid.NewGuid(), 1, "OLD", null);
-            membership.Update("NEW", 3, new DateOnly(2027, 1, 1), null);
+            membership.Update("NEW", 3, new DateOnly(2027, 1, 1));
 
             Assert.Equal("NEW", membership.AccountNumber);
             Assert.Equal(3, membership.TierId);

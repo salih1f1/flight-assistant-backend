@@ -63,7 +63,7 @@ namespace FlightAssistant.API.Endpoints
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
                 var result = await mediator.Send(new GetTravelerMembershipsQuery(travelerId, paging), ct);
-                var dtos = result.Items.Select(m => new LoyaltyMembershipDto(m.Id, m.ProgramId, m.AccountNumber, m.TierId, m.TierExpiryDate, m.PointsExpiryDate)).ToList();
+                var dtos = result.Items.Select(m => new LoyaltyMembershipDto(m.Id, m.ProgramId, m.AccountNumber, m.TierId, m.TierExpiryDate)).ToList();
                 return Results.Ok(new PagedResult<LoyaltyMembershipDto>(dtos, result.Total, result.Page, result.PageSize));
             })
             .WithName("GetMemberships")
@@ -77,7 +77,7 @@ namespace FlightAssistant.API.Endpoints
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
-                var id = await mediator.Send(new AddLoyaltyMembershipCommand(travelerId, req.ProgramId, req.AccountNumber, req.TierId, req.TierExpiryDate, req.PointsExpiryDate), ct);
+                var id = await mediator.Send(new AddLoyaltyMembershipCommand(travelerId, req.ProgramId, req.AccountNumber, req.TierId, req.TierExpiryDate), ct);
                 return Results.Created($"/loyalty/memberships/{id}", new { id });
             })
             .WithName("AddMembership")
@@ -85,7 +85,7 @@ namespace FlightAssistant.API.Endpoints
             .WithDescription(
                 "Links a loyalty program membership to the authenticated traveler. " +
                 "Body fields: ProgramId (from GET /loyalty/programs), AccountNumber, " +
-                "TierId (optional, from the program's tier list), TierExpiryDate (optional, YYYY-MM-DD), PointsExpiryDate (optional, YYYY-MM-DD). " +
+                "TierId (optional, from the program's tier list), TierExpiryDate (optional, YYYY-MM-DD). " +
                 "A ProgramId we don't have, or a TierId belonging to another program, is a 409 and writes nothing (#475).")
             .Produces(201)
             .ProducesValidationProblem()
@@ -96,13 +96,13 @@ namespace FlightAssistant.API.Endpoints
             {
                 http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
-                await mediator.Send(new UpdateLoyaltyMembershipCommand(travelerId, id, req.AccountNumber, req.TierId, req.TierExpiryDate, req.PointsExpiryDate), ct);
+                await mediator.Send(new UpdateLoyaltyMembershipCommand(travelerId, id, req.AccountNumber, req.TierId, req.TierExpiryDate), ct);
                 return Results.NoContent();
             })
             .WithName("UpdateMembership")
             .WithSummary("Update a loyalty membership")
             .WithDescription(
-                "Replaces the account number, tier, and expiry dates for the specified membership. " +
+                "Replaces the account number, tier, and tier expiry date for the specified membership. " +
                 "Route parameter: id — the membership ID returned when it was added. " +
                 "Only the authenticated traveler's own memberships can be updated. " +
                 "Returns 404 if no membership with that id exists, and 403 if it belongs to another traveler.")
