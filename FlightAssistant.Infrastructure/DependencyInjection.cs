@@ -442,6 +442,11 @@ namespace FlightAssistant.Infrastructure
             // shape DataSourceFlushService uses for the same singleton/scoped mismatch.
             services.AddSingleton<IJobSwitch, CachedJobSwitch>();
 
+            // The write side behind PUT /admin/jobs/{job} (Task 8): scoped, like every other
+            // repository above, since ToggleJobCommandHandler's write must land in the same request's
+            // DbContext/transaction, not a singleton's own long-lived scope.
+            services.AddScoped<IJobSwitchRepository, JobSwitchRepository>();
+
             return services;
         }
     }
