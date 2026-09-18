@@ -36,12 +36,11 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             int pageSize,
             string? sortColumn,
             bool sortDescending,
-            string? filterColumn,
-            string? filterValue,
+            IReadOnlyList<(string Column, string Value)> filters,
             CancellationToken ct = default) =>
             MakeGenericQuery<Task<(IReadOnlyList<IReadOnlyDictionary<string, object?>>, int)>>(
                 table.EntityType, nameof(QueryGenericAsync),
-                table, page, pageSize, sortColumn, sortDescending, filterColumn, filterValue, ct);
+                table, page, pageSize, sortColumn, sortDescending, filters, ct);
 
         /// <summary>Invokes the named private generic method (<paramref name="methodName"/>) of
         /// this class with its generic parameter bound to <paramref name="entityType"/>, forwarding
@@ -65,16 +64,18 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         /// pattern is translatable in the abstract.
         /// </summary>
         internal string BuildQueryString(
-            BrowsableTable table, string? sortColumn, bool sortDescending, string? filterColumn, string? filterValue) =>
+            BrowsableTable table, string? sortColumn, bool sortDescending,
+            IReadOnlyList<(string Column, string Value)> filters) =>
             MakeGenericQuery<string>(
-                table.EntityType, nameof(BuildQueryStringGeneric), sortColumn, sortDescending, filterColumn, filterValue);
+                table.EntityType, nameof(BuildQueryStringGeneric), sortColumn, sortDescending, filters);
 
         private string BuildQueryStringGeneric<TEntity>(
-            string? sortColumn, bool sortDescending, string? filterColumn, string? filterValue) where TEntity : class
+            string? sortColumn, bool sortDescending,
+            IReadOnlyList<(string Column, string Value)> filters) where TEntity : class
         {
             IQueryable<TEntity> query = _db.Set<TEntity>().AsNoTracking();
-            if (filterColumn is not null)
-                query = ApplyFilter(query, filterColumn, filterValue ?? string.Empty);
+            foreach (var (column, value) in filters)
+                query = ApplyFilter(query, column, value);
             query = ApplySort(query, sortColumn, sortDescending);
             return query.ToQueryString();
         }
@@ -189,16 +190,19 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
             int pageSize,
             string? sortColumn,
             bool sortDescending,
-            string? filterColumn,
-            string? filterValue,
+            IReadOnlyList<(string Column, string Value)> filters,
             CancellationToken ct) where TEntity : class
         {
             IQueryable<TEntity> query = _db.Set<TEntity>().AsNoTracking();
 
-            if (filterColumn is not null)
-                query = ApplyFilter(query, filterColumn, filterValue ?? string.Empty);
+            // Chained Where calls: EF ANDs them into one statement, which is exactly the required
+            // semantics — every criterion must match (#476). ApplyFilter is called once per
+            // criterion and is itself unchanged, so each criterion keeps the matching rules it has
+            // always had, and a list of one is the single filter this endpoint has always taken.
+            foreach (var (column, value) in filters)
+                query = ApplyFilter(query, column, value);
 
-            // Total must be counted after the filter above and before Skip/Take — the classic bug
+            // Total must be counted after the filters above and before Skip/Take — the classic bug
             // in this shape is a Total computed against the unfiltered table.
             var total = await query.CountAsync(ct);
 

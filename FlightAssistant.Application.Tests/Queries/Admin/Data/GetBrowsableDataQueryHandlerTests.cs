@@ -48,7 +48,8 @@ public class GetBrowsableDataQueryHandlerTests
         };
         _repository.QueryAsync(
                 Arg.Any<BrowsableTable>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<string?>(),
-                Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+                Arg.Any<bool>(), Arg.Any<IReadOnlyList<(string Column, string Value)>>(),
+                Arg.Any<CancellationToken>())
             .Returns((new[] { row }, 1));
 
         var query = new GetBrowsableDataQuery("travelers", new PagedRequest());

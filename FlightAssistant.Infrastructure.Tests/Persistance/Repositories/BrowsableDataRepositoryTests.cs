@@ -12,6 +12,7 @@ using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
 using FlightAssistant.Infrastructure.Tests.TestSupport;
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 
 namespace FlightAssistant.Infrastructure.Tests.Persistance.Repositories;
 
@@ -57,7 +58,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
         var (items, total) = await Repository(db).QueryAsync(
             TravelersTable, page: 1, pageSize: 50,
             sortColumn: null, sortDescending: false,
-            filterColumn: nameof(Traveler.DisplayName), filterValue: "ADA love");
+            filters: [(nameof(Traveler.DisplayName), "ADA love")]);
 
         Assert.Equal(1, total);
         Assert.Equal("Ada Lovelace", Assert.Single(items)[nameof(Traveler.DisplayName)]);
@@ -77,7 +78,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
 
         var sql = Repository(db).BuildQueryString(
             TravelersTable, sortColumn: null, sortDescending: false,
-            filterColumn: nameof(Traveler.DisplayName), filterValue: "ann");
+            filters: [(nameof(Traveler.DisplayName), "ann")]);
 
         // A client-evaluated fallback would produce a query with no WHERE clause referencing the
         // column at all (EF Core would instead emit a client-eval warning and filter in memory
@@ -110,10 +111,118 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
         await db.SaveChangesAsync();
 
         var (items, total) = await Repository(db).QueryAsync(
-            TravelersTable, 1, 50, null, false, nameof(Traveler.DisplayName), "name");
+            TravelersTable, 1, 50, null, false, filters: [(nameof(Traveler.DisplayName), "name")]);
 
         Assert.Equal(1, total);
         Assert.Equal("Has a name", Assert.Single(items)[nameof(Traveler.DisplayName)]);
+    }
+
+    // ── Several criteria, ANDed (#476) ─────────────────────────────────────────
+
+    // Every test in this section seeds rows so that **each criterion alone matches more rows than
+    // the pair does**. That is the only shape that fails a fold which keeps just one criterion —
+    // with a criterion that is selective on its own (an Id, say), "last one wins" returns the same
+    // single row that ANDing does, and the test passes while the code is broken.
+
+    /// <summary>
+    /// Two criteria on different columns, of different types (a string <c>contains</c> and an
+    /// "on or after" date), must both hold.
+    /// </summary>
+    [Fact]
+    public async Task QueryAsync_TwoFiltersOnDifferentColumns_MatchesOnlyRowsSatisfyingBoth()
+    {
+        await using var db = CreateDbContext();
+        var boundary = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+        void AddProvider(string code, DateTime? verifiedAt)
+        {
+            var provider = LoungeProvider.Create(code, code, LoungeProviderKind.Contract);
+            db.LoungeProviders.Add(provider);
+            db.Entry(provider).Property(p => p.VerifiedAt).CurrentValue = verifiedAt;
+        }
+        // Only ALPHA satisfies both. ALPHAOLD satisfies the code filter alone; ZULU the date
+        // filter alone — so keeping either criterion on its own returns 2, not 1.
+        AddProvider("ALPHA", boundary);
+        AddProvider("ALPHAOLD", boundary.AddDays(-3));
+        AddProvider("ZULU", boundary);
+        await db.SaveChangesAsync();
+
+        var (items, total) = await Repository(db).QueryAsync(
+            LoungeProvidersTable, page: 1, pageSize: 50,
+            sortColumn: null, sortDescending: false,
+            filters: [(nameof(LoungeProvider.Code), "alpha"), (nameof(LoungeProvider.VerifiedAt), ">=2026-09-07")]);
+
+        Assert.Equal(1, total);
+        Assert.Equal("ALPHA", Assert.Single(items)[nameof(LoungeProvider.Code)]);
+    }
+
+    /// <summary>
+    /// Two criteria on the <em>same</em> column AND rather than the last one winning — the failure
+    /// this shape invites is a fold that overwrites instead of composing, which a pair of criteria
+    /// on different columns would not necessarily notice.
+    /// </summary>
+    [Fact]
+    public async Task QueryAsync_TwoFiltersOnTheSameColumn_RequireBothSubstrings()
+    {
+        await using var db = CreateDbContext();
+        // "ada" alone matches two rows and "love" alone matches two; only one row matches both.
+        db.Travelers.AddRange(
+            NewTraveler("Ada Lovelace"),
+            NewTraveler("Ada Byron"),
+            NewTraveler("Bob Lovelace"));
+        await db.SaveChangesAsync();
+
+        var (items, total) = await Repository(db).QueryAsync(
+            TravelersTable, page: 1, pageSize: 50,
+            sortColumn: null, sortDescending: false,
+            filters: [(nameof(Traveler.DisplayName), "ada"), (nameof(Traveler.DisplayName), "love")]);
+
+        Assert.Equal(1, total);
+        Assert.Equal("Ada Lovelace", Assert.Single(items)[nameof(Traveler.DisplayName)]);
+    }
+
+    /// <summary>
+    /// Total is the count of rows matching <em>every</em> criterion — the classic bug in this shape
+    /// is a count taken before the fold, or after only one criterion. Page size 1 keeps the count
+    /// and the returned page distinguishable, so a Total read off the page cannot pass by accident.
+    /// </summary>
+    [Fact]
+    public async Task QueryAsync_TwoFilters_CountsTheRowsMatchingBoth()
+    {
+        await using var db = CreateDbContext();
+        db.Travelers.AddRange(
+            NewTraveler("Ada Lovelace"),
+            NewTraveler("Ada Byron"),
+            NewTraveler("Bob Lovelace"));
+        await db.SaveChangesAsync();
+
+        var (_, total) = await Repository(db).QueryAsync(
+            TravelersTable, page: 1, pageSize: 1,
+            sortColumn: null, sortDescending: false,
+            filters: [(nameof(Traveler.DisplayName), "ada"), (nameof(Traveler.DisplayName), "love")]);
+
+        // 3 would mean the count ran before the fold; 2, after only one of the two criteria.
+        Assert.Equal(1, total);
+    }
+
+    /// <summary>
+    /// The fold composes in SQL rather than in memory: both criteria reach one statement, ANDed.
+    /// Proven against the exact query <see cref="BrowsableDataRepository.QueryAsync"/> composes
+    /// (via the internal <c>BuildQueryString</c> seam), as the single-filter translation test does.
+    /// </summary>
+    [Fact]
+    public void BuildQueryString_TwoFilters_PutsBothPredicatesInOneStatement()
+    {
+        using var db = CreateDbContext();
+
+        var sql = Repository(db).BuildQueryString(
+            TravelersTable, sortColumn: null, sortDescending: false,
+            filters: [(nameof(Traveler.DisplayName), "ada"), (nameof(Traveler.DisplayName), "love")]);
+
+        Assert.Contains("WHERE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(" AND ", sql, StringComparison.OrdinalIgnoreCase);
+        // One case-folded comparison per criterion: a fold that overwrote instead of composing
+        // would leave exactly one, and the AND above could still come from another clause.
+        Assert.Equal(2, Regex.Matches(sql, "ILIKE|lower\\(", RegexOptions.IgnoreCase).Count);
     }
 
     // ── "Has a value" (#385 Task 3 / R4): a string filter of exactly "*" ────────
@@ -145,7 +254,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
 
         var (items, total) = await Repository(db).QueryAsync(
             TravelersTable, 1, 50, sortColumn: null, sortDescending: false,
-            filterColumn: nameof(Traveler.DisplayName), filterValue: "*");
+            filters: [(nameof(Traveler.DisplayName), "*")]);
 
         Assert.Equal(1, total);
         Assert.Equal("Ada Lovelace", Assert.Single(items)[nameof(Traveler.DisplayName)]);
@@ -167,7 +276,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
 
         var (items, total) = await Repository(db).QueryAsync(
             TravelersTable, 1, 50, sortColumn: null, sortDescending: false,
-            filterColumn: nameof(Traveler.DisplayName), filterValue: "vip*gold");
+            filters: [(nameof(Traveler.DisplayName), "vip*gold")]);
 
         Assert.Equal(1, total);
         Assert.Equal("VIP*Gold", Assert.Single(items)[nameof(Traveler.DisplayName)]);
@@ -189,7 +298,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
 
         var sql = Repository(db).BuildQueryString(
             TravelersTable, sortColumn: null, sortDescending: false,
-            filterColumn: nameof(Traveler.DisplayName), filterValue: "*");
+            filters: [(nameof(Traveler.DisplayName), "*")]);
 
         // A client-evaluated fallback would produce a query with no WHERE clause referencing the
         // column at all. Asserting on the generated SQL text is the only way to tell the two apart.
@@ -224,7 +333,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
 
         var ex = await Assert.ThrowsAsync<DomainException>(() => Repository(db).QueryAsync(
             TravelersTable, 1, 50, sortColumn: null, sortDescending: false,
-            filterColumn: nameof(Traveler.Id), filterValue: "*"));
+            filters: [(nameof(Traveler.Id), "*")]));
 
         Assert.Equal(400, ex.StatusCode);
     }
@@ -240,7 +349,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
         await db.SaveChangesAsync();
 
         var (items, total) = await Repository(db).QueryAsync(
-            TravelersTable, 1, 50, null, false, nameof(Traveler.Id), traveler.Id.ToString());
+            TravelersTable, 1, 50, null, false, filters: [(nameof(Traveler.Id), traveler.Id.ToString())]);
 
         Assert.Equal(1, total);
         Assert.Equal("Findable", Assert.Single(items)[nameof(Traveler.DisplayName)]);
@@ -270,7 +379,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
         var exception = await Record.ExceptionAsync(async () =>
             result = await Repository(db).QueryAsync(
                 DeviceTokensTable, 1, 50, null, false,
-                nameof(FlightAssistant.Domain.Travelers.Entities.DeviceToken.LastSeenUtc), "2026-09-01T12:00:00"));
+                filters: [(nameof(FlightAssistant.Domain.Travelers.Entities.DeviceToken.LastSeenUtc), "2026-09-01T12:00:00")]));
 
         Assert.Null(exception);
         Assert.Equal(1, result.Total);
@@ -308,7 +417,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
 
         var (items, total) = await Repository(db).QueryAsync(
             LoungeProvidersTable, 1, 50, nameof(LoungeProvider.Code), false,
-            nameof(LoungeProvider.VerifiedAt), filterValue);
+            filters: [(nameof(LoungeProvider.VerifiedAt), filterValue)]);
 
         Assert.Equal(2, total);
         Assert.Equal(new[] { "BOUNDARY", "LATER" }, items.Select(i => (string?)i[nameof(LoungeProvider.Code)]));
@@ -327,7 +436,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
         await db.SaveChangesAsync();
 
         var (items, total) = await Repository(db).QueryAsync(
-            TravelersTable, 1, 50, null, false, nameof(Traveler.DisplayName), ">=2026");
+            TravelersTable, 1, 50, null, false, filters: [(nameof(Traveler.DisplayName), ">=2026")]);
 
         Assert.Equal(1, total);
         Assert.Equal("VIP >=2026", Assert.Single(items)[nameof(Traveler.DisplayName)]);
@@ -343,7 +452,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
         await using var db = CreateDbContext();
 
         var ex = await Assert.ThrowsAsync<DomainException>(() => Repository(db).QueryAsync(
-            LoungeProvidersTable, 1, 50, null, false, nameof(LoungeProvider.Id), ">=1"));
+            LoungeProvidersTable, 1, 50, null, false, filters: [(nameof(LoungeProvider.Id), ">=1")]));
 
         Assert.Equal(400, ex.StatusCode);
     }
@@ -367,12 +476,12 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
         await db.SaveChangesAsync();
 
         var (all, _) = await Repository(db).QueryAsync(
-            LoyaltyProgramsTable, 1, 50, nameof(LoyaltyProgram.Code), false, null, null);
+            LoyaltyProgramsTable, 1, 50, nameof(LoyaltyProgram.Code), false, filters: []);
         Assert.IsType<DateTime>(all.Single(r => (string?)r[nameof(LoyaltyProgram.Code)] == "NEW")[nameof(LoyaltyProgram.CreatedUtc)]);
         Assert.Null(all.Single(r => (string?)r[nameof(LoyaltyProgram.Code)] == "SEED")[nameof(LoyaltyProgram.CreatedUtc)]);
 
         var (recent, total) = await Repository(db).QueryAsync(
-            LoyaltyProgramsTable, 1, 50, null, false, nameof(LoyaltyProgram.CreatedUtc), ">=" + since.ToString("O"));
+            LoyaltyProgramsTable, 1, 50, null, false, filters: [(nameof(LoyaltyProgram.CreatedUtc), ">=" + since.ToString("O"))]);
 
         Assert.Equal(1, total);
         Assert.Equal("NEW", Assert.Single(recent)[nameof(LoyaltyProgram.Code)]);
@@ -407,7 +516,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
 
         var ex = await Assert.ThrowsAsync<DomainException>(() => Repository(db).QueryAsync(
             AdminAuditLogTable, page: 1, pageSize: 50, sortColumn: null, sortDescending: false,
-            filterColumn: nameof(AdminAuditLog.Action), filterValue: "NotARealAction"));
+            filters: [(nameof(AdminAuditLog.Action), "NotARealAction")]));
 
         Assert.Equal(400, ex.StatusCode);
     }
@@ -422,7 +531,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
 
         var ex = await Assert.ThrowsAsync<DomainException>(() => Repository(db).QueryAsync(
             AdminAuditLogTable, page: 1, pageSize: 50, sortColumn: null, sortDescending: false,
-            filterColumn: nameof(AdminAuditLog.Action), filterValue: ""));
+            filters: [(nameof(AdminAuditLog.Action), "")]));
 
         Assert.Equal(400, ex.StatusCode);
     }
@@ -440,7 +549,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
 
         var ex = await Assert.ThrowsAsync<DomainException>(() => Repository(db).QueryAsync(
             LoungeProviderLinksTable, page: 1, pageSize: 50, sortColumn: null, sortDescending: false,
-            filterColumn: nameof(LoungeProviderLink.Role), filterValue: "NotARole"));
+            filters: [(nameof(LoungeProviderLink.Role), "NotARole")]));
 
         Assert.Equal(400, ex.StatusCode);
     }
@@ -460,7 +569,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
 
         var ex = await Assert.ThrowsAsync<DomainException>(() => Repository(db).QueryAsync(
             TravelersTable, page: 1, pageSize: 50, sortColumn: null, sortDescending: false,
-            filterColumn: nameof(Traveler.Id), filterValue: "not-a-guid"));
+            filters: [(nameof(Traveler.Id), "not-a-guid")]));
 
         Assert.Equal(400, ex.StatusCode);
     }
@@ -478,7 +587,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
 
         var (items, total) = await Repository(db).QueryAsync(
             TravelersTable, page: 1, pageSize: 2, sortColumn: nameof(Traveler.DisplayName), sortDescending: false,
-            filterColumn: nameof(Traveler.DisplayName), filterValue: "Match Me");
+            filters: [(nameof(Traveler.DisplayName), "Match Me")]);
 
         Assert.Equal(5, total);
         Assert.Equal(2, items.Count);
@@ -530,7 +639,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
             var (items, total) = await Repository(db).QueryAsync(
                 DeviceTokensTable, page, TiedRowPageSize,
                 sortColumn: nameof(DeviceToken.Platform), sortDescending: false,
-                filterColumn: null, filterValue: null);
+                filters: []);
 
             Assert.Equal(TiedRowCount, total);
             seen.AddRange(items.Select(i => (Guid)i[nameof(DeviceToken.Id)]!));
@@ -556,7 +665,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
         {
             var (items, total) = await Repository(db).QueryAsync(
                 DeviceTokensTable, page, TiedRowPageSize, sortColumn: null, sortDescending: false,
-                filterColumn: null, filterValue: null);
+                filters: []);
 
             Assert.Equal(TiedRowCount, total);
             seen.AddRange(items.Select(i => (Guid)i[nameof(DeviceToken.Id)]!));
@@ -595,7 +704,7 @@ public class BrowsableDataRepositoryTests : PostgresTestBase
 
         var (items, _) = await Repository(db).QueryAsync(
             TravelersTable, 1, 50, sortColumn: nameof(Traveler.DisplayName), sortDescending: true,
-            filterColumn: null, filterValue: null);
+            filters: []);
 
         Assert.Equal(["Charlie", "Bravo", "Alpha"], items.Select(i => i[nameof(Traveler.DisplayName)]));
     }

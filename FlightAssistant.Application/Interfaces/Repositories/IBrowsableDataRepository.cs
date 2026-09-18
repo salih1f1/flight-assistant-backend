@@ -23,13 +23,13 @@ namespace FlightAssistant.Application.Interfaces.Repositories
 
         /// <summary>
         /// Paginated rows for <paramref name="table"/>, projected to only the columns
-        /// <paramref name="table"/> exposes. <paramref name="sortColumn"/> and
-        /// <paramref name="filterColumn"/> must already be validated against
+        /// <paramref name="table"/> exposes. <paramref name="sortColumn"/> and every column in
+        /// <paramref name="filters"/> must already be validated against
         /// <c>BrowsableTables.IsColumnExposed</c> and confirmed non-sensitive by the caller — this
         /// method does not repeat that allowlist/sensitivity check itself, so an unvalidated caller
         /// is a bug, not something this method guards against. Column-name resolution safety is
         /// asymmetric between the two, though neither ever lets an unknown name become part of raw
-        /// SQL: see <paramref name="sortColumn"/> and <paramref name="filterColumn"/> below.
+        /// SQL: see <paramref name="sortColumn"/> and <paramref name="filters"/> below.
         /// </summary>
         /// <param name="sortColumn">
         /// A column name, or <c>null</c> for no caller-requested sort. Every ordering, including
@@ -40,19 +40,18 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// Core's own translation of <c>EF.Property</c> against model metadata, not from an explicit
         /// guard here.
         /// </param>
-        /// <param name="filterColumn">
-        /// A column name, or <c>null</c> for no filter. Exact match for a non-string column;
-        /// case-insensitive <c>contains</c> for a string column, translated to SQL rather than
-        /// evaluated client-side. Unlike <paramref name="sortColumn"/>, this one <em>is</em>
+        /// <param name="filters">
+        /// Zero or more <c>(Column, Value)</c> criteria, <b>combined with AND</b> — every criterion
+        /// must match for a row to be returned (#476). An empty list is "no filter". Repeats of the
+        /// same column are legitimate and AND like any other pair. Each value is the raw string as
+        /// received from the client: exact match for a non-string column, case-insensitive
+        /// <c>contains</c> for a string column, translated to SQL rather than evaluated
+        /// client-side, and converted internally to the column's real CLR type — a value that will
+        /// not parse throws a 400 <c>DomainException</c> rather than letting an unhandled parse
+        /// exception surface as a 500. Unlike <paramref name="sortColumn"/>, each column <em>is</em>
         /// re-checked explicitly via reflection and throws <see cref="InvalidOperationException"/>
         /// for a name that doesn't exist on the entity — defense-in-depth alongside the caller's
         /// own allowlist check, not a substitute for it.
-        /// </param>
-        /// <param name="filterValue">
-        /// The raw filter value as received from the client. Ignored when
-        /// <paramref name="filterColumn"/> is <c>null</c>. Converted internally to the column's real
-        /// CLR type; a value that will not parse throws a 400 <c>DomainException</c> rather than
-        /// letting an unhandled parse exception surface as a 500.
         /// </param>
         Task<(IReadOnlyList<IReadOnlyDictionary<string, object?>> Items, int Total)> QueryAsync(
             BrowsableTable table,
@@ -60,8 +59,7 @@ namespace FlightAssistant.Application.Interfaces.Repositories
             int pageSize,
             string? sortColumn,
             bool sortDescending,
-            string? filterColumn,
-            string? filterValue,
+            IReadOnlyList<(string Column, string Value)> filters,
             CancellationToken ct = default);
 
         /// <summary>
@@ -74,7 +72,7 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// <c>GetRowAsync</c> that returned the whole projected row). <paramref name="column"/>
         /// must already be confirmed both exposed (<c>BrowsableTables.IsColumnExposed</c>) and
         /// sensitive (<c>SensitiveProperties.IsSensitive</c>) by the caller — this method does not
-        /// repeat that check itself, matching <see cref="QueryAsync"/>'s <paramref name="filterColumn"/>
+        /// repeat that check itself, matching <see cref="QueryAsync"/>'s <c>filters</c>
         /// contract; a name that doesn't exist on the entity at all still throws
         /// <see cref="InvalidOperationException"/> defensively.
         /// </summary>
@@ -89,8 +87,8 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         /// (<c>Country.Code</c>), which parses as itself (#318 final review, finding 1) — is
         /// treated as "no such row" (a <c>null</c> return) rather than a thrown exception,
         /// resolving to 404, never a 500, for what is ultimately just an unrecognised id. The match
-        /// is always exact, for every key type including string — <see cref="QueryAsync"/>'s
-        /// <paramref name="filterValue"/> case-insensitive <em>contains</em> semantics for a string
+        /// is always exact, for every key type including string — the case-insensitive
+        /// <em>contains</em> semantics <see cref="QueryAsync"/>'s <c>filters</c> give a string
         /// column do not apply here; a prefix must never resolve a different row's id.
         /// </param>
         /// <returns>
