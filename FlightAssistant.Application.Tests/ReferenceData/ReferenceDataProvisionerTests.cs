@@ -12,6 +12,7 @@ using FlightAssistant.Domain.Verification.Enums;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 
 namespace FlightAssistant.Application.Tests.ReferenceData;
 
@@ -662,5 +663,109 @@ public class ReferenceDataProvisionerTests
             [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
 
         await _budget.DidNotReceive().GetStateAsync(Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>A source that never answers within the test's budget.</summary>
+    private sealed class StallingSource(string name, VerificationEntityType[] supports) : IVerificationSource
+    {
+        public string Name => name;
+        public decimal CostPerRowUsd => 0m;
+        public IReadOnlyCollection<VerificationEntityType> SupportedEntityTypes => supports;
+
+        public async Task<VerificationSourceFetchResult> LookupAsync(
+            VerificationEntityType entityType, VerificationSourceLookupKey key, CancellationToken ct = default)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), ct);
+            return VerificationSourceFetchResult.NotFound;
+        }
+
+        public void ReleaseCache(TimeSpan idleRelease) { }
+        public bool HasCachedData => false;
+    }
+
+    [Fact]
+    public async Task ExceedingTheBudget_IsUnavailable_NotNotFound()
+    {
+        // A timeout must never be reported as "this airport does not exist": we simply ran out of
+        // time. The shared download carries on, so the traveler's retry succeeds.
+        _options.Budget = TimeSpan.FromMilliseconds(50);
+        _registry.TryGet("ourairports").Returns(new StallingSource("ourairports", [VerificationEntityType.Airport]));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Unavailable, result.Status);
+        Assert.Equal(VerificationEntityType.Airport, result.FailedType);
+        Assert.Equal("LHR", result.FailedCode);
+    }
+
+    [Fact]
+    public async Task ExceedingTheBudget_WritesNothing()
+    {
+        _options.Budget = TimeSpan.FromMilliseconds(50);
+        _registry.TryGet("ourairports").Returns(new StallingSource("ourairports", [VerificationEntityType.Airport]));
+
+        await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        await _airports.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+        await _countries.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TheCallersOwnCancellation_Propagates_RatherThanBecomingUnavailable()
+    {
+        // The traveler abandoned the request. That is not a provisioning outcome, and swallowing it
+        // would have us go on assembling a response for a connection that has already gone (#453).
+        _options.Budget = TimeSpan.FromSeconds(30);
+        _registry.TryGet("ourairports").Returns(new StallingSource("ourairports", [VerificationEntityType.Airport]));
+        using var caller = new CancellationTokenSource();
+        caller.CancelAfter(TimeSpan.FromMilliseconds(50));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreateProvisioner().ProvisionAsync(
+                [new MissingReference(VerificationEntityType.Airport, "LHR")], caller.Token));
+    }
+
+    [Fact]
+    public async Task ACacheReadFailure_FailsOpen_ProvisioningStillSucceeds()
+    {
+        // FetchAsync's own cache-read catch (`when (ex is not OperationCanceledException)`, from
+        // Task 7) is what lets an ordinary cache outage fail open instead of failing the whole
+        // provision. The deadline above now depends on that filter excluding cancellation -- this
+        // pins the other half: a non-cancellation failure must still fail open.
+        _cache.GetAsync<string>(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("cache unavailable"));
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR")));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+        await _airports.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ACacheReadThatThrowsCancellation_PropagatesRatherThanBeingSwallowed()
+    {
+        // Unlike the test above, this exception IS an OperationCanceledException -- the one kind
+        // FetchAsync's cache-read catch must never treat as an ordinary outage. If that `when`
+        // filter were ever removed, this would be caught, logged as a cache failure, and
+        // provisioning would carry on past a cancellation it should have unwound for instead --
+        // exactly how a real deadline firing mid-cache-read would end up silently absorbed rather
+        // than reported. Distinct from TheCallersOwnCancellation_Propagates... above, which
+        // exercises this same guarantee via a stalled *source* lookup rather than the cache: here
+        // the caller's own token is already cancelled before the call even starts, so the outer
+        // budget catch's `!ct.IsCancellationRequested` guard does not intercept it either, and the
+        // exception must reach the caller unchanged rather than becoming a status.
+        using var caller = new CancellationTokenSource();
+        caller.Cancel();
+        _cache.GetAsync<string>(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new OperationCanceledException());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreateProvisioner().ProvisionAsync(
+                [new MissingReference(VerificationEntityType.Airport, "LHR")], caller.Token));
     }
 }

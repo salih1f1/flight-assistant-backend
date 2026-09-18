@@ -85,10 +85,40 @@ namespace FlightAssistant.Application.ReferenceData
             // Disabled behaves exactly like "the source has no such entity", which is today's 404.
             if (!_options.Enabled)
             {
-                var first = missing.First();
-                return ReferenceProvisionResult.NotFound(first.Type, first.Code);
+                var disabledFirst = missing.First();
+                return ReferenceProvisionResult.NotFound(disabledFirst.Type, disabledFirst.Code);
             }
 
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            deadline.CancelAfter(_options.Budget);
+
+            try
+            {
+                return await ProvisionCoreAsync(missing, deadline.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // Our own budget ran out, not the caller abandoning the request. The dataset download
+                // this was waiting on is shared and keeps running, so a retry shortly finds it warm.
+                var first = missing.First();
+                _logger.LogInformation(
+                    "Provisioning {EntityType} '{Code}' exceeded the {Budget} budget.",
+                    first.Type, first.Code, _options.Budget);
+                return ReferenceProvisionResult.Unavailable(
+                    first.Type, first.Code,
+                    $"Looking up reference data took longer than {_options.Budget}.");
+            }
+        }
+
+        /// <summary>
+        /// The provisioning walk itself, oblivious to the wall-clock budget -- <see cref="ProvisionAsync"/>
+        /// applies <see cref="IReferenceProvisioningOptions.Budget"/> around this call and turns a
+        /// timeout into <see cref="ReferenceProvisionStatus.Unavailable"/> rather than letting the
+        /// cancellation escape as an exception.
+        /// </summary>
+        private async Task<ReferenceProvisionResult> ProvisionCoreAsync(
+            IReadOnlyCollection<MissingReference> missing, CancellationToken ct)
+        {
             using var scope = VerificationJobActor.CreateScope(_scopeFactory);
             var airports = scope.ServiceProvider.GetRequiredService<IAirportRepository>();
             var countries = scope.ServiceProvider.GetRequiredService<ICountryRepository>();
