@@ -21,10 +21,14 @@ namespace FlightAssistant.API.Tests.Integration;
 /// <c>job_switches</c> has exactly two possible rows — <c>JobNames.All</c> is a deliberately closed
 /// list — and the "Integration" collection shares one InMemory database across every test in every
 /// class in the collection (<c>AdminAuditEndpointTests</c> documents the same constraint for
-/// <c>admin_audit_log</c>). So no test here assumes either table starts empty: the "no switch row was
-/// written" test compares a row count before and after the request rather than asserting the table
-/// empty, and the "exactly one audit row" test embeds a fresh marker in its reason text and filters on
-/// that, rather than counting every "JobSwitch" audit row any test has ever written.
+/// <c>admin_audit_log</c>). So no test here assumes either table starts empty. The "no switch row was
+/// written" test snapshots the row's full content (Enabled/ChangedUtc/ChangedBy/Reason, or its
+/// absence) before and after the request rather than comparing a row count: a count is blind to an
+/// UPDATE landing on a row a prior test already created in this shared database — same row, same
+/// count, different content — which is exactly the shape of the bug this test exists to catch (an
+/// upsert that runs before the config-ceiling check is enforced). The "exactly one audit row" test
+/// embeds a fresh marker in its reason text and filters on that, rather than counting every
+/// "JobSwitch" audit row any test has ever written.
 /// </para>
 /// </summary>
 [Collection("Integration")]
@@ -46,18 +50,24 @@ public class AdminJobEndpointTests(FlightAssistantWebApplicationFactory factory)
     /// <summary>A host whose configuration overrides one key on top of appsettings.Testing.json —
     /// mirrors AdminHealthEndpointTests' WithRedisAndAppInsightsConfigured. Still points at the same
     /// named InMemory database as every other test (FlightAssistantWebApplicationFactory's own
-    /// UseInMemoryDatabase call passes no separate root), which is exactly what the row-count-delta
-    /// assertions below are written to tolerate.</summary>
+    /// UseInMemoryDatabase call passes no separate root), which is exactly what the snapshot-based
+    /// assertion below is written to tolerate.</summary>
     private WebApplicationFactory<Program> FactoryWithConfig(string key, string value) =>
         factory.WithWebHostBuilder(builder =>
             builder.ConfigureAppConfiguration((_, cfg) =>
                 cfg.AddInMemoryCollection(new Dictionary<string, string?> { [key] = value })));
 
-    private static async Task<int> CountFlightSyncSwitchRowsAsync(IServiceProvider services)
+    /// <summary>The row's full observable content, not just its presence — a count alone cannot
+    /// distinguish "nothing happened" from "an existing row was overwritten in place", and the
+    /// config ceiling must forbid both.</summary>
+    private readonly record struct SwitchSnapshot(bool Enabled, DateTime? ChangedUtc, string? ChangedBy, string? Reason);
+
+    private static async Task<SwitchSnapshot?> SnapshotFlightSyncSwitchAsync(IServiceProvider services)
     {
         using var scope = services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
-        return await db.JobSwitches.CountAsync(s => s.Job == JobNames.FlightSync);
+        var row = await db.JobSwitches.AsNoTracking().FirstOrDefaultAsync(s => s.Job == JobNames.FlightSync);
+        return row is null ? null : new SwitchSnapshot(row.Enabled, row.ChangedUtc, row.ChangedBy, row.Reason);
     }
 
     // ── Auth ─────────────────────────────────────────────────────────────────────
@@ -133,16 +143,21 @@ public class AdminJobEndpointTests(FlightAssistantWebApplicationFactory factory)
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
 
+    // Content, not count: a prior test in this shared database (e.g. Put_SwitchesTheJobOff_AndReportsIt,
+    // which runs earlier and legitimately creates this same row) means a buggy handler that upserts
+    // before checking the ceiling would UPDATE that existing row rather than insert a new one — same
+    // row count before and after, different content. Comparing the full snapshot catches that; a bare
+    // count does not.
     [Fact]
     public async Task Put_Returns409_AndWritesNoSwitchRow_WhenConfigHasTheJobOff()
     {
         using var scopedFactory = FactoryWithConfig("FlightSync:Enabled", "false");
         var client = AdminClient(scopedFactory);
-        var before = await CountFlightSyncSwitchRowsAsync(scopedFactory.Services);
+        var before = await SnapshotFlightSyncSwitchAsync(scopedFactory.Services);
 
         await client.PutAsJsonAsync("admin/jobs/flight-sync", new { enabled = true });
 
-        var after = await CountFlightSyncSwitchRowsAsync(scopedFactory.Services);
+        var after = await SnapshotFlightSyncSwitchAsync(scopedFactory.Services);
         Assert.Equal(before, after);
     }
 
