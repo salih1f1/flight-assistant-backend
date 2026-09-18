@@ -227,8 +227,16 @@ namespace FlightAssistant.Application.ReferenceData
                 {
                     await airports.SaveChangesAsync(ct).ConfigureAwait(false);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (ex is not OperationCanceledException && !ct.IsCancellationRequested)
                 {
+                    // This repository's established idiom for telling "our own failure" apart from
+                    // "the caller abandoned the request" is the token, not the exception type (see
+                    // AdminHealthReportBuilder, #453) -- a type-only filter does not step aside if
+                    // EF or Npgsql ever delivers a cancelled save wrapped (a DbUpdateException or
+                    // AggregateException around an OperationCanceledException), which would
+                    // otherwise log this as an Error and return Unavailable instead of letting the
+                    // cancellation propagate.
+                    //
                     // Application cannot see EF Core's DbUpdateException -- that boundary is
                     // deliberate (#465 review: worth more than eliminating a rare 500, and
                     // translating it inside AirportRepository would change error behaviour for
