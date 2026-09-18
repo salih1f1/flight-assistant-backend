@@ -67,7 +67,8 @@ namespace FlightAssistant.API.Endpoints.Admin
                 await BuildMigrationsAsync(db, includeDiagnostics, logger, ct),
                 BuildFlightSync(heartbeat, configuration, includeDiagnostics),
                 await BuildVerificationAsync(
-                    verificationHeartbeat, verificationOptions.Value.Enabled, verificationRequests, includeDiagnostics, logger, ct));
+                    verificationHeartbeat, verificationOptions.Value.Enabled, verificationOptions.Value.StaleAfterDays,
+                    verificationRequests, includeDiagnostics, logger, ct));
         }
 
         private static AdminHealthCheckDto BuildCheck(string name, HealthReportEntry entry, bool includeDiagnostics)
@@ -231,6 +232,7 @@ namespace FlightAssistant.API.Endpoints.Admin
         public static async Task<AdminHealthVerificationDto> BuildVerificationAsync(
             VerificationJobHeartbeat heartbeat,
             bool enabled,
+            int staleAfterDays,
             IVerificationRequestRepository requests,
             bool includeDiagnostics,
             ILogger logger,
@@ -279,6 +281,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                 snapshot.NextRunDueUtc,
                 includeDiagnostics ? snapshot.LastError : null,
                 pendingCount,
+                staleAfterDays,
                 snapshot.RequestsPaused,
                 recentFailures);
         }
