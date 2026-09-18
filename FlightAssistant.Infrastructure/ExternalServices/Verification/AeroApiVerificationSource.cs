@@ -265,6 +265,11 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                 };
             }
 
+            // Not a checked column, so VerificationComparer ignores it (#465). Carried because
+            // Airline.CountryCode is a required foreign key and this name is the only country
+            // information AeroAPI gives us; ICountryNameResolver turns it into a code.
+            values[VerificationExtraValues.AirlineCountryName] = GetString(root, "country");
+
             return values;
         }
 
