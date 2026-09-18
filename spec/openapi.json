@@ -5990,6 +5990,9 @@
               "type": "string"
             },
             "nullable": true
+          },
+          "sensitive": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false

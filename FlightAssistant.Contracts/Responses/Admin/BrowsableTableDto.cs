@@ -19,5 +19,9 @@ namespace FlightAssistant.Contracts.Responses.Admin
     /// offering one the API would answer with a 400.</param>
     /// <param name="Values">The names a value may take, for <c>Enum</c> alone; <c>null</c> for every
     /// other kind, which is what tells the panel to render something other than a picker.</param>
-    public sealed record BrowsableColumnDto(string Name, string Kind, IReadOnlyList<string>? Values);
+    /// <param name="Sensitive">Whether the column is masked: its value is <c>"&lt;redacted&gt;"</c>
+    /// in every response, and a filter on it answers 400 (#485). Said outright so a client need not
+    /// infer it from a page of redacted values — which is impossible on a page with no rows, such as
+    /// a filter that matches nothing. <c>Kind</c> stays the column's real type.</param>
+    public sealed record BrowsableColumnDto(string Name, string Kind, IReadOnlyList<string>? Values, bool Sensitive);
 }

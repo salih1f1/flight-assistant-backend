@@ -56,7 +56,9 @@ namespace FlightAssistant.Application.Queries.Admin.Data
         private static IReadOnlyList<BrowsableColumn> Describe(BrowsableTable table) =>
             table.Columns
                 .Select(name => BrowsableColumnKinds.Describe(
-                    table.EntityType.GetProperty(name, BindingFlags.Public | BindingFlags.Instance)!.PropertyType, name))
+                    table.EntityType.GetProperty(name, BindingFlags.Public | BindingFlags.Instance)!.PropertyType,
+                    name,
+                    SensitiveProperties.IsSensitive(table.EntityType, name)))
                 .ToList();
     }
 }

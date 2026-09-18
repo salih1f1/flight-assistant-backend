@@ -60,11 +60,11 @@ namespace FlightAssistant.Application.Tests.Administration
         [Fact]
         public void Describe_GivesAnEnumColumnItsValues_AndEveryOtherKindNone()
         {
-            var status = BrowsableColumnKinds.Describe(typeof(VerificationRequestStatus), "Status");
+            var status = BrowsableColumnKinds.Describe(typeof(VerificationRequestStatus), "Status", sensitive: false);
             Assert.Equal(BrowsableColumnKind.Enum, status.Kind);
             Assert.Equal(Enum.GetNames<VerificationRequestStatus>(), status.Values);
 
-            var requested = BrowsableColumnKinds.Describe(typeof(DateTime), "RequestedUtc");
+            var requested = BrowsableColumnKinds.Describe(typeof(DateTime), "RequestedUtc", sensitive: false);
             Assert.Equal(BrowsableColumnKind.Date, requested.Kind);
             Assert.Null(requested.Values);
         }
@@ -80,7 +80,7 @@ namespace FlightAssistant.Application.Tests.Administration
                 foreach (var columnName in table.Columns)
                 {
                     var property = table.EntityType.GetProperty(columnName, BindingFlags.Public | BindingFlags.Instance)!;
-                    var column = BrowsableColumnKinds.Describe(property.PropertyType, columnName);
+                    var column = BrowsableColumnKinds.Describe(property.PropertyType, columnName, sensitive: false);
 
                     Assert.Equal(columnName, column.Name);
                     Assert.True(
@@ -100,7 +100,8 @@ namespace FlightAssistant.Application.Tests.Administration
         {
             var table = BrowsableTables.All.Single(t => t.Slug == "verification-requests");
             var status = BrowsableColumnKinds.Describe(
-                table.EntityType.GetProperty("Status", BindingFlags.Public | BindingFlags.Instance)!.PropertyType, "Status");
+                table.EntityType.GetProperty("Status", BindingFlags.Public | BindingFlags.Instance)!.PropertyType,
+                "Status", sensitive: false);
 
             Assert.Equal(BrowsableColumnKind.Enum, status.Kind);
             Assert.Contains("Pending", status.Values!);

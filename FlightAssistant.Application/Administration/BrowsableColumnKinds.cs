@@ -30,7 +30,13 @@ namespace FlightAssistant.Application.Administration
     /// <param name="Values">The names a value may take, for <see cref="BrowsableColumnKind.Enum"/>
     /// alone; null for every other kind, which is what tells the panel to render something other
     /// than a picker.</param>
-    public sealed record BrowsableColumn(string Name, BrowsableColumnKind Kind, IReadOnlyList<string>? Values);
+    /// <param name="Sensitive">Whether <c>SensitiveProperties</c> masks this column — its value is
+    /// replaced with the redacted placeholder in every response, and a filter on it is a 400
+    /// (#485). Independent of <paramref name="Kind"/>, which stays the column's real type:
+    /// a client that only learned "sensitive" by noticing a whole page of redacted values cannot
+    /// learn it at all from a page with no rows.</param>
+    public sealed record BrowsableColumn(
+        string Name, BrowsableColumnKind Kind, IReadOnlyList<string>? Values, bool Sensitive);
 
     /// <summary>
     /// Classifies a browsable column's CLR type. The single source of truth for which types the data
@@ -64,15 +70,19 @@ namespace FlightAssistant.Application.Administration
             type == typeof(int) || type == typeof(long) || type == typeof(short)
             || type == typeof(double) || type == typeof(float) || type == typeof(decimal);
 
-        /// <summary>The column as the listing publishes it, values and all.</summary>
-        public static BrowsableColumn Describe(Type type, string name)
+        /// <summary>
+        /// The column as the listing publishes it, values and all. <paramref name="sensitive"/> is
+        /// passed in rather than worked out here: it is a fact about the property on its entity,
+        /// which this class — which knows only CLR types — has no way to ask about.
+        /// </summary>
+        public static BrowsableColumn Describe(Type type, string name, bool sensitive)
         {
             var kind = Classify(type);
             var values = kind == BrowsableColumnKind.Enum
                 ? Enum.GetNames(Nullable.GetUnderlyingType(type) ?? type)
                 : null;
 
-            return new BrowsableColumn(name, kind, values);
+            return new BrowsableColumn(name, kind, values, sensitive);
         }
     }
 }

@@ -30,7 +30,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                         s.DisplayName,
                         s.RowCount,
                         // The kind goes out as its name, never its number: the panel keys off it.
-                        s.Columns.Select(c => new BrowsableColumnDto(c.Name, c.Kind.ToString(), c.Values)).ToList()))
+                        s.Columns.Select(c => new BrowsableColumnDto(c.Name, c.Kind.ToString(), c.Values, c.Sensitive)).ToList()))
                     .ToList();
                 return Results.Ok(dtos);
             })
