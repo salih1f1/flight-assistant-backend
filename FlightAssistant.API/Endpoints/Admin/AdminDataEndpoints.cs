@@ -44,7 +44,11 @@ namespace FlightAssistant.API.Endpoints.Admin
                 string table,
                 [AsParameters] PagedRequest paging,
                 string? sort,
-                string? filter,
+                // Repeated, not separated: ?filter=Country:TR&filter=Name:air (#476). Minimal APIs
+                // bind a repeated query parameter to an array natively, and repeating it needs no
+                // escaping rule — these values are names and free text, where a separator character
+                // would be ordinary content.
+                string[]? filter,
                 IMediator mediator,
                 CancellationToken ct) =>
             {

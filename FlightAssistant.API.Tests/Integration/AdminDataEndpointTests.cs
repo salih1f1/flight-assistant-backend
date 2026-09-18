@@ -264,6 +264,59 @@ public class AdminDataEndpointTests(FlightAssistantWebApplicationFactory factory
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    // ── Several filters, ANDed (#476) ───────────────────────────────────────────
+
+    /// <summary>
+    /// The marker keeps this test's rows apart from every other test's in a shared database; the
+    /// second criterion is what the test is actually about. Both rows carry the marker, so a fold
+    /// that kept only one criterion would return 2 where ANDing returns 1.
+    /// </summary>
+    [Fact]
+    public async Task GetTableData_TwoFilters_ReturnsOnlyRowsMatchingBoth()
+    {
+        var marker = Marker();
+        await SeedAsync(db => db.Travelers.AddRange(
+            Traveler.Register($"ada-{marker}@example.com", $"Ada {marker}"),
+            Traveler.Register($"bob-{marker}@example.com", $"Bob {marker}")));
+
+        var result = await GetTableDataAsync(
+            factory.CreateAdminClient(),
+            $"admin/data/travelers?filter=DisplayName:{Uri.EscapeDataString(marker)}&filter=DisplayName:Ada");
+
+        Assert.Equal(1, result.Total);
+        Assert.StartsWith("Ada", Assert.Single(result.Items)[nameof(Traveler.DisplayName)].GetString());
+    }
+
+    [Fact]
+    public async Task GetTableData_OneOfSeveralFilterColumnsUnknown_Returns400_NamingIt()
+    {
+        var response = await factory.CreateAdminClient()
+            .GetAsync("admin/data/travelers?filter=DisplayName:a&filter=NotARealColumn:x");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("NotARealColumn", await response.Content.ReadAsStringAsync());
+    }
+
+    /// <summary>
+    /// The compatibility guarantee behind the whole repeated-parameter choice: a single
+    /// <c>filter=</c> is a list of one and behaves exactly as it did before #476 — the shape every
+    /// existing panel link, dashboard tile and bookmark uses.
+    /// </summary>
+    [Fact]
+    public async Task GetTableData_ASingleFilter_StillBehavesAsItAlwaysHas()
+    {
+        var marker = Marker();
+        await SeedAsync(db => db.Travelers.AddRange(
+            Traveler.Register($"ada-{marker}@example.com", $"Ada {marker}"),
+            Traveler.Register($"bob-{marker}@example.com", $"Bob {marker}")));
+
+        var result = await GetTableDataAsync(
+            factory.CreateAdminClient(),
+            $"admin/data/travelers?filter=DisplayName:{Uri.EscapeDataString(marker)}");
+
+        Assert.Equal(2, result.Total);
+    }
+
     // ── Sensitive column in sort/filter ─────────────────────────────────────────
 
     [Fact]

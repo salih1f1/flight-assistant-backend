@@ -28,23 +28,31 @@ namespace FlightAssistant.Application.Queries.Admin.Data
     /// paging is still stable in that case via the primary-key tiebreaker
     /// <see cref="IBrowsableDataRepository.QueryAsync"/> always appends.
     /// </param>
-    /// <param name="Filter">
-    /// <c>column:value</c> — exact match for a non-string column, case-insensitive <c>contains</c>
-    /// for a string column. On a string column, a value of exactly <c>*</c> means "has a value":
-    /// not null, and not blank — non-empty after trimming whitespace (#385), so a whitespace-only
-    /// value does not count; <c>*</c> anywhere else in the value, including alongside other text,
-    /// stays a literal character to find by <c>contains</c>. On a non-string column <c>*</c> is not
-    /// special-cased — it is simply an unparseable value, a 400, same as today. On a date column,
-    /// <c>column:&gt;=value</c> means "on or after" and a null
-    /// date never matches (#334); on a string column the <c>&gt;=</c> stays part of the text to find.
-    /// Split on the *first* colon only, since a filter value (an ISO-8601 timestamp, for instance)
-    /// can itself contain colons.
+    /// <param name="Filters">
+    /// Zero or more criteria, each <c>column:value</c>, <b>combined with AND</b> — every one must
+    /// match (#476). On the wire this is the <c>filter</c> query parameter, repeated:
+    /// <c>?filter=Country:TR&amp;filter=Name:air</c>. A single <c>filter</c> is a list of one and
+    /// behaves exactly as it always has, which is what keeps every existing link and bookmark
+    /// working.
+    ///
+    /// <para>Per criterion, unchanged: exact match for a non-string column, case-insensitive
+    /// <c>contains</c> for a string column. On a string column, a value of exactly <c>*</c> means
+    /// "has a value" — not null, and not blank, non-empty after trimming whitespace (#385) — while
+    /// <c>*</c> anywhere else in the value, including alongside other text, stays a literal
+    /// character to find by <c>contains</c>. On a non-string column <c>*</c> is not special-cased —
+    /// it is simply an unparseable value, a 400. On a date column, <c>column:&gt;=value</c> means
+    /// "on or after" and a null date never matches (#334); on a string column the <c>&gt;=</c>
+    /// stays part of the text to find. Each criterion is split on its *first* colon only, since a
+    /// value (an ISO-8601 timestamp, for instance) can itself contain colons.</para>
+    ///
+    /// <para>Repeats of the same column are legitimate and AND like any other pair:
+    /// <c>?filter=Name:air&amp;filter=Name:tur</c> requires both substrings.</para>
     /// </param>
     public sealed record GetBrowsableDataQuery(
         string Table,
         PagedRequest Paging,
         string? Sort = null,
-        string? Filter = null) : IRequest<PagedResult<Dictionary<string, object?>>>
+        IReadOnlyList<string>? Filters = null) : IRequest<PagedResult<Dictionary<string, object?>>>
     {
         /// <summary>The column name portion of <see cref="Sort"/>, with a leading <c>-</c> (if any)
         /// stripped. <c>null</c> when <see cref="Sort"/> is null or empty.</summary>
@@ -54,20 +62,17 @@ namespace FlightAssistant.Application.Queries.Admin.Data
         public bool SortDescending => !string.IsNullOrEmpty(Sort) && Sort[0] == '-';
 
         /// <summary>
-        /// <see cref="Filter"/> split into its column and value halves on the first <c>:</c>, or
-        /// <c>null</c> when <see cref="Filter"/> is empty or carries no colon at all (a malformed
-        /// filter — <see cref="GetBrowsableDataQueryValidator"/> rejects that case with a 400 before
-        /// this is ever read for real).
+        /// Each of <see cref="Filters"/> split into its column and value halves on the first
+        /// <c>:</c>, in the order given. A criterion that is empty or carries no colon at all is
+        /// dropped here — a malformed filter, which <see cref="GetBrowsableDataQueryValidator"/>
+        /// rejects with a 400 before this is ever read for real. Empty when nothing was filtered on.
         /// </summary>
-        public (string Column, string Value)? ParsedFilter
-        {
-            get
-            {
-                if (string.IsNullOrEmpty(Filter)) return null;
-                var separator = Filter.IndexOf(':');
-                return separator < 0 ? null : (Filter[..separator], Filter[(separator + 1)..]);
-            }
-        }
+        public IReadOnlyList<(string Column, string Value)> ParsedFilters =>
+            (Filters ?? [])
+                .Select(filter => (Filter: filter, Separator: filter?.IndexOf(':') ?? -1))
+                .Where(x => x.Separator >= 0)
+                .Select(x => (Column: x.Filter![..x.Separator], Value: x.Filter[(x.Separator + 1)..]))
+                .ToList();
     }
 
     public sealed class GetBrowsableDataQueryValidator : AbstractValidator<GetBrowsableDataQuery>
@@ -76,10 +81,12 @@ namespace FlightAssistant.Application.Queries.Admin.Data
         {
             RuleFor(x => x.Paging).SetValidator(new PagedRequestValidator());
 
-            RuleFor(x => x)
-                .Must(x => string.IsNullOrEmpty(x.Filter) || x.Filter.Contains(':'))
+            RuleForEach(x => x.Filters)
+                .Must(filter => !string.IsNullOrEmpty(filter) && filter.Contains(':'))
                 .WithName("filter")
-                .WithMessage(x => $"Filter '{x.Filter}' must be in the form 'column:value'.");
+                // The two-argument overload: RuleForEach hands a one-argument message lambda the
+                // root query, not the element, so naming the offending criterion needs both.
+                .WithMessage((_, filter) => $"Filter '{filter}' must be in the form 'column:value'.");
 
             RuleFor(x => x)
                 .Must(BeAnExposedNonSensitiveSortColumn)
@@ -87,7 +94,7 @@ namespace FlightAssistant.Application.Queries.Admin.Data
                 .WithMessage(SortErrorMessage);
 
             RuleFor(x => x)
-                .Must(BeAnExposedNonSensitiveFilterColumn)
+                .Must(BeAllExposedNonSensitiveFilterColumns)
                 .WithName("filter")
                 .WithMessage(FilterErrorMessage);
         }
@@ -119,27 +126,35 @@ namespace FlightAssistant.Application.Queries.Admin.Data
             return $"Unknown sort column '{query.SortColumn}'. Valid columns: {string.Join(", ", table.Columns)}.";
         }
 
-        private static bool BeAnExposedNonSensitiveFilterColumn(GetBrowsableDataQuery query)
+        private static bool BeAllExposedNonSensitiveFilterColumns(GetBrowsableDataQuery query)
         {
-            var filter = query.ParsedFilter;
-            if (filter is null) return true;
             var table = BrowsableTables.TryGetBySlug(query.Table);
             if (table is null) return true;
 
-            return BrowsableTables.IsColumnExposed(query.Table, filter.Value.Column)
-                && !SensitiveProperties.IsSensitive(table.EntityType, filter.Value.Column);
+            return query.ParsedFilters.All(filter =>
+                BrowsableTables.IsColumnExposed(query.Table, filter.Column)
+                && !SensitiveProperties.IsSensitive(table.EntityType, filter.Column));
         }
 
+        /// <summary>
+        /// One message covering every criterion that failed, each named. With several filters in
+        /// play, "Invalid filter column." alone does not say which one to fix — and being told
+        /// about the second only after fixing the first is the round-trip that produces.
+        /// </summary>
         private static string FilterErrorMessage(GetBrowsableDataQuery query)
         {
             var table = BrowsableTables.TryGetBySlug(query.Table);
-            var filter = query.ParsedFilter;
-            if (table is null || filter is null) return "Invalid filter column.";
+            if (table is null) return "Invalid filter column.";
 
-            if (SensitiveProperties.IsSensitive(table.EntityType, filter.Value.Column))
-                return $"Column '{filter.Value.Column}' is sensitive and cannot be filtered on.";
+            var problems = query.ParsedFilters
+                .Where(filter => !BrowsableTables.IsColumnExposed(query.Table, filter.Column)
+                    || SensitiveProperties.IsSensitive(table.EntityType, filter.Column))
+                .Select(filter => SensitiveProperties.IsSensitive(table.EntityType, filter.Column)
+                    ? $"Column '{filter.Column}' is sensitive and cannot be filtered on."
+                    : $"Unknown filter column '{filter.Column}'. Valid columns: {string.Join(", ", table.Columns)}.")
+                .ToList();
 
-            return $"Unknown filter column '{filter.Value.Column}'. Valid columns: {string.Join(", ", table.Columns)}.";
+            return problems.Count == 0 ? "Invalid filter column." : string.Join(" ", problems);
         }
     }
 
@@ -155,15 +170,13 @@ namespace FlightAssistant.Application.Queries.Admin.Data
             var table = BrowsableTables.TryGetBySlug(request.Table)
                 ?? throw new DomainException($"Unknown table '{request.Table}'.", 404);
 
-            var filter = request.ParsedFilter;
-
             var (rows, total) = await _repository.QueryAsync(
                 table,
                 request.Paging.Page,
                 request.Paging.PageSize,
                 request.SortColumn,
                 request.SortDescending,
-                filter is null ? [] : [(filter.Value.Column, filter.Value.Value)],
+                request.ParsedFilters,
                 ct);
 
             // Masking and enum rendering ship here, not in the repository: every column the repository
