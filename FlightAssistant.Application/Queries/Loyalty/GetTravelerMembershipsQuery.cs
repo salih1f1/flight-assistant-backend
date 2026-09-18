@@ -11,8 +11,7 @@ namespace FlightAssistant.Application.Queries.Loyalty
         int ProgramId,
         string AccountNumber,
         int? TierId,
-        DateOnly? TierExpiryDate,
-        DateOnly? PointsExpiryDate
+        DateOnly? TierExpiryDate
     );
 
     public record GetTravelerMembershipsQuery(Guid TravelerId, PagedRequest Paging) : IRequest<PagedResult<MembershipResult>>;
@@ -35,7 +34,7 @@ namespace FlightAssistant.Application.Queries.Loyalty
         {
             var (memberships, total) = await _loyalty.GetMembershipsForTravelerAsync(query.TravelerId, query.Paging.Page, query.Paging.PageSize, ct);
             var items = memberships.Select(m => new MembershipResult(
-                m.Id, m.ProgramId, m.AccountNumber, m.TierId, m.TierExpiryDate, m.PointsExpiryDate
+                m.Id, m.ProgramId, m.AccountNumber, m.TierId, m.TierExpiryDate
             )).ToList();
             return new PagedResult<MembershipResult>(items, total, query.Paging.Page, query.Paging.PageSize);
         }

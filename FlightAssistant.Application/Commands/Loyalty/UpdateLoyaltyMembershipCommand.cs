@@ -9,8 +9,7 @@ namespace FlightAssistant.Application.Commands.Loyalty
         Guid MembershipId,
         string AccountNumber,
         int? TierId,
-        DateOnly? TierExpiryDate,
-        DateOnly? PointsExpiryDate
+        DateOnly? TierExpiryDate
     ) : IRequest;
 
     public sealed class UpdateLoyaltyMembershipCommandHandler : IRequestHandler<UpdateLoyaltyMembershipCommand>
@@ -27,7 +26,7 @@ namespace FlightAssistant.Application.Commands.Loyalty
             if (membership.TravelerId != cmd.TravelerId)
                 throw new DomainException("Cannot update another traveler's membership.", 403);
 
-            membership.Update(cmd.AccountNumber, cmd.TierId, cmd.TierExpiryDate, cmd.PointsExpiryDate);
+            membership.Update(cmd.AccountNumber, cmd.TierId, cmd.TierExpiryDate);
             await _loyalty.SaveChangesAsync(ct);
         }
     }

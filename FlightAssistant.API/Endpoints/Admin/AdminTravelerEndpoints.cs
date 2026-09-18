@@ -36,7 +36,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                         f.DepartureAirportId, f.ArrivalAirportId, f.ServiceDate, f.Notify)).ToList(),
                     result.TrackedFlightsTruncated,
                     result.LoyaltyMemberships.Select(m => new AdminMembershipDto(
-                        m.Id, m.ProgramId, m.AccountNumber, m.TierId, m.TierExpiryDate, m.PointsExpiryDate)).ToList()));
+                        m.Id, m.ProgramId, m.AccountNumber, m.TierId, m.TierExpiryDate)).ToList()));
             })
             .WithName("AdminGetTravelerDetail")
             .WithSummary("Get traveler detail")
@@ -145,8 +145,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                     req.ProgramId,
                     req.AccountNumber,
                     req.TierId,
-                    req.TierExpiryDate,
-                    req.PointsExpiryDate), ct);
+                    req.TierExpiryDate), ct);
 
                 return Results.Created($"/admin/travelers/{id}/detail", new { id = membershipId });
             })
@@ -156,7 +155,7 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "Links a loyalty program membership to this traveler, exactly as POST /loyalty/memberships does " +
                 "for the signed-in traveler. Body fields: ProgramId (from GET /admin/loyalty/programs), " +
                 "AccountNumber, TierId (optional, from that program's tier list), TierExpiryDate (optional, " +
-                "YYYY-MM-DD, today or later), PointsExpiryDate (same). An unknown traveler is a 404 and writes " +
+                "YYYY-MM-DD, today or later). An unknown traveler is a 404 and writes " +
                 "nothing. A ProgramId we don't have, or a TierId belonging to another program, is a 409 and " +
                 "writes nothing. Adding a membership the traveler already has is not refused: the same program " +
                 "can be added twice, as it can through POST /loyalty/memberships.")

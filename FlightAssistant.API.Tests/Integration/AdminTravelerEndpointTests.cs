@@ -584,7 +584,7 @@ public class AdminTravelerEndpointTests(FlightAssistantWebApplicationFactory fac
 
         var response = await factory.CreateAdminClient(adminId.ToString()).PostAsJsonAsync(
             $"admin/travelers/{traveler.Id}/memberships",
-            new AddMembershipRequest(program.Id, "ACC-475", tiers[1].Id, tierExpiry, null));
+            new AddMembershipRequest(program.Id, "ACC-475", tiers[1].Id, tierExpiry));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var membership = Assert.Single(await MembershipsForAsync(traveler.Id));
@@ -607,7 +607,7 @@ public class AdminTravelerEndpointTests(FlightAssistantWebApplicationFactory fac
 
         var response = await factory.CreateAdminClient().PostAsJsonAsync(
             $"admin/travelers/{traveler.Id}/memberships",
-            new AddMembershipRequest(program.Id, "ACC-NO-TIER", null, null, null));
+            new AddMembershipRequest(program.Id, "ACC-NO-TIER", null, null));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var membership = Assert.Single(await MembershipsForAsync(traveler.Id));
@@ -626,7 +626,7 @@ public class AdminTravelerEndpointTests(FlightAssistantWebApplicationFactory fac
 
         var response = await factory.CreateAdminClient().PostAsJsonAsync(
             $"admin/travelers/{travelerId}/memberships",
-            new AddMembershipRequest(program.Id, "ACC-GHOST", null, null, null));
+            new AddMembershipRequest(program.Id, "ACC-GHOST", null, null));
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         Assert.Empty(await MembershipsForAsync(travelerId));
@@ -639,7 +639,7 @@ public class AdminTravelerEndpointTests(FlightAssistantWebApplicationFactory fac
 
         var response = await factory.CreateAdminClient().PostAsJsonAsync(
             $"admin/travelers/{traveler.Id}/memberships",
-            new AddMembershipRequest(987654, "ACC-NO-PROGRAM", null, null, null));
+            new AddMembershipRequest(987654, "ACC-NO-PROGRAM", null, null));
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -660,7 +660,7 @@ public class AdminTravelerEndpointTests(FlightAssistantWebApplicationFactory fac
 
         var response = await factory.CreateAdminClient().PostAsJsonAsync(
             $"admin/travelers/{traveler.Id}/memberships",
-            new AddMembershipRequest(program.Id, "ACC-WRONG-TIER", otherTiers[0].Id, null, null));
+            new AddMembershipRequest(program.Id, "ACC-WRONG-TIER", otherTiers[0].Id, null));
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -681,7 +681,7 @@ public class AdminTravelerEndpointTests(FlightAssistantWebApplicationFactory fac
 
         var response = await factory.CreateAdminClient().PostAsJsonAsync(
             $"admin/travelers/{traveler.Id}/memberships",
-            new AddMembershipRequest(program.Id, "ACC-PAST", null, yesterday, null));
+            new AddMembershipRequest(program.Id, "ACC-PAST", null, yesterday));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync();
@@ -697,7 +697,7 @@ public class AdminTravelerEndpointTests(FlightAssistantWebApplicationFactory fac
 
         var response = await factory.CreateAdminClient().PostAsJsonAsync(
             $"admin/travelers/{traveler.Id}/memberships",
-            new AddMembershipRequest(program.Id, "", null, null, null));
+            new AddMembershipRequest(program.Id, "", null, null));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Empty(await MembershipsForAsync(traveler.Id));
@@ -713,7 +713,7 @@ public class AdminTravelerEndpointTests(FlightAssistantWebApplicationFactory fac
 
         await client.PostAsJsonAsync(
             $"admin/travelers/{traveler.Id}/memberships",
-            new AddMembershipRequest(program.Id, "ACC-DETAIL", tiers[0].Id, null, null));
+            new AddMembershipRequest(program.Id, "ACC-DETAIL", tiers[0].Id, null));
 
         var dto = await client.GetFromJsonAsync<AdminTravelerDetailDto>($"admin/travelers/{traveler.Id}/detail");
         var membership = Assert.Single(dto!.LoyaltyMemberships);

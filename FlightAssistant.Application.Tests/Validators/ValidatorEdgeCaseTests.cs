@@ -278,7 +278,7 @@ public class ValidatorEdgeCaseTests
     public void AddMembership_AccountNumberExceeds64_Fails()
     {
         var v = new AddLoyaltyMembershipCommandValidator();
-        var cmd = new AddLoyaltyMembershipCommand(Guid.NewGuid(), 1, new string('A', 65), null, null, null);
+        var cmd = new AddLoyaltyMembershipCommand(Guid.NewGuid(), 1, new string('A', 65), null, null);
         AssertInvalid(v, cmd, "AccountNumber");
     }
 
@@ -286,7 +286,7 @@ public class ValidatorEdgeCaseTests
     public void AddMembership_AccountNumber64Chars_Passes()
     {
         var v = new AddLoyaltyMembershipCommandValidator();
-        var cmd = new AddLoyaltyMembershipCommand(Guid.NewGuid(), 1, new string('A', 64), null, null, null);
+        var cmd = new AddLoyaltyMembershipCommand(Guid.NewGuid(), 1, new string('A', 64), null, null);
         AssertValid(v, cmd);
     }
 
@@ -295,7 +295,7 @@ public class ValidatorEdgeCaseTests
     {
         var v = new AddLoyaltyMembershipCommandValidator();
         var cmd = new AddLoyaltyMembershipCommand(Guid.NewGuid(), 1, "ACC1", null,
-            DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), null);
+            DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)));
         AssertInvalid(v, cmd, "TierExpiryDate");
     }
 
@@ -304,25 +304,25 @@ public class ValidatorEdgeCaseTests
     {
         var v = new AddLoyaltyMembershipCommandValidator();
         var cmd = new AddLoyaltyMembershipCommand(Guid.NewGuid(), 1, "ACC1", null,
-            DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30)), null);
+            DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30)));
         AssertValid(v, cmd);
     }
 
     [Fact]
-    public void AddMembership_NullExpiryDates_Passes()
+    public void AddMembership_NullTierExpiry_Passes()
     {
         var v = new AddLoyaltyMembershipCommandValidator();
-        var cmd = new AddLoyaltyMembershipCommand(Guid.NewGuid(), 1, "ACC1", null, null, null);
+        var cmd = new AddLoyaltyMembershipCommand(Guid.NewGuid(), 1, "ACC1", null, null);
         AssertValid(v, cmd);
     }
 
     [Fact]
-    public void UpdateMembership_PastPointsExpiry_Fails()
+    public void UpdateMembership_PastTierExpiry_Fails()
     {
         var v = new UpdateLoyaltyMembershipCommandValidator();
         var cmd = new UpdateLoyaltyMembershipCommand(Guid.NewGuid(), Guid.NewGuid(), "ACC1", null,
-            null, DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)));
-        AssertInvalid(v, cmd, "PointsExpiryDate");
+            DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)));
+        AssertInvalid(v, cmd, "TierExpiryDate");
     }
 
     // ── AddDeviceToken platform whitelist ─────────────────────────────────────

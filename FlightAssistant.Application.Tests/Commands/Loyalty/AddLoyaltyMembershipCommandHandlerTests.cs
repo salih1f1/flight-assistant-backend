@@ -21,7 +21,7 @@ public class AddLoyaltyMembershipCommandHandlerTests
     {
         var travelerId = Guid.NewGuid();
         HasProgram(1);
-        var cmd = new AddLoyaltyMembershipCommand(travelerId, 1, "BA123456", null, null, null);
+        var cmd = new AddLoyaltyMembershipCommand(travelerId, 1, "BA123456", null, null);
 
         var id = await _handler.Handle(cmd, CancellationToken.None);
 
@@ -39,7 +39,7 @@ public class AddLoyaltyMembershipCommandHandlerTests
     public async Task AcceptsATierOfTheProgram()
     {
         HasProgram(1, tierIds: [7, 8]);
-        var cmd = new AddLoyaltyMembershipCommand(Guid.NewGuid(), 1, "BA123456", 8, null, null);
+        var cmd = new AddLoyaltyMembershipCommand(Guid.NewGuid(), 1, "BA123456", 8, null);
 
         await _handler.Handle(cmd, CancellationToken.None);
 
@@ -56,7 +56,7 @@ public class AddLoyaltyMembershipCommandHandlerTests
     public async Task UnknownProgram_Throws409_AndWritesNothing()
     {
         _loyalty.GetProgramByIdAsync(1, Arg.Any<CancellationToken>()).Returns((LoyaltyProgram?)null);
-        var cmd = new AddLoyaltyMembershipCommand(Guid.NewGuid(), 1, "BA123456", null, null, null);
+        var cmd = new AddLoyaltyMembershipCommand(Guid.NewGuid(), 1, "BA123456", null, null);
 
         var error = await Assert.ThrowsAsync<DomainException>(() => _handler.Handle(cmd, CancellationToken.None));
 
@@ -74,7 +74,7 @@ public class AddLoyaltyMembershipCommandHandlerTests
     public async Task TierFromAnotherProgram_Throws409_AndWritesNothing()
     {
         HasProgram(1, tierIds: [7]);
-        var cmd = new AddLoyaltyMembershipCommand(Guid.NewGuid(), 1, "BA123456", 99, null, null);
+        var cmd = new AddLoyaltyMembershipCommand(Guid.NewGuid(), 1, "BA123456", 99, null);
 
         var error = await Assert.ThrowsAsync<DomainException>(() => _handler.Handle(cmd, CancellationToken.None));
 

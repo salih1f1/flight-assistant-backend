@@ -36,8 +36,7 @@ public class LoyaltyEndpointTests(FlightAssistantWebApplicationFactory factory)
             programId = 1,
             accountNumber = "ACC123",
             tierId = (int?)null,
-            tierExpiryDate = yesterday,
-            pointsExpiryDate = (string?)null
+            tierExpiryDate = yesterday
         });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -55,11 +54,30 @@ public class LoyaltyEndpointTests(FlightAssistantWebApplicationFactory factory)
             programId = 1,
             accountNumber = new string('A', 65),
             tierId = (int?)null,
-            tierExpiryDate = (string?)null,
-            pointsExpiryDate = (string?)null
+            tierExpiryDate = (string?)null
         });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task AddMembership_BodyStillCarriesPointsExpiry_Returns201()
+    {
+        // Clients written against the old contract keep sending pointsExpiryDate. The field is gone
+        // from the request record, and an unknown JSON property is ignored rather than rejected, so
+        // those callers must go on working (#484).
+        var client = factory.CreateUserClient(Guid.NewGuid().ToString());
+
+        var response = await client.PostAsJsonAsync("loyalty/memberships", new
+        {
+            programId = await SeedLoyaltyProgramAsync(),
+            accountNumber = "ACC123",
+            tierId = (int?)null,
+            tierExpiryDate = (string?)null,
+            pointsExpiryDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30)).ToString("yyyy-MM-dd")
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
     [Fact]
@@ -126,8 +144,7 @@ public class LoyaltyEndpointTests(FlightAssistantWebApplicationFactory factory)
             programId = 987654,
             accountNumber = "ACC123",
             tierId = (int?)null,
-            tierExpiryDate = (string?)null,
-            pointsExpiryDate = (string?)null
+            tierExpiryDate = (string?)null
         });
 
         // Before #475 this reached Postgres and failed its foreign key as a 500.
@@ -141,8 +158,7 @@ public class LoyaltyEndpointTests(FlightAssistantWebApplicationFactory factory)
             programId = await SeedLoyaltyProgramAsync(),
             accountNumber = "ACC123",
             tierId = (int?)null,
-            tierExpiryDate = (string?)null,
-            pointsExpiryDate = (string?)null
+            tierExpiryDate = (string?)null
         });
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -163,8 +179,7 @@ public class LoyaltyEndpointTests(FlightAssistantWebApplicationFactory factory)
         {
             accountNumber = "ACC999",
             tierId = (int?)null,
-            tierExpiryDate = (string?)null,
-            pointsExpiryDate = (string?)null
+            tierExpiryDate = (string?)null
         });
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);

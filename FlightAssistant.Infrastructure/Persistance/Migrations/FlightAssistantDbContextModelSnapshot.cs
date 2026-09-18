@@ -754,9 +754,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<DateOnly?>("PointsExpiryDate")
-                        .HasColumnType("date");
-
                     b.Property<int>("ProgramId")
                         .HasColumnType("integer");
 

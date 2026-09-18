@@ -26,7 +26,7 @@ public class UpdateLoyaltyMembershipCommandHandlerTests
 
         _loyalty.GetMembershipByIdAsync(membershipId, Arg.Any<CancellationToken>()).Returns(membership);
 
-        var cmd = new UpdateLoyaltyMembershipCommand(travelerId, membershipId, "NEW-NUM", 2, null, null);
+        var cmd = new UpdateLoyaltyMembershipCommand(travelerId, membershipId, "NEW-NUM", 2, null);
         await _handler.Handle(cmd, CancellationToken.None);
 
         Assert.Equal("NEW-NUM", membership.AccountNumber);
@@ -41,7 +41,7 @@ public class UpdateLoyaltyMembershipCommandHandlerTests
         var membership = TravelerLoyaltyMembership.Create(Guid.NewGuid(), 1, "NUM");
         _loyalty.GetMembershipByIdAsync(membershipId, Arg.Any<CancellationToken>()).Returns(membership);
 
-        var cmd = new UpdateLoyaltyMembershipCommand(Guid.NewGuid() /* different traveler */, membershipId, "NUM", null, null, null);
+        var cmd = new UpdateLoyaltyMembershipCommand(Guid.NewGuid() /* different traveler */, membershipId, "NUM", null, null);
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             _handler.Handle(cmd, CancellationToken.None));
@@ -54,7 +54,7 @@ public class UpdateLoyaltyMembershipCommandHandlerTests
         _loyalty.GetMembershipByIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
-            _handler.Handle(new UpdateLoyaltyMembershipCommand(Guid.NewGuid(), Guid.NewGuid(), "X", null, null, null), CancellationToken.None));
+            _handler.Handle(new UpdateLoyaltyMembershipCommand(Guid.NewGuid(), Guid.NewGuid(), "X", null, null), CancellationToken.None));
         Assert.Equal(404, ex.StatusCode);
     }
 }
