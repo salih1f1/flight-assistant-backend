@@ -163,8 +163,7 @@ namespace FlightAssistant.Application.Queries.Admin.Data
                 request.Paging.PageSize,
                 request.SortColumn,
                 request.SortDescending,
-                filter?.Column,
-                filter?.Value,
+                filter is null ? [] : [(filter.Value.Column, filter.Value.Value)],
                 ct);
 
             // Masking and enum rendering ship here, not in the repository: every column the repository
