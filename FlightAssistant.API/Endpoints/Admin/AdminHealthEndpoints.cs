@@ -72,11 +72,14 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "verification job's last-cycle heartbeat with its pending request count. Exception " +
                 "detail on individual checks and both jobs' last errors render outside Production " +
                 "only.")
-            .Produces<AdminHealthDto>(200)
-            // Every known failure mode degrades gracefully into the 200 payload (including a
-            // database outage — final review C1); this stays reachable for anything unexpected,
-            // e.g. HealthCheckService itself throwing.
-            .ProducesProblem(500);
+            // 200 only. Every known failure mode degrades gracefully into the payload (including a
+            // database outage — final review C1), and the one route left to a 500 is
+            // GlobalExceptionHandler's default: arm, which all 72 admin operations share. That is
+            // ambient, and CLAUDE.md's rule is that ambient statuses are not declared per route
+            // (#416). Declaring it also contradicted this route's own contract: the report is
+            // always 200 so the panel's error handling cannot swallow the body explaining what
+            // broke. AdminServerErrorDeclarationTests pins both halves.
+            .Produces<AdminHealthDto>(200);
 
             // GET /admin/health/sources
             admin.MapGet("health/sources", async (IMediator mediator, IHostEnvironment env, CancellationToken ct) =>
