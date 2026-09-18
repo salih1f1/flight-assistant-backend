@@ -4,12 +4,14 @@ using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
+using FlightAssistant.Application.Interfaces.DataSources;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Infrastructure.ExternalServices;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
+using FlightAssistant.Infrastructure.DataSources;
 using FlightAssistant.Infrastructure.ExternalServices.AeroDataBox;
 using FlightAssistant.Infrastructure.ExternalServices.GitHub;
 using FlightAssistant.Infrastructure.ExternalServices.Verification;
@@ -60,8 +62,14 @@ namespace FlightAssistant.Infrastructure
             // its own port rather than living on IRefDataRepository or IVerificationRequestRepository.
             services.AddScoped<IVerificationNeedsAttentionRepository, VerificationNeedsAttentionRepository>();
 
-            // Data-source health (#460): the status table behind the /health page.
+            // Data-source health (#460): the status table behind the /health page, the catalog of
+            // what is watched, and the in-memory observer every seam records into. The observer is
+            // registered under its own type and under IDataSourceObserver as the SAME instance —
+            // the pattern AeroApiThrottleGate uses — since a second copy would buffer into nothing.
             services.AddScoped<IDataSourceStatusRepository, DataSourceStatusRepository>();
+            services.AddSingleton<IDataSourceCatalog, DataSourceCatalog>();
+            services.AddSingleton<BufferedDataSourceObserver>();
+            services.AddSingleton<IDataSourceObserver>(sp => sp.GetRequiredService<BufferedDataSourceObserver>());
 
             // Verification sources (#367 task 3): the two free outside datasets an automated check
             // can name. Both hold no credentials — OurAirports and mledoze's raw GitHub file are

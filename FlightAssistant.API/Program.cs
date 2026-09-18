@@ -156,6 +156,10 @@ if (!string.IsNullOrWhiteSpace(redisConnStr))
 builder.Services.AddFlightSync();
 builder.Services.AddVerificationJob();
 
+// #460: drains the in-memory data-source observations into data_source_status. Unconditional —
+// it only persists what other call paths already observed, and starts no traffic of its own.
+builder.Services.AddHostedService<DataSourceFlushService>();
+
 // ------------------------------------------------------------
 // 3. Authentication & Authorization
 // ------------------------------------------------------------
