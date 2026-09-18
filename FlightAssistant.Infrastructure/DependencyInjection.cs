@@ -99,13 +99,15 @@ namespace FlightAssistant.Infrastructure
             {
                 client.DefaultRequestHeaders.UserAgent.ParseAdd("FlightAssistant-VerificationJob");
                 client.Timeout = OurAirportsVerificationSource.DownloadTimeout + TimeSpan.FromSeconds(30);
-            });
+            })
+                .AddDataSourceObservation(DataSourceKeys.OurAirports);
 
             services.AddHttpClient(MledozeCountriesVerificationSource.HttpClientName, client =>
             {
                 client.DefaultRequestHeaders.UserAgent.ParseAdd("FlightAssistant-VerificationJob");
                 client.Timeout = MledozeCountriesVerificationSource.DownloadTimeout + TimeSpan.FromSeconds(30);
-            });
+            })
+                .AddDataSourceObservation(DataSourceKeys.Mledoze);
 
             services.AddSingleton(sp => new OurAirportsVerificationSource(
                 sp.GetRequiredService<IHttpClientFactory>(),
@@ -233,6 +235,7 @@ namespace FlightAssistant.Infrastructure
             });
 
             aeroApiClientBuilder.AddHttpMessageHandler<AeroApiThrottlingHandler>();
+            aeroApiClientBuilder.AddDataSourceObservation(DataSourceKeys.AeroApi);
 
             services.AddScoped(sp => new AeroApiAirportTimezoneLookup(
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient(AeroApiVerificationSource.HttpClientName),
@@ -278,7 +281,8 @@ namespace FlightAssistant.Infrastructure
                 client.DefaultRequestHeaders.Add("X-RapidAPI-Host", AeroDataBoxOptions.RapidApiHost);
                 client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
             })
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+            .AddDataSourceObservation(DataSourceKeys.AeroDataBox);
 
             services.AddScoped(sp => new AeroDataBoxFlightSearchProvider(
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient(AeroDataBoxFlightSearchProvider.HttpClientName),
@@ -385,11 +389,13 @@ namespace FlightAssistant.Infrastructure
                         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.Token);
                     client.Timeout = TimeSpan.FromSeconds(30);
                 })
-                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+                .AddDataSourceObservation(DataSourceKeys.GitHub);
 
             services.AddHttpClient(GitHubCiRunProvider.DownloadClientName, client =>
                     client.Timeout = TimeSpan.FromSeconds(60))
-                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+                .AddDataSourceObservation($"{DataSourceKeys.GitHub}-download");
 
             services.AddScoped<ICiRunProvider>(sp =>
             {
