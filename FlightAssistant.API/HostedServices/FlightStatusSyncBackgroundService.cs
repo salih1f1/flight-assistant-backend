@@ -1,5 +1,7 @@
 using FlightAssistant.Application.Commands.Flights;
+using FlightAssistant.Application.Interfaces.Jobs;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Jobs;
 using MediatR;
 using Microsoft.Extensions.Options;
 
@@ -18,28 +20,33 @@ namespace FlightAssistant.API.HostedServices
         private readonly TimeProvider _timeProvider;
         private readonly ILogger<FlightStatusSyncBackgroundService> _log;
         private readonly FlightSyncHeartbeat _heartbeat;
+        private readonly IJobSwitch _jobSwitch;
 
         public FlightStatusSyncBackgroundService(
             IServiceScopeFactory scopeFactory,
             IOptions<FlightSyncOptions> options,
             TimeProvider timeProvider,
             ILogger<FlightStatusSyncBackgroundService> log,
-            FlightSyncHeartbeat heartbeat)
+            FlightSyncHeartbeat heartbeat,
+            IJobSwitch jobSwitch)
         {
             _scopeFactory = scopeFactory;
             _options = options.Value;
             _timeProvider = timeProvider;
             _log = log;
             _heartbeat = heartbeat;
+            _jobSwitch = jobSwitch;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            // Unchanged (#471): the config ceiling still terminates the service. Nothing reachable
+            // from the admin panel can lift it, so there is no reason to keep a loop alive for it —
+            // and the heartbeat still stays NeverRun, which is what makes /admin/health say
+            // "disabled" here rather than "broken".
             if (!_options.Enabled)
             {
                 _log.LogInformation("FlightStatusSyncBackgroundService is disabled via config.");
-                // Heartbeat is left untouched: it must stay NeverRun so the admin health endpoint
-                // can render "disabled" rather than "broken".
                 return;
             }
 
@@ -50,6 +57,14 @@ namespace FlightAssistant.API.HostedServices
             {
                 do
                 {
+                    // Read per tick, not once: the switch is what an admin can change while this
+                    // loop is running, and a loop that read it once could never be switched back on.
+                    if (!await _jobSwitch.IsEnabledAsync(JobNames.FlightSync, stoppingToken))
+                    {
+                        _heartbeat.MarkSwitchedOff();
+                        continue;
+                    }
+
                     await RunAndRecordAsync(stoppingToken);
                 }
                 while (await timer.WaitForNextTickAsync(stoppingToken));
