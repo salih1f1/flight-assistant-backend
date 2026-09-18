@@ -40,6 +40,23 @@ public class AdminImportEndpointTests(FlightAssistantWebApplicationFactory facto
         return line.Split(',');
     }
 
+    /// <summary>
+    /// Imports the countries an airport row below references. Airports carry a foreign key to
+    /// <c>countries</c>, and #455 now refuses an airport whose country we do not have, so the
+    /// documented import order — alliances, countries, airports, airlines — has to be followed
+    /// here too. This suite runs on InMemory, which enforces no foreign key, which is exactly why
+    /// these rows got away without it before the guard existed.
+    /// </summary>
+    private static async Task GivenCountriesAsync(HttpClient client)
+    {
+        const string countriesCsv = """
+            Code,Name,Alpha3,NumericCode,Region,Subregion,IsEU,IsSchengen,IsEEA
+            GB,United Kingdom,GBR,826,Europe,Northern Europe,false,false,false
+            """;
+        var response = await client.PostAsync("admin/import/countries", BuildMultipart(countriesCsv));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     [Fact]
     public async Task ImportAlliances_ValidCsv_Returns200()
     {
@@ -54,6 +71,7 @@ public class AdminImportEndpointTests(FlightAssistantWebApplicationFactory facto
     public async Task ImportLounges_MixOfValidAndInvalidRows_Returns207()
     {
         var client = factory.CreateAdminClient();
+        await GivenCountriesAsync(client);
 
         const string airportsCsv = """
             Iata,Icao,Name,City,CountryCode,Latitude,Longitude,ElevationFt
@@ -259,6 +277,7 @@ public class AdminImportEndpointTests(FlightAssistantWebApplicationFactory facto
     public async Task ImportExportRoundTrip_Lounges_KeepsVerificationDetails()
     {
         var client = factory.CreateAdminClient();
+        await GivenCountriesAsync(client);
 
         const string airportsCsv = """
             Iata,Icao,Name,City,CountryCode,Latitude,Longitude,ElevationFt

@@ -40,8 +40,10 @@ namespace FlightAssistant.API.Endpoints.Admin
             })
             .WithName("AdminCreateLoyaltyProgram")
             .WithSummary("Create loyalty program")
+            .WithDescription("409 when KindId or AirlineId names a row that does not exist.")
             .Produces(201)
-            .ProducesValidationProblem();
+            .ProducesValidationProblem()
+            .ProducesProblem(409);
 
             // PUT /admin/loyalty/programs/{id}
             group.MapPut("programs/{id:int}", async (int id, [FromBody] UpdateLoyaltyProgramRequest req, IMediator mediator, CancellationToken ct) =>
@@ -51,9 +53,11 @@ namespace FlightAssistant.API.Endpoints.Admin
             })
             .WithName("AdminUpdateLoyaltyProgram")
             .WithSummary("Update loyalty program")
+            .WithDescription("409 when KindId or AirlineId names a row that does not exist.")
             .Produces(204)
             .ProducesValidationProblem()
-            .ProducesProblem(404);
+            .ProducesProblem(404)
+            .ProducesProblem(409);
 
             // DELETE /admin/loyalty/programs/{id}
             group.MapDelete("programs/{id:int}", async (int id, IMediator mediator, CancellationToken ct) =>

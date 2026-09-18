@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using FlightAssistant.Application.Commands.Admin.Common;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FluentValidation;
@@ -18,15 +19,19 @@ namespace FlightAssistant.Application.Commands.Admin.Airlines
     {
         private readonly IAirlineRepository _repo;
         private readonly IAllianceRepository _alliances;
-        public CreateAirlineCommandHandler(IAirlineRepository repo, IAllianceRepository alliances)
+        private readonly ICountryRepository _countries;
+        public CreateAirlineCommandHandler(
+            IAirlineRepository repo, IAllianceRepository alliances, ICountryRepository countries)
         {
             _repo = repo;
             _alliances = alliances;
+            _countries = countries;
         }
 
         public async Task<int> Handle(CreateAirlineCommand cmd, CancellationToken ct)
         {
-            await AllianceReference.EnsureExistsAsync(_alliances, cmd.AllianceCode, ct);
+            await ReferenceExistence.EnsureAllianceExistsAsync(_alliances, cmd.AllianceCode, ct);
+            await ReferenceExistence.EnsureCountryExistsAsync(_countries, cmd.CountryCode, "Airline", ct);
             var airline = Airline.Create(cmd.Iata, cmd.Icao, cmd.Name, cmd.CountryCode, cmd.AllianceCode);
             await _repo.AddAsync(airline, ct);
             await _repo.SaveChangesAsync(ct);

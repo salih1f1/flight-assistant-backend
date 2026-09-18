@@ -15,6 +15,23 @@ namespace FlightAssistant.API.Tests.Integration;
 [Collection("Integration")]
 public class AdminAirlineEndpointTests(FlightAssistantWebApplicationFactory factory)
 {
+    /// <summary>
+    /// Puts the country every airline below names in the table. Airlines carry a foreign key to
+    /// <c>countries</c> and #455 now refuses one we do not have, so a create here has to satisfy
+    /// that guard before it can exercise the alliance one.
+    /// </summary>
+    private static async Task GivenCountryAsync(HttpClient client)
+    {
+        var csv = "Code,Name,Alpha3,NumericCode,Region,Subregion,IsEU,IsSchengen,IsEEA\n"
+                + "GB,United Kingdom,GBR,826,Europe,Northern Europe,false,false,false";
+        var file = new ByteArrayContent(Encoding.UTF8.GetBytes(csv));
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/csv");
+        var form = new MultipartFormDataContent { { file, "file", "countries.csv" } };
+
+        var response = await client.PostAsync("admin/import/countries", form);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     /// <summary>Puts one alliance in the table, so a code exists for the accepted-code cases.</summary>
     private static async Task GivenAllianceAsync(HttpClient client, string code, string name)
     {
@@ -31,6 +48,7 @@ public class AdminAirlineEndpointTests(FlightAssistantWebApplicationFactory fact
     public async Task CreateAirline_AllianceCodeThatIsNoAlliance_Returns409AsAProblemDocument()
     {
         var client = factory.CreateAdminClient();
+        await GivenCountryAsync(client);
 
         var response = await client.PostAsJsonAsync("admin/airlines", new
         {
@@ -50,6 +68,7 @@ public class AdminAirlineEndpointTests(FlightAssistantWebApplicationFactory fact
     public async Task UpdateAirline_AllianceCodeThatIsNoAlliance_Returns409()
     {
         var client = factory.CreateAdminClient();
+        await GivenCountryAsync(client);
         var created = await client.PostAsJsonAsync("admin/airlines", new
         {
             iata = "Q2",
@@ -78,6 +97,7 @@ public class AdminAirlineEndpointTests(FlightAssistantWebApplicationFactory fact
     public async Task UpdateAirline_AllianceCodeThatIsAnAlliance_Returns204()
     {
         var client = factory.CreateAdminClient();
+        await GivenCountryAsync(client);
         await GivenAllianceAsync(client, "OW", "oneworld");
         var created = await client.PostAsJsonAsync("admin/airlines", new
         {
@@ -110,6 +130,7 @@ public class AdminAirlineEndpointTests(FlightAssistantWebApplicationFactory fact
     public async Task CreateAirline_BlankAllianceCode_Returns201()
     {
         var client = factory.CreateAdminClient();
+        await GivenCountryAsync(client);
 
         var response = await client.PostAsJsonAsync("admin/airlines", new
         {

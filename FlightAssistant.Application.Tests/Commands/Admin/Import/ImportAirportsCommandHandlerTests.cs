@@ -14,7 +14,18 @@ public class ImportAirportsCommandHandlerTests
     private readonly IAirportRepository _repo = Substitute.For<IAirportRepository>();
     private readonly IAdminContext _adminContext = new AdminContext { ActorId = "importing-admin" };
 
-    private ImportAirportsCommandHandler Handler() => new(_repo, _adminContext);
+    private readonly ICountryRepository _countries = Substitute.For<ICountryRepository>();
+
+    public ImportAirportsCommandHandlerTests()
+    {
+        // The rows below are GB and US, so the #455 country guard has countries to find.
+        _countries.FindByCodeAsync("GB", Arg.Any<CancellationToken>())
+            .Returns(Country.Create("GB", "United Kingdom", "GBR", 826));
+        _countries.FindByCodeAsync("US", Arg.Any<CancellationToken>())
+            .Returns(Country.Create("US", "United States", "USA", 840));
+    }
+
+    private ImportAirportsCommandHandler Handler() => new(_repo, _adminContext, _countries);
 
     [Fact]
     public async Task Handle_NewAirport_InsertsAndReturnsInsertedCount()
@@ -121,5 +132,23 @@ public class ImportAirportsCommandHandlerTests
         Assert.True(existing.IsVerified);
         Assert.Null(existing.VerificationIssue);
         Assert.Equal(VerificationSources.Import, existing.VerificationSource);
+    }
+
+    [Fact]
+    public async Task Handle_CountryCodeThatIsNoCountry_FailsThatRowOnlyAndStillImportsTheRest()
+    {
+        _repo.FindByIataAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _repo.FindByIcaoAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _countries.FindByCodeAsync("ZZ", Arg.Any<CancellationToken>()).ReturnsNull();
+        var handler = Handler();
+        var bad = new AirportImportDto("ZZZ", null, "Nowhere", "Nowhere", "ZZ", null, null, null);
+        var good = new AirportImportDto("LHR", "EGLL", "Heathrow", "London", "GB", null, null, null);
+
+        var result = await handler.Handle(new ImportAirportsCommand([bad, good]), CancellationToken.None);
+
+        Assert.Equal(1, result.Inserted);
+        var error = Assert.Single(result.Errors);
+        Assert.Contains("ZZ", error);
+        await _repo.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 }

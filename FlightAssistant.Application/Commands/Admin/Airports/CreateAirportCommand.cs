@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using FlightAssistant.Application.Commands.Admin.Common;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FluentValidation;
@@ -20,10 +21,16 @@ namespace FlightAssistant.Application.Commands.Admin.Airports
     public sealed class CreateAirportCommandHandler : IRequestHandler<CreateAirportCommand, int>
     {
         private readonly IAirportRepository _repo;
-        public CreateAirportCommandHandler(IAirportRepository repo) => _repo = repo;
+        private readonly ICountryRepository _countries;
+        public CreateAirportCommandHandler(IAirportRepository repo, ICountryRepository countries)
+        {
+            _repo = repo;
+            _countries = countries;
+        }
 
         public async Task<int> Handle(CreateAirportCommand cmd, CancellationToken ct)
         {
+            await ReferenceExistence.EnsureCountryExistsAsync(_countries, cmd.CountryCode, "Airport", ct);
             var airport = Airport.Create(cmd.Iata, cmd.Icao, cmd.Name, cmd.City, cmd.CountryCode,
                 cmd.Latitude, cmd.Longitude, cmd.ElevationFt);
             await _repo.AddAsync(airport, ct);
