@@ -3,6 +3,9 @@ using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Domain.Verification.Enums;
+using FlightAssistant.Infrastructure.Persistance;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
@@ -10,9 +13,12 @@ using NSubstitute;
 namespace FlightAssistant.API.Tests.Endpoints.Admin;
 
 /// <summary>
-/// Direct unit tests of the builder's pieces that need no host, no <c>DbContext</c> and no
-/// <c>HealthCheckService</c>: <see cref="AdminHealthReportBuilder.ParseVersion"/>, and
-/// <see cref="AdminHealthReportBuilder.BuildVerificationAsync"/> with a substitute queue. The rest of
+/// Direct unit tests of the builder's pieces that need no host and no <c>HealthCheckService</c>:
+/// <see cref="AdminHealthReportBuilder.ParseVersion"/>,
+/// <see cref="AdminHealthReportBuilder.BuildVerificationAsync"/> with a substitute queue, and
+/// <see cref="AdminHealthReportBuilder.BuildMigrationsAsync"/> against a relational <c>DbContext</c>
+/// whose server does not exist — no running Postgres and no Docker, since both of its failure paths
+/// are reached before anything is successfully read. The rest of
 /// <see cref="AdminHealthReportBuilder"/> is covered by <c>AdminHealthEndpointTests</c> through the
 /// full <c>WebApplicationFactory</c> pipeline.
 /// </summary>
@@ -232,5 +238,110 @@ public class AdminHealthReportBuilderTests
             includeDiagnostics: true, NullLogger.Instance, CancellationToken.None);
 
         Assert.Null(dto.RecentFailures);
+    }
+
+    // ── An aborted request (#453) ───────────────────────────────────────────
+
+    /// <summary>
+    /// A relational context whose server does not exist. <c>IsRelational()</c> answers a *provider*
+    /// question — true for Npgsql whether or not Postgres is reachable (CLAUDE.md, "Cannot tell is
+    /// not nothing pending") — which is exactly what these two tests need: the guard clause is
+    /// passed and the migration-history reads below are genuinely reached, with no server, no
+    /// container and no Docker. Port 1 is refused immediately rather than hanging, and the two
+    /// one-second timeouts are a backstop for a host where it is not.
+    /// </summary>
+    private static FlightAssistantDbContext RelationalContextPointedAtNothing() =>
+        new(new DbContextOptionsBuilder<FlightAssistantDbContext>()
+            .UseNpgsql("Host=127.0.0.1;Port=1;Database=none;Username=none;Password=none;Timeout=1;Command Timeout=1")
+            .Options);
+
+    /// <summary>
+    /// <c>/admin/health</c> runs every health check with no predicate, the external <c>aeroapi</c>
+    /// and <c>apns</c> ones included, so it is the likeliest route in the API to be abandoned
+    /// mid-flight — a panel refresh, a navigation, a fetch timeout. When that happens the request's
+    /// own token is cancelled and the migration-history read throws; catching it would log a
+    /// migration failure that never happened and carry on assembling a report for a connection that
+    /// is already gone. The caller left, so this is not "cannot tell": it is nothing to tell anyone.
+    /// </summary>
+    [Fact]
+    public async Task BuildMigrationsAsync_TheRequestWasAborted_LetsItThrow_AndLogsNoMigrationFailure()
+    {
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var logger = new CapturingLogger();
+        await using var db = RelationalContextPointedAtNothing();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => AdminHealthReportBuilder.BuildMigrationsAsync(db, includeDiagnostics: true, logger, cts.Token));
+
+        Assert.Empty(logger.Entries);
+    }
+
+    /// <summary>
+    /// The other side of the filter, and the behaviour it must not cost us (final review, C1): with
+    /// the caller still there, a database that cannot be reached degrades to <c>Available: false</c>
+    /// — "cannot tell", never an empty <c>Pending</c> list, which is a different and much stronger
+    /// claim — and does log, instead of taking the whole report down the way an unguarded
+    /// <c>NpgsqlException</c> did.
+    /// </summary>
+    [Fact]
+    public async Task BuildMigrationsAsync_TheDatabaseIsUnreachable_ReportsCannotTell_AndLogsAWarning()
+    {
+        var logger = new CapturingLogger();
+        await using var db = RelationalContextPointedAtNothing();
+
+        var dto = await AdminHealthReportBuilder.BuildMigrationsAsync(
+            db, includeDiagnostics: true, logger, CancellationToken.None);
+
+        Assert.False(dto.Available);
+        Assert.Empty(dto.Pending);
+        Assert.NotNull(dto.Error);
+        var (level, message) = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Warning, level);
+        Assert.Equal("Failed to read EF Core migration state for /admin/health.", message);
+    }
+
+    /// <summary>
+    /// The same rule on the section next door, which has had this filter since #367 but has never
+    /// been pinned by a test: an abandoned request must not be reported as <c>PendingCount: null</c>.
+    /// A client hang-up and a database that cannot answer are different things, and only the second
+    /// one is worth an operator's attention — the pair of them is the whole point of the filter.
+    /// </summary>
+    [Fact]
+    public async Task BuildVerificationAsync_TheRequestWasAborted_LetsItThrow_RatherThanReportingCannotTell()
+    {
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var requests = Substitute.For<IVerificationRequestRepository>();
+        requests.CountPendingAsync(Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromException<int>(new OperationCanceledException()));
+        var logger = new CapturingLogger();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => AdminHealthReportBuilder.BuildVerificationAsync(
+                new VerificationJobHeartbeat(TimeProvider.System), enabled: true, StaleAfterDays, requests,
+                includeDiagnostics: true, logger, cts.Token));
+
+        Assert.Empty(logger.Entries);
+    }
+
+    /// <summary>Records every log call so a test can assert one was — or was not — emitted.</summary>
+    private sealed class CapturingLogger : ILogger
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Entries.Add((logLevel, formatter(state, exception)));
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+            public void Dispose() { }
+        }
     }
 }
