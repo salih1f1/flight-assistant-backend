@@ -133,6 +133,16 @@ public class ReferenceDataProvisionerTests
     {
         _budget.GetStateAsync(Arg.Any<CancellationToken>()).Returns(ProviderBudgetState.Normal);
 
+        // NSubstitute's built-in default for an unconfigured member returning `string` is "",
+        // never null -- and that default value provider applies through Task<string> too. A real
+        // ICacheService returns null for a genuine cache miss (see e.g. SyncFlightStatusCommand's
+        // TravelerAttemptMarkedAsync), so without this every unconfigured GetAsync<string> call in
+        // this file would read as an existing negative-cache hit ("" is not null) and every test
+        // below that doesn't care about caching would short-circuit before ever reaching a source.
+        // A test that wants an actual cached hit configures its own, more specific `Returns` on top
+        // of this, which NSubstitute matches first.
+        _cache.GetAsync<string>(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns((string?)null);
+
         // Every airport FoundAirport() below returns is in "GB", so this is the default "the
         // country is already on file" case for every test that doesn't care about country
         // provisioning -- EnsureCountriesAsync reads countries in a batch via FindByCodesAsync,
@@ -503,5 +513,91 @@ public class ReferenceDataProvisionerTests
 
         Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
         await _countries.Received(1).AddAsync(Arg.Any<Country>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ACachedMiss_SkipsTheSourceEntirely()
+    {
+        var source = new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR"));
+        _registry.TryGet("ourairports").Returns(source);
+        _cache.GetAsync<string>(
+                ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "ZZZ"),
+                Arg.Any<CancellationToken>())
+            .Returns("1");
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "ZZZ")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.NotFound, result.Status);
+        Assert.Equal(0, source.Calls);
+    }
+
+    [Fact]
+    public async Task AFreshMiss_IsRemembered()
+    {
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport],
+                _ => VerificationSourceFetchResult.NotFound));
+
+        await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "ZZZ")], CancellationToken.None);
+
+        await _cache.Received(1).SetAsync(
+            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "ZZZ"),
+            Arg.Any<string>(),
+            _options.NegativeCacheTtl,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AHit_IsNeverCached()
+    {
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR")));
+
+        await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        await _cache.DidNotReceive().SetAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ASourceError_IsNeverCached()
+    {
+        // Caching a failure would turn a brief outage into hours of 404s.
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport],
+                _ => VerificationSourceFetchResult.SourceError("ourairports download failed: HTTP 503")));
+
+        await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        await _cache.DidNotReceive().SetAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ZeroTtl_NeitherReadsNorWritesTheCache()
+    {
+        _options.NegativeCacheTtl = TimeSpan.Zero;
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport],
+                _ => VerificationSourceFetchResult.NotFound));
+
+        await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "ZZZ")], CancellationToken.None);
+
+        await _cache.DidNotReceive().GetAsync<string>(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _cache.DidNotReceive().SetAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TheCacheKey_IsCaseInsensitiveOnTheCode()
+    {
+        Assert.Equal(
+            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "zzz"),
+            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "ZZZ"));
     }
 }

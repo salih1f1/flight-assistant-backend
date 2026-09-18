@@ -39,6 +39,14 @@ namespace FlightAssistant.Application.ReferenceData
         /// The <c>Create</c> factories hardcode <c>"admin"</c>, so it is assigned afterwards.</summary>
         public const string ProvisionedSourceType = "auto";
 
+        /// <summary>
+        /// The cache key remembering that a source has no such entity. Upper-cased so a caller's
+        /// casing cannot produce a second entry for the same code -- <c>POST /flights</c> does not
+        /// canonicalise the designator before the lookup.
+        /// </summary>
+        public static string NegativeCacheKeyFor(VerificationEntityType type, string code) =>
+            $"refdata:missing:{type}:{code.Trim().ToUpperInvariant()}";
+
         private readonly IVerificationSourceRegistry _registry;
         private readonly IVerificationJobOptions _verificationOptions;
         private readonly ICountryNameResolver _countryNames;
@@ -323,6 +331,48 @@ namespace FlightAssistant.Application.ReferenceData
         }
 
         /// <summary>
+        /// <see cref="FetchFromSourcesAsync"/>, with the negative cache in front of it: a code a
+        /// source has already said it does not have costs nothing to ask about again. Only a miss is
+        /// remembered -- never a hit, and never a failure, which would turn a brief outage into
+        /// hours of 404s. A cache outage fails open, exactly as the manual-sync cooldown does (#369).
+        /// </summary>
+        private async Task<Fetch> FetchAsync(VerificationEntityType type, string code, CancellationToken ct)
+        {
+            var ttl = _options.NegativeCacheTtl;
+            var cacheKey = NegativeCacheKeyFor(type, code);
+
+            if (ttl > TimeSpan.Zero)
+            {
+                try
+                {
+                    if (await _cache.GetAsync<string>(cacheKey, ct).ConfigureAwait(false) is not null)
+                        return Fetch.NotFound;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Fail open: a cache outage must not stop a provision that would have succeeded.
+                    _logger.LogWarning(ex, "Reading the reference-provisioning negative cache failed for {CacheKey}.", cacheKey);
+                }
+            }
+
+            var fetch = await FetchFromSourcesAsync(type, code, ct).ConfigureAwait(false);
+
+            if (fetch.Status == FetchStatus.NotFound && ttl > TimeSpan.Zero)
+            {
+                try
+                {
+                    await _cache.SetAsync(cacheKey, "1", ttl, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Writing the reference-provisioning negative cache failed for {CacheKey}.", cacheKey);
+                }
+            }
+
+            return fetch;
+        }
+
+        /// <summary>
         /// Asks each source configured for <paramref name="type"/> in turn; the first that answers
         /// Found wins. A source error stops the search rather than falling through to the next
         /// source: falling through would let one broken source's outage be reported as a miss.
@@ -331,7 +381,7 @@ namespace FlightAssistant.Application.ReferenceData
         /// naming a country-only source -- that is <c>Unavailable</c>, not <c>NotFound</c>: nothing
         /// ever actually answered, so there is no basis to tell a traveler the airport doesn't exist.
         /// </summary>
-        private async Task<Fetch> FetchAsync(VerificationEntityType type, string code, CancellationToken ct)
+        private async Task<Fetch> FetchFromSourcesAsync(VerificationEntityType type, string code, CancellationToken ct)
         {
             var sourceNames = _verificationOptions.DefaultSourcesFor(type);
             if (sourceNames.Count == 0)
