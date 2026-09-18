@@ -156,8 +156,9 @@ namespace FlightAssistant.Application.ReferenceData
                 }
             }
 
-            // Countries first: airports.CountryCode is a foreign key into countries, and the country a
-            // row needs is only known once its source has answered.
+            // Countries first: both airports.CountryCode and airlines.CountryCode are foreign keys
+            // into countries, and the country a row needs is only known once its source (or, for an
+            // airline, the name resolver) has answered.
             var countryFailure = await EnsureCountriesAsync(
                 countries, requiredCountryCodes, () => wroteAnything = true, ct).ConfigureAwait(false);
             if (countryFailure is not null)

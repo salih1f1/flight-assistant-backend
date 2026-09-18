@@ -480,6 +480,10 @@ public class ReferenceDataProvisionerTests
 
         Assert.Equal(ReferenceProvisionStatus.NotFound, result.Status);
         Assert.Equal(VerificationEntityType.Airline, result.FailedType);
+        // Pins that a blank name still goes through the resolver rather than being special-cased
+        // before the call -- a regression that short-circuited on `countryName is null` would
+        // still produce NotFound above, but would never make this call.
+        await _countryNames.Received(1).TryResolveCodeByNameAsync(null, Arg.Any<CancellationToken>());
     }
 
     [Fact]
