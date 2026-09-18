@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Application.ReferenceData;
 using FlightAssistant.Infrastructure.ExternalServices.Verification;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.AspNetCore.Authentication;
@@ -137,6 +138,24 @@ public class FlightAssistantWebApplicationFactory : WebApplicationFactory<Progra
             foreach (var d in searchDescs)
                 services.Remove(d);
             services.AddScoped<IFlightSearchProvider, NoRowsFlightSearchProvider>();
+
+            // ── No test reaches a real reference-data provisioning call ──────
+            // Same posture as the flight-search stub above. Since #465, TrackFlightCommandHandler
+            // calls IReferenceDataProvisioner whenever an airline or airport is unresolved, and the
+            // real provisioner's default airline source is the metered "aeroapi" one, over the
+            // shared "AeroApi" named client — so without this, a test that tracks a flight with an
+            // unresolved reference would attempt a real, doomed AeroAPI call and fail slowly on its
+            // timeout.
+            // Answering NotFound for the first missing reference means an unstubbed track of an
+            // unresolved reference still 404s, matching the pre-#465 behaviour; a test that cares
+            // about provisioning actually succeeding, or being Unavailable, overrides this
+            // registration with its own fake.
+            var provisionerDescs = services
+                .Where(d => d.ServiceType == typeof(IReferenceDataProvisioner))
+                .ToList();
+            foreach (var d in provisionerDescs)
+                services.Remove(d);
+            services.AddScoped<IReferenceDataProvisioner, NotFoundReferenceDataProvisioner>();
         });
     }
 
@@ -145,6 +164,18 @@ public class FlightAssistantWebApplicationFactory : WebApplicationFactory<Progra
     {
         public Task<IReadOnlyList<FlightSearchResult>> SearchAsync(FlightSearchCriteria criteria, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<FlightSearchResult>>([]);
+    }
+
+    /// <summary>Answers every provisioning attempt with NotFound for the first missing reference —
+    /// the pre-#465 behaviour, and no network call. See the note above.</summary>
+    private sealed class NotFoundReferenceDataProvisioner : IReferenceDataProvisioner
+    {
+        public Task<ReferenceProvisionResult> ProvisionAsync(
+            IReadOnlyCollection<MissingReference> missing, CancellationToken ct = default)
+        {
+            var first = missing.First();
+            return Task.FromResult(ReferenceProvisionResult.NotFound(first.Type, first.Code));
+        }
     }
 
     /// <summary>The message a test gets when anything tries to download a verification dataset.</summary>
