@@ -12,6 +12,12 @@ public class AdminAirlineCommandHandlerTests
     private readonly IAirlineRepository _repo = Substitute.For<IAirlineRepository>();
     private readonly IAdminFlightRepository _flights = Substitute.For<IAdminFlightRepository>();
     private readonly IAllianceRepository _alliances = Substitute.For<IAllianceRepository>();
+    private readonly ICountryRepository _countries = Substitute.For<ICountryRepository>();
+
+    public AdminAirlineCommandHandlerTests() =>
+        // Every airline below is GB, so the #455 country guard has a country to find.
+        _countries.FindByCodeAsync("GB", Arg.Any<CancellationToken>())
+            .Returns(Country.Create("GB", "United Kingdom", "GBR", 826));
 
     /// <summary>Makes <paramref name="code"/> a real row, so the alliance guard lets it through.</summary>
     private void GivenAlliance(string code) =>
@@ -23,7 +29,7 @@ public class AdminAirlineCommandHandlerTests
     [Fact]
     public async Task Create_CallsAddAndSave_ReturnsId()
     {
-        var handler = new CreateAirlineCommandHandler(_repo, _alliances);
+        var handler = new CreateAirlineCommandHandler(_repo, _alliances, _countries);
         _repo.AddAsync(Arg.Any<Airline>(), Arg.Any<CancellationToken>())
             .Returns(Task.CompletedTask);
 
@@ -40,7 +46,7 @@ public class AdminAirlineCommandHandlerTests
     [Fact]
     public async Task Update_ExistingAirline_CallsSave()
     {
-        var handler = new UpdateAirlineCommandHandler(_repo, _alliances);
+        var handler = new UpdateAirlineCommandHandler(_repo, _alliances, _countries);
         var airline = Airline.Create("BA", null, "British Airways", "GB");
         _repo.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(airline);
 
@@ -54,7 +60,7 @@ public class AdminAirlineCommandHandlerTests
     [Fact]
     public async Task Update_NotFound_Throws()
     {
-        var handler = new UpdateAirlineCommandHandler(_repo, _alliances);
+        var handler = new UpdateAirlineCommandHandler(_repo, _alliances, _countries);
         _repo.GetByIdAsync(99, Arg.Any<CancellationToken>()).ReturnsNull();
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
@@ -71,7 +77,7 @@ public class AdminAirlineCommandHandlerTests
     [Fact]
     public async Task Create_AllianceCodeThatIsNotAnAlliance_Throws409AndSavesNothing()
     {
-        var handler = new CreateAirlineCommandHandler(_repo, _alliances);
+        var handler = new CreateAirlineCommandHandler(_repo, _alliances, _countries);
         _alliances.FindByCodeAsync("STAR", Arg.Any<CancellationToken>()).ReturnsNull();
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
@@ -88,7 +94,7 @@ public class AdminAirlineCommandHandlerTests
     [Fact]
     public async Task Create_AllianceCodeThatExists_Saves()
     {
-        var handler = new CreateAirlineCommandHandler(_repo, _alliances);
+        var handler = new CreateAirlineCommandHandler(_repo, _alliances, _countries);
         GivenAlliance("OW");
 
         await handler.Handle(
@@ -104,7 +110,7 @@ public class AdminAirlineCommandHandlerTests
     [InlineData("   ")]
     public async Task Create_NoAllianceCode_SavesWithoutLookingAnAllianceUp(string? allianceCode)
     {
-        var handler = new CreateAirlineCommandHandler(_repo, _alliances);
+        var handler = new CreateAirlineCommandHandler(_repo, _alliances, _countries);
 
         await handler.Handle(
             new CreateAirlineCommand("BA", null, "British Airways", "GB", allianceCode),
@@ -117,7 +123,7 @@ public class AdminAirlineCommandHandlerTests
     [Fact]
     public async Task Update_AllianceCodeThatIsNotAnAlliance_Throws409AndSavesNothing()
     {
-        var handler = new UpdateAirlineCommandHandler(_repo, _alliances);
+        var handler = new UpdateAirlineCommandHandler(_repo, _alliances, _countries);
         _repo.GetByIdAsync(1, Arg.Any<CancellationToken>())
             .Returns(Airline.Create("BA", null, "British Airways", "GB"));
         _alliances.FindByCodeAsync("STAR", Arg.Any<CancellationToken>()).ReturnsNull();
@@ -135,7 +141,7 @@ public class AdminAirlineCommandHandlerTests
     [Fact]
     public async Task Update_AllianceCodeThatExists_Saves()
     {
-        var handler = new UpdateAirlineCommandHandler(_repo, _alliances);
+        var handler = new UpdateAirlineCommandHandler(_repo, _alliances, _countries);
         _repo.GetByIdAsync(1, Arg.Any<CancellationToken>())
             .Returns(Airline.Create("BA", null, "British Airways", "GB"));
         GivenAlliance("OW");
@@ -150,7 +156,7 @@ public class AdminAirlineCommandHandlerTests
     [Fact]
     public async Task Update_LowerCaseAllianceCode_IsAcceptedBecauseTheLookupCanonicalisesIt()
     {
-        var handler = new UpdateAirlineCommandHandler(_repo, _alliances);
+        var handler = new UpdateAirlineCommandHandler(_repo, _alliances, _countries);
         _repo.GetByIdAsync(1, Arg.Any<CancellationToken>())
             .Returns(Airline.Create("BA", null, "British Airways", "GB"));
         GivenAlliance("OW");
@@ -203,6 +209,41 @@ public class AdminAirlineCommandHandlerTests
         await handler.Handle(new DeleteAirlineCommand(99), CancellationToken.None);
 
         await _repo.DidNotReceive().DeleteAsync(Arg.Any<Airline>(), Arg.Any<CancellationToken>());
+        await _repo.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    // ── Country reference guard (#455) ────────────────────────────────────────
+
+    [Fact]
+    public async Task Create_CountryCodeThatIsNoCountry_Throws409AndSavesNothing()
+    {
+        var handler = new CreateAirlineCommandHandler(_repo, _alliances, _countries);
+        _countries.FindByCodeAsync("ZZ", Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
+            handler.Handle(
+                new CreateAirlineCommand("Q9", null, "Nowhere Air", "ZZ", null),
+                CancellationToken.None));
+
+        Assert.Equal(409, ex.StatusCode);
+        Assert.Contains("ZZ", ex.Message);
+        await _repo.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Update_CountryCodeThatIsNoCountry_Throws409AndSavesNothing()
+    {
+        var handler = new UpdateAirlineCommandHandler(_repo, _alliances, _countries);
+        _repo.GetByIdAsync(1, Arg.Any<CancellationToken>())
+            .Returns(Airline.Create("BA", null, "British Airways", "GB"));
+        _countries.FindByCodeAsync("ZZ", Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
+            handler.Handle(
+                new UpdateAirlineCommand(1, "BA", null, "British Airways", "ZZ", null),
+                CancellationToken.None));
+
+        Assert.Equal(409, ex.StatusCode);
         await _repo.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 }

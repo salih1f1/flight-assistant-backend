@@ -389,6 +389,7 @@
           "Admin - Airports"
         ],
         "summary": "Create airport",
+        "description": "409 when CountryCode names a country that is not in the countries table.",
         "operationId": "AdminCreateAirport",
         "requestBody": {
           "content": {
@@ -410,6 +411,16 @@
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
                 }
               }
             }
@@ -463,6 +474,7 @@
           "Admin - Airports"
         ],
         "summary": "Update airport",
+        "description": "409 when CountryCode names a country that is not in the countries table.",
         "operationId": "AdminUpdateAirport",
         "parameters": [
           {
@@ -501,6 +513,16 @@
           },
           "404": {
             "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -2265,6 +2287,7 @@
           "Admin - Lounges"
         ],
         "summary": "Create lounge",
+        "description": "409 when AirportId names an airport that does not exist.",
         "operationId": "AdminCreateLounge",
         "requestBody": {
           "content": {
@@ -2286,6 +2309,16 @@
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
                 }
               }
             }
@@ -2474,6 +2507,7 @@
           "Admin - Loyalty"
         ],
         "summary": "Create loyalty program",
+        "description": "409 when KindId or AirlineId names a row that does not exist.",
         "operationId": "AdminCreateLoyaltyProgram",
         "requestBody": {
           "content": {
@@ -2498,6 +2532,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
@@ -2508,6 +2552,7 @@
           "Admin - Loyalty"
         ],
         "summary": "Update loyalty program",
+        "description": "409 when KindId or AirlineId names a row that does not exist.",
         "operationId": "AdminUpdateLoyaltyProgram",
         "parameters": [
           {
@@ -2546,6 +2591,16 @@
           },
           "404": {
             "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
             "content": {
               "application/problem+json": {
                 "schema": {

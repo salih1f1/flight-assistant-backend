@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using FlightAssistant.Application.Commands.Admin.Common;
 using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.ReferenceData.Entities;
@@ -49,11 +50,14 @@ public sealed class ImportAirportsCommandHandler : IRequestHandler<ImportAirport
 {
     private readonly IAirportRepository _repo;
     private readonly IAdminContext _adminContext;
+    private readonly ICountryRepository _countries;
 
-    public ImportAirportsCommandHandler(IAirportRepository repo, IAdminContext adminContext)
+    public ImportAirportsCommandHandler(
+        IAirportRepository repo, IAdminContext adminContext, ICountryRepository countries)
     {
         _repo = repo;
         _adminContext = adminContext;
+        _countries = countries;
     }
 
     public async Task<ImportResult> Handle(ImportAirportsCommand request, CancellationToken ct)
@@ -73,6 +77,11 @@ public sealed class ImportAirportsCommandHandler : IRequestHandler<ImportAirport
                     errors.Add($"Airport '{dto.Iata}': {verification.RejectionReason}");
                     continue;
                 }
+
+                // Inside the per-row try (#455), like the alliance guard in the airlines import:
+                // SaveChangesAsync runs once after the loop, so the constraint failure this
+                // replaces could not be caught per row and failed the whole file with a 500.
+                await ReferenceExistence.EnsureCountryExistsAsync(_countries, dto.CountryCode, "Airport", ct);
 
                 var existing = await _repo.FindByIataAsync(dto.Iata, ct);
                 if (existing is null)
