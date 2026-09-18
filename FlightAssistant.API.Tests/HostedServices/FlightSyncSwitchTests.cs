@@ -27,11 +27,11 @@ public class FlightSyncSwitchTests
     // service, independent of FlightSyncOptions's own default ever changing.
     private static readonly TimeSpan LoopInterval = TimeSpan.FromMinutes(1);
 
-    // Set by BuildCore to whichever FakeJobSwitch ends up wired into the most recently built
-    // service, so StartAndTickAsync can confirm a tick has actually landed before returning: every
-    // iteration reads the switch exactly once, whether it answers on or off, which is the one signal
-    // common to all six tests below -- several of which never touch the heartbeat or MediatR.
+    // Set by BuildCore to whichever fakes are wired into the most recently built service, so
+    // StartAndTickAsync and the config-disabled test can inspect them without every Build overload
+    // having to thread them back out individually.
     private FakeJobSwitch _jobSwitch = null!;
+    private FlightSyncHeartbeat _heartbeat = null!;
 
     // ── Fakes ──
 
@@ -44,8 +44,10 @@ public class FlightSyncSwitchTests
     {
         public bool Enabled { get; set; } = enabled;
 
-        /// <summary>How many times the loop has asked. The config-disabled tests assert this stays
-        /// zero; <see cref="StartAndTickAsync"/> uses it to know a tick actually ran.</summary>
+        /// <summary>How many times the loop has asked. Only the config-disabled test reads this
+        /// (asserting it stays zero); ticking tests wait on the heartbeat instead (see
+        /// <see cref="StartAndTickAsync"/>), since the switch read alone doesn't prove the rest of
+        /// the pass's work has finished.</summary>
         public int Reads { get; private set; }
 
         public Task<bool> IsEnabledAsync(string job, CancellationToken ct)
@@ -107,6 +109,7 @@ public class FlightSyncSwitchTests
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var mediator = new RecordingMediator();
         heartbeat = new FlightSyncHeartbeat();
+        _heartbeat = heartbeat;
         _jobSwitch = jobSwitch ?? new FakeJobSwitch(switchEnabled);
 
         // One due flight, so a switch-on tick has something to send through MediatR; which flight
@@ -152,24 +155,39 @@ public class FlightSyncSwitchTests
     /// <summary>
     /// Drives <paramref name="ticks"/> loop passes. The first call starts the service -- the
     /// do-while's first pass runs immediately, before any tick is due -- and every later pass
-    /// advances <paramref name="time"/> by <see cref="LoopInterval"/>. Either way, a pass resumes
-    /// asynchronously (via the thread pool, not inline on this thread: <c>BackgroundService</c>
-    /// hands <c>ExecuteAsync</c> a task rather than running it out, and <c>PeriodicTimer</c>'s
-    /// continuation is posted rather than run from inside <c>Advance</c>), so each one is followed
-    /// by a bounded wait for <see cref="FakeJobSwitch.Reads"/> to climb -- the one thing every pass
-    /// does, whichever way the switch answers, which is what makes it a safe generic signal that a
-    /// pass has actually landed before the next line of the test inspects the result.
+    /// advances <paramref name="time"/> by <see cref="LoopInterval"/>.
+    ///
+    /// <para>
+    /// <b>Why this waits on the heartbeat, not <see cref="FakeJobSwitch.Reads"/>.</b> Ported from
+    /// <c>VerificationSwitchTests</c> (#471 test-infra fix, applied here after a reviewer reproduced
+    /// the same failure shape under load -- see the task report for measured before/after counts).
+    /// <c>BackgroundService.StartAsync</c> hands <c>ExecuteAsync</c> to the thread pool rather than
+    /// running it out on the calling thread, and <c>PeriodicTimer</c>'s continuation is posted rather
+    /// than run from inside <c>Advance</c>, so a pass resumes genuinely concurrently with this
+    /// method, not merely "later on the same thread". Reading the switch happens first and fast, so
+    /// a wait keyed on that read alone can be satisfied before a switched-on pass's later work --
+    /// resolving the DI scope and reaching <c>RecordingMediator.Send</c> -- has actually finished;
+    /// under an uncontended CPU this window is rarely hit, but it reproduces reliably once the thread
+    /// pool is under concurrent load. Every pass, switched on or off, ends by publishing exactly one
+    /// new <see cref="FlightSyncHeartbeat.Current"/> snapshot whose outcome is not
+    /// <see cref="FlightSyncOutcome.Running"/> (<c>MarkSwitchedOff</c>, or <c>MarkRunStarted</c> then
+    /// a terminal <c>MarkRunSucceeded</c>/<c>MarkRunFailed</c>) -- and <c>with</c> always allocates a
+    /// new record, even when a repeated <c>MarkSwitchedOff</c> leaves every field equal to the last
+    /// snapshot's -- so comparing snapshot references (not the records' own value equality) is a
+    /// generic, pass-agnostic "this pass's work, including any cycle, is fully done" signal.
+    /// </para>
     /// </summary>
     private async Task StartAndTickAsync(FlightStatusSyncBackgroundService service, FakeTimeProvider time, int ticks)
     {
         for (var i = 0; i < ticks; i++)
         {
-            var readsBefore = _jobSwitch.Reads;
+            var before = _heartbeat.Current;
             if (service.ExecuteTask is null)
                 await service.StartAsync(CancellationToken.None);
             else
                 time.Advance(LoopInterval);
-            await WaitUntil(() => _jobSwitch.Reads > readsBefore);
+            await WaitUntil(() => !ReferenceEquals(_heartbeat.Current, before)
+                && _heartbeat.Current.LastOutcome != FlightSyncOutcome.Running);
         }
     }
 
