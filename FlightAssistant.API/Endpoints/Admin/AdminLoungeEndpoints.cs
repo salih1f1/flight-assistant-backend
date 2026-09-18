@@ -52,8 +52,10 @@ namespace FlightAssistant.API.Endpoints.Admin
             })
             .WithName("AdminCreateLounge")
             .WithSummary("Create lounge")
+            .WithDescription("409 when AirportId names an airport that does not exist.")
             .Produces(201)
-            .ProducesValidationProblem();
+            .ProducesValidationProblem()
+            .ProducesProblem(409);
 
             // PUT /admin/lounges/{id}
             group.MapPut("{id:int}", async (int id, [FromBody] UpdateLoungeRequest req, IMediator mediator, CancellationToken ct) =>

@@ -1,3 +1,4 @@
+using FlightAssistant.Application.Commands.Admin.Common;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Lounges.Entities;
 using FluentValidation;
@@ -20,10 +21,16 @@ namespace FlightAssistant.Application.Commands.Admin.Lounges
     public sealed class CreateLoungeCommandHandler : IRequestHandler<CreateLoungeCommand, int>
     {
         private readonly ILoungeRepository _repo;
-        public CreateLoungeCommandHandler(ILoungeRepository repo) => _repo = repo;
+        private readonly IAirportRepository _airports;
+        public CreateLoungeCommandHandler(ILoungeRepository repo, IAirportRepository airports)
+        {
+            _repo = repo;
+            _airports = airports;
+        }
 
         public async Task<int> Handle(CreateLoungeCommand cmd, CancellationToken ct)
         {
+            await ReferenceExistence.EnsureAirportExistsAsync(_airports, cmd.AirportId, "Lounge", ct);
             var lounge = Lounge.Create(cmd.AirportId, cmd.Name, cmd.Terminal, cmd.LocationHint,
                 cmd.Hours, cmd.IsAirside, cmd.IsDomesticOnly, cmd.IsInternationalOnly, cmd.Amenities);
             await _repo.AddAsync(lounge, ct);

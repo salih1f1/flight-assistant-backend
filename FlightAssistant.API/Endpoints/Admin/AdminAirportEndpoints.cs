@@ -52,8 +52,10 @@ namespace FlightAssistant.API.Endpoints.Admin
             })
             .WithName("AdminCreateAirport")
             .WithSummary("Create airport")
+            .WithDescription("409 when CountryCode names a country that is not in the countries table.")
             .Produces(201)
-            .ProducesValidationProblem();
+            .ProducesValidationProblem()
+            .ProducesProblem(409);
 
             // PUT /admin/airports/{id}
             group.MapPut("{id:int}", async (int id, [FromBody] UpdateAirportRequest req, IMediator mediator, CancellationToken ct) =>
@@ -64,9 +66,11 @@ namespace FlightAssistant.API.Endpoints.Admin
             })
             .WithName("AdminUpdateAirport")
             .WithSummary("Update airport")
+            .WithDescription("409 when CountryCode names a country that is not in the countries table.")
             .Produces(204)
             .ProducesValidationProblem()
-            .ProducesProblem(404);
+            .ProducesProblem(404)
+            .ProducesProblem(409);
 
             // DELETE /admin/airports/{id}
             group.MapDelete("{id:int}", async (int id, IMediator mediator, CancellationToken ct) =>

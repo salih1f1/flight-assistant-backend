@@ -1,5 +1,5 @@
 using System.Text.RegularExpressions;
-using FlightAssistant.Application.Commands.Admin.Airlines;
+using FlightAssistant.Application.Commands.Admin.Common;
 using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.ReferenceData.Entities;
@@ -47,13 +47,16 @@ public sealed class ImportAirlinesCommandHandler : IRequestHandler<ImportAirline
     private readonly IAirlineRepository _repo;
     private readonly IAdminContext _adminContext;
     private readonly IAllianceRepository _alliances;
+    private readonly ICountryRepository _countries;
 
     public ImportAirlinesCommandHandler(
-        IAirlineRepository repo, IAdminContext adminContext, IAllianceRepository alliances)
+        IAirlineRepository repo, IAdminContext adminContext, IAllianceRepository alliances,
+        ICountryRepository countries)
     {
         _repo = repo;
         _adminContext = adminContext;
         _alliances = alliances;
+        _countries = countries;
     }
 
     public async Task<ImportResult> Handle(ImportAirlinesCommand request, CancellationToken ct)
@@ -77,7 +80,8 @@ public sealed class ImportAirlinesCommandHandler : IRequestHandler<ImportAirline
                 // Inside the per-row try on purpose (#449): the guard's 409 becomes this row's
                 // error, where the constraint failure it replaces could not — SaveChangesAsync
                 // runs once after the loop, so one bad code used to fail every row with a 500.
-                await AllianceReference.EnsureExistsAsync(_alliances, dto.AllianceCode, ct);
+                await ReferenceExistence.EnsureAllianceExistsAsync(_alliances, dto.AllianceCode, ct);
+                await ReferenceExistence.EnsureCountryExistsAsync(_countries, dto.CountryCode, "Airline", ct);
 
                 Airline? existing = null;
                 if (!string.IsNullOrWhiteSpace(dto.Iata))
