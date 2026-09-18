@@ -84,8 +84,10 @@ namespace FlightAssistant.Application.ReferenceData
             using var scope = VerificationJobActor.CreateScope(_scopeFactory);
             var airports = scope.ServiceProvider.GetRequiredService<IAirportRepository>();
             var countries = scope.ServiceProvider.GetRequiredService<ICountryRepository>();
+            var airlines = scope.ServiceProvider.GetRequiredService<IAirlineRepository>();
 
             var createdAirports = new List<Airport>();
+            var createdAirlines = new List<Airline>();
 
             // Case-insensitive: a source may report "gb" where another reports "GB", and the country
             // code is canonicalised by Country.Create anyway.
@@ -95,8 +97,8 @@ namespace FlightAssistant.Application.ReferenceData
             // One loop over every missing entry, dispatched by type -- not a loop per type. A
             // Country entry just contributes its code to the required set and moves on; anything
             // else is fetched here, and the single early-return below (shared by every type) is
-            // where the all-or-nothing guarantee lives. Task 6 extends the switch with Airline
-            // rather than adding a second loop, which would need its own copy of that return.
+            // where the all-or-nothing guarantee lives -- one case per type in the switch below,
+            // never a loop per type, which would need its own copy of that return.
             foreach (var entry in missing)
             {
                 if (entry.Type == VerificationEntityType.Country)
@@ -122,6 +124,33 @@ namespace FlightAssistant.Application.ReferenceData
                         break;
                     }
 
+                    case VerificationEntityType.Airline:
+                    {
+                        // aeroapi reports an operator's country as a name, never a code (#401 R1),
+                        // but Airline.CountryCode is a required foreign key -- so the name has to
+                        // be resolved before a row can exist at all.
+                        var countryName = Value(fetch.Values!, VerificationExtraValues.AirlineCountryName);
+                        var resolution = await _countryNames
+                            .TryResolveCodeByNameAsync(countryName, ct).ConfigureAwait(false);
+
+                        if (resolution.IsError)
+                            return ReferenceProvisionResult.Unavailable(entry.Type, entry.Code, resolution.Error);
+
+                        if (resolution.Code is null)
+                        {
+                            // No code means no valid row: a data gap we cannot fill, not a
+                            // transient failure, so the caller answers 404 rather than 503.
+                            _logger.LogInformation(
+                                "Cannot provision airline '{Code}': its country '{CountryName}' did not resolve to a code.",
+                                entry.Code, countryName);
+                            return ReferenceProvisionResult.NotFound(entry.Type, entry.Code);
+                        }
+
+                        createdAirlines.Add(BuildAirline(entry.Code, resolution.Code, fetch.SourceName!, fetch.Values!));
+                        requiredCountryCodes.Add(resolution.Code);
+                        break;
+                    }
+
                     default:
                         throw new ArgumentOutOfRangeException(nameof(entry.Type), entry.Type, "Unknown entity type.");
                 }
@@ -137,6 +166,12 @@ namespace FlightAssistant.Application.ReferenceData
             foreach (var airport in createdAirports)
             {
                 await airports.AddAsync(airport, ct).ConfigureAwait(false);
+                wroteAnything = true;
+            }
+
+            foreach (var airline in createdAirlines)
+            {
+                await airlines.AddAsync(airline, ct).ConfigureAwait(false);
                 wroteAnything = true;
             }
 
@@ -214,6 +249,27 @@ namespace FlightAssistant.Application.ReferenceData
 
             Stamp(airport, sourceName);
             return airport;
+        }
+
+        /// <summary>
+        /// Builds the row once the country name has already resolved to a code -- the caller
+        /// handles the null-code case (no valid row can exist) before this is ever invoked, so
+        /// unlike <see cref="BuildAirport"/> this never itself returns null.
+        /// </summary>
+        private static Airline BuildAirline(
+            string requestedIata,
+            string countryCode,
+            string sourceName,
+            IReadOnlyDictionary<string, string?> values)
+        {
+            var airline = Airline.Create(
+                iata: Value(values, nameof(Airline.Iata)) ?? requestedIata,
+                icao: Value(values, nameof(Airline.Icao)),
+                name: Value(values, nameof(Airline.Name)) ?? requestedIata,
+                countryCode: countryCode);
+
+            Stamp(airline, sourceName);
+            return airline;
         }
 
         private static Country BuildCountry(

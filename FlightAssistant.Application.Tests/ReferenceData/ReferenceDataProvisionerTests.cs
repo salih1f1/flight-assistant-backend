@@ -397,4 +397,107 @@ public class ReferenceDataProvisionerTests
         await _countries.Received(1).AddAsync(Arg.Any<Country>(), Arg.Any<CancellationToken>());
         await _airports.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
+
+    private static VerificationSourceFetchResult FoundAirline(string iata, string? countryName) =>
+        VerificationSourceFetchResult.Found(new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            [nameof(Airline.Iata)] = iata,
+            [nameof(Airline.Icao)] = "BAW",
+            [nameof(Airline.Name)] = "British Airways",
+            [VerificationExtraValues.AirlineCountryName] = countryName
+        });
+
+    [Fact]
+    public async Task UnknownAirline_ResolvesItsCountryNameToACode()
+    {
+        _registry.TryGet("aeroapi").Returns(
+            new FakeSource("aeroapi", 0.015m, [VerificationEntityType.Airline], _ => FoundAirline("BA", "United Kingdom")));
+        _countries.FindByCodesAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns([Country.Create("GB", "United Kingdom")]);
+        _countryNames.TryResolveCodeByNameAsync("United Kingdom", Arg.Any<CancellationToken>())
+            .Returns(CountryCodeResolution.Found("GB"));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airline, "BA")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+        await _airlines.Received(1).AddAsync(
+            Arg.Is<Airline>(a =>
+                a.Iata == "BA" &&
+                a.Icao == "BAW" &&
+                a.Name == "British Airways" &&
+                a.CountryCode == "GB" &&
+                a.IsVerified &&
+                a.VerificationSource == "aeroapi" &&
+                a.SourceType == "auto"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task UnknownAirline_WhoseCountryNameCannotBeResolved_IsNotFound()
+    {
+        // No country code means no valid Airline row — the FK is required. That is a data gap, not
+        // a transient failure, so it is a 404 rather than a 503.
+        _registry.TryGet("aeroapi").Returns(
+            new FakeSource("aeroapi", 0.015m, [VerificationEntityType.Airline], _ => FoundAirline("BA", "Atlantis")));
+        _countryNames.TryResolveCodeByNameAsync("Atlantis", Arg.Any<CancellationToken>())
+            .Returns(CountryCodeResolution.NotFound);
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airline, "BA")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.NotFound, result.Status);
+        Assert.Equal(VerificationEntityType.Airline, result.FailedType);
+        Assert.Equal("BA", result.FailedCode);
+        await _airlines.DidNotReceive().AddAsync(Arg.Any<Airline>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task UnknownAirline_WhenTheResolverFails_IsUnavailable()
+    {
+        _registry.TryGet("aeroapi").Returns(
+            new FakeSource("aeroapi", 0.015m, [VerificationEntityType.Airline], _ => FoundAirline("BA", "United Kingdom")));
+        _countryNames.TryResolveCodeByNameAsync("United Kingdom", Arg.Any<CancellationToken>())
+            .Returns(CountryCodeResolution.Failed("mledoze download failed: HTTP 503"));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airline, "BA")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Unavailable, result.Status);
+        Assert.Equal("mledoze download failed: HTTP 503", result.DiagnosticDetail);
+    }
+
+    [Fact]
+    public async Task UnknownAirline_WithNoCountryNameAtAll_IsNotFound()
+    {
+        _registry.TryGet("aeroapi").Returns(
+            new FakeSource("aeroapi", 0.015m, [VerificationEntityType.Airline], _ => FoundAirline("BA", null)));
+        _countryNames.TryResolveCodeByNameAsync(null, Arg.Any<CancellationToken>())
+            .Returns(CountryCodeResolution.NotFound);
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airline, "BA")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.NotFound, result.Status);
+        Assert.Equal(VerificationEntityType.Airline, result.FailedType);
+    }
+
+    [Fact]
+    public async Task UnknownAirline_InAnUnknownCountry_ProvisionsTheCountryToo()
+    {
+        _registry.TryGet("aeroapi").Returns(
+            new FakeSource("aeroapi", 0.015m, [VerificationEntityType.Airline], _ => FoundAirline("BA", "United Kingdom")));
+        _registry.TryGet("mledoze").Returns(
+            new FakeSource("mledoze", 0m, [VerificationEntityType.Country], _ => FoundCountry("GB", "United Kingdom")));
+        _countries.FindByCodesAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns([]);
+        _countryNames.TryResolveCodeByNameAsync("United Kingdom", Arg.Any<CancellationToken>())
+            .Returns(CountryCodeResolution.Found("GB"));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airline, "BA")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+        await _countries.Received(1).AddAsync(Arg.Any<Country>(), Arg.Any<CancellationToken>());
+    }
 }
