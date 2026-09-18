@@ -600,4 +600,67 @@ public class ReferenceDataProvisionerTests
             ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "zzz"),
             ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "ZZZ"));
     }
+
+    [Theory]
+    [InlineData(ProviderBudgetState.SoftLimit)]
+    [InlineData(ProviderBudgetState.Exhausted)]
+    public async Task AMeteredSource_IsHeldBackOnceTheBudgetLeavesNormal(ProviderBudgetState state)
+    {
+        _budget.GetStateAsync(Arg.Any<CancellationToken>()).Returns(state);
+        var source = new FakeSource("aeroapi", 0.015m, [VerificationEntityType.Airline],
+            _ => FoundAirline("BA", "United Kingdom"));
+        _registry.TryGet("aeroapi").Returns(source);
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airline, "BA")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Unavailable, result.Status);
+        Assert.Equal(0, source.Calls);
+    }
+
+    [Fact]
+    public async Task AMeteredSource_RunsWhileTheBudgetIsNormal()
+    {
+        _budget.GetStateAsync(Arg.Any<CancellationToken>()).Returns(ProviderBudgetState.Normal);
+        var source = new FakeSource("aeroapi", 0.015m, [VerificationEntityType.Airline],
+            _ => FoundAirline("BA", "United Kingdom"));
+        _registry.TryGet("aeroapi").Returns(source);
+        _countries.FindByCodesAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns([Country.Create("GB", "United Kingdom")]);
+        _countryNames.TryResolveCodeByNameAsync("United Kingdom", Arg.Any<CancellationToken>())
+            .Returns(CountryCodeResolution.Found("GB"));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airline, "BA")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+        Assert.Equal(1, source.Calls);
+    }
+
+    [Fact]
+    public async Task AFreeSource_IsNeverGatedByTheBudget()
+    {
+        // ourairports and mledoze cost nothing; refusing them would withhold work that spends no money.
+        _budget.GetStateAsync(Arg.Any<CancellationToken>()).Returns(ProviderBudgetState.Exhausted);
+        var source = new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR"));
+        _registry.TryGet("ourairports").Returns(source);
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+        Assert.Equal(1, source.Calls);
+    }
+
+    [Fact]
+    public async Task AFreeSource_NeverEvenReadsTheBudget()
+    {
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR")));
+
+        await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        await _budget.DidNotReceive().GetStateAsync(Arg.Any<CancellationToken>());
+    }
 }

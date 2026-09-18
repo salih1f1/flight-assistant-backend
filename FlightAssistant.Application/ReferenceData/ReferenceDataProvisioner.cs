@@ -400,6 +400,24 @@ namespace FlightAssistant.Application.ReferenceData
 
                 anySourceSupportedType = true;
 
+                // Only a source that actually bills is gated. From SoftLimit onward, matching
+                // AeroApiFlightSearchBudgetDecorator -- the closest analogue, also traveler-facing
+                // and also discretionary spend -- rather than #401's Exhausted-only rule, which is
+                // for work an admin explicitly asked for. Unavailable, never NotFound: a refusal
+                // teaches us nothing about whether the entity exists.
+                if (source.CostPerRowUsd > 0m)
+                {
+                    var budgetState = await _budget.GetStateAsync(ct).ConfigureAwait(false);
+                    if (budgetState != ProviderBudgetState.Normal)
+                    {
+                        _logger.LogInformation(
+                            "Not provisioning {EntityType} '{Code}' from metered source {SourceName}: budget is {BudgetState}.",
+                            type, code, sourceName, budgetState);
+                        return Fetch.Unavailable(
+                            $"The flight data budget is {budgetState}, so '{sourceName}' was not called.");
+                    }
+                }
+
                 var key = type switch
                 {
                     VerificationEntityType.Airport => VerificationSourceLookupKey.ForAirport(code, null),
