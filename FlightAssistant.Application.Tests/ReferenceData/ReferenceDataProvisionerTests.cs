@@ -395,5 +395,6 @@ public class ReferenceDataProvisionerTests
 
         Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
         await _countries.Received(1).AddAsync(Arg.Any<Country>(), Arg.Any<CancellationToken>());
+        await _airports.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 }
