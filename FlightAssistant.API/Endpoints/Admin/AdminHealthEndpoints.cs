@@ -1,7 +1,9 @@
 using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Queries.Admin.DataSources;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Infrastructure.Persistance;
+using MediatR;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 
@@ -74,6 +76,22 @@ namespace FlightAssistant.API.Endpoints.Admin
             // database outage — final review C1); this stays reachable for anything unexpected,
             // e.g. HealthCheckService itself throwing.
             .ProducesProblem(500);
+
+            // GET /admin/health/sources
+            admin.MapGet("health/sources", async (IMediator mediator, IHostEnvironment env, CancellationToken ct) =>
+                // Same non-Production rule the report above applies to its own diagnostics: a
+                // sanitized LastError is still exception-shaped detail.
+                Results.Ok(await mediator.Send(new GetDataSourcesQuery(IncludeDiagnostics: !env.IsProduction()), ct)))
+            .WithTags("Admin - Health")
+            .WithName("AdminGetDataSources")
+            .WithSummary("Every outside data source and its observed status")
+            .WithDescription(
+                "One row per catalogued dependency: its current status, when it was last seen working, when " +
+                "it was last observed at all, a sentence saying what that status is based on, and where to " +
+                "check it yourself. Reads a small table and runs no checks — unlike GET /admin/health, which " +
+                "runs every registered health check live. A source that has never been observed is reported " +
+                "as Unknown, never as healthy.")
+            .Produces<List<AdminDataSourceDto>>(200);
         }
     }
 }
