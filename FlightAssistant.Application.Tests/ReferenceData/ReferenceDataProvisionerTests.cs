@@ -57,6 +57,12 @@ public class ReferenceDataProvisionerTests
 
     private readonly Options _options = new();
 
+    /// <summary>Captured by the <see cref="IAirportRepository"/> factory registration in
+    /// <see cref="CreateProvisioner"/> the moment it's resolved from the provisioner's own scope --
+    /// proves that scope actually carries the <c>system</c> actor, rather than trusting the
+    /// unrelated <c>Stamp()</c>/<c>Verify(...)</c> assertion to stand in for that.</summary>
+    private string? _actorOnScope;
+
     /// <summary>A stand-in source whose answers the test dictates, with a cost so the metered
     /// gate can be exercised.</summary>
     private sealed class FakeSource(
@@ -101,7 +107,13 @@ public class ReferenceDataProvisionerTests
         var services = new ServiceCollection();
         services.AddScoped<AdminContext>();
         services.AddScoped<IAdminContext>(sp => sp.GetRequiredService<AdminContext>());
-        services.AddScoped(_ => _airports);
+        services.AddScoped<IAirportRepository>(sp =>
+        {
+            // Reads the actor off the very scope the provisioner resolves this repository from --
+            // the scope it must be VerificationJobActor.CreateScope, not the caller's own scope.
+            _actorOnScope = sp.GetRequiredService<IAdminContext>().ActorId;
+            return _airports;
+        });
         services.AddScoped(_ => _airlines);
         services.AddScoped(_ => _countries);
         var provider = services.BuildServiceProvider();
@@ -145,6 +157,8 @@ public class ReferenceDataProvisionerTests
                 a.VerificationSource == "ourairports" &&
                 a.SourceType == "auto"),
             Arg.Any<CancellationToken>());
+        await _airports.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+        Assert.Equal(VerificationJobActor.ActorId, _actorOnScope);
     }
 
     [Fact]
@@ -203,6 +217,24 @@ public class ReferenceDataProvisionerTests
             [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
 
         Assert.Equal(ReferenceProvisionStatus.Unavailable, result.Status);
+    }
+
+    [Fact]
+    public async Task NoConfiguredSourceSupportsTheType_IsUnavailable_NotNotFound()
+    {
+        // Reachable by configuration alone: Verification:DefaultSources:Airport could name a
+        // source (here standing in for e.g. mledoze) that is registered and answers fine, but
+        // simply doesn't support airports at all. Nothing ever actually answered the airport
+        // question, so this must not be reported as "this airport does not exist".
+        var source = new FakeSource("ourairports", 0m, [VerificationEntityType.Country],
+            _ => VerificationSourceFetchResult.NotFound);
+        _registry.TryGet("ourairports").Returns(source);
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Unavailable, result.Status);
+        await _airports.DidNotReceive().AddAsync(Arg.Any<Airport>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

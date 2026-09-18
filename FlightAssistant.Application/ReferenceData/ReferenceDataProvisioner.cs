@@ -162,7 +162,7 @@ namespace FlightAssistant.Application.ReferenceData
             public static readonly Fetch NotFound = new(FetchStatus.NotFound, null, null, null);
             public static Fetch Found(string sourceName, IReadOnlyDictionary<string, string?> values) =>
                 new(FetchStatus.Found, sourceName, values, null);
-            public static Fetch Unavailable(string error) => new(FetchStatus.Unavailable, null, null, error);
+            public static Fetch Unavailable(string? error) => new(FetchStatus.Unavailable, null, null, error);
 
             public ReferenceProvisionResult ToProvisionResult(VerificationEntityType type, string code) =>
                 Status == FetchStatus.NotFound
@@ -174,12 +174,18 @@ namespace FlightAssistant.Application.ReferenceData
         /// Asks each source configured for <paramref name="type"/> in turn; the first that answers
         /// Found wins. A source error stops the search rather than falling through to the next
         /// source: falling through would let one broken source's outage be reported as a miss.
+        /// If every configured source turns out not to support <paramref name="type"/> at all --
+        /// reachable purely by misconfiguration, e.g. <c>Verification:DefaultSources:Airport</c>
+        /// naming a country-only source -- that is <c>Unavailable</c>, not <c>NotFound</c>: nothing
+        /// ever actually answered, so there is no basis to tell a traveler the airport doesn't exist.
         /// </summary>
         private async Task<Fetch> FetchAsync(VerificationEntityType type, string code, CancellationToken ct)
         {
             var sourceNames = _verificationOptions.DefaultSourcesFor(type);
             if (sourceNames.Count == 0)
                 return Fetch.Unavailable($"No source is configured for {type}.");
+
+            var anySourceSupportedType = false;
 
             foreach (var sourceName in sourceNames)
             {
@@ -189,6 +195,8 @@ namespace FlightAssistant.Application.ReferenceData
 
                 if (!source.SupportedEntityTypes.Contains(type))
                     continue;
+
+                anySourceSupportedType = true;
 
                 var key = type switch
                 {
@@ -211,7 +219,9 @@ namespace FlightAssistant.Application.ReferenceData
                     return Fetch.Found(sourceName, result.Lookup.Values!);
             }
 
-            return Fetch.NotFound;
+            return anySourceSupportedType
+                ? Fetch.NotFound
+                : Fetch.Unavailable($"No configured source supports {type}.");
         }
     }
 }
