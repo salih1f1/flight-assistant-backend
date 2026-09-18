@@ -60,6 +60,9 @@ namespace FlightAssistant.Infrastructure
             // its own port rather than living on IRefDataRepository or IVerificationRequestRepository.
             services.AddScoped<IVerificationNeedsAttentionRepository, VerificationNeedsAttentionRepository>();
 
+            // Data-source health (#460): the status table behind the /health page.
+            services.AddScoped<IDataSourceStatusRepository, DataSourceStatusRepository>();
+
             // Verification sources (#367 task 3): the two free outside datasets an automated check
             // can name. Both hold no credentials — OurAirports and mledoze's raw GitHub file are
             // public, unauthenticated URLs — so, unlike the GitHub clients below, following a
