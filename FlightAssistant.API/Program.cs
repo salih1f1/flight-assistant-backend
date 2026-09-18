@@ -160,6 +160,10 @@ builder.Services.AddVerificationJob();
 // it only persists what other call paths already observed, and starts no traffic of its own.
 builder.Services.AddHostedService<DataSourceFlushService>();
 
+// #460: marks the optional sources this environment has no credentials for, reading configuration
+// only. Required sources stay Unknown until something actually calls them.
+builder.Services.AddHostedService<DataSourceSeeder>();
+
 // ------------------------------------------------------------
 // 3. Authentication & Authorization
 // ------------------------------------------------------------
