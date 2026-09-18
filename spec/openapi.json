@@ -590,6 +590,49 @@
         }
       }
     },
+    "/admin/alliances/{id}/detail": {
+      "get": {
+        "tags": [
+          "Admin - Alliances"
+        ],
+        "summary": "Get alliance detail",
+        "description": "Returns the alliance together with every airline whose AllianceCode is its Code, ordered by name. The list is not capped: it is bounded by how many airlines exist in the alliance rather than growing with usage, so there is no truncation flag. An alliance no airline belongs to is a 200 with an empty list, not a 404. Verification state is deliberately absent — it lives with the raw record at GET /admin/data/alliances.",
+        "operationId": "AdminGetAllianceDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllianceDetailAdminDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/audit": {
       "get": {
         "tags": [
@@ -5590,6 +5633,57 @@
           },
           "name": {
             "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AllianceAirlineDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "iata": {
+            "type": "string",
+            "nullable": true
+          },
+          "icao": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "countryCode": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AllianceDetailAdminDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "airlines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AllianceAirlineDto"
+            },
             "nullable": true
           }
         },
