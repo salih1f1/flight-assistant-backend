@@ -13,8 +13,14 @@ public class ImportAirlinesCommandHandlerTests
 {
     private readonly IAirlineRepository _repo = Substitute.For<IAirlineRepository>();
     private readonly IAdminContext _adminContext = new AdminContext { ActorId = "importing-admin" };
+    private readonly IAllianceRepository _alliances = Substitute.For<IAllianceRepository>();
 
-    private ImportAirlinesCommandHandler Handler() => new(_repo, _adminContext);
+    public ImportAirlinesCommandHandlerTests() =>
+        // Every row below that names an alliance names OW, so the #449 guard has one to find.
+        _alliances.FindByCodeAsync("OW", Arg.Any<CancellationToken>())
+            .Returns(Alliance.Create("OW", "oneworld"));
+
+    private ImportAirlinesCommandHandler Handler() => new(_repo, _adminContext, _alliances);
 
     [Fact]
     public async Task Handle_NewAirline_InsertsAndReturnsInsertedCount()
@@ -141,5 +147,24 @@ public class ImportAirlinesCommandHandlerTests
         Assert.True(existing.IsVerified);
         Assert.Null(existing.VerificationIssue);
         Assert.Equal(VerificationSources.Import, existing.VerificationSource);
+    }
+
+    [Fact]
+    public async Task Handle_AllianceCodeThatIsNotAnAlliance_FailsThatRowOnlyAndStillImportsTheRest()
+    {
+        _repo.FindByIataAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _repo.FindByIcaoAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _alliances.FindByCodeAsync("STAR", Arg.Any<CancellationToken>()).ReturnsNull();
+        var handler = Handler();
+        var bad = new AirlineImportDto("LH", "DLH", "Lufthansa", "DE", "STAR");
+        var good = new AirlineImportDto("BA", "BAW", "British Airways", "GB", "OW");
+
+        var result = await handler.Handle(new ImportAirlinesCommand([bad, good]), CancellationToken.None);
+
+        Assert.Equal(1, result.Inserted);
+        var error = Assert.Single(result.Errors);
+        Assert.Contains("STAR", error);
+        await _repo.Received(1).AddAsync(Arg.Any<Airline>(), Arg.Any<CancellationToken>());
+        await _repo.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 }
