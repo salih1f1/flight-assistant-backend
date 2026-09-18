@@ -189,13 +189,25 @@ entity type rather than two that can drift.
 | Budget at `SoftLimit` or beyond, metered lookup needed | 503 + `Retry-After` |
 | Wall-clock budget exceeded | 503 + `Retry-After` |
 | Source error (timeout, 5xx, parse) | 503, fixed category in `DiagnosticDetail` |
-| Airline country name unresolvable | 404 naming the airline |
+| Airline country name unresolvable | 404 naming the airline; nothing written |
 | Traveler at the tracking cap | 409, before any provisioning, nothing written |
 | `ReferenceProvisioning:Enabled` false | today's 404 |
 
-**Partial success is kept.** If the airports resolve and the airline does not, the airports
-are still saved and the response is 404. Those rows are independently correct, and discarding
-them would make the retry pay for them again.
+**Provisioning is all-or-nothing.** If the airports resolve and the airline does not, nothing
+is written and the response is 404.
+
+This reverses an earlier decision in this design to keep partial success. The argument for
+keeping it was that discarding resolved rows makes a retry pay for them again -- but that
+argument does not survive contact with which sources actually cost money. Airports come from
+`ourairports` and countries from `mledoze`, both free and both held in memory for 24 hours
+after the first load, so re-fetching them on a retry costs effectively nothing. The only
+metered source is `aeroapi`, for airlines -- and in the very scenario partial success was
+meant to help, the airline is the thing that failed, so there is nothing metered to salvage.
+What partial success would buy is near-zero; what it would cost is a second write path that
+has to work out which entities are still safe to save once one of their countries could not
+be resolved, and a reference table that can be left half-populated by a failed request.
+
+One save, one transaction, nothing on failure.
 
 Provisioning never throws out of the handler uncaught; every failure maps to a
 `DomainException` with a status.
