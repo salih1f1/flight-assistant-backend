@@ -103,6 +103,29 @@ namespace FlightAssistant.Application.Commands.Admin.Common
                     "a loyalty program kind", "the kind");
         }
 
+        /// <summary>
+        /// Refuses a <c>ProgramId</c> that is not in <c>loyalty_programs</c>, and a <c>TierId</c>
+        /// that is not one of <i>that</i> program's tiers — both foreign keys of
+        /// <c>traveler_loyalty_memberships</c>, and the pair is only meaningful together: a tier id
+        /// borrowed from another program passes every foreign key and still describes a membership
+        /// nobody holds (#475). The tier is optional, so a null one costs no check.
+        /// </summary>
+        public static async Task EnsureLoyaltyProgramAndTierExistAsync(
+            ILoyaltyRepository loyalty, int programId, int? tierId, CancellationToken ct)
+        {
+            // Includes the tiers, so the pair is checked against one read.
+            var program = await loyalty.GetProgramByIdAsync(programId, ct)
+                ?? throw Missing("TravelerLoyaltyMembership", "ProgramId", programId.ToString(),
+                    "a loyalty program", "the program");
+
+            if (tierId is not { } id || program.Tiers.Any(t => t.Id == id))
+                return;
+
+            throw new DomainException(
+                $"TravelerLoyaltyMembership TierId {id} is not a tier of loyalty program {programId}; " +
+                "choose one of that program's tiers.", 409);
+        }
+
         private static DomainException Missing(
             string entity, string column, string value, string article, string subject) =>
             new($"{entity} {column} {value} is not {article} we have; add {subject} first.", 409);

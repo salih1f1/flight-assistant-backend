@@ -85,9 +85,11 @@ namespace FlightAssistant.API.Endpoints
             .WithDescription(
                 "Links a loyalty program membership to the authenticated traveler. " +
                 "Body fields: ProgramId (from GET /loyalty/programs), AccountNumber, " +
-                "TierId (optional, from the program's tier list), TierExpiryDate (optional, YYYY-MM-DD), PointsExpiryDate (optional, YYYY-MM-DD).")
+                "TierId (optional, from the program's tier list), TierExpiryDate (optional, YYYY-MM-DD), PointsExpiryDate (optional, YYYY-MM-DD). " +
+                "A ProgramId we don't have, or a TierId belonging to another program, is a 409 and writes nothing (#475).")
             .Produces(201)
-            .ProducesValidationProblem();
+            .ProducesValidationProblem()
+            .ProducesProblem(409);
 
             // PUT /loyalty/memberships/{id} — update a membership
             group.MapPut("memberships/{id:guid}", async (HttpContext http, Guid id, [FromBody] UpdateMembershipRequest req, IMediator mediator, CancellationToken ct) =>
