@@ -768,4 +768,50 @@ public class ReferenceDataProvisionerTests
             CreateProvisioner().ProvisionAsync(
                 [new MissingReference(VerificationEntityType.Airport, "LHR")], caller.Token));
     }
+
+    [Fact]
+    public async Task ASaveFailure_IsUnavailable_NotProvisioned()
+    {
+        // Application cannot see EF Core's DbUpdateException (a deliberate layer boundary, #465
+        // review), so any non-cancellation save failure is treated the same way. The concrete case
+        // is the concurrent-duplicate race: Airport.Iata carries a unique index, so two
+        // POST /flights requests provisioning the same new airport race -- one wins, and the
+        // other's SaveChangesAsync throws here. A logged 503 whose retry succeeds immediately (the
+        // row the other request just created is now there) beats an unhandled 500 on a
+        // traveler-facing path. The diagnostic must be a fixed string, never the exception's own
+        // message, which could carry a host, constraint or table name.
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR")));
+        _airports.SaveChangesAsync(Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException(
+                "23505: duplicate key value violates unique constraint \"ix_airports_iata\""));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Unavailable, result.Status);
+        Assert.Equal(VerificationEntityType.Airport, result.FailedType);
+        Assert.Equal("LHR", result.FailedCode);
+        Assert.Equal("Saving the provisioned reference data failed.", result.DiagnosticDetail);
+    }
+
+    [Fact]
+    public async Task ASaveThatThrowsCancellation_PropagatesRatherThanBeingSwallowed()
+    {
+        // Same shape as ACacheReadThatThrowsCancellation... above: the save's own catch
+        // (`when (ex is not OperationCanceledException)`) must never treat a genuine cancellation
+        // as an ordinary save failure. The caller's own token is already cancelled here, so the
+        // outer budget catch's `!ct.IsCancellationRequested` guard does not intercept it either,
+        // and the exception must reach the caller unchanged rather than becoming a status.
+        using var caller = new CancellationTokenSource();
+        caller.Cancel();
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR")));
+        _airports.SaveChangesAsync(Arg.Any<CancellationToken>())
+            .ThrowsAsync(new OperationCanceledException());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreateProvisioner().ProvisionAsync(
+                [new MissingReference(VerificationEntityType.Airport, "LHR")], caller.Token));
+    }
 }

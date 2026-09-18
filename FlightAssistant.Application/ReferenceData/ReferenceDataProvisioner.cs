@@ -222,7 +222,33 @@ namespace FlightAssistant.Application.ReferenceData
             // the same DbContext, but the happy-path regression test's `_airports` double is the
             // one that actually observes this call.
             if (wroteAnything)
-                await airports.SaveChangesAsync(ct).ConfigureAwait(false);
+            {
+                try
+                {
+                    await airports.SaveChangesAsync(ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Application cannot see EF Core's DbUpdateException -- that boundary is
+                    // deliberate (#465 review: worth more than eliminating a rare 500, and
+                    // translating it inside AirportRepository would change error behaviour for
+                    // every other caller of these repositories, including the admin create/update
+                    // paths) -- so any non-cancellation save failure is treated the same way: a
+                    // save failure means we could not write the reference data, so we could not
+                    // provision, whatever the cause. The concrete case is the concurrent-duplicate
+                    // race: Airport.Iata and Airline.Iata both carry unique indexes, so two
+                    // POST /flights requests provisioning the same new row race -- one wins, and
+                    // the other's save throws here. A logged 503 whose retry succeeds immediately
+                    // -- the row the other request just created is now there -- beats an unhandled
+                    // 500 on a traveler-facing path. The message is a fixed string, never
+                    // ex.Message: DiagnosticDetail is client-visible outside Production and must
+                    // never carry a host, constraint or table name.
+                    _logger.LogError(ex, "Saving provisioned reference data failed.");
+                    var first = missing.First();
+                    return ReferenceProvisionResult.Unavailable(
+                        first.Type, first.Code, "Saving the provisioned reference data failed.");
+                }
+            }
 
             return ReferenceProvisionResult.Provisioned;
         }
