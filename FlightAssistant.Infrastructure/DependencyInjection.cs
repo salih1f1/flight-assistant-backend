@@ -135,6 +135,10 @@ namespace FlightAssistant.Infrastructure
                 sp.GetRequiredService<ILogger<MledozeCountriesVerificationSource>>()));
             services.AddSingleton<IVerificationSource>(sp => sp.GetRequiredService<MledozeCountriesVerificationSource>());
 
+            // The same singleton, so the name index rides on the dataset the source already
+            // downloads and caches (#465) rather than a second copy of it.
+            services.AddSingleton<ICountryNameResolver>(sp => sp.GetRequiredService<MledozeCountriesVerificationSource>());
+
             // aeroapi (#401): airports and airlines, metered, against AeroAPI itself rather than a
             // downloaded dataset. Registered a singleton for the same reason as the two sources
             // above (IVerificationSourceRegistry resolves IEnumerable<IVerificationSource> once, at
