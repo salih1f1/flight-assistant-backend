@@ -168,7 +168,7 @@ namespace FlightAssistant.Infrastructure
             services.AddSingleton<IAeroApiThrottleObserver>(sp =>
                 sp.GetRequiredService<AeroApiThrottleGate>());
 
-            var aeroApiClientBuilder = services.AddHttpClient("AeroApi", (sp, client) =>
+            var aeroApiClientBuilder = services.AddHttpClient(AeroApiVerificationSource.HttpClientName, (sp, client) =>
             {
                 var options = sp.GetRequiredService<IOptions<AeroApiOptions>>().Value;
                 client.BaseAddress = new Uri(options.BaseUrl);
@@ -224,13 +224,13 @@ namespace FlightAssistant.Infrastructure
             aeroApiClientBuilder.AddHttpMessageHandler<AeroApiThrottlingHandler>();
 
             services.AddScoped(sp => new AeroApiAirportTimezoneLookup(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(AeroApiVerificationSource.HttpClientName),
                 sp.GetRequiredService<ICacheService>(),
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
                 sp.GetRequiredService<ILogger<AeroApiAirportTimezoneLookup>>()));
 
             services.AddScoped(sp => new AeroApiFlightSearchProvider(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(AeroApiVerificationSource.HttpClientName),
                 sp.GetRequiredService<AeroApiAirportTimezoneLookup>(),
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
                 sp.GetRequiredService<ILogger<AeroApiFlightSearchProvider>>()));
@@ -325,7 +325,7 @@ namespace FlightAssistant.Infrastructure
             // emit one duplicate status event the first time it is synced after this deploy.
             // Accepted, not migrated; see AeroApiFlightStatusProviderTests for the documenting test.
             services.AddScoped(sp => new AeroApiFlightStatusProvider(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(AeroApiVerificationSource.HttpClientName),
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
                 sp.GetRequiredService<TimeProvider>(),
                 sp.GetRequiredService<ILogger<AeroApiFlightStatusProvider>>()));
@@ -337,7 +337,7 @@ namespace FlightAssistant.Infrastructure
             // report is throttled, retried and authenticated identically. The endpoint it proxies
             // is itself billed at $0.00.
             services.AddScoped(sp => new AeroApiAccountUsageProvider(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AeroApi"),
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(AeroApiVerificationSource.HttpClientName),
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
                 sp.GetRequiredService<ILogger<AeroApiAccountUsageProvider>>()));
 
