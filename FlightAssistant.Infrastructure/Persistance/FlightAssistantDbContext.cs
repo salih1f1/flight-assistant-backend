@@ -1,4 +1,5 @@
 ﻿using FlightAssistant.Domain.Administration.Entities;
+using FlightAssistant.Domain.DataSources.Entities;
 using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Domain.Flights.Entities;
@@ -51,6 +52,9 @@ namespace FlightAssistant.Infrastructure.Persistance
 
         // Verification
         public DbSet<VerificationRequest> VerificationRequests => Set<VerificationRequest>();
+
+        // Health
+        public DbSet<DataSourceStatus> DataSourceStatuses => Set<DataSourceStatus>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
