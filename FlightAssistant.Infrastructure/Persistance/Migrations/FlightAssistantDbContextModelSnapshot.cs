@@ -411,6 +411,36 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.ToTable("traveler_flights", (string)null);
                 });
 
+            modelBuilder.Entity("FlightAssistant.Domain.Jobs.Entities.JobSwitch", b =>
+                {
+                    b.Property<string>("Job")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("job");
+
+                    b.Property<string>("ChangedBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("changed_by");
+
+                    b.Property<DateTime?>("ChangedUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("changed_utc");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("enabled");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("reason");
+
+                    b.HasKey("Job");
+
+                    b.ToTable("job_switches", (string)null);
+                });
+
             modelBuilder.Entity("FlightAssistant.Domain.Lounges.Entities.Lounge", b =>
                 {
                     b.Property<int>("Id")
