@@ -3146,6 +3146,72 @@
         }
       }
     },
+    "/admin/travelers/{id}/memberships": {
+      "post": {
+        "tags": [
+          "Admin - Travelers"
+        ],
+        "summary": "Add a loyalty membership for a traveler",
+        "description": "Links a loyalty program membership to this traveler, exactly as POST /loyalty/memberships does for the signed-in traveler. Body fields: ProgramId (from GET /admin/loyalty/programs), AccountNumber, TierId (optional, from that program's tier list), TierExpiryDate (optional, YYYY-MM-DD, today or later), PointsExpiryDate (same). An unknown traveler is a 404 and writes nothing. A ProgramId we don't have, or a TierId belonging to another program, is a 409 and writes nothing. Adding a membership the traveler already has is not refused: the same program can be added twice, as it can through POST /loyalty/memberships.",
+        "operationId": "AdminAddMembershipForTraveler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMembershipRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/travelers/{travelerId}/device-tokens/{tokenId}": {
       "delete": {
         "tags": [
@@ -4204,7 +4270,7 @@
           "Loyalty"
         ],
         "summary": "Add a loyalty membership",
-        "description": "Links a loyalty program membership to the authenticated traveler. Body fields: ProgramId (from GET /loyalty/programs), AccountNumber, TierId (optional, from the program's tier list), TierExpiryDate (optional, YYYY-MM-DD), PointsExpiryDate (optional, YYYY-MM-DD).",
+        "description": "Links a loyalty program membership to the authenticated traveler. Body fields: ProgramId (from GET /loyalty/programs), AccountNumber, TierId (optional, from the program's tier list), TierExpiryDate (optional, YYYY-MM-DD), PointsExpiryDate (optional, YYYY-MM-DD). A ProgramId we don't have, or a TierId belonging to another program, is a 409 and writes nothing (#475).",
         "operationId": "AddMembership",
         "requestBody": {
           "content": {
@@ -4226,6 +4292,16 @@
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
                 }
               }
             }
