@@ -14,13 +14,27 @@ public class ImportAirlinesCommandHandlerTests
     private readonly IAirlineRepository _repo = Substitute.For<IAirlineRepository>();
     private readonly IAdminContext _adminContext = new AdminContext { ActorId = "importing-admin" };
     private readonly IAllianceRepository _alliances = Substitute.For<IAllianceRepository>();
+    private readonly ICountryRepository _countries = Substitute.For<ICountryRepository>();
 
-    public ImportAirlinesCommandHandlerTests() =>
+    public ImportAirlinesCommandHandlerTests()
+    {
         // Every row below that names an alliance names OW, so the #449 guard has one to find.
         _alliances.FindByCodeAsync("OW", Arg.Any<CancellationToken>())
             .Returns(Alliance.Create("OW", "oneworld"));
+        // The rows below are GB, US and DE, so the #455 country guard has countries to find.
+        foreach (var (code, name, a3, num) in new[]
+                 {
+                     ("GB", "United Kingdom", "GBR", 826),
+                     ("US", "United States", "USA", 840),
+                     ("DE", "Germany", "DEU", 276),
+                 })
+        {
+            _countries.FindByCodeAsync(code, Arg.Any<CancellationToken>())
+                .Returns(Country.Create(code, name, a3, num));
+        }
+    }
 
-    private ImportAirlinesCommandHandler Handler() => new(_repo, _adminContext, _alliances);
+    private ImportAirlinesCommandHandler Handler() => new(_repo, _adminContext, _alliances, _countries);
 
     [Fact]
     public async Task Handle_NewAirline_InsertsAndReturnsInsertedCount()
@@ -165,6 +179,24 @@ public class ImportAirlinesCommandHandlerTests
         var error = Assert.Single(result.Errors);
         Assert.Contains("STAR", error);
         await _repo.Received(1).AddAsync(Arg.Any<Airline>(), Arg.Any<CancellationToken>());
+        await _repo.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Handle_CountryCodeThatIsNoCountry_FailsThatRowOnlyAndStillImportsTheRest()
+    {
+        _repo.FindByIataAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _repo.FindByIcaoAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _countries.FindByCodeAsync("ZZ", Arg.Any<CancellationToken>()).ReturnsNull();
+        var handler = Handler();
+        var bad = new AirlineImportDto("Q8", null, "Nowhere Air", "ZZ", null);
+        var good = new AirlineImportDto("BA", "BAW", "British Airways", "GB", "OW");
+
+        var result = await handler.Handle(new ImportAirlinesCommand([bad, good]), CancellationToken.None);
+
+        Assert.Equal(1, result.Inserted);
+        var error = Assert.Single(result.Errors);
+        Assert.Contains("ZZ", error);
         await _repo.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 }

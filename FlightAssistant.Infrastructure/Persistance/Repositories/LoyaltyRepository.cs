@@ -102,6 +102,9 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
         public Task<LoyaltyProgramKind?> FindKindByCodeAsync(string code, CancellationToken ct = default) =>
             _db.LoyaltyProgramKinds.FirstOrDefaultAsync(k => k.Code == code, ct);
 
+        public Task<LoyaltyProgramKind?> FindKindByIdAsync(int id, CancellationToken ct = default) =>
+            _db.LoyaltyProgramKinds.FirstOrDefaultAsync(k => k.Id == id, ct);
+
         public async Task AddKindAsync(LoyaltyProgramKind kind, CancellationToken ct = default) =>
             await _db.LoyaltyProgramKinds.AddAsync(kind, ct);
 

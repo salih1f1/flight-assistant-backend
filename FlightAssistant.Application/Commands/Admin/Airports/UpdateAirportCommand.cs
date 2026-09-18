@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using FlightAssistant.Application.Commands.Admin.Common;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
 using FluentValidation;
@@ -21,12 +22,18 @@ namespace FlightAssistant.Application.Commands.Admin.Airports
     public sealed class UpdateAirportCommandHandler : IRequestHandler<UpdateAirportCommand>
     {
         private readonly IAirportRepository _repo;
-        public UpdateAirportCommandHandler(IAirportRepository repo) => _repo = repo;
+        private readonly ICountryRepository _countries;
+        public UpdateAirportCommandHandler(IAirportRepository repo, ICountryRepository countries)
+        {
+            _repo = repo;
+            _countries = countries;
+        }
 
         public async Task Handle(UpdateAirportCommand cmd, CancellationToken ct)
         {
             var airport = await _repo.GetByIdAsync(cmd.Id, ct)
                 ?? throw new DomainException($"Airport {cmd.Id} not found.", 404);
+            await ReferenceExistence.EnsureCountryExistsAsync(_countries, cmd.CountryCode, "Airport", ct);
             airport.Update(cmd.Iata, cmd.Icao, cmd.Name, cmd.City, cmd.CountryCode,
                 cmd.Latitude, cmd.Longitude, cmd.ElevationFt);
             await _repo.SaveChangesAsync(ct);

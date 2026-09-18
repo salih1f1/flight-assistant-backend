@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using FlightAssistant.Application.Commands.Admin.Common;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
 using FluentValidation;
@@ -19,17 +20,21 @@ namespace FlightAssistant.Application.Commands.Admin.Airlines
     {
         private readonly IAirlineRepository _repo;
         private readonly IAllianceRepository _alliances;
-        public UpdateAirlineCommandHandler(IAirlineRepository repo, IAllianceRepository alliances)
+        private readonly ICountryRepository _countries;
+        public UpdateAirlineCommandHandler(
+            IAirlineRepository repo, IAllianceRepository alliances, ICountryRepository countries)
         {
             _repo = repo;
             _alliances = alliances;
+            _countries = countries;
         }
 
         public async Task Handle(UpdateAirlineCommand cmd, CancellationToken ct)
         {
             var airline = await _repo.GetByIdAsync(cmd.Id, ct)
                 ?? throw new DomainException($"Airline {cmd.Id} not found.", 404);
-            await AllianceReference.EnsureExistsAsync(_alliances, cmd.AllianceCode, ct);
+            await ReferenceExistence.EnsureAllianceExistsAsync(_alliances, cmd.AllianceCode, ct);
+            await ReferenceExistence.EnsureCountryExistsAsync(_countries, cmd.CountryCode, "Airline", ct);
             airline.Update(cmd.Iata, cmd.Icao, cmd.Name, cmd.CountryCode, cmd.AllianceCode);
             await _repo.SaveChangesAsync(ct);
         }

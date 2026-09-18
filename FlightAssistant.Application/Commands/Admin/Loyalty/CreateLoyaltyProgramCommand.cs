@@ -1,3 +1,4 @@
+using FlightAssistant.Application.Commands.Admin.Common;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FluentValidation;
@@ -16,10 +17,17 @@ namespace FlightAssistant.Application.Commands.Admin.Loyalty
     public sealed class CreateLoyaltyProgramCommandHandler : IRequestHandler<CreateLoyaltyProgramCommand, int>
     {
         private readonly ILoyaltyRepository _repo;
-        public CreateLoyaltyProgramCommandHandler(ILoyaltyRepository repo) => _repo = repo;
+        private readonly IAirlineRepository _airlines;
+        public CreateLoyaltyProgramCommandHandler(ILoyaltyRepository repo, IAirlineRepository airlines)
+        {
+            _repo = repo;
+            _airlines = airlines;
+        }
 
         public async Task<int> Handle(CreateLoyaltyProgramCommand cmd, CancellationToken ct)
         {
+            await ReferenceExistence.EnsureLoyaltyProgramKindExistsAsync(_repo, cmd.KindId, ct);
+            await ReferenceExistence.EnsureAirlineExistsAsync(_airlines, cmd.AirlineId, "LoyaltyProgram", ct);
             var program = LoyaltyProgram.Create(cmd.Code, cmd.Name, cmd.KindId, cmd.AirlineId, cmd.AllianceCode);
             await _repo.AddProgramAsync(program, ct);
             await _repo.SaveChangesAsync(ct);
