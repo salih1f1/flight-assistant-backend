@@ -402,8 +402,13 @@ public class TrackFlightCommandHandlerTests
     }
 
     [Fact]
-    public async Task EveryMissingReference_IsSentInOneCall()
+    public async Task EveryMissingReference_IsSentInOneCall_AirlineFirstThenDepartureThenArrival()
     {
+        // The order is load-bearing, not incidental: ReferenceDataProvisioner attributes every
+        // failure to missing.First(), and ReferenceNotFound's doc comment claims the pre-#465 404
+        // messages are unchanged only because this airline-first order reproduces the old
+        // first-null-wins lookup sequence. Reordering these three MissingReference.Add calls would
+        // silently change a client-visible 404 message with no other test catching it.
         _refData.GetAirlineIdByIataAsync("BA", Arg.Any<CancellationToken>()).ReturnsNull();
         _refData.GetAirportIdByIataAsync("LHR", Arg.Any<CancellationToken>()).ReturnsNull();
         _refData.GetAirportIdByIataAsync("JFK", Arg.Any<CancellationToken>()).ReturnsNull();
@@ -411,7 +416,12 @@ public class TrackFlightCommandHandlerTests
         await Assert.ThrowsAsync<DomainException>(() => _handler.Handle(DefaultCmd, CancellationToken.None));
 
         await _provisioner.Received(1).ProvisionAsync(
-            Arg.Is<IReadOnlyCollection<MissingReference>>(m => m.Count == 3), Arg.Any<CancellationToken>());
+            Arg.Is<IReadOnlyCollection<MissingReference>>(m =>
+                m.Count == 3 &&
+                m.ElementAt(0) == new MissingReference(VerificationEntityType.Airline, "BA") &&
+                m.ElementAt(1) == new MissingReference(VerificationEntityType.Airport, "LHR") &&
+                m.ElementAt(2) == new MissingReference(VerificationEntityType.Airport, "JFK")),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -438,17 +448,25 @@ public class TrackFlightCommandHandlerTests
             _handler.Handle(DefaultCmd, CancellationToken.None));
 
         Assert.Equal(503, ex.StatusCode);
+        // Exact-equality, not DoesNotContain: missing.First() attribution can name the wrong entity
+        // (see ReferenceDataProvisioner), so the client-facing message deliberately names none --
+        // this pins that a future "helpful" edit can't interpolate FailedCode into it unnoticed.
+        Assert.Equal(
+            "Flight reference data could not be looked up right now. Please try again shortly.",
+            ex.Message);
         Assert.Equal("ourairports download failed: HTTP 503", ex.DiagnosticDetail);
     }
 
     [Fact]
     public async Task AtTheCap_WithAMissingReference_Is409AndProvisionsNothing()
     {
-        // A refused track must write nothing at all — including reference rows.
+        // A refused track must write nothing at all — including reference rows. The cap here must
+        // match SyncOptions.MaxActiveTrackedFlightsPerTraveler (3) — a value the pre-check reads
+        // through _syncOptions, so an unrelated literal would prove nothing about the actual cap.
         _refData.GetAirlineIdByIataAsync("BA", Arg.Any<CancellationToken>()).ReturnsNull();
         _flights.CountActiveTrackedFlightsAsync(
                 DefaultCmd.TravelerId, Arg.Any<DateTime>(), Arg.Any<TimeSpan>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
-            .Returns(20);
+            .Returns(3);
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             _handler.Handle(DefaultCmd, CancellationToken.None));

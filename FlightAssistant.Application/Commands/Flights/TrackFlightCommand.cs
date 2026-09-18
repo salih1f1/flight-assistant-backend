@@ -62,8 +62,11 @@ namespace FlightAssistant.Application.Commands.Flights
             if (airlineId is null || depAirportId is null || arrAirportId is null)
             {
                 // The cap is checked before provisioning so a refused track still writes nothing
-                // (#465). Only the count matters here: a missing reference row means no Flight row
-                // can reference it, so this traveler cannot already be tracking this flight.
+                // (#465). This deliberately skips AlreadyTracksAsync -- airlineId may be null here.
+                // Accepted cost: an at-cap traveler who already tracks this flight but named an
+                // unresolvable airport gets 409 here instead of the idempotent success further down;
+                // not a regression, since that request 404'd before the cap check was ever reached
+                // pre-#465.
                 var capBeforeProvisioning = _syncOptions.MaxActiveTrackedFlightsPerTraveler;
                 if (await _flights.CountActiveTrackedFlightsAsync(
                         cmd.TravelerId, now, _syncOptions.StopAfterArrival, _syncOptions.StopWithoutArrivalAfter, ct)
