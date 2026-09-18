@@ -1,6 +1,7 @@
 using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Application.ReferenceData;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Flights.Events;
 using FlightAssistant.Domain.ReferenceData.Entities;
@@ -119,9 +120,12 @@ public class DomainEventDispatchInterceptorTrackFlightPostgresTests : PostgresTe
 
         var publisher = Substitute.For<IPublisher>();
         await using var db = CreateInterceptedDbContext(publisher);
+        // Every reference row is seeded above, so the provisioner is never consulted (#465) --
+        // this test pins event dispatch on the repeat-track path, not provisioning.
         var handler = new TrackFlightCommandHandler(
             new FlightRepository(db, clock),
             new RefDataRepository(db),
+            Substitute.For<IReferenceDataProvisioner>(),
             new SyncOptions(),
             new WindowOptions(),
             clock);

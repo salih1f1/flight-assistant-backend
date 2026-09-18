@@ -6,6 +6,7 @@ using System.Text.Json;
 using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Verification;
+using FlightAssistant.Application.ReferenceData;
 using FlightAssistant.Contracts.Requests.Flights;
 using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Flights.Entities;
@@ -467,7 +468,26 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
     public async Task TrackFlight_UnknownAirline_Returns404()
     {
         // Undeclared before #405. One POST only: the Testing profile allows 2 before a 429.
-        var client = factory.CreateUserClient();
+        //
+        // Since #465, an unresolved reference goes through IReferenceDataProvisioner before the
+        // handler 404s -- and the real provisioner's default airline source is the metered
+        // "aeroapi" one, over the same shared "AeroApi" named client flight status/search use. This
+        // test's job is only "a source's genuine NotFound answer still reaches the caller as a 404",
+        // not "the real AeroAPI is reachable with the Testing profile's placeholder key" -- so the
+        // provisioner is substituted with a fake that answers NotFound deterministically, the same
+        // way AdminUsageEndpointTests substitutes IAeroApiAccountUsageProvider to avoid a live,
+        // metered call.
+        var provisioner = Substitute.For<IReferenceDataProvisioner>();
+        provisioner.ProvisionAsync(Arg.Any<IReadOnlyCollection<MissingReference>>(), Arg.Any<CancellationToken>())
+            .Returns(ReferenceProvisionResult.NotFound(VerificationEntityType.Airline, "QQ"));
+
+        using var scopedFactory = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddScoped<IReferenceDataProvisioner>(_ => provisioner)));
+        var client = scopedFactory.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", $"test-{Guid.NewGuid()}");
+
         var tomorrow = DateTime.UtcNow.AddDays(1);
         var response = await client.PostAsJsonAsync("flights", new
         {

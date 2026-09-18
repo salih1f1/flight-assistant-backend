@@ -1,9 +1,11 @@
 using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.ReferenceData;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Flights.Enums;
+using FlightAssistant.Domain.Verification.Enums;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Flights
@@ -22,6 +24,7 @@ namespace FlightAssistant.Application.Commands.Flights
     {
         private readonly IFlightRepository _flights;
         private readonly IRefDataRepository _refData;
+        private readonly IReferenceDataProvisioner _provisioner;
         private readonly IFlightSyncOptions _syncOptions;
         private readonly IFlightStatusWindowOptions _windowOptions;
         private readonly TimeProvider _timeProvider;
@@ -29,12 +32,14 @@ namespace FlightAssistant.Application.Commands.Flights
         public TrackFlightCommandHandler(
             IFlightRepository flights,
             IRefDataRepository refData,
+            IReferenceDataProvisioner provisioner,
             IFlightSyncOptions syncOptions,
             IFlightStatusWindowOptions windowOptions,
             TimeProvider timeProvider)
         {
             _flights = flights;
             _refData = refData;
+            _provisioner = provisioner;
             _syncOptions = syncOptions;
             _windowOptions = windowOptions;
             _timeProvider = timeProvider;
@@ -47,17 +52,48 @@ namespace FlightAssistant.Application.Commands.Flights
             // to contradict it, so this is now the single source of truth for which airline is
             // being tracked.
             var airlineIata = cmd.FlightNumber.Length >= 2 ? cmd.FlightNumber[..2] : cmd.FlightNumber;
-            var airlineId = await _refData.GetAirlineIdByIataAsync(airlineIata, ct)
-                ?? throw new DomainException($"Airline '{airlineIata}' not found.", 404);
 
-            var depAirportId = await _refData.GetAirportIdByIataAsync(cmd.DepartureAirportIata, ct)
-                ?? throw new DomainException($"Airport '{cmd.DepartureAirportIata}' not found.", 404);
+            var airlineId = await _refData.GetAirlineIdByIataAsync(airlineIata, ct);
+            var depAirportId = await _refData.GetAirportIdByIataAsync(cmd.DepartureAirportIata, ct);
+            var arrAirportId = await _refData.GetAirportIdByIataAsync(cmd.ArrivalAirportIata, ct);
 
-            var arrAirportId = await _refData.GetAirportIdByIataAsync(cmd.ArrivalAirportIata, ct)
-                ?? throw new DomainException($"Airport '{cmd.ArrivalAirportIata}' not found.", 404);
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+
+            if (airlineId is null || depAirportId is null || arrAirportId is null)
+            {
+                // The cap is checked before provisioning so a refused track still writes nothing
+                // (#465). Only the count matters here: a missing reference row means no Flight row
+                // can reference it, so this traveler cannot already be tracking this flight.
+                var capBeforeProvisioning = _syncOptions.MaxActiveTrackedFlightsPerTraveler;
+                if (await _flights.CountActiveTrackedFlightsAsync(
+                        cmd.TravelerId, now, _syncOptions.StopAfterArrival, _syncOptions.StopWithoutArrivalAfter, ct)
+                    >= capBeforeProvisioning)
+                {
+                    throw CapExceeded(capBeforeProvisioning);
+                }
+
+                var missing = new List<MissingReference>(3);
+                if (airlineId is null)
+                    missing.Add(new MissingReference(VerificationEntityType.Airline, airlineIata));
+                if (depAirportId is null)
+                    missing.Add(new MissingReference(VerificationEntityType.Airport, cmd.DepartureAirportIata));
+                if (arrAirportId is null)
+                    missing.Add(new MissingReference(VerificationEntityType.Airport, cmd.ArrivalAirportIata));
+
+                var provision = await _provisioner.ProvisionAsync(missing, ct);
+                if (provision.Status != ReferenceProvisionStatus.Provisioned)
+                    throw ToDomainException(provision);
+
+                // Re-resolve through our own DbContext: the provisioner wrote in a scope of its own.
+                airlineId = await _refData.GetAirlineIdByIataAsync(airlineIata, ct)
+                    ?? throw ReferenceNotFound(VerificationEntityType.Airline, airlineIata);
+                depAirportId = await _refData.GetAirportIdByIataAsync(cmd.DepartureAirportIata, ct)
+                    ?? throw ReferenceNotFound(VerificationEntityType.Airport, cmd.DepartureAirportIata);
+                arrAirportId = await _refData.GetAirportIdByIataAsync(cmd.ArrivalAirportIata, ct)
+                    ?? throw ReferenceNotFound(VerificationEntityType.Airport, cmd.ArrivalAirportIata);
+            }
 
             var flightNumber = cmd.FlightNumber.Trim().ToUpperInvariant();
-            var now = _timeProvider.GetUtcNow().UtcDateTime;
 
             // A cap on flights the traveler tracks that the status sync still polls (#380). A flight holds
             // its slot until the planner would stop it, so this bounds how many flights one account keeps
@@ -67,14 +103,13 @@ namespace FlightAssistant.Application.Commands.Flights
             var cap = _syncOptions.MaxActiveTrackedFlightsPerTraveler;
             if (await _flights.CountActiveTrackedFlightsAsync(
                     cmd.TravelerId, now, _syncOptions.StopAfterArrival, _syncOptions.StopWithoutArrivalAfter, ct) >= cap
-                && !await AlreadyTracksAsync(cmd.TravelerId, airlineId, flightNumber, cmd.ServiceDate, ct))
+                && !await AlreadyTracksAsync(cmd.TravelerId, airlineId.Value, flightNumber, cmd.ServiceDate, ct))
             {
-                throw new DomainException(
-                    $"You can track up to {cap} flights at a time. Stop tracking one to add another.", 409);
+                throw CapExceeded(cap);
             }
 
             // Look up or create the Flight aggregate (race-safe via the unique ix_flight_lookup index)
-            var candidate = Flight.Create(airlineId, flightNumber, depAirportId, arrAirportId, cmd.ServiceDate, cmd.ScheduledDepartureUtc, cmd.ScheduledArrivalUtc);
+            var candidate = Flight.Create(airlineId.Value, flightNumber, depAirportId.Value, arrAirportId.Value, cmd.ServiceDate, cmd.ScheduledDepartureUtc, cmd.ScheduledArrivalUtc);
             var flight = await _flights.GetOrCreateFlightAsync(candidate, ct);
 
             // Idempotent: skip if traveler already tracking this flight
@@ -112,5 +147,33 @@ namespace FlightAssistant.Application.Commands.Flights
             var flight = await _flights.GetByFlightNumberAndDateAsync(airlineId, flightNumber, serviceDate, ct);
             return flight is not null && await _flights.GetTravelerFlightAsync(travelerId, flight.Id, ct) is not null;
         }
+
+        /// <summary>The one copy of the tracking-cap refusal, thrown from both the pre-provisioning
+        /// check and the main one, so the two can never disagree about the wording.</summary>
+        private static DomainException CapExceeded(int cap) =>
+            new($"You can track up to {cap} flights at a time. Stop tracking one to add another.", 409);
+
+        /// <summary>
+        /// Turns a failed provisioning attempt into the right status. Only <c>NotFound</c> becomes a
+        /// 404 -- a source answered and has no such entity. Everything else is a 503: we did not
+        /// learn that the entity is absent, only that we could not find out.
+        /// </summary>
+        private static DomainException ToDomainException(ReferenceProvisionResult result) =>
+            result.Status == ReferenceProvisionStatus.NotFound
+                ? ReferenceNotFound(result.FailedType!.Value, result.FailedCode!)
+                : new DomainException(
+                    "Flight reference data could not be looked up right now. Please try again shortly.",
+                    503,
+                    result.DiagnosticDetail);
+
+        /// <summary>The 404 messages are unchanged from before #465, so a client matching on them
+        /// keeps working.</summary>
+        private static DomainException ReferenceNotFound(VerificationEntityType type, string code) =>
+            type switch
+            {
+                VerificationEntityType.Airline => new DomainException($"Airline '{code}' not found.", 404),
+                VerificationEntityType.Airport => new DomainException($"Airport '{code}' not found.", 404),
+                _ => new DomainException($"Country '{code}' not found.", 404)
+            };
     }
 }
