@@ -75,10 +75,14 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "never leaves the API from this endpoint (a full reveal, audited, is a separate " +
                 "future endpoint). 'sort' is a column name, optionally prefixed with '-' for " +
                 "descending (e.g. sort=-CreatedUtc); paging is stable even without an explicit " +
-                "sort, via an always-appended primary-key tiebreaker. 'filter' is 'column:value' — " +
-                "exact match for a non-string column, case-insensitive contains for a string " +
-                "column, split on the first ':' only so a value such as an ISO-8601 timestamp can " +
-                "itself contain colons. On a string column, a value of exactly '*' means 'has a " +
+                "sort, via an always-appended primary-key tiebreaker. 'filter' is 'column:value', " +
+                "and may be given more than once — ?filter=Country:TR&filter=Name:air — in which " +
+                "case every criterion must match (AND). Repeats of the same column AND too, so " +
+                "filter=Name:air&filter=Name:tur requires both substrings. At most 10 filters per " +
+                "request; more is a 400. A single 'filter' behaves exactly as it always has. Per " +
+                "criterion: exact match for a non-string column, case-insensitive contains for a " +
+                "string column, split on the first ':' only so a value such as an ISO-8601 " +
+                "timestamp can itself contain colons. On a string column, a value of exactly '*' means 'has a " +
                 "value' — not null, and not blank (non-empty after trimming whitespace); '*' " +
                 "anywhere else in the value is still a literal character to find by contains. On a " +
                 "non-string column '*' is not special-cased and is simply an unparseable value, a " +
