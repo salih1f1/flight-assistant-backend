@@ -2288,6 +2288,93 @@
         }
       }
     },
+    "/admin/jobs": {
+      "get": {
+        "tags": [
+          "Admin - Jobs"
+        ],
+        "summary": "The background jobs and whether they are running",
+        "description": "Both scheduled jobs: the deployment config ceiling, the runtime switch, and the effective state, alongside who last changed the switch and why. 'canToggle' is false when config has the job off — config is a hard ceiling and no toggle can start a job it has disabled.",
+        "operationId": "AdminGetJobs",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminJobDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/jobs/{job}": {
+      "put": {
+        "tags": [
+          "Admin - Jobs"
+        ],
+        "summary": "Switch a background job on or off",
+        "description": "Stops or starts a job's scheduled loop. Worst case is the cache window plus one full loop interval, because a cycle already in flight is never aborted -- about 70 seconds for flight sync, about 40 for verification. Manual triggers are unaffected and keep working while a job is switched off. Audited. 409 when config has the job off, 404 when the job name is unknown.",
+        "operationId": "AdminToggleJob",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToggleJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminJobDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/lounge-providers/{id}/verify": {
       "patch": {
         "tags": [
@@ -5498,6 +5585,54 @@
         },
         "additionalProperties": false
       },
+      "AdminJobDto": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "string",
+            "nullable": true
+          },
+          "displayName": {
+            "type": "string",
+            "nullable": true
+          },
+          "configEnabled": {
+            "type": "boolean"
+          },
+          "switchEnabled": {
+            "type": "boolean"
+          },
+          "effectiveEnabled": {
+            "type": "boolean"
+          },
+          "canToggle": {
+            "type": "boolean"
+          },
+          "changedUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "changedBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastOutcome": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastRunUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "AdminLoungeDto": {
         "type": "object",
         "properties": {
@@ -6964,6 +7099,19 @@
           "pageSize": {
             "type": "integer",
             "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ToggleJobRequest": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
