@@ -120,10 +120,18 @@ namespace FlightAssistant.Infrastructure.DataSources
                 // on whether the resource could be READ, never on what the answer was: a site with
                 // Always On off, read successfully, is Ok, so ProbeCostNote stays null (there is
                 // nothing to warn about -- this never costs money and never changes a site fact).
+                //
+                // The browse blade, not a deep link to the resource. A per-resource portal URL needs
+                // the subscription id, which is resolved at runtime from WEBSITE_OWNER_NAME and is
+                // not knowable here -- and this list is environment-independent, so a dev-specific
+                // resource group and site name baked into it would be wrong everywhere else. The
+                // AzureCost row above takes the same approach for the same reason. A link that
+                // lands on a portal error is the kind of small untruth this whole page exists to
+                // remove, so it is better to land one click away and correct.
                 new(DataSourceKeys.AppService, "Azure App Service", DataSourceKind.Infrastructure,
                     DataSourceCriticality.Optional,
                     "Reads the App Service's own state and whether Always On is enabled. Reports only; it cannot change anything in Azure.",
-                    "https://portal.azure.com/#@/resource/subscriptions/_/resourceGroups/flight-assistant-dev/providers/Microsoft.Web/sites/flight-assistant-dev-api",
+                    "https://portal.azure.com/#browse/Microsoft.Web%2Fsites",
                     AppServiceProvider.HttpClientName, SupportsProbe: true, ProbeCostNote: null),
             ];
 
