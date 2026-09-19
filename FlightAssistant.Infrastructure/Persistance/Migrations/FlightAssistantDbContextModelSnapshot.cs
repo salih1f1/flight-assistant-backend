@@ -807,6 +807,38 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.ToTable("traveler_loyalty_memberships", (string)null);
                 });
 
+            modelBuilder.Entity("FlightAssistant.Domain.Providers.Entities.ProviderRoute", b =>
+                {
+                    b.Property<string>("Job")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("job");
+
+                    b.Property<string>("ChangedBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("changed_by");
+
+                    b.Property<DateTime?>("ChangedUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("changed_utc");
+
+                    b.Property<string>("Providers")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("providers");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("reason");
+
+                    b.HasKey("Job");
+
+                    b.ToTable("provider_routes", (string)null);
+                });
+
             modelBuilder.Entity("FlightAssistant.Domain.ReferenceData.Entities.Airline", b =>
                 {
                     b.Property<int>("Id")

@@ -6,6 +6,7 @@ using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Jobs.Entities;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
+using FlightAssistant.Domain.Providers.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
 using FlightAssistant.Domain.Verification.Entities;
@@ -59,6 +60,10 @@ namespace FlightAssistant.Infrastructure.Persistance
 
         // Jobs
         public DbSet<JobSwitch> JobSwitches => Set<JobSwitch>();
+
+        /// <summary>#531. One row per routing decision an admin has changed; no row means the
+        /// configured default applies.</summary>
+        public DbSet<ProviderRoute> ProviderRoutes => Set<ProviderRoute>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
