@@ -20,5 +20,11 @@ namespace FlightAssistant.Infrastructure.Providers
                 _aeroDataBox.Value.IsConfigured ? [ProviderJobs.AeroDataBox] : [ProviderJobs.AeroApi],
             _ => throw new InvalidOperationException($"'{job}' is not a known provider routing key.")
         };
+
+        public bool IsCeilinged(string job) => job switch
+        {
+            ProviderJobs.FlightSearchRoute => !_aeroDataBox.Value.IsConfigured,
+            _ => throw new InvalidOperationException($"'{job}' is not a known provider routing key.")
+        };
     }
 }

@@ -10,5 +10,13 @@ namespace FlightAssistant.Application.Interfaces.Providers
     public interface IProviderRouteDefaults
     {
         IReadOnlyList<string> For(string job);
+
+        /// <summary>
+        /// True when configuration leaves this key no real choice — for
+        /// <c>flight-search-route</c>, when <c>AeroDataBox:ApiKey</c> is unset. A write against a
+        /// ceilinged key is refused, matching how <c>ToggleJobCommand</c> refuses a job whose config
+        /// has it off.
+        /// </summary>
+        bool IsCeilinged(string job);
     }
 }

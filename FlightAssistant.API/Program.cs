@@ -505,6 +505,7 @@ adminGroup.MapAdminAuditEndpoints();
 adminGroup.MapAdminStatsEndpoints();
 adminGroup.MapAdminDataEndpoints();
 adminGroup.MapAdminJobEndpoints();
+adminGroup.MapAdminProviderEndpoints();
 
 // Private endpoints (ping, secure-test, whoami)
 app.MapPrivateEndpoints();
