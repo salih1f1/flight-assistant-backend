@@ -25,10 +25,10 @@ public class AdminProviderEndpointTests(FlightAssistantWebApplicationFactory fac
     {
         var client = factory.CreateAdminClient();
 
-        var rows = await client.GetFromJsonAsync<List<AdminProviderRouteDto>>("admin/providers");
+        var map = await client.GetFromJsonAsync<AdminProviderMapDto>("admin/providers");
 
-        Assert.NotNull(rows);
-        var route = Assert.Single(rows!, r => r.Job == "flight-search-route");
+        Assert.NotNull(map);
+        var route = Assert.Single(map!.Routes, r => r.Job == "flight-search-route");
         Assert.Equal("Route search", route.DisplayName);
         Assert.Contains("aeroapi", route.Options);
         Assert.Contains("aerodatabox", route.Options);
@@ -61,12 +61,39 @@ public class AdminProviderEndpointTests(FlightAssistantWebApplicationFactory fac
     {
         var client = factory.CreateAdminClient();
 
-        var rows = await client.GetFromJsonAsync<List<AdminProviderRouteDto>>("/admin/providers");
+        var map = await client.GetFromJsonAsync<AdminProviderMapDto>("/admin/providers");
 
-        Assert.Equal(4, rows!.Count);
+        var rows = map!.Routes;
+        Assert.Equal(4, rows.Count);
         Assert.Contains(rows, r => r.Job == "flight-search-route");
         Assert.Contains(rows, r => r.Job == "verification-airport");
         Assert.Contains(rows, r => r.Job == "verification-airline");
         Assert.Contains(rows, r => r.Job == "verification-country");
+    }
+
+    [Fact]
+    public async Task GetProviders_ReturnsTheOperationMapAndHeadroom()
+    {
+        var client = factory.CreateAdminClient();
+
+        var map = await client.GetFromJsonAsync<AdminProviderMapDto>("/admin/providers");
+
+        Assert.NotNull(map);
+        Assert.Equal(4, map!.Routes.Count);
+
+        // Every trigger the operator asked about is represented.
+        Assert.Contains(map.Operations, o => o.Operation.StartsWith("POST /flights"));
+        Assert.Contains(map.Operations, o => o.Trigger == "Status sync");
+        Assert.Contains(map.Operations, o => o.Trigger == "Verification");
+
+        // A fixed row explains itself rather than just being absent from the switch list.
+        var flightNumberSearch = Assert.Single(map.Operations,
+            o => o.Operation.Contains("anchored on a flight number"));
+        Assert.Null(flightNumberSearch.RoutingKey);
+        Assert.Contains("6E4120", flightNumberSearch.FixedReason!);
+
+        // Quota is unknown, not zero, in a test host that has called AeroDataBox never.
+        var aeroDataBox = Assert.Single(map.Headroom, h => h.Provider == "aerodatabox");
+        Assert.Null(aeroDataBox.QuotaRemaining);
     }
 }

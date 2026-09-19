@@ -1,17 +1,53 @@
+using FlightAssistant.Application.Interfaces.Caching;
+using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Providers;
 using FlightAssistant.Application.Interfaces.Verification;
+using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Application.Providers;
 using FlightAssistant.Application.Queries.Admin.Providers;
+using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
 
 namespace FlightAssistant.Application.Tests.Queries.Admin.Providers
 {
     /// <summary>
     /// <see cref="GetProviderRoutesQueryHandler"/> (#531 fix round 1, Finding 2). Pins both branches
-    /// of the ceiling check, which the fix shipped in round 1 with no dedicated test at all.
+    /// of the ceiling check, which the fix shipped in round 1 with no dedicated test at all. Neither
+    /// test here cares about <c>Headroom</c> -- that is <c>GetProviderRoutesQueryHandlerHeadroomTests</c>'
+    /// job -- so the six headroom-only dependencies below are stubbed just enough that the AeroAPI
+    /// branch's own try/catch never has anything to catch.
     /// </summary>
     public class GetProviderRoutesQueryTests
     {
+        private static readonly AeroApiAccountUsage EmptyUsage = new(
+            TotalCalls: 0,
+            TotalPages: 0,
+            TotalCostUsd: 0m,
+            TotalDiscountCostUsd: 0m,
+            TotalSuccessfulCalls: 0,
+            TotalFailedCalls: 0,
+            ByOperation: Array.Empty<AeroApiOperationUsage>());
+
+        private static GetProviderRoutesQueryHandler CreateHandler(
+            IProviderRouting routing, IProviderRouteDefaults defaults, IVerificationSourceRegistry registry)
+        {
+            var budget = Substitute.For<IProviderBudgetGuard>();
+            budget.GetStateAsync(Arg.Any<CancellationToken>()).Returns(ProviderBudgetState.Normal);
+
+            var usage = Substitute.For<IAeroApiAccountUsageProvider>();
+            usage.GetUsageAsync(Arg.Any<DateTimeOffset>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+                .Returns(EmptyUsage);
+
+            var cache = Substitute.For<ICacheService>();
+            var budgetOptions = Substitute.For<IAeroApiBudgetOptions>();
+            budgetOptions.MonthlyBudgetUsd.Returns(5m);
+            var quota = Substitute.For<IProviderQuotaReader>();
+
+            return new GetProviderRoutesQueryHandler(
+                routing, defaults, registry, budget, usage, cache, budgetOptions, quota,
+                new FakeTimeProvider(DateTimeOffset.UtcNow));
+        }
+
         /// <summary>
         /// The documented rollback scenario this fix exists for: an operator picked "aerodatabox"
         /// while it was reachable and the row persisted; <c>AeroDataBox:ApiKey</c> was then removed,
@@ -40,10 +76,10 @@ namespace FlightAssistant.Application.Tests.Queries.Admin.Providers
             // since this test only cares about the flight-search-route row.
             registry.Sources.Returns(Array.Empty<IVerificationSource>());
 
-            var handler = new GetProviderRoutesQueryHandler(routing, defaults, registry);
-            var rows = await handler.Handle(new GetProviderRoutesQuery(), default);
+            var handler = CreateHandler(routing, defaults, registry);
+            var map = await handler.Handle(new GetProviderRoutesQuery(), default);
 
-            var route = Assert.Single(rows, r => r.Job == ProviderJobs.FlightSearchRoute);
+            var route = Assert.Single(map.Routes, r => r.Job == ProviderJobs.FlightSearchRoute);
             Assert.Equal(new[] { ProviderJobs.AeroApi }, route.Providers);
         }
 
@@ -69,10 +105,10 @@ namespace FlightAssistant.Application.Tests.Queries.Admin.Providers
             // Task 9: see the companion test above -- an empty registry is fine here too.
             registry.Sources.Returns(Array.Empty<IVerificationSource>());
 
-            var handler = new GetProviderRoutesQueryHandler(routing, defaults, registry);
-            var rows = await handler.Handle(new GetProviderRoutesQuery(), default);
+            var handler = CreateHandler(routing, defaults, registry);
+            var map = await handler.Handle(new GetProviderRoutesQuery(), default);
 
-            var route = Assert.Single(rows, r => r.Job == ProviderJobs.FlightSearchRoute);
+            var route = Assert.Single(map.Routes, r => r.Job == ProviderJobs.FlightSearchRoute);
             Assert.Equal(new[] { ProviderJobs.AeroDataBox }, route.Providers);
         }
     }
