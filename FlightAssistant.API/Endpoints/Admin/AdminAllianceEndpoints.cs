@@ -21,14 +21,16 @@ namespace FlightAssistant.API.Endpoints.Admin
                 return Results.Ok(new AllianceDetailAdminDto(
                     result.Id, result.Code, result.Name,
                     result.Airlines
-                        .Select(a => new AllianceAirlineDto(a.Id, a.Iata, a.Icao, a.Name, a.CountryCode))
+                        .Select(a => new AllianceAirlineDto(
+                            a.Id, a.Iata, a.Icao, a.Name, a.CountryCode, a.LoyaltyProgramName))
                         .ToList()));
             })
             .WithName("AdminGetAllianceDetail")
             .WithSummary("Get alliance detail")
             .WithDescription(
                 "Returns the alliance together with every airline whose AllianceCode is its Code, " +
-                "ordered by name. The list is not capped: it is bounded by how many airlines exist " +
+                "ordered by name, each with the name of the airline's own loyalty program (null " +
+                "when it runs none). The list is not capped: it is bounded by how many airlines exist " +
                 "in the alliance rather than growing with usage, so there is no truncation flag. " +
                 "An alliance no airline belongs to is a 200 with an empty list, not a 404. " +
                 "Verification state is deliberately absent — it lives with the raw record at " +

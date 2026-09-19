@@ -618,7 +618,7 @@
           "Admin - Alliances"
         ],
         "summary": "Get alliance detail",
-        "description": "Returns the alliance together with every airline whose AllianceCode is its Code, ordered by name. The list is not capped: it is bounded by how many airlines exist in the alliance rather than growing with usage, so there is no truncation flag. An alliance no airline belongs to is a 200 with an empty list, not a 404. Verification state is deliberately absent — it lives with the raw record at GET /admin/data/alliances.",
+        "description": "Returns the alliance together with every airline whose AllianceCode is its Code, ordered by name, each with the name of the airline's own loyalty program (null when it runs none). The list is not capped: it is bounded by how many airlines exist in the alliance rather than growing with usage, so there is no truncation flag. An alliance no airline belongs to is a 200 with an empty list, not a 404. Verification state is deliberately absent — it lives with the raw record at GET /admin/data/alliances.",
         "operationId": "AdminGetAllianceDetail",
         "parameters": [
           {
@@ -6345,6 +6345,10 @@
             "nullable": true
           },
           "countryCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "loyaltyProgramName": {
             "type": "string",
             "nullable": true
           }
