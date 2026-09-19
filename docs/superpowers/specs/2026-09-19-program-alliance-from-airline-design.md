@@ -75,7 +75,7 @@ Drop the column first and the system forgets every alliance it knows, including 
 alliance→airlines page shipped in #174. So the data moves down first, in the same pull request, in
 two parts — one for databases that already exist, one for databases created later.
 
-### Part 1 — the seed, for fresh databases
+### Part 1 — the seed files
 
 `airlines.v1.json` gains `AllianceCode` on the 21 airlines the loyalty seed already asserts one
 for. This is not a new claim; it is the same claim written on the row that owns it:
@@ -113,8 +113,22 @@ there to locate rows in the file, nothing more. Follow the file's shape for cons
 like; the seeder reads none of it.
 
 Without them, dropping the column leaves those two programs with neither an airline nor an
-alliance. The seeder inserts an airline only when no row matches its IATA or ICAO
-(`ReferenceDataSeeder.PopulateAirlinesAsync`), so adding rows is safe to re-run.
+alliance.
+
+**Which database each file reaches.** `SeedCustomAsync` skips any dataset version already recorded
+in `seed_versions`, and `PopulateAirlinesAsync` only ever *inserts* — it never updates a row that is
+already there. So the two edits have different reach, and both are needed:
+
+| Change | Fresh database | Existing database |
+|---|---|---|
+| `AllianceCode` added to 21 rows of `airlines.v1.json` | applied | **skipped** — Airline v1 is already in `seed_versions`; the migration covers these rows instead |
+| New `airlines.v2.json` holding only Cathay Pacific and Korean Air | applied | **applied** — v2 is a version no database has seen |
+
+Hence the two missing airlines go in a **new file**, `FlightAssistant.API/SeedData/Airline/airlines.v2.json`, not into `v1`:
+inserting them is the one thing the seeder can still do on a database that already exists. Airlines
+are seeded before loyalty programs (`SeedAirlinesAsync` precedes `SeedLoyaltyProgramsAsync` in
+`ReferenceDataSeeder.StartAsync`), so on a fresh database `CX-MPC` and `KE-SKY` find their airline
+and link to it. File order within the folder does not matter: inserts are guarded by IATA/ICAO.
 
 ### Part 2 — the migration, for databases that exist
 
@@ -193,11 +207,13 @@ alliance now arrives through the airline import. Worth a line in the PR descript
 - **A program with no airline has no alliance at all** — including the `ALLIANCE` kind in
   `loyalty-program-kinds` ("Multi-airline alliance program"). No such row exists in any seed. If one
   is ever needed, it belongs as a link from the alliance, not as a code on the program.
-- **On existing databases, `CX-MPC` and `KE-SKY` end up unlinked.** Their airlines are absent
-  today, so the migration has nowhere to copy their alliance to. The next boot seeds Cathay Pacific
-  and Korean Air (part 1), but the seeder does not revisit programs that already exist, so an admin
-  links those two programs from the panel — two rows, once. Inserting reference data from a
-  migration was rejected: it duplicates the seeder's job and fights its id sequence.
+- **On existing databases, `CX-MPC` and `KE-SKY` end up unlinked.** Their airlines are absent when
+  the migration runs, so it has nowhere to copy their alliance to, and those two alliance values are
+  lost. `airlines.v2.json` then inserts Cathay Pacific and Korean Air on the next boot, carrying
+  their alliances — but the loyalty seeder returns early for a program code that already exists, so
+  it never links the two programs to the new airlines. An admin does that from the panel: two rows,
+  once, and the *Not linked* signal is what makes them findable. Inserting reference data from a
+  migration was rejected — it duplicates the seeder's job and fights its id sequence.
 
 ---
 

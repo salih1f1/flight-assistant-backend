@@ -304,10 +304,10 @@ dotnet test FlightAssistant.Domain.Tests/FlightAssistant.Domain.Tests.csproj \
   --filter "FullyQualifiedName~LoyaltyProgramCreationTime"
 ```
 
-Expected: FAIL to build — `CreateSeeded` has no 4-argument overload without `allianceCode`… it does
-(the parameter is optional), so the build succeeds and the failure is
-`Assert.Empty() Failure: Collection was not empty` on the reflection assertion. Either way it fails
-before the property is removed; do not proceed until you have seen it fail.
+Expected: the build **succeeds** — `allianceCode` is an optional parameter, so dropping the argument
+compiles fine — and the test then FAILS on the reflection assertion with
+`Assert.Empty() Failure: Collection was not empty`, because the property is still there. Do not
+proceed until you have seen that failure.
 
 - [ ] **Step 3: Remove it from the domain entity**
 
