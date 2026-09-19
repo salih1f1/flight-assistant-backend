@@ -72,9 +72,14 @@ figure rather than nothing. Both are read-only.
 
 ### 1.2 Configuration
 
+**Corrected after implementation** (see the note at the end of this document): shipped as
+`AzureCost:*`, not `Azure:*` as first written below. `appsettings.json` already has an `Azure`
+section holding the B2C sign-in policy, and mixing cost settings into it would put two unrelated
+concerns under one key, so a separate section keeps them apart.
+
 ```
-Azure:SubscriptionId     — required for this feature; absent means "not configured"
-Azure:BudgetName         — optional; when set, that budget is used rather than the first returned
+AzureCost:SubscriptionId — required for this feature; absent means "not configured"
+AzureCost:BudgetName     — optional; when set, that budget is used rather than the first returned
 ```
 
 Absent `SubscriptionId` is a normal state, not an error. A local developer has no subscription and
@@ -88,16 +93,22 @@ must not see a red panel because of it.
 gauge, which shows near-live spend. Two cost figures side by side invite the reader to assume they
 mean the same kind of thing, and they do not.
 
-So:
+**Corrected after implementation** (see the note at the end of this document): neither Cost
+Management endpoint this reads — the Consumption Budgets list (2023-05-01) or the Cost Management
+query (2023-03-01) — reports its own last-refreshed timestamp anywhere in its response. That was
+assumed, not verified, when this section was first drafted; task 2 checked both REST references
+field-by-field and found no such field at any nesting. So:
 
-- The response carries the data's **own** as-of timestamp, taken from Cost Management's answer —
-  never the time we fetched it, which would overstate freshness by up to a day.
+- `dataAsOfUtc` is always null. The lag itself is real — Azure genuinely reports cost 8–24 hours
+  late — it is just unmeasurable from either response, so this never invents a value to fill it.
 - The panel says, in words, that Azure reports on a delay.
-- When the as-of timestamp is missing from the response, the panel says the age is unknown rather
-  than implying it is current.
+- With no as-of timestamp available, the panel says the age is unknown rather than implying the
+  figure is current.
 
 A figure a day old, presented as current, is worse than no figure: it invites a decision on stale
-information while looking authoritative.
+information while looking authoritative. Fabricating an as-of value — stamping the fetch time, say
+— would have exactly that defect, which is why null is left null rather than backfilled from the
+clock.
 
 ---
 
@@ -109,7 +120,7 @@ The panel's correctness is mostly in its states, not its arithmetic.
 |---|---|---|
 | `Ok` | budget and spend both read | the gauge |
 | `NoBudget` | Cost Management returned no budget | spend, and "no budget defined in Azure" |
-| `NotConfigured` | `Azure:SubscriptionId` absent | gray, "not configured" |
+| `NotConfigured` | `AzureCost:SubscriptionId` absent | gray, "not configured" |
 | `NotAuthorized` | 401/403 | gray, naming **Cost Management Reader** |
 | `Unavailable` | anything else — timeout, 5xx, malformed | amber, with the category |
 
@@ -157,7 +168,13 @@ periodStartUtc, periodEndUtc, dataAsOfUtc, message
 
 ## 6. Data source registration
 
-One catalog entry, `azure-cost`:
+**Corrected after implementation** (see the note at the end of this document): shipped as
+`azurecost`, not `azure-cost` as first written below — matching every other one-word catalog key
+(`aeroapi`, `github`, `mledoze`, …). `DataSourceKeys` is a primary key and appears in URLs, so this
+document is corrected to match the shipped spelling rather than the code changed to match it, which
+would cost a migration.
+
+One catalog entry, `azurecost`:
 
 - **Kind** `Infrastructure`, **Criticality** `Optional` — the application runs fine without it.
 - **WhatIsChecked:** "Reads the subscription's budget and month-to-date spend from Azure Cost
@@ -194,8 +211,14 @@ Also:
 - **A non-USD currency is rendered in that currency**, not dollars.
 - **A budget period that is not a calendar month** — Azure budgets can be quarterly or annual — has
   its real period reported rather than being described as "this month".
-- **`dataAsOfUtc` comes from the response, not the clock.** Asserted with a fake clock set well
-  after the recorded timestamp, so a regression to "now" fails.
+- **`dataAsOfUtc` is always null, and stays null even against a fully-populated response.**
+  Corrected after implementation (see the note at the end of this document) from the originally
+  planned "comes from the response, not the clock" test, which assumed a field neither endpoint
+  actually returns (§2). `DataAsOfUtc_IsAlwaysNull_NeitherAzureEndpointReportsIt` feeds the
+  provider a response carrying every optional field the 2023-05-01 reference documents — a real
+  `eTag`, a `forecastSpend` — and still asserts null, proving this isn't merely absent from a thin
+  fixture. `AMissingAsOfTimestamp_IsNull_NotNow` pins that a missing timestamp is never backfilled
+  from the clock either.
 - The panel draws **no gauge** in any non-`Ok` state.
 - `DataSourceCatalogTests` picks the new client up automatically; adding it without a catalog entry
   must fail the build.
@@ -223,3 +246,31 @@ This is stated here so it is not discovered at review.
 None. Decisions taken in discussion: the real Azure Budget resource rather than a configured number;
 whole-subscription scope; `HttpClient` over the SDK so the completeness test covers it; Dashboard
 placement beneath the AeroAPI gauge.
+
+---
+
+## Corrections after implementation
+
+Recorded here, rather than silently edited away, so the history of what this document originally
+claimed is not lost — this is what the final review before the #496 pull request found and why.
+The Phase 2 issue in the panel repository should be written from the corrected text above, not from
+memory of the original.
+
+- **§2 (Freshness).** Originally claimed the response carries the data's own as-of timestamp. It
+  does not: neither Cost Management endpoint reports one anywhere in its response (verified against
+  both REST references, field-by-field, in task 2) — an assumption that turned out false, not a
+  decision that changed. The honest part of the original claim stands: the 8–24 hour lag is real,
+  just unmeasurable from the response, so the panel says "age unknown" instead of a number.
+- **§8 (Testing).** The test named "`dataAsOfUtc` comes from the response, not the clock" —
+  asserted with a fake clock — cannot exist: there is no response field for it to read from.
+  Replaced with a description of the two tests actually built, which pin "always null" instead,
+  including against a response with every other optional field populated.
+- **§1.2 (Configuration).** Named `Azure:SubscriptionId` / `Azure:BudgetName`. Shipped as
+  `AzureCost:SubscriptionId` / `AzureCost:BudgetName`, because `appsettings.json`'s existing `Azure`
+  section already holds the B2C sign-in policy, and cost settings belong in a section of their own
+  rather than mixed into it. §3's states table repeated the original spelling and is corrected the
+  same way.
+- **§6 (Data source registration).** Named the catalog key `azure-cost`. Shipped as `azurecost`,
+  matching every other one-word catalog key. `DataSourceKeys` is a primary key and appears in URLs,
+  so the document was corrected to match the code rather than the other way around — renaming it
+  now would cost a migration for no behavioural gain.

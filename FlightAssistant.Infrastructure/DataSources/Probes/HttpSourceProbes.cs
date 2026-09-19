@@ -84,6 +84,14 @@ namespace FlightAssistant.Infrastructure.DataSources.Probes
             // proves the role is granted -- the question this probe exists to answer -- so it counts
             // as Ok here, the same way the dashboard card does not treat "no budget defined" as a
             // fault.
+            // ACCEPTED DEVIATION: a 429 from Cost Management reaches here as
+            // AzureBudgetState.Unavailable and is mapped to Failed below, but the same HTTP
+            // response, seen by DataSourceObservingHandler on the underlying "AzureCost" client, is
+            // recorded as RateLimited -- so the probe outcome and the observed outcome disagree for
+            // this one source. Left as-is deliberately: adding a RateLimited branch here would need
+            // a state the panel has no use for (AzureBudgetState carries no RateLimited of its own,
+            // only Unavailable), and threading one through purely to match an observation the probe
+            // doesn't otherwise use is the scope creep YAGNI rules out.
             return snapshot.State switch
             {
                 AzureBudgetState.Ok or AzureBudgetState.NoBudget => DataSourceOutcome.Ok,

@@ -21,9 +21,10 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Azure
     /// <para>
     /// <b>Two endpoints, usually one call.</b> A budget's own <c>currentSpend</c> is authoritative
     /// once one exists, so <see cref="GetBudgetAsync"/> only falls back to the query when the
-    /// budgets list comes back empty -- calling it unconditionally would double the calls against
-    /// an endpoint Microsoft documents as low-throughput, for a number the budgets call already
-    /// carries in the common case.
+    /// budgets list comes back empty, or the one budget it selects carries no usable spend figure
+    /// (an unevaluated budget, one whose period has not started, or a non-cost budget category) --
+    /// calling it unconditionally would double the calls against an endpoint Microsoft documents as
+    /// low-throughput, for a number the budgets call already carries in the common case.
     /// </para>
     ///
     /// <para>
@@ -50,8 +51,15 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Azure
         // The aggregation's source column name, which the Cost Management query response echoes
         // back verbatim as a column header (verified against the 2023-03-01 examples -- the
         // dictionary KEY the request uses for an aggregation, e.g. "totalCost", is a request-side
-        // alias only; the RESPONSE column is named after the aggregated column itself).
-        private const string CostColumnName = "PreTaxCost";
+        // alias only; the RESPONSE column is named after the aggregated column itself). "PreTaxCost"
+        // is the Enterprise Agreement spelling; a Microsoft Customer Agreement or pay-as-you-go
+        // subscription -- the likely case for this one -- names the same aggregation "Cost" or
+        // "CostUSD" instead. This repository cannot tell which without Cost Management Reader
+        // granted, so it accepts all three rather than betting on one: matching only "PreTaxCost"
+        // would silently return no figure for the other two, which is this fallback's entire
+        // reason to exist ("so the panel can still show a figure rather than nothing") failing
+        // quietly. Matched case-insensitively against the column header (see GetCostQuerySpendAsync).
+        private static readonly string[] CostColumnNames = ["PreTaxCost", "Cost", "CostUSD"];
         private const string CurrencyColumnName = "Currency";
 
         private static readonly TokenRequestContext ManagementScope = new(["https://management.azure.com/.default"]);
@@ -102,7 +110,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Azure
                         AzureBudgetState.NoBudget, null, null, spend, currency, null, null, null, null);
                 }
 
-                return MapBudget(budget.Value);
+                return await MapBudgetAsync(budget.Value, ct).ConfigureAwait(false);
             }
             catch (AzureCostHttpException ex) when (ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
@@ -115,6 +123,17 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Azure
             {
                 _logger.LogWarning("Azure Cost Management returned HTTP {StatusCode}.", (int)ex.StatusCode);
                 return AzureBudgetSnapshot.Unavailable($"Azure Cost Management returned HTTP {(int)ex.StatusCode}.");
+            }
+            catch (AzureCostBudgetNotFoundException ex)
+            {
+                // A typo'd or renamed AzureCost:BudgetName must not silently fall back to whichever
+                // budget Azure happens to list first -- a $5 "dev" budget shown in place of a $500
+                // "production" one is worse than an honest "not found".
+                _logger.LogWarning(
+                    "AzureCost:BudgetName '{BudgetName}' does not match any budget Azure returned.",
+                    ex.BudgetName);
+                return AzureBudgetSnapshot.Unavailable(
+                    $"Configured budget '{ex.BudgetName}' (AzureCost:BudgetName) was not found in Azure.");
             }
             catch (JsonException ex)
             {
@@ -146,6 +165,10 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Azure
         /// <summary>Picks the budget named by <see cref="AzureCostOptions.BudgetName"/> when set,
         /// else the first well-formed entry in <c>value</c>. Null when <c>value</c> is empty or
         /// absent, or none of its entries carry both a <c>name</c> and <c>properties</c>.</summary>
+        /// <exception cref="AzureCostBudgetNotFoundException"><see cref="AzureCostOptions.BudgetName"/>
+        /// is set, at least one well-formed budget came back, and none of them carry that name --
+        /// silently falling back to <c>first</c> here would report a different budget's figures
+        /// under a name nobody asked for.</exception>
         private (string Name, JsonElement Properties)? SelectBudget(JsonElement root)
         {
             if (!root.TryGetProperty("value", out var value) || value.ValueKind != JsonValueKind.Array)
@@ -165,10 +188,26 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Azure
                     return (name, properties);
             }
 
+            if (_options.BudgetName is { Length: > 0 } configuredName && first is not null)
+                throw new AzureCostBudgetNotFoundException(configuredName);
+
             return first;
         }
 
-        private static AzureBudgetSnapshot MapBudget((string Name, JsonElement Properties) budget)
+        /// <summary>
+        /// Maps a budget entry to <see cref="AzureBudgetState.Ok"/> -- but only once it actually
+        /// has a labelled spend figure to show. A budget Azure has not yet evaluated, one whose
+        /// <c>timePeriod.startDate</c> is in the future, or a <c>ReservationUtilization</c>-category
+        /// budget (the same list endpoint returns those alongside cost budgets) all carry a `name`
+        /// and `properties` with no usable `currentSpend`. Reporting `Ok` anyway would have the
+        /// panel draw a gauge from a null spend -- "$0.00 of $50.00" -- with no 403 anywhere: the
+        /// exact failure this feature exists to prevent, through a different door. So a missing
+        /// spend, or a spend with no currency to safely label it as, falls through to the cost
+        /// query for a figure; if that yields nothing usable either, this reports
+        /// <see cref="AzureBudgetState.Unavailable"/> rather than a spend-less (or unlabelled) `Ok`.
+        /// </summary>
+        private async Task<AzureBudgetSnapshot> MapBudgetAsync(
+            (string Name, JsonElement Properties) budget, CancellationToken ct)
         {
             var (name, properties) = budget;
 
@@ -176,6 +215,26 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Azure
                 ? amountEl.GetDecimal()
                 : null;
 
+            var (spend, currency) = ReadCurrentSpend(properties);
+
+            if (spend is null || currency is null)
+                (spend, currency) = await GetCostQuerySpendAsync(ct).ConfigureAwait(false);
+
+            if (spend is null || currency is null)
+                return AzureBudgetSnapshot.Unavailable(
+                    "Azure Cost Management reported a budget with no spend figure.");
+
+            var (periodStart, periodEnd) = ReadPeriod(properties);
+
+            return new AzureBudgetSnapshot(
+                AzureBudgetState.Ok, name, amount, spend, currency, periodStart, periodEnd, DataAsOfUtc: null, Message: null);
+        }
+
+        /// <summary>The budget's own <c>currentSpend</c>, when it carries one. Split out from
+        /// <see cref="MapBudgetAsync"/> so that method's spend-or-currency-missing check reads as
+        /// one condition instead of four scattered null tests.</summary>
+        private static (decimal? Spend, string? Currency) ReadCurrentSpend(JsonElement properties)
+        {
             decimal? spend = null;
             string? currency = null;
             if (properties.TryGetProperty("currentSpend", out var currentSpend) && currentSpend.ValueKind == JsonValueKind.Object)
@@ -185,11 +244,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Azure
                 if (currentSpend.TryGetProperty("unit", out var unitEl) && unitEl.ValueKind == JsonValueKind.String)
                     currency = unitEl.GetString();
             }
-
-            var (periodStart, periodEnd) = ReadPeriod(properties);
-
-            return new AzureBudgetSnapshot(
-                AzureBudgetState.Ok, name, amount, spend, currency, periodStart, periodEnd, DataAsOfUtc: null, Message: null);
+            return (spend, currency);
         }
 
         private static (DateTimeOffset? Start, DateTimeOffset? End) ReadPeriod(JsonElement properties)
@@ -236,7 +291,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Azure
             foreach (var column in columns.EnumerateArray())
             {
                 var columnName = column.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : null;
-                if (string.Equals(columnName, CostColumnName, StringComparison.Ordinal)) costIndex = index;
+                if (columnName is not null && CostColumnNames.Contains(columnName, StringComparer.OrdinalIgnoreCase)) costIndex = index;
                 else if (string.Equals(columnName, CurrencyColumnName, StringComparison.Ordinal)) currencyIndex = index;
                 index++;
             }
@@ -297,6 +352,14 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Azure
         private sealed class AzureCostHttpException(HttpStatusCode statusCode) : Exception
         {
             public HttpStatusCode StatusCode { get; } = statusCode;
+        }
+
+        /// <summary>Internal control-flow signal from <see cref="SelectBudget"/> -- never escapes
+        /// <see cref="GetBudgetAsync"/>, which maps it to <see cref="AzureBudgetState.Unavailable"/>
+        /// naming the configured value.</summary>
+        private sealed class AzureCostBudgetNotFoundException(string budgetName) : Exception
+        {
+            public string BudgetName { get; } = budgetName;
         }
     }
 }

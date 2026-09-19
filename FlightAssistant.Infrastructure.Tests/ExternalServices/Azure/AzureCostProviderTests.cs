@@ -92,6 +92,14 @@ public class AzureCostProviderTests
           "rows": [ [ {{cost.ToString(CultureInfo.InvariantCulture)}}, "{{currency}}" ] ] } }
         """;
 
+    /// <summary>Same shape as <see cref="CostQueryWith"/>, with the cost column under a caller-
+    /// supplied name -- a Microsoft Customer Agreement or pay-as-you-go subscription names it
+    /// "Cost" or "CostUSD" rather than the Enterprise Agreement spelling "PreTaxCost".</summary>
+    private static string CostQueryWithColumn(string columnName, decimal cost, string currency) => $$"""
+        { "properties": { "columns": [ { "name": "{{columnName}}", "type": "Number" }, { "name": "Currency", "type": "String" } ],
+          "rows": [ [ {{cost.ToString(CultureInfo.InvariantCulture)}}, "{{currency}}" ] ] } }
+        """;
+
     [Fact]
     public async Task NoSubscriptionId_IsNotConfigured_AndMakesNoCall()
     {
@@ -102,7 +110,7 @@ public class AzureCostProviderTests
         Assert.Equal(AzureBudgetState.NotConfigured, snapshot.State);
         // A local developer has no subscription. Reaching out anyway would log a confusing failure
         // for a state that is entirely expected.
-        Assert.Equal(0, calls.Count);
+        Assert.Empty(calls);
     }
 
     [Theory]
@@ -148,6 +156,31 @@ public class AzureCostProviderTests
         Assert.Equal(50.0m, snapshot.BudgetAmount);
         Assert.Equal(12.34m, snapshot.CurrentSpendAmount);
         Assert.Equal("USD", snapshot.Currency);
+        // FIX (minor): this test's own name promises "...AndPeriod" -- until now nothing here
+        // asserted a date, so ReadPeriod could have returned (null, null) unconditionally and the
+        // suite would have stayed green.
+        Assert.Equal(new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero), snapshot.PeriodStartUtc);
+        Assert.Equal(new DateTimeOffset(2026, 9, 30, 23, 59, 59, TimeSpan.Zero), snapshot.PeriodEndUtc);
+    }
+
+    // FIX (minor, spec Section 8): Azure budgets can be quarterly or annual, not only monthly --
+    // this pins that ReadPeriod reports the real span rather than assuming a calendar month.
+    [Fact]
+    public async Task AQuarterlyBudget_ReportsItsRealPeriod_NotACalendarMonth()
+    {
+        var (provider, _) = Build(respond: _ => Json("""
+            { "value": [ { "name": "quarterly",
+                "properties": {
+                  "amount": 150.0,
+                  "timePeriod": { "startDate": "2026-07-01T00:00:00Z", "endDate": "2026-09-30T23:59:59Z" },
+                  "currentSpend": { "amount": 88.0, "unit": "USD" } } } ] }
+            """));
+
+        var snapshot = await provider.GetBudgetAsync(CancellationToken.None);
+
+        Assert.Equal(AzureBudgetState.Ok, snapshot.State);
+        Assert.Equal(new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero), snapshot.PeriodStartUtc);
+        Assert.Equal(new DateTimeOffset(2026, 9, 30, 23, 59, 59, TimeSpan.Zero), snapshot.PeriodEndUtc);
     }
 
     // The billing currency is a property of the account. Formatting EUR as dollars would misstate the
@@ -192,6 +225,26 @@ public class AzureCostProviderTests
         Assert.Equal("USD", snapshot.Currency);
     }
 
+    // FIX (important): "PreTaxCost" is the Enterprise Agreement spelling. A Microsoft Customer
+    // Agreement or pay-as-you-go subscription -- the likely case here -- names the same
+    // aggregation "Cost" instead; matching only "PreTaxCost" would silently return no figure for
+    // such a subscription, the exact fallback failing quietly that this whole method exists to
+    // prevent.
+    [Fact]
+    public async Task NoBudgetDefined_StillReportsSpend_FromACostNamedColumn()
+    {
+        var (provider, _) = Build(respond: req =>
+            req.RequestUri!.AbsolutePath.Contains("budgets")
+                ? Json(EmptyBudgets)
+                : Json(CostQueryWithColumn("Cost", 12.34m, "USD")));
+
+        var snapshot = await provider.GetBudgetAsync(CancellationToken.None);
+
+        Assert.Equal(AzureBudgetState.NoBudget, snapshot.State);
+        Assert.Equal(12.34m, snapshot.CurrentSpendAmount);
+        Assert.Equal("USD", snapshot.Currency);
+    }
+
     // With a budget in hand its own currentSpend is authoritative, so a second call is wasted quota
     // against an endpoint Microsoft documents as low-throughput.
     [Fact]
@@ -201,7 +254,7 @@ public class AzureCostProviderTests
 
         await provider.GetBudgetAsync(CancellationToken.None);
 
-        Assert.Equal(1, calls.Count);
+        Assert.Single(calls);
     }
 
     [Fact]
@@ -218,6 +271,90 @@ public class AzureCostProviderTests
 
         Assert.Equal("production", snapshot.BudgetName);
         Assert.Equal(500.0m, snapshot.BudgetAmount);
+    }
+
+    // FIX (minor): a typo'd or renamed AzureCost:BudgetName must not silently fall back to
+    // whichever budget Azure lists first -- a $5 "dev" budget shown in place of a $500
+    // "production" one is worse than an honest "not found".
+    [Fact]
+    public async Task ANamedBudget_NotFound_IsUnavailable_NamingTheConfiguredValue()
+    {
+        var options = new AzureCostOptions { SubscriptionId = "sub-1", BudgetName = "production" };
+        var (provider, _) = Build(options, respond: _ => Json("""
+            { "value": [ { "name": "dev", "properties": { "amount": 5.0, "currentSpend": { "amount": 1.0, "unit": "USD" } } } ] }
+            """));
+
+        var snapshot = await provider.GetBudgetAsync(CancellationToken.None);
+
+        Assert.Equal(AzureBudgetState.Unavailable, snapshot.State);
+        Assert.Contains("production", snapshot.Message);
+        Assert.Null(snapshot.CurrentSpendAmount);
+        Assert.Null(snapshot.BudgetAmount);
+    }
+
+    // FIX (important): `Ok` must never carry a null spend -- that is the "$0.00 of $50.00"
+    // failure this whole feature exists to prevent, through a different door. A budget Azure has
+    // not yet evaluated, one whose timePeriod.startDate is in the future, or a
+    // ReservationUtilization-category budget (the same list endpoint returns those alongside cost
+    // budgets) all answer with `properties` but no `currentSpend`. Every other happy-path fixture
+    // in this file includes `currentSpend`, so none of them could have caught this.
+    [Fact]
+    public async Task ABudgetWithNoCurrentSpend_FallsThroughToTheCostQuery_AndStaysOk()
+    {
+        var (provider, _) = Build(respond: req =>
+            req.RequestUri!.AbsolutePath.Contains("budgets")
+                ? Json("""
+                    { "value": [ { "name": "monthly", "properties": {
+                        "amount": 50.0,
+                        "timePeriod": { "startDate": "2026-09-01T00:00:00Z", "endDate": "2026-09-30T23:59:59Z" } } } ] }
+                    """)
+                : Json(CostQueryWith(12.34m, "USD")));
+
+        var snapshot = await provider.GetBudgetAsync(CancellationToken.None);
+
+        Assert.Equal(AzureBudgetState.Ok, snapshot.State);
+        Assert.Equal(50.0m, snapshot.BudgetAmount);
+        Assert.Equal(12.34m, snapshot.CurrentSpendAmount);
+        Assert.Equal("USD", snapshot.Currency);
+    }
+
+    // The scenario this fix closes: the cost-query fallback has nothing to offer either. `Ok`
+    // must not be reported with a null spend -- that would be the exact "$0.00 of $50.00" defect,
+    // just reached from the budget-with-no-currentSpend path instead of the no-budget-at-all path.
+    [Fact]
+    public async Task ABudgetWithNoCurrentSpend_AndNoCostQueryFigureEither_IsUnavailable_NotASpendlessOk()
+    {
+        var (provider, _) = Build(respond: req =>
+            req.RequestUri!.AbsolutePath.Contains("budgets")
+                ? Json("""
+                    { "value": [ { "name": "monthly", "properties": { "amount": 50.0 } } ] }
+                    """)
+                : Json("""{ "properties": { "columns": [], "rows": [] } }"""));
+
+        var snapshot = await provider.GetBudgetAsync(CancellationToken.None);
+
+        Assert.Equal(AzureBudgetState.Unavailable, snapshot.State);
+        Assert.Null(snapshot.CurrentSpendAmount);
+        Assert.Null(snapshot.BudgetAmount);
+    }
+
+    // The other half of "no spend-less Ok": a spend amount with no currency to label it is just
+    // as capable of misleading (silently read as whatever currency the panel assumes) as no
+    // amount at all, so it must not reach Ok unlabelled either.
+    [Fact]
+    public async Task ABudgetSpend_WithNoCurrency_DoesNotProduceAnUnlabelledOk()
+    {
+        var (provider, _) = Build(respond: req =>
+            req.RequestUri!.AbsolutePath.Contains("budgets")
+                ? Json("""
+                    { "value": [ { "name": "monthly", "properties": {
+                        "amount": 50.0, "currentSpend": { "amount": 12.34 } } } ] }
+                    """)
+                : Json("""{ "properties": { "columns": [], "rows": [] } }"""));
+
+        var snapshot = await provider.GetBudgetAsync(CancellationToken.None);
+
+        Assert.Equal(AzureBudgetState.Unavailable, snapshot.State);
     }
 
     [Theory]

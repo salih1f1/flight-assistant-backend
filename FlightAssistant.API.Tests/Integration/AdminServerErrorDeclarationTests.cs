@@ -20,17 +20,26 @@ public class AdminServerErrorDeclarationTests(FlightAssistantWebApplicationFacto
 {
     /// <summary>
     /// Every admin operation whose handler throws a <c>DomainException(…, 500)</c> of its own, and
-    /// therefore the complete set allowed to declare one. Each is a provider credential or
-    /// configuration failure the operation cannot degrade past:
+    /// therefore the complete set allowed to declare one -- with one deliberate, reviewed exception
+    /// called out on its own bullet below rather than left silent. Each of the rest is a provider
+    /// credential or configuration failure the operation cannot degrade past:
     /// <list type="bullet">
     /// <item><c>/admin/ci/runs</c>, <c>/admin/ci/runs/{id}/tests</c> — GitHub Actions token missing
     /// or rejected (<c>GetCiRunsQuery</c>, <c>GetCiRunTestsQuery</c>).</item>
     /// <item><c>/admin/flights/search</c>, <c>/admin/flights/{id}/sync</c> — AeroAPI key missing or
     /// rejected (<c>SearchFlightsQuery</c>, <c>SyncFlightStatusCommand</c>).</item>
     /// <item><c>/admin/usage/aeroapi</c> — same key, on the usage route.</item>
+    /// <item><c>/admin/usage/azure</c> — the one exception: not a <c>DomainException</c>.
+    /// <c>AzureBudgetCache.GetOrFetchAsync</c> calls <c>ICacheService</c> with no try/catch, and
+    /// <c>RedisCacheService</c> rethrows on a Redis outage, reaching <c>GlobalExceptionHandler</c>'s
+    /// ambient default arm like any unhandled exception would. Declared anyway (final review before
+    /// #496's pull request, 2026-09-19) so a generated client has an error branch for a failure this
+    /// route can genuinely reach -- a deliberate, reviewed exception to this list's rule, spelled
+    /// out here rather than silent.</item>
     /// </list>
-    /// A new entry here is a claim that the operation throws its own 500. Check that it does before
-    /// adding one: the alternative is that the ambient 500 has crept back in under a new name.
+    /// A new entry here is ordinarily a claim that the operation throws its own 500 -- check that it
+    /// does before adding one, or the alternative is that the ambient 500 has crept back in under a
+    /// new name. <c>/admin/usage/azure</c> above is the one deliberate exception to that rule.
     /// </summary>
     private static readonly string[] ThrowTheirOwnServerError =
     [
@@ -38,6 +47,7 @@ public class AdminServerErrorDeclarationTests(FlightAssistantWebApplicationFacto
         "GET /admin/ci/runs/{id}/tests",
         "GET /admin/flights/search",
         "GET /admin/usage/aeroapi",
+        "GET /admin/usage/azure",
         "POST /admin/flights/{id}/sync",
     ];
 
