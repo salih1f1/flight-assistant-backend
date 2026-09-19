@@ -9,7 +9,6 @@ using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Providers.Entities;
-using FlightAssistant.Domain.Verification.Enums;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Providers
@@ -169,7 +168,7 @@ namespace FlightAssistant.Application.Commands.Admin.Providers
                 return Task.FromResult(options);
             }
 
-            var entityType = EntityTypeFor(request.Job);
+            var entityType = ProviderJobs.EntityTypeFor(request.Job);
             foreach (var name in request.Providers)
             {
                 var source = _registry.TryGet(name);
@@ -186,14 +185,6 @@ namespace FlightAssistant.Application.Commands.Admin.Providers
             var supported = ProviderJobs.SupportedSourceNames(_registry, entityType);
             return Task.FromResult(supported);
         }
-
-        private static VerificationEntityType EntityTypeFor(string job) => job switch
-        {
-            ProviderJobs.VerificationAirport => VerificationEntityType.Airport,
-            ProviderJobs.VerificationAirline => VerificationEntityType.Airline,
-            ProviderJobs.VerificationCountry => VerificationEntityType.Country,
-            _ => throw new InvalidOperationException($"'{job}' is not a verification routing key.")
-        };
 
         /// <summary>
         /// Stages the one audit row this change produces. <c>AdminAuditInterceptor</c> excludes

@@ -33,6 +33,22 @@ namespace FlightAssistant.Application.Providers
                 nameof(entityType), entityType, "Unknown verification entity type.")
         };
 
+        /// <summary>
+        /// The entity type a verification routing key decides sources for -- the inverse of
+        /// <see cref="ForEntityType"/>. Both directions of this bijection live here, side by side,
+        /// so they cannot drift apart (#531 task 9 fix round 1: this used to be a private copy in
+        /// each of <c>SetProviderRouteCommandHandler</c> and <c>GetProviderRoutesQueryHandler</c>).
+        /// Throws for <see cref="FlightSearchRoute"/> too -- that key has its own static option list
+        /// and is never routed through here.
+        /// </summary>
+        public static VerificationEntityType EntityTypeFor(string job) => job switch
+        {
+            VerificationAirport => VerificationEntityType.Airport,
+            VerificationAirline => VerificationEntityType.Airline,
+            VerificationCountry => VerificationEntityType.Country,
+            _ => throw new InvalidOperationException($"'{job}' is not a verification routing key.")
+        };
+
         public static string DisplayNameFor(string job) => job switch
         {
             FlightSearchRoute => "Route search",

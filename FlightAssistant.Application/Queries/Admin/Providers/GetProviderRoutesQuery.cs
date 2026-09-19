@@ -2,7 +2,6 @@ using FlightAssistant.Application.Interfaces.Providers;
 using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Application.Providers;
 using FlightAssistant.Contracts.Responses.Admin;
-using FlightAssistant.Domain.Verification.Enums;
 using MediatR;
 
 namespace FlightAssistant.Application.Queries.Admin.Providers
@@ -57,7 +56,7 @@ namespace FlightAssistant.Application.Queries.Admin.Providers
                 // SetProviderRouteCommandHandler's own validation would then reject.
                 var options = job == ProviderJobs.FlightSearchRoute
                     ? ProviderJobs.OptionsFor(job)
-                    : ProviderJobs.SupportedSourceNames(_registry, EntityTypeFor(job));
+                    : ProviderJobs.SupportedSourceNames(_registry, ProviderJobs.EntityTypeFor(job));
 
                 rows.Add(new AdminProviderRouteDto(
                     Job: job,
@@ -74,16 +73,5 @@ namespace FlightAssistant.Application.Queries.Admin.Providers
 
             return rows;
         }
-
-        /// <summary>Maps a verification routing key to the entity type it decides sources for.
-        /// Never called for <see cref="ProviderJobs.FlightSearchRoute"/>, which has its own static
-        /// option list and is handled separately above.</summary>
-        private static VerificationEntityType EntityTypeFor(string job) => job switch
-        {
-            ProviderJobs.VerificationAirport => VerificationEntityType.Airport,
-            ProviderJobs.VerificationAirline => VerificationEntityType.Airline,
-            ProviderJobs.VerificationCountry => VerificationEntityType.Country,
-            _ => throw new InvalidOperationException($"'{job}' is not a verification routing key.")
-        };
     }
 }
