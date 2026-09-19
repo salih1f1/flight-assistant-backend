@@ -238,4 +238,74 @@ public class ReferenceProvisioningPostgresTests : PostgresTestBase
         Assert.Empty(await db.Airports.Where(a => a.Iata == "LHR").ToListAsync());
         Assert.Empty(await db.Countries.Where(c => c.Code == "GB").ToListAsync());
     }
+
+    private static VerificationSourceFetchResult FoundAirline(string iata, string icao) =>
+        VerificationSourceFetchResult.Found(new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            [nameof(Airline.Iata)] = iata,
+            [nameof(Airline.Icao)] = icao,
+            [nameof(Airline.Name)] = "Pegasus",
+            [VerificationExtraValues.AirlineCountryName] = "Turkey"
+        });
+
+    [Fact]
+    public async Task AnAirlineWeHoldByIcaoOnly_IsCompleted_RatherThanViolatingItsUniqueIndex()
+    {
+        // The case the feature bites hardest on: airlines.Icao carries a filtered unique index
+        // (AirlineConfiguration), Airline.Iata is nullable, ImportAirlinesCommand explicitly
+        // permits an ICAO-only row, and GetAirlineIdByIataAsync matches on IATA alone -- so
+        // tracking PC2145 misses, and inserting aeroapi's {PC, PGT} row violates that index. Only
+        // a real PostgreSQL run can see this: the InMemory provider enforces no unique index at
+        // all, so the pre-fix insert saved happily there while producing a permanent, re-billed
+        // 503 in production.
+        await using (var seed = _fixture.CreateDbContext())
+        {
+            seed.Countries.Add(Country.Create("TR", "Turkey"));
+            seed.Airlines.Add(Airline.Create(null, "PGT", "Pegasus Airlines", "TR"));
+            await seed.SaveChangesAsync();
+        }
+
+        _registry.TryGet("aeroapi").Returns(
+            new FakeSource("aeroapi", [VerificationEntityType.Airline], _ => FoundAirline("PC", "PGT")));
+        var provisioner = CreateProvisioner(new Options());
+
+        var result = await provisioner.ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airline, "PC")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+
+        await using var db = _fixture.CreateDbContext();
+        var airline = Assert.Single(await db.Airlines.Where(a => a.Icao == "PGT").ToListAsync());
+        Assert.Equal("PC", airline.Iata);                   // the code the row lacked
+        Assert.Equal("Pegasus Airlines", airline.Name);     // a value it already had, kept
+        Assert.Equal("TR", airline.CountryCode);
+    }
+
+    [Fact]
+    public async Task AnAirportWeHoldByIcao_IsCompleted_RatherThanViolatingItsUniqueIndex()
+    {
+        // airports.Icao carries the same filtered unique index (AirportConfiguration), so the same
+        // insert fails the same way -- again invisible to every non-PostgreSQL suite.
+        await using (var seed = _fixture.CreateDbContext())
+        {
+            seed.Countries.Add(Country.Create("GB", "United Kingdom"));
+            seed.Airports.Add(Airport.Create("ZZZ", "EGLL", name: "", city: "", countryCode: "GB"));
+            await seed.SaveChangesAsync();
+        }
+
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", [VerificationEntityType.Airport], _ => FoundAirport("LHR")));
+        var provisioner = CreateProvisioner(new Options());
+
+        var result = await provisioner.ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+
+        await using var db = _fixture.CreateDbContext();
+        var airport = Assert.Single(await db.Airports.Where(a => a.Icao == "EGLL").ToListAsync());
+        Assert.Equal("London Heathrow", airport.Name);      // blank columns filled from the source
+        Assert.Equal("London", airport.City);
+        Assert.Equal("ZZZ", airport.Iata);                  // a code the row already has, kept
+    }
 }

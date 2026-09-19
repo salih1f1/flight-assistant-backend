@@ -13,6 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
+using NSubstitute.ReturnsExtensions;
 
 namespace FlightAssistant.Application.Tests.ReferenceData;
 
@@ -813,5 +814,80 @@ public class ReferenceDataProvisionerTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             CreateProvisioner().ProvisionAsync(
                 [new MissingReference(VerificationEntityType.Airport, "LHR")], caller.Token));
+    }
+
+    [Fact]
+    public async Task AnAirlineWeHoldByIcaoOnly_IsCompleted_NotInsertedASecondTime()
+    {
+        // airlines.Icao carries a filtered unique index and ImportAirlinesCommand explicitly
+        // permits a row with only an ICAO, while GetAirlineIdByIataAsync matches on IATA alone --
+        // so the lookup misses, and inserting the source's row would violate that index. The save
+        // failure that follows is Unavailable, which is deliberately never negative-cached, so
+        // every retry re-bills aeroapi's $0.015 for a 503 that can never succeed.
+        var held = Airline.Create(null, "PGT", "Pegasus Airlines", "TR");
+        _airlines.FindByIcaoAsync("PGT", Arg.Any<CancellationToken>()).Returns(held);
+        _registry.TryGet("aeroapi").Returns(new FakeSource("aeroapi", 0.015m, [VerificationEntityType.Airline],
+            _ => VerificationSourceFetchResult.Found(new Dictionary<string, string?>(StringComparer.Ordinal)
+            {
+                [nameof(Airline.Iata)] = "PC",
+                [nameof(Airline.Icao)] = "PGT",
+                [nameof(Airline.Name)] = "Pegasus",
+                [VerificationExtraValues.AirlineCountryName] = "Turkey"
+            })));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airline, "PC")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+        Assert.Equal("PC", held.Iata);                  // the code the row lacked is filled in
+        Assert.Equal("Pegasus Airlines", held.Name);    // a value the row already had is kept
+        Assert.Equal("TR", held.CountryCode);
+        await _airlines.DidNotReceive().AddAsync(Arg.Any<Airline>(), Arg.Any<CancellationToken>());
+        await _airports.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+        // The held row's own CountryCode already satisfies the foreign key, so the country name
+        // never has to resolve -- a row we demonstrably hold can't be 404'd by a name mismatch.
+        await _countryNames.DidNotReceive()
+            .TryResolveCodeByNameAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AnAirportWeHoldByIcao_IsCompleted_NotInsertedASecondTime()
+    {
+        // airports.Icao carries the same filtered unique index, so the same insert would fail the
+        // same way. Here the row's own Iata is not the code the caller asked for, so it is left
+        // alone; the columns it genuinely lacks are the ones filled in.
+        var held = Airport.Create("ZZZ", "ZZZZ", name: "", city: "", countryCode: "GB");
+        _airports.FindByIcaoAsync("ZZZZ", Arg.Any<CancellationToken>()).Returns(held);
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR")));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+        Assert.Equal("Test Airport", held.Name);
+        Assert.Equal("Testville", held.City);
+        Assert.Equal(51.5, held.Latitude);
+        Assert.Equal("ZZZ", held.Iata);                 // never overwritten
+        await _airports.DidNotReceive().AddAsync(Arg.Any<Airport>(), Arg.Any<CancellationToken>());
+        await _airports.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AnIcaoWeDoNotHold_StillTakesTheOrdinaryInsertPath()
+    {
+        // The completion path above must not change what happens in the ordinary case: the ICAO
+        // the source reported is looked up once, finds nothing, and a new row is inserted.
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR")));
+        _airports.FindByIcaoAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+        await _airports.Received(1).FindByIcaoAsync("ZZZZ", Arg.Any<CancellationToken>());
+        await _airports.Received(1).AddAsync(
+            Arg.Is<Airport>(a => a.Iata == "LHR" && a.SourceType == "auto"), Arg.Any<CancellationToken>());
     }
 }

@@ -153,6 +153,18 @@ namespace FlightAssistant.Application.ReferenceData
                 {
                     case VerificationEntityType.Airport:
                     {
+                        // A row we already hold, found by the ICAO the source just reported, is
+                        // completed rather than inserted a second time -- see CompleteAirport.
+                        var heldAirport = await FindByIcaoAsync(
+                            fetch.Values!, nameof(Airport.Icao),
+                            icao => airports.FindByIcaoAsync(icao, ct)).ConfigureAwait(false);
+                        if (heldAirport is not null)
+                        {
+                            CompleteAirport(heldAirport, entry.Code, fetch.Values!);
+                            wroteAnything = true;
+                            break;
+                        }
+
                         var airport = BuildAirport(entry.Code, fetch.SourceName!, fetch.Values!);
                         if (airport is null)
                             return ReferenceProvisionResult.NotFound(entry.Type, entry.Code);
@@ -164,6 +176,19 @@ namespace FlightAssistant.Application.ReferenceData
 
                     case VerificationEntityType.Airline:
                     {
+                        // Before the country name is resolved at all: a row we already hold has a
+                        // CountryCode that already satisfies the foreign key, so completing it needs
+                        // no resolution -- and an unresolvable name must not 404 an airline we hold.
+                        var heldAirline = await FindByIcaoAsync(
+                            fetch.Values!, nameof(Airline.Icao),
+                            icao => airlines.FindByIcaoAsync(icao, ct)).ConfigureAwait(false);
+                        if (heldAirline is not null)
+                        {
+                            CompleteAirline(heldAirline, entry.Code, fetch.Values!);
+                            wroteAnything = true;
+                            break;
+                        }
+
                         // aeroapi reports an operator's country as a name, never a code (#401 R1),
                         // but Airline.CountryCode is a required foreign key -- so the name has to
                         // be resolved before a row can exist at all.
@@ -294,6 +319,87 @@ namespace FlightAssistant.Application.ReferenceData
 
             return null;
         }
+
+        /// <summary>
+        /// The row we already hold under the ICAO code the source just reported, or null when the
+        /// source reported no ICAO (nothing to match on) or we hold no such row.
+        ///
+        /// <para>
+        /// There is no way to pre-check this before the lookup: an IATA flight designator gives us
+        /// only the marketing airline's two-letter code (<c>PC2145</c> -> <c>PC</c>), so the ICAO
+        /// is not known until the source answers. Matching on the <em>source's</em> ICAO is the
+        /// point -- that is the value the row would be inserted with, and the value the filtered
+        /// unique index on <c>airlines.Icao</c>/<c>airports.Icao</c> would reject.
+        /// </para>
+        /// </summary>
+        private static async Task<T?> FindByIcaoAsync<T>(
+            IReadOnlyDictionary<string, string?> values,
+            string icaoColumn,
+            Func<string, Task<T?>> find) where T : class
+        {
+            var icao = Value(values, icaoColumn);
+            return icao is null ? null : await find(icao).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Fills in the columns an airport we already hold lacks, from the source's row, and leaves
+        /// every value it already has alone.
+        ///
+        /// <para>
+        /// <b>Why completing, not inserting or 404ing.</b> <c>airports.Icao</c> carries a filtered
+        /// unique index (<c>AirportConfiguration</c>), so inserting the source's row for an ICAO we
+        /// already hold fails the save -- which this service reports as <c>Unavailable</c>, i.e. a
+        /// 503 that can never succeed however often it is retried, and one that is deliberately
+        /// never negative-cached. 404 would be wrong too: the entity demonstrably exists in our own
+        /// table; we merely could not find it by the code the caller named.
+        /// </para>
+        ///
+        /// <para>
+        /// <b>What it does not touch.</b> <c>CountryCode</c> is passed straight back: the held row
+        /// already satisfies its <c>countries</c> foreign key, so the source's country is neither
+        /// needed nor an improvement, and nothing new has to be provisioned for it. Its
+        /// verification state and <c>SourceType</c> are left alone as well -- only the columns the
+        /// row lacked came from the source, so the row as a whole is not this source's data and
+        /// stamping it verified would be a claim we have not checked.
+        /// </para>
+        /// </summary>
+        private static void CompleteAirport(
+            Airport existing, string requestedIata, IReadOnlyDictionary<string, string?> values) =>
+            existing.Update(
+                iata: FillRequired(existing.Iata, Value(values, nameof(Airport.Iata)) ?? requestedIata),
+                icao: Fill(existing.Icao, Value(values, nameof(Airport.Icao))),
+                name: FillRequired(existing.Name, Value(values, nameof(Airport.Name)) ?? requestedIata),
+                city: FillRequired(existing.City, Value(values, nameof(Airport.City)) ?? string.Empty),
+                countryCode: existing.CountryCode,
+                latitude: existing.Latitude ?? ParseDouble(Value(values, nameof(Airport.Latitude))),
+                longitude: existing.Longitude ?? ParseDouble(Value(values, nameof(Airport.Longitude))),
+                elevationFt: existing.ElevationFt ?? ParseInt(Value(values, nameof(Airport.ElevationFt))));
+
+        /// <summary>
+        /// <see cref="CompleteAirport"/> for an airline, and the case that bites hardest:
+        /// <c>Airline.Iata</c> is nullable and <c>ImportAirlinesCommand</c> explicitly permits a row
+        /// with only an ICAO, while <c>GetAirlineIdByIataAsync</c> matches on IATA alone -- so the
+        /// lookup misses, and the source's row would violate the filtered unique index on
+        /// <c>airlines.Icao</c>. Every retry of that 503 re-bills <c>aeroapi</c>.
+        /// </summary>
+        private static void CompleteAirline(
+            Airline existing, string requestedIata, IReadOnlyDictionary<string, string?> values) =>
+            existing.Update(
+                iata: Fill(existing.Iata, Value(values, nameof(Airline.Iata)) ?? requestedIata),
+                icao: Fill(existing.Icao, Value(values, nameof(Airline.Icao))),
+                name: FillRequired(existing.Name, Value(values, nameof(Airline.Name)) ?? requestedIata),
+                countryCode: existing.CountryCode,
+                allianceCode: existing.AllianceCode);
+
+        /// <summary>The source's value only where the row has none. Blank counts as none: a row
+        /// imported with an empty name has nothing worth keeping there.</summary>
+        private static string? Fill(string? existing, string? fromSource) =>
+            string.IsNullOrWhiteSpace(existing) ? fromSource : existing;
+
+        /// <summary><see cref="Fill"/> for a column that cannot be null. A separate name rather than
+        /// an overload, which would differ only in nullability and so not be one at all.</summary>
+        private static string FillRequired(string existing, string fromSource) =>
+            string.IsNullOrWhiteSpace(existing) ? fromSource : existing;
 
         /// <summary>
         /// Builds the row from a Found fetch, or null when the source's row cannot be used --
