@@ -6,14 +6,11 @@ using FlightAssistant.Contracts.Responses.Travelers;
 using System.Collections.Generic;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Identity.Web.Resource;
 
 namespace FlightAssistant.API.Endpoints
 {
     public static class TravelerEndpoints
     {
-        private const string ScopeAccessAsUser = "access_as_user";
-
         public static void MapTravelerEndpoints(this IEndpointRouteBuilder app)
         {
             var group = app.MapGroup("travelers").RequireAuthorization("AccessAsUser").WithTags("Travelers");

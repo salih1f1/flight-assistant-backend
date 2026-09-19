@@ -1,12 +1,9 @@
-using Microsoft.Identity.Web.Resource;
 using System.Security.Claims;
 
 namespace FlightAssistant.API.Endpoints
 {
     public static class PrivateEndpoints
     {
-        private const string ScopeAccessAsUser = "access_as_user";
-
         public static void MapPrivateEndpoints(this IEndpointRouteBuilder app)
         {
             var group = app.MapGroup("private").WithTags("Private");

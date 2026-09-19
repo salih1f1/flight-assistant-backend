@@ -6,15 +6,12 @@ using FlightAssistant.Contracts.Requests.Loyalty;
 using FlightAssistant.Contracts.Responses.Loyalty;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Identity.Web.Resource;
 using System.Collections.Generic;
 
 namespace FlightAssistant.API.Endpoints
 {
     public static class LoyaltyEndpoints
     {
-        private const string ScopeAccessAsUser = "access_as_user";
-
         public static void MapLoyaltyEndpoints(this IEndpointRouteBuilder app)
         {
             var group = app.MapGroup("loyalty").RequireAuthorization("AccessAsUser").WithTags("Loyalty");

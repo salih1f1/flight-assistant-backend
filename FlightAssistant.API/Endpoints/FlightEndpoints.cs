@@ -7,15 +7,12 @@ using FlightAssistant.Contracts.Requests.Flights;
 using FlightAssistant.Contracts.Responses.Flights;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Identity.Web.Resource;
 using System.Collections.Generic;
 
 namespace FlightAssistant.API.Endpoints
 {
     public static class FlightEndpoints
     {
-        private const string ScopeAccessAsUser = "access_as_user";
-
         public static void MapFlightEndpoints(this IEndpointRouteBuilder app)
         {
             var group = app.MapGroup("flights").RequireAuthorization("AccessAsUser").WithTags("Flights");

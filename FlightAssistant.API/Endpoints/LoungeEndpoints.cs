@@ -2,14 +2,11 @@ using FlightAssistant.API.Authentication;
 using FlightAssistant.Application.Queries.Lounges;
 using FlightAssistant.Contracts.Responses.Lounges;
 using MediatR;
-using Microsoft.Identity.Web.Resource;
 
 namespace FlightAssistant.API.Endpoints
 {
     public static class LoungeEndpoints
     {
-        private const string ScopeAccessAsUser = "access_as_user";
-
         public static void MapLoungeEndpoints(this IEndpointRouteBuilder app)
         {
             var group = app.MapGroup("lounges").RequireAuthorization("AccessAsUser").WithTags("Lounges");
