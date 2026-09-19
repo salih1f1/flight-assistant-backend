@@ -18,6 +18,12 @@ namespace FlightAssistant.Infrastructure.DataSources
         public const string Redis = "redis";
         public const string Apns = "apns";
         public const string AppInsights = "appinsights";
+
+        // #496 task 2: AzureCostProvider's named HttpClient is registered under this key so
+        // AddDataSourceObservation has something to tag it with. No DataSourceDescriptor uses it
+        // yet -- that catalog row is task 3, which is also what makes
+        // EveryNamedHttpClientHasACatalogEntry pass again (task 2 deliberately leaves it red).
+        public const string AzureCost = "azurecost";
     }
 
     /// <summary>
