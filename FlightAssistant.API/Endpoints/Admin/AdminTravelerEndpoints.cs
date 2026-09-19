@@ -123,11 +123,16 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "signed-in traveler. A row from GET /admin/flights/search can be posted here unmodified. " +
                 "Tracking a flight the traveler already tracks changes nothing and still returns 201 with " +
                 "its flightId. An unknown traveler is a 404 and writes nothing. " +
-                "The same cap as POST /flights applies: at the traveler's limit of flights tracked at a time, tracking another returns 409 and writes nothing.")
+                "The same cap as POST /flights applies: at the traveler's limit of flights tracked at a time, tracking another returns 409 and writes nothing. " +
+                "If the airline or either airport is not already known to the system, it is looked up in the external reference sources and created automatically (#465). " +
+                "So 404 covers two things here: an unknown traveler, and a source answering that no such airline, airport or country exists — the country case names one the " +
+                "reference data itself requires (a CountryCode foreign key), never one the caller sent. " +
+                "503 means that lookup could not be completed — a source was unreachable, the flight data budget is spent, or it took longer than the configured budget; retry after the period in the Retry-After header.")
             .Produces(201)
             .ProducesValidationProblem()
             .ProducesProblem(404)
-            .ProducesProblem(409);
+            .ProducesProblem(409)
+            .ProducesProblem(503);
 
             // POST /admin/travelers/{id}/memberships — add a loyalty membership for this traveler
             // (#475), so an operator can set one up for a traveler without that traveler's own

@@ -467,6 +467,13 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
     public async Task TrackFlight_UnknownAirline_Returns404()
     {
         // Undeclared before #405. One POST only: the Testing profile allows 2 before a 429.
+        //
+        // Since #465, an unresolved reference goes through IReferenceDataProvisioner before the
+        // handler 404s. Nothing here overrides it: FlightAssistantWebApplicationFactory registers a
+        // default IReferenceDataProvisioner that answers NotFound without any network call (the
+        // same posture as its IFlightSearchProvider stub), so this test proves "a source's genuine
+        // NotFound answer still reaches the caller as a 404" through the real DI graph, with no live
+        // call to the metered "aeroapi" source the real provisioner would otherwise default to.
         var client = factory.CreateUserClient();
         var tomorrow = DateTime.UtcNow.AddDays(1);
         var response = await client.PostAsJsonAsync("flights", new

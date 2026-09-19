@@ -341,7 +341,7 @@ public class AeroApiVerificationSourceTests
     }
 
     [Fact]
-    public async Task LookupAsync_Airline_MapsExactlyIataIcaoName()
+    public async Task LookupAsync_Airline_MapsExactlyIataIcaoNameAndTheRawCountryName()
     {
         var handler = new StubHttpMessageHandler(HttpStatusCode.OK, ReadFixture("operator-baw.json"));
 
@@ -349,7 +349,42 @@ public class AeroApiVerificationSourceTests
             VerificationEntityType.Airline, VerificationSourceLookupKey.ForAirline("BA", "BAW"));
 
         var values = result.Lookup!.Values!;
-        Assert.Equal(new HashSet<string> { "Iata", "Icao", "Name" }, values.Keys.ToHashSet());
+        // #465: also carries the raw country name under VerificationExtraValues.AirlineCountryName
+        // -- not a checked column, see AirlineLookup_StillCarriesExactlyTheCheckedColumns below.
+        Assert.Equal(
+            new HashSet<string> { "Iata", "Icao", "Name", VerificationExtraValues.AirlineCountryName },
+            values.Keys.ToHashSet());
+        Assert.Equal("BA", values[nameof(Airline.Iata)]);
+        Assert.Equal("BAW", values[nameof(Airline.Icao)]);
+        Assert.Equal("British Airways", values[nameof(Airline.Name)]);
+    }
+
+    [Fact]
+    public async Task AirlineLookup_AlsoCarriesTheRawCountryName()
+    {
+        // Airline.CountryCode is a required FK but deliberately not a checked column (#401 R1),
+        // so this name is the only country information AeroAPI gives us. #465 resolves it to a code.
+        var handler = new StubHttpMessageHandler(HttpStatusCode.OK, ReadFixture("operator-baw.json"));
+
+        var result = await Source(handler).LookupAsync(
+            VerificationEntityType.Airline, VerificationSourceLookupKey.ForAirline("BA", "BAW"));
+
+        Assert.False(result.IsError);
+        var values = result.Lookup!.Values!;
+        Assert.Equal("United Kingdom", values[VerificationExtraValues.AirlineCountryName]);
+    }
+
+    [Fact]
+    public async Task AirlineLookup_StillCarriesExactlyTheCheckedColumns()
+    {
+        var handler = new StubHttpMessageHandler(HttpStatusCode.OK, ReadFixture("operator-baw.json"));
+
+        var result = await Source(handler).LookupAsync(
+            VerificationEntityType.Airline, VerificationSourceLookupKey.ForAirline("BA", "BAW"));
+
+        var values = result.Lookup!.Values!;
+        foreach (var column in VerificationCheckedColumns.GetColumns(VerificationEntityType.Airline))
+            Assert.True(values.ContainsKey(column.Name), $"missing checked column {column.Name}");
         Assert.Equal("BA", values[nameof(Airline.Iata)]);
         Assert.Equal("BAW", values[nameof(Airline.Icao)]);
         Assert.Equal("British Airways", values[nameof(Airline.Name)]);

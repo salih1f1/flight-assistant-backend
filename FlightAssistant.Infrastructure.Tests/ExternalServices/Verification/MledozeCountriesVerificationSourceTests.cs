@@ -609,4 +609,76 @@ public class MledozeCountriesVerificationSourceTests
         Assert.Equal("mledoze", source.Name);
         Assert.Equal(0m, source.CostPerRowUsd);
     }
+
+    // ── Country name resolution (ICountryNameResolver, #465) ──────────────────
+
+    // Note: ccn3 quoted as a string, matching the real dataset's shape (see countries-slice.json,
+    // whose leading-zero values like "010" could not round-trip as bare JSON numbers anyway) and
+    // JsonRow.Ccn3's string? type -- an unquoted number there fails deserialization outright, which
+    // would make every one of these tests report a source error instead of exercising the resolver.
+    private const string TwoCountryDataset = """
+        [
+          {"cca2":"GB","cca3":"GBR","ccn3":"826","name":{"common":"United Kingdom"},"region":"Europe","subregion":"Northern Europe"},
+          {"cca2":"TR","cca3":"TUR","ccn3":"792","name":{"common":"Türkiye"},"region":"Asia","subregion":"Western Asia"}
+        ]
+        """;
+
+    [Fact]
+    public async Task TryResolveCodeByNameAsync_ExactName_ReturnsCode()
+    {
+        var source = Source(new StaticHandler(HttpStatusCode.OK, TwoCountryDataset));
+
+        var result = await source.TryResolveCodeByNameAsync("United Kingdom", CancellationToken.None);
+
+        Assert.False(result.IsError);
+        Assert.Equal("GB", result.Code);
+    }
+
+    [Fact]
+    public async Task TryResolveCodeByNameAsync_NormalisesAccentsAndCase()
+    {
+        // The comparer's own Text rule, reused: a source spelling it without the diacritic must
+        // still resolve, or no Turkish airline would ever provision.
+        var source = Source(new StaticHandler(HttpStatusCode.OK, TwoCountryDataset));
+
+        var result = await source.TryResolveCodeByNameAsync("turkiye", CancellationToken.None);
+
+        Assert.False(result.IsError);
+        Assert.Equal("TR", result.Code);
+    }
+
+    [Fact]
+    public async Task TryResolveCodeByNameAsync_UnknownName_ReturnsNullCodeAndNoError()
+    {
+        var source = Source(new StaticHandler(HttpStatusCode.OK, TwoCountryDataset));
+
+        var result = await source.TryResolveCodeByNameAsync("Atlantis", CancellationToken.None);
+
+        Assert.False(result.IsError);
+        Assert.Null(result.Code);
+    }
+
+    [Fact]
+    public async Task TryResolveCodeByNameAsync_BlankName_ReturnsNullWithoutLoadingTheDataset()
+    {
+        // A transport that throws on any request: reaching the download at all fails this test.
+        var source = Source(new ThrowingHandler(new InvalidOperationException("must not be reached")));
+
+        var result = await source.TryResolveCodeByNameAsync("  ", CancellationToken.None);
+
+        Assert.False(result.IsError);
+        Assert.Null(result.Code);
+    }
+
+    [Fact]
+    public async Task TryResolveCodeByNameAsync_LoadFails_ReportsErrorNotAMiss()
+    {
+        // A failed load must never look like "no such country" — that would 404 a real airline.
+        var source = Source(new ThrowingHandler(new HttpRequestException("connection reset")));
+
+        var result = await source.TryResolveCodeByNameAsync("United Kingdom", CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Null(result.Code);
+    }
 }

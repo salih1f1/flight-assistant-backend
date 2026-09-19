@@ -1,0 +1,704 @@
+using System.Globalization;
+using FlightAssistant.Application.Interfaces.Caching;
+using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Interfaces.Verification;
+using FlightAssistant.Application.ProviderBudget;
+using FlightAssistant.Application.Verification;
+using FlightAssistant.Domain.Common;
+using FlightAssistant.Domain.ReferenceData.Entities;
+using FlightAssistant.Domain.Verification.Enums;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+
+namespace FlightAssistant.Application.ReferenceData
+{
+    /// <summary>
+    /// Creates reference rows from the verification sources (#465). See
+    /// <see cref="IReferenceDataProvisioner"/> for what it promises; this type owns how.
+    ///
+    /// <para>
+    /// <b>Its own DI scope.</b> Writes go through <see cref="VerificationJobActor.CreateScope"/>,
+    /// not the caller's scope. <c>AdminAuditInterceptor</c> audits every tracked change in a
+    /// <c>SaveChanges</c> that carries an actor, so setting one on a traveler's request scope would
+    /// start auditing that traveler's own flight writes -- which must stay untouched. A separate
+    /// scope audits the reference writes under <c>system</c> and leaves the traveler's write alone.
+    /// It passes no correlation id: the request's id lives in <c>HttpContext.Items</c>, invisible to
+    /// Application, so these rows fall back to <c>Activity.Current?.Id</c> like any actor-less path.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>It never throws for an expected failure.</b> A miss, a source error, a budget refusal and
+    /// a deadline are statuses, because this runs inside a traveler's <c>POST /flights</c> and the
+    /// caller has to turn each into a different status code.
+    /// </para>
+    /// </summary>
+    public sealed class ReferenceDataProvisioner : IReferenceDataProvisioner
+    {
+        /// <summary><c>ISeedableEntity.SourceType</c> for a row this service created -- distinct from
+        /// <c>seed</c>, <c>admin</c> and <c>import</c>, so an operator can tell where it came from.
+        /// The <c>Create</c> factories hardcode <c>"admin"</c>, so it is assigned afterwards.</summary>
+        public const string ProvisionedSourceType = "auto";
+
+        /// <summary>
+        /// The cache key remembering that a source has no such entity. Upper-cased so a caller's
+        /// casing cannot produce a second entry for the same code -- <c>POST /flights</c> does not
+        /// canonicalise the designator before the lookup.
+        /// </summary>
+        public static string NegativeCacheKeyFor(VerificationEntityType type, string code) =>
+            $"refdata:missing:{type}:{code.Trim().ToUpperInvariant()}";
+
+        private readonly IVerificationSourceRegistry _registry;
+        private readonly IVerificationJobOptions _verificationOptions;
+        private readonly ICountryNameResolver _countryNames;
+        private readonly ICacheService _cache;
+        private readonly IProviderBudgetGuard _budget;
+        private readonly IReferenceProvisioningOptions _options;
+        private readonly IServiceScopeFactory _scopeFactory;
+        private readonly ILogger<ReferenceDataProvisioner> _logger;
+
+        public ReferenceDataProvisioner(
+            IVerificationSourceRegistry registry,
+            IVerificationJobOptions verificationOptions,
+            ICountryNameResolver countryNames,
+            ICacheService cache,
+            IProviderBudgetGuard budget,
+            IReferenceProvisioningOptions options,
+            IServiceScopeFactory scopeFactory,
+            ILogger<ReferenceDataProvisioner> logger)
+        {
+            _registry = registry;
+            _verificationOptions = verificationOptions;
+            _countryNames = countryNames;
+            _cache = cache;
+            _budget = budget;
+            _options = options;
+            _scopeFactory = scopeFactory;
+            _logger = logger;
+        }
+
+        public async Task<ReferenceProvisionResult> ProvisionAsync(
+            IReadOnlyCollection<MissingReference> missing, CancellationToken ct = default)
+        {
+            if (missing.Count == 0)
+                return ReferenceProvisionResult.Provisioned;
+
+            var entries = Deduplicate(missing);
+
+            // Disabled behaves exactly like "the source has no such entity", which is today's 404.
+            if (!_options.Enabled)
+            {
+                var disabledFirst = entries.First();
+                return ReferenceProvisionResult.NotFound(disabledFirst.Type, disabledFirst.Code);
+            }
+
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            deadline.CancelAfter(_options.Budget);
+
+            try
+            {
+                return await ProvisionCoreAsync(entries, deadline.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // Our own budget ran out, not the caller abandoning the request. For the two dataset
+                // sources the download this was waiting on is shared and keeps running, so a retry
+                // shortly finds it warm -- but NOT for aeroapi (#401 R6): HasCachedData is always
+                // false and it caches nothing, so an aborted airline lookup leaves nothing warm and
+                // the retry starts over behind AeroApiThrottleGate. An airline can therefore 503
+                // here repeatedly while the gate is busy.
+                //
+                // The log names every entity the attempt covered, not just the first: this is one
+                // budget for the whole step, so which entry was in flight when it fired is not
+                // knowable here -- naming one made an airline's timeout read as the airport's. The
+                // response names none either (ToDomainException's Unavailable message is fixed).
+                _logger.LogInformation(
+                    "Provisioning {Entities} exceeded the {Budget} budget.",
+                    Describe(entries), _options.Budget);
+                var first = entries.First();
+                return ReferenceProvisionResult.Unavailable(
+                    first.Type, first.Code,
+                    $"Looking up reference data took longer than {_options.Budget}.");
+            }
+        }
+
+        /// <summary>
+        /// One entry per <c>(Type, canonical code)</c>, keeping the first occurrence so the caller's
+        /// own order survives.
+        ///
+        /// <para>
+        /// <c>POST /flights</c> accepts a departure and arrival IATA that are the same unknown code,
+        /// or the same code in two different cases, and <c>TrackFlightCommandHandler</c> adds one
+        /// <see cref="MissingReference"/> per airport without comparing them. Building two rows with
+        /// one canonical IATA in a single save violates the unique index on <c>airports.Iata</c>:
+        /// the save fails, which is <see cref="ReferenceProvisionStatus.Unavailable"/> -- a permanent
+        /// 503 plus an Error log on every attempt. Canonicalised the same way
+        /// <see cref="NegativeCacheKeyFor"/> does, so the two agree on what "the same code" means.
+        /// </para>
+        /// </summary>
+        private static IReadOnlyCollection<MissingReference> Deduplicate(
+            IReadOnlyCollection<MissingReference> missing)
+        {
+            if (missing.Count < 2)
+                return missing;
+
+            var seen = new HashSet<(VerificationEntityType Type, string Code)>();
+            var unique = new List<MissingReference>(missing.Count);
+            foreach (var entry in missing)
+            {
+                if (seen.Add((entry.Type, entry.Code.Trim().ToUpperInvariant())))
+                    unique.Add(entry);
+            }
+
+            return unique;
+        }
+
+        /// <summary>The entities an attempt covered, for a log line that must not single one out.</summary>
+        private static string Describe(IReadOnlyCollection<MissingReference> entries) =>
+            string.Join(", ", entries.Select(e => $"{e.Type} '{e.Code}'"));
+
+        /// <summary>
+        /// The provisioning walk itself, oblivious to the wall-clock budget -- <see cref="ProvisionAsync"/>
+        /// applies <see cref="IReferenceProvisioningOptions.Budget"/> around this call and turns a
+        /// timeout into <see cref="ReferenceProvisionStatus.Unavailable"/> rather than letting the
+        /// cancellation escape as an exception.
+        /// </summary>
+        private async Task<ReferenceProvisionResult> ProvisionCoreAsync(
+            IReadOnlyCollection<MissingReference> missing, CancellationToken ct)
+        {
+            using var scope = VerificationJobActor.CreateScope(_scopeFactory);
+            var airports = scope.ServiceProvider.GetRequiredService<IAirportRepository>();
+            var countries = scope.ServiceProvider.GetRequiredService<ICountryRepository>();
+            var airlines = scope.ServiceProvider.GetRequiredService<IAirlineRepository>();
+
+            var createdAirports = new List<Airport>();
+            var createdAirlines = new List<Airline>();
+
+            // Case-insensitive: a source may report "gb" where another reports "GB", and the country
+            // code is canonicalised by Country.Create anyway.
+            var requiredCountryCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var wroteAnything = false;
+
+            // One loop over every missing entry, dispatched by type -- not a loop per type. A
+            // Country entry just contributes its code to the required set and moves on; anything
+            // else is fetched here, and the single early-return below (shared by every type) is
+            // where the all-or-nothing guarantee lives -- one case per type in the switch below,
+            // never a loop per type, which would need its own copy of that return.
+            foreach (var entry in missing)
+            {
+                if (entry.Type == VerificationEntityType.Country)
+                {
+                    requiredCountryCodes.Add(entry.Code);
+                    continue;
+                }
+
+                var fetch = await FetchAsync(entry.Type, entry.Code, ct).ConfigureAwait(false);
+                if (fetch.Status != FetchStatus.Found)
+                    return fetch.ToProvisionResult(entry.Type, entry.Code);
+
+                switch (entry.Type)
+                {
+                    case VerificationEntityType.Airport:
+                    {
+                        // A row we already hold, found by the ICAO the source just reported, is
+                        // completed rather than inserted a second time -- see CompleteAirport.
+                        var heldAirport = await FindByIcaoAsync(
+                            fetch.Values!, nameof(Airport.Icao),
+                            icao => airports.FindByIcaoAsync(icao, ct)).ConfigureAwait(false);
+                        if (heldAirport is not null)
+                        {
+                            CompleteAirport(heldAirport, entry.Code, fetch.Values!);
+                            wroteAnything = true;
+                            break;
+                        }
+
+                        var airport = BuildAirport(entry.Code, fetch.SourceName!, fetch.Values!);
+                        if (airport is null)
+                        {
+                            // A NotFound decided after the lookup is remembered just like one the
+                            // source itself reported -- see RememberMissAsync.
+                            await RememberMissAsync(entry.Type, entry.Code, ct).ConfigureAwait(false);
+                            return ReferenceProvisionResult.NotFound(entry.Type, entry.Code);
+                        }
+
+                        createdAirports.Add(airport);
+                        requiredCountryCodes.Add(airport.CountryCode);
+                        break;
+                    }
+
+                    case VerificationEntityType.Airline:
+                    {
+                        // Before the country name is resolved at all: a row we already hold has a
+                        // CountryCode that already satisfies the foreign key, so completing it needs
+                        // no resolution -- and an unresolvable name must not 404 an airline we hold.
+                        var heldAirline = await FindByIcaoAsync(
+                            fetch.Values!, nameof(Airline.Icao),
+                            icao => airlines.FindByIcaoAsync(icao, ct)).ConfigureAwait(false);
+                        if (heldAirline is not null)
+                        {
+                            CompleteAirline(heldAirline, entry.Code, fetch.Values!);
+                            wroteAnything = true;
+                            break;
+                        }
+
+                        // aeroapi reports an operator's country as a name, never a code (#401 R1),
+                        // but Airline.CountryCode is a required foreign key -- so the name has to
+                        // be resolved before a row can exist at all.
+                        var countryName = Value(fetch.Values!, VerificationExtraValues.AirlineCountryName);
+                        var resolution = await _countryNames
+                            .TryResolveCodeByNameAsync(countryName, ct).ConfigureAwait(false);
+
+                        if (resolution.IsError)
+                            return ReferenceProvisionResult.Unavailable(entry.Type, entry.Code, resolution.Error);
+
+                        if (resolution.Code is null)
+                        {
+                            // No code means no valid row: a data gap we cannot fill, not a
+                            // transient failure, so the caller answers 404 rather than 503.
+                            _logger.LogInformation(
+                                "Cannot provision airline '{Code}': its country '{CountryName}' did not resolve to a code.",
+                                entry.Code, countryName);
+                            // The billed lookup already happened, so this miss is remembered too --
+                            // otherwise a carrier whose country name mledoze spells differently
+                            // costs $0.015 on every attempt, forever. See RememberMissAsync.
+                            await RememberMissAsync(entry.Type, entry.Code, ct).ConfigureAwait(false);
+                            return ReferenceProvisionResult.NotFound(entry.Type, entry.Code);
+                        }
+
+                        createdAirlines.Add(BuildAirline(entry.Code, resolution.Code, fetch.SourceName!, fetch.Values!));
+                        requiredCountryCodes.Add(resolution.Code);
+                        break;
+                    }
+
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(entry.Type), entry.Type, "Unknown entity type.");
+                }
+            }
+
+            // Countries first: both airports.CountryCode and airlines.CountryCode are foreign keys
+            // into countries, and the country a row needs is only known once its source (or, for an
+            // airline, the name resolver) has answered.
+            var countryFailure = await EnsureCountriesAsync(
+                countries, requiredCountryCodes, () => wroteAnything = true, ct).ConfigureAwait(false);
+            if (countryFailure is not null)
+                return countryFailure;
+
+            foreach (var airport in createdAirports)
+            {
+                await airports.AddAsync(airport, ct).ConfigureAwait(false);
+                wroteAnything = true;
+            }
+
+            foreach (var airline in createdAirlines)
+            {
+                await airlines.AddAsync(airline, ct).ConfigureAwait(false);
+                wroteAnything = true;
+            }
+
+            // Every repository resolved from this scope shares its DbContext, so one save commits
+            // every row in a single transaction, and EF orders the INSERTs by the foreign-key graph.
+            // ReferenceProvisioningPostgresTests (a later task) proves that ordering against real
+            // PostgreSQL, which the InMemory provider cannot (it enforces no foreign key at all).
+            // Saved via `airports`, not `countries`: interchangeable in production since both wrap
+            // the same DbContext, but the happy-path regression test's `_airports` double is the
+            // one that actually observes this call.
+            if (wroteAnything)
+            {
+                try
+                {
+                    await airports.SaveChangesAsync(ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException && !ct.IsCancellationRequested)
+                {
+                    // This repository's established idiom for telling "our own failure" apart from
+                    // "the caller abandoned the request" is the token, not the exception type (see
+                    // AdminHealthReportBuilder, #453) -- a type-only filter does not step aside if
+                    // EF or Npgsql ever delivers a cancelled save wrapped (a DbUpdateException or
+                    // AggregateException around an OperationCanceledException), which would
+                    // otherwise log this as an Error and return Unavailable instead of letting the
+                    // cancellation propagate.
+                    //
+                    // Application cannot see EF Core's DbUpdateException -- that boundary is
+                    // deliberate (#465 review: worth more than eliminating a rare 500, and
+                    // translating it inside AirportRepository would change error behaviour for
+                    // every other caller of these repositories, including the admin create/update
+                    // paths) -- so any non-cancellation save failure is treated the same way: a
+                    // save failure means we could not write the reference data, so we could not
+                    // provision, whatever the cause. The concrete case is the concurrent-duplicate
+                    // race: Airport.Iata and Airline.Iata both carry unique indexes, so two
+                    // POST /flights requests provisioning the same new row race -- one wins, and
+                    // the other's save throws here. A logged 503 whose retry succeeds immediately
+                    // -- the row the other request just created is now there -- beats an unhandled
+                    // 500 on a traveler-facing path. The message is a fixed string, never
+                    // ex.Message: DiagnosticDetail is client-visible outside Production and must
+                    // never carry a host, constraint or table name.
+                    _logger.LogError(ex, "Saving provisioned reference data failed.");
+                    var first = missing.First();
+                    return ReferenceProvisionResult.Unavailable(
+                        first.Type, first.Code, "Saving the provisioned reference data failed.");
+                }
+            }
+
+            return ReferenceProvisionResult.Provisioned;
+        }
+
+        /// <summary>
+        /// Creates any of <paramref name="codes"/> that <c>countries</c> does not already hold.
+        /// Returns null when every code is now present, or the failure that stopped it. One batched
+        /// read for the whole set, then at most one source lookup per genuinely missing code -- so
+        /// two airports in the same country cost one lookup, not two.
+        /// </summary>
+        private async Task<ReferenceProvisionResult?> EnsureCountriesAsync(
+            ICountryRepository countries,
+            IReadOnlyCollection<string> codes,
+            Action markWrote,
+            CancellationToken ct)
+        {
+            if (codes.Count == 0)
+                return null;
+
+            var existing = await countries.FindByCodesAsync(codes, ct).ConfigureAwait(false);
+            var present = existing.Select(c => c.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var code in codes)
+            {
+                if (present.Contains(code))
+                    continue;
+
+                var fetch = await FetchAsync(VerificationEntityType.Country, code, ct).ConfigureAwait(false);
+                if (fetch.Status != FetchStatus.Found)
+                    return fetch.ToProvisionResult(VerificationEntityType.Country, code);
+
+                await countries.AddAsync(BuildCountry(code, fetch.SourceName!, fetch.Values!), ct).ConfigureAwait(false);
+                markWrote();
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// The row we already hold under the ICAO code the source just reported, or null when the
+        /// source reported no ICAO (nothing to match on) or we hold no such row.
+        ///
+        /// <para>
+        /// There is no way to pre-check this before the lookup: an IATA flight designator gives us
+        /// only the marketing airline's two-letter code (<c>PC2145</c> -> <c>PC</c>), so the ICAO
+        /// is not known until the source answers. Matching on the <em>source's</em> ICAO is the
+        /// point -- that is the value the row would be inserted with, and the value the filtered
+        /// unique index on <c>airlines.Icao</c>/<c>airports.Icao</c> would reject.
+        /// </para>
+        /// </summary>
+        private static async Task<T?> FindByIcaoAsync<T>(
+            IReadOnlyDictionary<string, string?> values,
+            string icaoColumn,
+            Func<string, Task<T?>> find) where T : class
+        {
+            var icao = Value(values, icaoColumn);
+            return icao is null ? null : await find(icao).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Fills in the columns an airport we already hold lacks, from the source's row, and leaves
+        /// every value it already has alone.
+        ///
+        /// <para>
+        /// <b>Why completing, not inserting or 404ing.</b> <c>airports.Icao</c> carries a filtered
+        /// unique index (<c>AirportConfiguration</c>), so inserting the source's row for an ICAO we
+        /// already hold fails the save -- which this service reports as <c>Unavailable</c>, i.e. a
+        /// 503 that can never succeed however often it is retried, and one that is deliberately
+        /// never negative-cached. 404 would be wrong too: the entity demonstrably exists in our own
+        /// table; we merely could not find it by the code the caller named.
+        /// </para>
+        ///
+        /// <para>
+        /// <b>What it does not touch.</b> <c>CountryCode</c> is passed straight back: the held row
+        /// already satisfies its <c>countries</c> foreign key, so the source's country is neither
+        /// needed nor an improvement, and nothing new has to be provisioned for it. Its
+        /// verification state and <c>SourceType</c> are left alone as well -- only the columns the
+        /// row lacked came from the source, so the row as a whole is not this source's data and
+        /// stamping it verified would be a claim we have not checked.
+        /// </para>
+        /// </summary>
+        private static void CompleteAirport(
+            Airport existing, string requestedIata, IReadOnlyDictionary<string, string?> values) =>
+            existing.Update(
+                iata: FillRequired(existing.Iata, Value(values, nameof(Airport.Iata)) ?? requestedIata),
+                icao: Fill(existing.Icao, Value(values, nameof(Airport.Icao))),
+                name: FillRequired(existing.Name, Value(values, nameof(Airport.Name)) ?? requestedIata),
+                city: FillRequired(existing.City, Value(values, nameof(Airport.City)) ?? string.Empty),
+                countryCode: existing.CountryCode,
+                latitude: existing.Latitude ?? ParseDouble(Value(values, nameof(Airport.Latitude))),
+                longitude: existing.Longitude ?? ParseDouble(Value(values, nameof(Airport.Longitude))),
+                elevationFt: existing.ElevationFt ?? ParseInt(Value(values, nameof(Airport.ElevationFt))));
+
+        /// <summary>
+        /// <see cref="CompleteAirport"/> for an airline, and the case that bites hardest:
+        /// <c>Airline.Iata</c> is nullable and <c>ImportAirlinesCommand</c> explicitly permits a row
+        /// with only an ICAO, while <c>GetAirlineIdByIataAsync</c> matches on IATA alone -- so the
+        /// lookup misses, and the source's row would violate the filtered unique index on
+        /// <c>airlines.Icao</c>. Every retry of that 503 re-bills <c>aeroapi</c>.
+        /// </summary>
+        private static void CompleteAirline(
+            Airline existing, string requestedIata, IReadOnlyDictionary<string, string?> values) =>
+            existing.Update(
+                iata: Fill(existing.Iata, Value(values, nameof(Airline.Iata)) ?? requestedIata),
+                icao: Fill(existing.Icao, Value(values, nameof(Airline.Icao))),
+                name: FillRequired(existing.Name, Value(values, nameof(Airline.Name)) ?? requestedIata),
+                countryCode: existing.CountryCode,
+                allianceCode: existing.AllianceCode);
+
+        /// <summary>The source's value only where the row has none. Blank counts as none: a row
+        /// imported with an empty name has nothing worth keeping there.</summary>
+        private static string? Fill(string? existing, string? fromSource) =>
+            string.IsNullOrWhiteSpace(existing) ? fromSource : existing;
+
+        /// <summary><see cref="Fill"/> for a column that cannot be null. A separate name rather than
+        /// an overload, which would differ only in nullability and so not be one at all.</summary>
+        private static string FillRequired(string existing, string fromSource) =>
+            string.IsNullOrWhiteSpace(existing) ? fromSource : existing;
+
+        /// <summary>
+        /// Builds the row from a Found fetch, or null when the source's row cannot be used --
+        /// today that means a blank <see cref="Airport.CountryCode"/>: an airport with no country
+        /// cannot satisfy its <c>countries</c> foreign key, so it is genuinely unprovisionable
+        /// rather than a crash. Never lets a blank value reach <see cref="Airport.Create"/>, which
+        /// calls <c>ToCanonicalCode()</c> on it and throws <see cref="NullReferenceException"/> on
+        /// null.
+        /// </summary>
+        private static Airport? BuildAirport(
+            string requestedIata, string sourceName, IReadOnlyDictionary<string, string?> values)
+        {
+            var countryCode = Value(values, nameof(Airport.CountryCode));
+            if (countryCode is null)
+                return null;
+
+            var airport = Airport.Create(
+                iata: Value(values, nameof(Airport.Iata)) ?? requestedIata,
+                icao: Value(values, nameof(Airport.Icao)),
+                name: Value(values, nameof(Airport.Name)) ?? requestedIata,
+                city: Value(values, nameof(Airport.City)) ?? string.Empty,
+                countryCode: countryCode,
+                latitude: ParseDouble(Value(values, nameof(Airport.Latitude))),
+                longitude: ParseDouble(Value(values, nameof(Airport.Longitude))),
+                elevationFt: ParseInt(Value(values, nameof(Airport.ElevationFt))));
+
+            Stamp(airport, sourceName);
+            return airport;
+        }
+
+        /// <summary>
+        /// Builds the row once the country name has already resolved to a code -- the caller
+        /// handles the null-code case (no valid row can exist) before this is ever invoked, so
+        /// unlike <see cref="BuildAirport"/> this never itself returns null.
+        /// </summary>
+        private static Airline BuildAirline(
+            string requestedIata,
+            string countryCode,
+            string sourceName,
+            IReadOnlyDictionary<string, string?> values)
+        {
+            var airline = Airline.Create(
+                iata: Value(values, nameof(Airline.Iata)) ?? requestedIata,
+                icao: Value(values, nameof(Airline.Icao)),
+                name: Value(values, nameof(Airline.Name)) ?? requestedIata,
+                countryCode: countryCode);
+
+            Stamp(airline, sourceName);
+            return airline;
+        }
+
+        private static Country BuildCountry(
+            string requestedCode, string sourceName, IReadOnlyDictionary<string, string?> values)
+        {
+            var country = Country.Create(
+                code: Value(values, nameof(Country.Code)) ?? requestedCode,
+                name: Value(values, nameof(Country.Name)) ?? requestedCode,
+                alpha3: Value(values, nameof(Country.Alpha3)),
+                numericCode: ParseInt(Value(values, nameof(Country.NumericCode))),
+                region: Value(values, nameof(Country.Region)),
+                subregion: Value(values, nameof(Country.Subregion)));
+
+            Stamp(country, sourceName);
+            return country;
+        }
+
+        /// <summary>Marks a freshly-created row as verified by the source it came from. The row *is*
+        /// that source's data, so it is verified by construction; stamping it also stops the
+        /// flight-tracking trigger (#410) re-queueing it for <c>Verification:StaleAfterDays</c>.</summary>
+        private static void Stamp(SeedableEntity entity, string sourceName)
+        {
+            entity.SourceType = ProvisionedSourceType;
+            entity.Verify(VerificationJobActor.ActorId, sourceName);
+        }
+
+        private static string? Value(IReadOnlyDictionary<string, string?> values, string column) =>
+            values.TryGetValue(column, out var value) && !string.IsNullOrWhiteSpace(value) ? value : null;
+
+        private static double? ParseDouble(string? value) =>
+            double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
+
+        private static int? ParseInt(string? value) =>
+            int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
+
+        private enum FetchStatus { Found, NotFound, Unavailable }
+
+        private sealed record Fetch(
+            FetchStatus Status, string? SourceName, IReadOnlyDictionary<string, string?>? Values, string? Error)
+        {
+            public static readonly Fetch NotFound = new(FetchStatus.NotFound, null, null, null);
+            public static Fetch Found(string sourceName, IReadOnlyDictionary<string, string?> values) =>
+                new(FetchStatus.Found, sourceName, values, null);
+            public static Fetch Unavailable(string? error) => new(FetchStatus.Unavailable, null, null, error);
+
+            public ReferenceProvisionResult ToProvisionResult(VerificationEntityType type, string code) =>
+                Status == FetchStatus.NotFound
+                    ? ReferenceProvisionResult.NotFound(type, code)
+                    : ReferenceProvisionResult.Unavailable(type, code, Error);
+        }
+
+        /// <summary>
+        /// <see cref="FetchFromSourcesAsync"/>, with the negative cache in front of it: a code a
+        /// source has already said it does not have costs nothing to ask about again. Only a miss is
+        /// remembered -- never a hit, and never a failure, which would turn a brief outage into
+        /// hours of 404s. A cache outage fails open, exactly as the manual-sync cooldown does (#369).
+        /// The write itself lives in <see cref="RememberMissAsync"/>, which the two post-lookup
+        /// NotFound decisions in <see cref="ProvisionCoreAsync"/> call as well: a miss must cost one
+        /// lookup wherever it is decided, not only where the source reported it.
+        /// </summary>
+        private async Task<Fetch> FetchAsync(VerificationEntityType type, string code, CancellationToken ct)
+        {
+            var ttl = _options.NegativeCacheTtl;
+            var cacheKey = NegativeCacheKeyFor(type, code);
+
+            if (ttl > TimeSpan.Zero)
+            {
+                try
+                {
+                    if (await _cache.GetAsync<string>(cacheKey, ct).ConfigureAwait(false) is not null)
+                        return Fetch.NotFound;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Fail open: a cache outage must not stop a provision that would have succeeded.
+                    _logger.LogWarning(ex, "Reading the reference-provisioning negative cache failed for {CacheKey}.", cacheKey);
+                }
+            }
+
+            var fetch = await FetchFromSourcesAsync(type, code, ct).ConfigureAwait(false);
+
+            if (fetch.Status == FetchStatus.NotFound)
+                await RememberMissAsync(type, code, ct).ConfigureAwait(false);
+
+            return fetch;
+        }
+
+        /// <summary>
+        /// Remembers that this entity cannot be provisioned, so the next attempt costs nothing.
+        ///
+        /// <para>
+        /// Called wherever the final outcome for a <em>fetched</em> entry is
+        /// <see cref="ReferenceProvisionStatus.NotFound"/> -- not only where the source itself said
+        /// no. Two of those decisions are made after a successful, billed lookup: an airline whose
+        /// country name will not resolve to a code, and an airport the source reports with no
+        /// country at all. The airline one needs no misconfiguration to hit -- the mledoze reverse
+        /// index covers <c>name.common</c> only, so any carrier whose <c>aeroapi</c> country differs
+        /// from it ("Czech Republic" vs Czechia, "Burma" vs Myanmar) is a permanent 404 that would
+        /// otherwise cost $0.015 on every single attempt.
+        /// </para>
+        ///
+        /// <para>
+        /// <b>Never called for <see cref="ReferenceProvisionStatus.Unavailable"/>.</b> That
+        /// distinction is load-bearing: a source error, a budget refusal or a deadline teaches us
+        /// nothing about whether the entity exists, and caching one would turn a brief outage into
+        /// hours of 404s. A cache outage fails open, exactly as the read side does.
+        /// </para>
+        /// </summary>
+        private async Task RememberMissAsync(VerificationEntityType type, string code, CancellationToken ct)
+        {
+            var ttl = _options.NegativeCacheTtl;
+            if (ttl <= TimeSpan.Zero)
+                return;
+
+            var cacheKey = NegativeCacheKeyFor(type, code);
+            try
+            {
+                await _cache.SetAsync(cacheKey, "1", ttl, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Writing the reference-provisioning negative cache failed for {CacheKey}.", cacheKey);
+            }
+        }
+
+        /// <summary>
+        /// Asks each source configured for <paramref name="type"/> in turn; the first that answers
+        /// Found wins. A source error stops the search rather than falling through to the next
+        /// source: falling through would let one broken source's outage be reported as a miss.
+        /// If every configured source turns out not to support <paramref name="type"/> at all --
+        /// reachable purely by misconfiguration, e.g. <c>Verification:DefaultSources:Airport</c>
+        /// naming a country-only source -- that is <c>Unavailable</c>, not <c>NotFound</c>: nothing
+        /// ever actually answered, so there is no basis to tell a traveler the airport doesn't exist.
+        /// </summary>
+        private async Task<Fetch> FetchFromSourcesAsync(VerificationEntityType type, string code, CancellationToken ct)
+        {
+            var sourceNames = _verificationOptions.DefaultSourcesFor(type);
+            if (sourceNames.Count == 0)
+                return Fetch.Unavailable($"No source is configured for {type}.");
+
+            var anySourceSupportedType = false;
+
+            foreach (var sourceName in sourceNames)
+            {
+                var source = _registry.TryGet(sourceName);
+                if (source is null)
+                    return Fetch.Unavailable($"Source '{sourceName}' is not registered.");
+
+                if (!source.SupportedEntityTypes.Contains(type))
+                    continue;
+
+                anySourceSupportedType = true;
+
+                // Only a source that actually bills is gated. From SoftLimit onward, matching
+                // AeroApiFlightSearchBudgetDecorator -- the closest analogue, also traveler-facing
+                // and also discretionary spend -- rather than #401's Exhausted-only rule, which is
+                // for work an admin explicitly asked for. Unavailable, never NotFound: a refusal
+                // teaches us nothing about whether the entity exists.
+                if (source.CostPerRowUsd > 0m)
+                {
+                    var budgetState = await _budget.GetStateAsync(ct).ConfigureAwait(false);
+                    if (budgetState != ProviderBudgetState.Normal)
+                    {
+                        _logger.LogInformation(
+                            "Not provisioning {EntityType} '{Code}' from metered source {SourceName}: budget is {BudgetState}.",
+                            type, code, sourceName, budgetState);
+                        return Fetch.Unavailable(
+                            $"The flight data budget is {budgetState}, so '{sourceName}' was not called.");
+                    }
+                }
+
+                var key = type switch
+                {
+                    VerificationEntityType.Airport => VerificationSourceLookupKey.ForAirport(code, null),
+                    VerificationEntityType.Airline => VerificationSourceLookupKey.ForAirline(code, null),
+                    VerificationEntityType.Country => VerificationSourceLookupKey.ForCountry(code),
+                    _ => throw new ArgumentOutOfRangeException(nameof(type), type, "Unknown entity type.")
+                };
+
+                var result = await source.LookupAsync(type, key, ct).ConfigureAwait(false);
+                if (result.IsError)
+                {
+                    _logger.LogWarning(
+                        "Provisioning {EntityType} '{Code}' from {SourceName} failed: {Error}",
+                        type, code, sourceName, result.Error);
+                    return Fetch.Unavailable(result.Error);
+                }
+
+                if (result.Lookup!.IsFound)
+                    return Fetch.Found(sourceName, result.Lookup.Values!);
+            }
+
+            return anySourceSupportedType
+                ? Fetch.NotFound
+                : Fetch.Unavailable($"No configured source supports {type}.");
+        }
+    }
+}

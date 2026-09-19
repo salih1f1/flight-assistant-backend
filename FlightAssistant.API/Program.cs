@@ -149,6 +149,7 @@ builder.Services.AddAppHealthChecks(builder.Configuration);
 
 builder.Services.AddFlightSync();
 builder.Services.AddVerificationJob();
+builder.Services.AddReferenceProvisioning();
 
 // #460: drains the in-memory data-source observations into data_source_status. Unconditional —
 // it only persists what other call paths already observed, and starts no traffic of its own.

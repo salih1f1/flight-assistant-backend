@@ -132,11 +132,21 @@ namespace FlightAssistant.API.Endpoints
                 "A flight counts until its status sync stops: by default 30 minutes after it lands or is cancelled, or a day after its arrival time if no landing is reported. " +
                 "Tracking another returns 409 and adds nothing; tracking a flight the traveler already tracks still returns 201. " +
                 "Rate-limited per traveler: too many tracking requests return 429 with a Retry-After header. " +
-                "Returns 404 if the airline or either airport in the request is not known to the system. ")
+                "If the airline or either airport is not already known to the system, it is looked up in the external " +
+                "reference sources and created automatically, so a row returned by GET /flights/search can be tracked " +
+                "even for an airport or airline nobody has imported yet. " +
+                "Returns 404 only when a source answered and genuinely has no such airline, airport or country — the country case " +
+                "names one the reference data itself requires (a CountryCode foreign key on the airline or airport), never one the caller sent. " +
+                "Returns 503 with a Retry-After header when the lookup could not be completed — a source was " +
+                "unreachable, the flight data budget is spent, or the lookup took longer than the configured budget. " +
+                "When the unknown entity is an airport or a country, that reference data keeps loading in the background, " +
+                "so a retry shortly afterwards usually succeeds; an unknown airline can take longer and may keep returning " +
+                "503 while upstream capacity is busy.")
             .Produces(201)
             .ProducesValidationProblem()
             .ProducesProblem(404)
             .ProducesProblem(409)
+            .ProducesProblem(503)
             .RequireRateLimiting("flight-track");
 
             // DELETE /flights/{flightId} — stop tracking a flight

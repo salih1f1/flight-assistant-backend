@@ -42,7 +42,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
     /// other country.
     /// </para>
     /// </summary>
-    public sealed class MledozeCountriesVerificationSource : IVerificationSource
+    public sealed class MledozeCountriesVerificationSource : IVerificationSource, ICountryNameResolver
     {
         /// <summary>The name this source is registered and resolved under, and the value recorded
         /// in <c>verification_requests.sources</c> / <c>IVerifiable.VerificationSource</c>.</summary>
@@ -67,9 +67,16 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
 
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+        /// <summary>The parsed dataset: the by-code index every lookup uses, plus a by-name index
+        /// for <see cref="ICountryNameResolver"/> (#465). Both are built in one parse pass, so the
+        /// name index costs one dictionary and no extra download.</summary>
+        private sealed record Dataset(
+            IReadOnlyDictionary<string, Row> ByCode,
+            IReadOnlyDictionary<string, string> CodeByNormalizedName);
+
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<MledozeCountriesVerificationSource> _logger;
-        private readonly VerificationDatasetCache<IReadOnlyDictionary<string, Row>> _cache;
+        private readonly VerificationDatasetCache<Dataset> _cache;
         private readonly TimeSpan _downloadTimeout;
 
         /// <param name="downloadTimeout">Overrides <see cref="DownloadTimeout"/> -- for tests only,
@@ -82,7 +89,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             _httpClientFactory = httpClientFactory;
             _logger = logger;
             _downloadTimeout = downloadTimeout ?? DownloadTimeout;
-            _cache = new VerificationDatasetCache<IReadOnlyDictionary<string, Row>>(timeProvider, MaxCacheAge);
+            _cache = new VerificationDatasetCache<Dataset>(timeProvider, MaxCacheAge);
         }
 
         public string Name => SourceName;
@@ -99,10 +106,10 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             if (!SupportedEntityTypes.Contains(entityType))
                 throw new ArgumentOutOfRangeException(nameof(entityType), entityType, $"{SourceName} does not support {entityType}.");
 
-            IReadOnlyDictionary<string, Row> byCode;
+            Dataset dataset;
             try
             {
-                byCode = await _cache.GetAsync(DownloadAsync, ct).ConfigureAwait(false);
+                dataset = await _cache.GetAsync(DownloadAsync, ct).ConfigureAwait(false);
             }
             catch (VerificationSourceFetchException ex)
             {
@@ -111,17 +118,46 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                 return VerificationSourceFetchResult.SourceError(ex.Message);
             }
 
-            if (string.IsNullOrWhiteSpace(key.CountryCode) || !byCode.TryGetValue(key.CountryCode, out var row))
+            if (string.IsNullOrWhiteSpace(key.CountryCode) || !dataset.ByCode.TryGetValue(key.CountryCode, out var row))
                 return VerificationSourceFetchResult.NotFound;
 
             return VerificationSourceFetchResult.Found(ToValues(row));
+        }
+
+        /// <inheritdoc />
+        public async Task<CountryCodeResolution> TryResolveCodeByNameAsync(
+            string? countryName, CancellationToken ct = default)
+        {
+            // A blank name is a miss, not a reason to download a dataset.
+            if (string.IsNullOrWhiteSpace(countryName))
+                return CountryCodeResolution.NotFound;
+
+            var normalized = VerificationValueNormalizer.NormalizeText(countryName);
+            if (string.IsNullOrEmpty(normalized))
+                return CountryCodeResolution.NotFound;
+
+            Dataset dataset;
+            try
+            {
+                dataset = await _cache.GetAsync(DownloadAsync, ct).ConfigureAwait(false);
+            }
+            catch (VerificationSourceFetchException ex)
+            {
+                // A failed load is never a miss: reporting "no such country" here would 404 an
+                // airline that genuinely exists.
+                return CountryCodeResolution.Failed(ex.Message);
+            }
+
+            return dataset.CodeByNormalizedName.TryGetValue(normalized, out var code)
+                ? CountryCodeResolution.Found(code)
+                : CountryCodeResolution.NotFound;
         }
 
         public void ReleaseCache(TimeSpan idleRelease) => _cache.Release(idleRelease);
 
         public bool HasCachedData => _cache.HasCachedData;
 
-        private async Task<IReadOnlyDictionary<string, Row>> DownloadAsync(CancellationToken ct)
+        private async Task<Dataset> DownloadAsync(CancellationToken ct)
         {
             try
             {
@@ -142,12 +178,13 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
 
         /// <summary>Instance method (not static) so it can log the skipped records via
         /// <see cref="_logger"/> -- fix round 2, item 8.</summary>
-        private async Task<IReadOnlyDictionary<string, Row>> ParseAsync(Stream stream, CancellationToken ct)
+        private async Task<Dataset> ParseAsync(Stream stream, CancellationToken ct)
         {
             var records = await JsonSerializer.DeserializeAsync<List<JsonRow>>(stream, JsonOptions, ct).ConfigureAwait(false)
                 ?? throw new JsonException("The mledoze dataset deserialized to null.");
 
             var byCode = new Dictionary<string, Row>(StringComparer.OrdinalIgnoreCase);
+            var codeByName = new Dictionary<string, string>(StringComparer.Ordinal);
             var skipped = 0;
             var skippedSample = new List<string>(SkippedSampleSize);
             for (var index = 0; index < records.Count; index++)
@@ -169,6 +206,15 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
                 // Last one wins on a duplicate cca2 -- the real dataset does not contain any; this
                 // is simply the natural behaviour of a dictionary assignment, not a chosen rule.
                 byCode[record.Cca2] = new Row(record.Cca2, record.Name.Common, record.Cca3, record.Ccn3, record.Region, record.Subregion);
+
+                // The reverse index for ICountryNameResolver (#465). Normalised with the comparer's
+                // own Text rule so an accent or casing difference in an upstream country name still
+                // resolves. First one wins, unlike byCode's last-one-wins: the real dataset has no
+                // duplicate common name, and on a reshaped file keeping the earlier record is
+                // arbitrary but at least stable across runs.
+                var normalizedName = VerificationValueNormalizer.NormalizeText(record.Name.Common);
+                if (!string.IsNullOrEmpty(normalizedName))
+                    codeByName.TryAdd(normalizedName, record.Cca2);
             }
 
             // One warning per parse, not one per record (final fix wave, A): a reshaped file would
@@ -183,7 +229,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Verification
             if (byCode.Count == 0)
                 throw new VerificationSourceFetchException(VerificationSourceDownloader.NoUsableRowsError(SourceName));
 
-            return byCode;
+            return new Dataset(byCode, codeByName);
         }
 
         private static IReadOnlyDictionary<string, string?> ToValues(Row row)

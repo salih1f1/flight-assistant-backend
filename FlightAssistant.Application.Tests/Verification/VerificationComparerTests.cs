@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Verification;
+using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Verification.Enums;
 
 namespace FlightAssistant.Application.Tests.Verification;
@@ -472,5 +473,31 @@ public class VerificationComparerTests
         var result = VerificationComparer.Compare(VerificationEntityType.Airport, ours, new[] { Found(OurAirports, source) });
 
         Assert.Equal(VerificationComparisonOutcome.Verified, result.Outcome);
+    }
+
+    // ---- #465: an extra, unregistered value alongside the checked columns -------------------
+
+    [Fact]
+    public void Compare_IgnoresValuesThatAreNotCheckedColumns()
+    {
+        // #465 has AeroAPI carry the operator's country name alongside the checked columns. The
+        // comparer must not see it -- otherwise every airline check would report a difference for a
+        // column our own projected row does not even contain.
+        var airline = Airline.Create("BA", "BAW", "British Airways", "GB");
+        var sourceValues = new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["Iata"] = "BA",
+            ["Icao"] = "BAW",
+            ["Name"] = "British Airways",
+            [VerificationExtraValues.AirlineCountryName] = "United Kingdom"
+        };
+
+        var result = VerificationComparer.Compare(
+            VerificationEntityType.Airline,
+            VerificationCheckedColumns.Project(airline),
+            new[] { Found("aeroapi", sourceValues) });
+
+        Assert.Equal(VerificationComparisonOutcome.Verified, result.Outcome);
+        Assert.Empty(result.Differences);
     }
 }
