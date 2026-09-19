@@ -3695,6 +3695,28 @@
         }
       }
     },
+    "/admin/usage/azure": {
+      "get": {
+        "tags": [
+          "Admin - Usage"
+        ],
+        "summary": "Azure subscription budget and month-to-date spend",
+        "description": "The subscription's budget as defined in Azure Cost Management, with spend against it. 'state' says what the API could actually read: Ok, NoBudget when none is defined, NotConfigured when no subscription is set, NotAuthorized when the managed identity lacks the Cost Management Reader role, or Unavailable. Azure reports cost on a delay of roughly 8-24 hours, but neither Cost Management endpoint behind this reports its own freshness, so 'dataAsOfUtc' is always null today — the delay is real, just unmeasurable from the response. Amounts are in 'currency', which is the subscription's billing currency and not necessarily USD. Cached for an hour, except refusals and outages, which are not cached.",
+        "operationId": "AdminGetAzureBudget",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AzureBudgetDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/verification-sources": {
       "get": {
         "tags": [
@@ -6371,6 +6393,53 @@
             "items": {
               "$ref": "#/components/schemas/AllianceAirlineDto"
             },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AzureBudgetDto": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "nullable": true
+          },
+          "budgetName": {
+            "type": "string",
+            "nullable": true
+          },
+          "budgetAmount": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "currentSpendAmount": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "currency": {
+            "type": "string",
+            "nullable": true
+          },
+          "periodStartUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "periodEndUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "dataAsOfUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "message": {
+            "type": "string",
             "nullable": true
           }
         },

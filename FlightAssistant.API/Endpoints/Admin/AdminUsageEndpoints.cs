@@ -62,6 +62,26 @@ namespace FlightAssistant.API.Endpoints.Admin
             .ProducesProblem(500)
             .ProducesProblem(502)
             .ProducesProblem(503);
+
+            // GET /admin/usage/azure
+            group.MapGet("azure", async (IMediator mediator, CancellationToken ct) =>
+                Results.Ok(await mediator.Send(new GetAzureBudgetQuery(), ct)))
+            .WithName("AdminGetAzureBudget")
+            .WithSummary("Azure subscription budget and month-to-date spend")
+            .WithDescription(
+                "The subscription's budget as defined in Azure Cost Management, with spend against " +
+                "it. 'state' says what the API could actually read: Ok, NoBudget when none is " +
+                "defined, NotConfigured when no subscription is set, NotAuthorized when the managed " +
+                "identity lacks the Cost Management Reader role, or Unavailable. Azure reports cost " +
+                "on a delay of roughly 8-24 hours, but neither Cost Management endpoint behind this " +
+                "reports its own freshness, so 'dataAsOfUtc' is always null today — the delay is " +
+                "real, just unmeasurable from the response. Amounts are in 'currency', which is the " +
+                "subscription's billing currency and not necessarily USD. Cached for an hour, " +
+                "except refusals and outages, which are not cached.")
+            // Always 200: every failure is a state in the body, because the panel must render
+            // "not authorized" as information rather than as a failed request — unlike AeroAPI
+            // above, there is no validation to reject and no upstream error this passes through.
+            .Produces<AzureBudgetDto>(200);
         }
     }
 }
