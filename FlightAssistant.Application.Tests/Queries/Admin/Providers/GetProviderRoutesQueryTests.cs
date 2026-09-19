@@ -1,4 +1,5 @@
 using FlightAssistant.Application.Interfaces.Providers;
+using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Application.Providers;
 using FlightAssistant.Application.Queries.Admin.Providers;
 using NSubstitute;
@@ -28,13 +29,18 @@ namespace FlightAssistant.Application.Tests.Queries.Admin.Providers
             // reference the moment it reaches one of the other three.
             var routing = Substitute.For<IProviderRouting>();
             var defaults = Substitute.For<IProviderRouteDefaults>();
+            var registry = Substitute.For<IVerificationSourceRegistry>();
             routing.GetAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
                 .Returns(new ProviderRouteState(ProviderJobs.FlightSearchRoute,
                     new[] { ProviderJobs.AeroDataBox }, false, DateTime.UtcNow, "Ada", "picked before rollback"));
             defaults.IsCeilinged(ProviderJobs.FlightSearchRoute).Returns(true);
             defaults.For(Arg.Any<string>()).Returns(new[] { ProviderJobs.AeroApi });
+            // Task 9: the loop now asks the registry for the three verification keys' options too
+            // (ProviderJobs.All carries all four since task 7) -- an empty registry is fine here,
+            // since this test only cares about the flight-search-route row.
+            registry.Sources.Returns(Array.Empty<IVerificationSource>());
 
-            var handler = new GetProviderRoutesQueryHandler(routing, defaults);
+            var handler = new GetProviderRoutesQueryHandler(routing, defaults, registry);
             var rows = await handler.Handle(new GetProviderRoutesQuery(), default);
 
             var route = Assert.Single(rows, r => r.Job == ProviderJobs.FlightSearchRoute);
@@ -54,13 +60,16 @@ namespace FlightAssistant.Application.Tests.Queries.Admin.Providers
             // flight-search-route row out of all four by predicate.
             var routing = Substitute.For<IProviderRouting>();
             var defaults = Substitute.For<IProviderRouteDefaults>();
+            var registry = Substitute.For<IVerificationSourceRegistry>();
             routing.GetAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
                 .Returns(new ProviderRouteState(ProviderJobs.FlightSearchRoute,
                     new[] { ProviderJobs.AeroDataBox }, false, DateTime.UtcNow, "Ada", "chosen deliberately"));
             defaults.IsCeilinged(ProviderJobs.FlightSearchRoute).Returns(false);
             defaults.For(Arg.Any<string>()).Returns(new[] { ProviderJobs.AeroApi });
+            // Task 9: see the companion test above -- an empty registry is fine here too.
+            registry.Sources.Returns(Array.Empty<IVerificationSource>());
 
-            var handler = new GetProviderRoutesQueryHandler(routing, defaults);
+            var handler = new GetProviderRoutesQueryHandler(routing, defaults, registry);
             var rows = await handler.Handle(new GetProviderRoutesQuery(), default);
 
             var route = Assert.Single(rows, r => r.Job == ProviderJobs.FlightSearchRoute);

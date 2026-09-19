@@ -55,4 +55,18 @@ public class AdminProviderEndpointTests(FlightAssistantWebApplicationFactory fac
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
+
+    [Fact]
+    public async Task GetProviders_ReturnsAllFourRoutingKeys()
+    {
+        var client = factory.CreateAdminClient();
+
+        var rows = await client.GetFromJsonAsync<List<AdminProviderRouteDto>>("/admin/providers");
+
+        Assert.Equal(4, rows!.Count);
+        Assert.Contains(rows, r => r.Job == "flight-search-route");
+        Assert.Contains(rows, r => r.Job == "verification-airport");
+        Assert.Contains(rows, r => r.Job == "verification-airline");
+        Assert.Contains(rows, r => r.Job == "verification-country");
+    }
 }

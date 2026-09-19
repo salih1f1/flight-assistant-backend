@@ -2,12 +2,14 @@ using System.Diagnostics;
 using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Application.Interfaces.Providers;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Application.Providers;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Providers.Entities;
+using FlightAssistant.Domain.Verification.Enums;
 using MediatR;
 
 namespace FlightAssistant.Application.Commands.Admin.Providers
@@ -39,6 +41,7 @@ namespace FlightAssistant.Application.Commands.Admin.Providers
 
         private readonly IProviderRouteRepository _repository;
         private readonly IProviderRouteDefaults _defaults;
+        private readonly IVerificationSourceRegistry _registry;
         private readonly IAdminContext _adminContext;
         private readonly IAdminAuditRepository _auditRepository;
         private readonly TimeProvider _timeProvider;
@@ -46,12 +49,14 @@ namespace FlightAssistant.Application.Commands.Admin.Providers
         public SetProviderRouteCommandHandler(
             IProviderRouteRepository repository,
             IProviderRouteDefaults defaults,
+            IVerificationSourceRegistry registry,
             IAdminContext adminContext,
             IAdminAuditRepository auditRepository,
             TimeProvider timeProvider)
         {
             _repository = repository;
             _defaults = defaults;
+            _registry = registry;
             _adminContext = adminContext;
             _auditRepository = auditRepository;
             _timeProvider = timeProvider;
@@ -65,16 +70,7 @@ namespace FlightAssistant.Application.Commands.Admin.Providers
             if (request.Providers is null || request.Providers.Count == 0)
                 throw new DomainException("At least one provider must be named.", 400);
 
-            var options = ProviderJobs.OptionsFor(request.Job);
-            foreach (var provider in request.Providers)
-            {
-                if (!options.Contains(provider, StringComparer.Ordinal))
-                {
-                    throw new DomainException(
-                        $"'{provider}' is not a provider for '{request.Job}'. Options: {string.Join(", ", options)}.",
-                        400);
-                }
-            }
+            var options = await ValidateProvidersAsync(request, ct);
 
             // provider_routes.providers is varchar(256) with nothing else in front of it, so an
             // over-long joined list would otherwise reach Postgres as an unhandled
@@ -148,6 +144,56 @@ namespace FlightAssistant.Application.Commands.Admin.Providers
                 ChangedBy: changedBy,
                 Reason: request.Reason);
         }
+
+        /// <summary>
+        /// Checks every named provider and returns the option list to report back. A flight-search
+        /// key has a static option list; a verification key's options are every registered source
+        /// whose <c>SupportedEntityTypes</c> includes that key's entity type, which only the registry
+        /// knows — so the two kinds are validated differently on purpose.
+        /// </summary>
+        private Task<IReadOnlyList<string>> ValidateProvidersAsync(
+            SetProviderRouteCommand request, CancellationToken ct)
+        {
+            if (request.Job == ProviderJobs.FlightSearchRoute)
+            {
+                var options = ProviderJobs.OptionsFor(request.Job);
+                foreach (var provider in request.Providers)
+                {
+                    if (!options.Contains(provider, StringComparer.Ordinal))
+                    {
+                        throw new DomainException(
+                            $"'{provider}' is not a provider for '{request.Job}'. Options: {string.Join(", ", options)}.",
+                            400);
+                    }
+                }
+                return Task.FromResult(options);
+            }
+
+            var entityType = EntityTypeFor(request.Job);
+            foreach (var name in request.Providers)
+            {
+                var source = _registry.TryGet(name);
+                if (source is null)
+                    throw new DomainException($"There is no verification source '{name}'.", 400);
+
+                if (!source.SupportedEntityTypes.Contains(entityType))
+                {
+                    throw new DomainException(
+                        $"Verification source '{name}' does not support {entityType}.", 400);
+                }
+            }
+
+            var supported = ProviderJobs.SupportedSourceNames(_registry, entityType);
+            return Task.FromResult(supported);
+        }
+
+        private static VerificationEntityType EntityTypeFor(string job) => job switch
+        {
+            ProviderJobs.VerificationAirport => VerificationEntityType.Airport,
+            ProviderJobs.VerificationAirline => VerificationEntityType.Airline,
+            ProviderJobs.VerificationCountry => VerificationEntityType.Country,
+            _ => throw new InvalidOperationException($"'{job}' is not a verification routing key.")
+        };
 
         /// <summary>
         /// Stages the one audit row this change produces. <c>AdminAuditInterceptor</c> excludes

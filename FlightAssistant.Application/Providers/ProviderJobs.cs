@@ -1,3 +1,4 @@
+using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Domain.Verification.Enums;
 
 namespace FlightAssistant.Application.Providers
@@ -56,6 +57,19 @@ namespace FlightAssistant.Application.Providers
             VerificationAirport or VerificationAirline or VerificationCountry => [],
             _ => throw Unknown(job)
         };
+
+        /// <summary>
+        /// The registered sources that can check <paramref name="entityType"/>. Lives here so the
+        /// command's validation and the query's reported options cannot disagree about what is
+        /// selectable.
+        /// </summary>
+        public static IReadOnlyList<string> SupportedSourceNames(
+            IVerificationSourceRegistry registry, VerificationEntityType entityType) =>
+            registry.Sources
+                .Where(s => s.SupportedEntityTypes.Contains(entityType))
+                .Select(s => s.Name)
+                .OrderBy(n => n, StringComparer.Ordinal)
+                .ToList();
 
         private static InvalidOperationException Unknown(string job) =>
             new($"'{job}' is not a known provider routing key.");

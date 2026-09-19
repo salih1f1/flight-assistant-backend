@@ -1,6 +1,8 @@
 using FlightAssistant.Application.Interfaces.Providers;
+using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Application.Providers;
 using FlightAssistant.Contracts.Responses.Admin;
+using FlightAssistant.Domain.Verification.Enums;
 using MediatR;
 
 namespace FlightAssistant.Application.Queries.Admin.Providers
@@ -14,11 +16,14 @@ namespace FlightAssistant.Application.Queries.Admin.Providers
     {
         private readonly IProviderRouting _routing;
         private readonly IProviderRouteDefaults _defaults;
+        private readonly IVerificationSourceRegistry _registry;
 
-        public GetProviderRoutesQueryHandler(IProviderRouting routing, IProviderRouteDefaults defaults)
+        public GetProviderRoutesQueryHandler(
+            IProviderRouting routing, IProviderRouteDefaults defaults, IVerificationSourceRegistry registry)
         {
             _routing = routing;
             _defaults = defaults;
+            _registry = registry;
         }
 
         public async Task<IReadOnlyList<AdminProviderRouteDto>> Handle(
@@ -44,11 +49,21 @@ namespace FlightAssistant.Application.Queries.Admin.Providers
                 // entry) for an operator who needs the raw history.
                 var providers = ceilinged ? _defaults.For(job) : state.Providers;
 
+                // Task 9: a verification key has no static option list (ProviderJobs.OptionsFor
+                // returns an empty array for the three of them) -- the real answer is every
+                // registered source whose SupportedEntityTypes includes that key's entity type,
+                // which only IVerificationSourceRegistry knows. ProviderJobs.SupportedSourceNames
+                // is the one place that expression lives, so this can never advertise an option
+                // SetProviderRouteCommandHandler's own validation would then reject.
+                var options = job == ProviderJobs.FlightSearchRoute
+                    ? ProviderJobs.OptionsFor(job)
+                    : ProviderJobs.SupportedSourceNames(_registry, EntityTypeFor(job));
+
                 rows.Add(new AdminProviderRouteDto(
                     Job: job,
                     DisplayName: ProviderJobs.DisplayNameFor(job),
                     Providers: providers,
-                    Options: ProviderJobs.OptionsFor(job),
+                    Options: options,
                     IsDefault: state.IsDefault,
                     CanChange: !ceilinged,
                     FixedReason: null,
@@ -59,5 +74,16 @@ namespace FlightAssistant.Application.Queries.Admin.Providers
 
             return rows;
         }
+
+        /// <summary>Maps a verification routing key to the entity type it decides sources for.
+        /// Never called for <see cref="ProviderJobs.FlightSearchRoute"/>, which has its own static
+        /// option list and is handled separately above.</summary>
+        private static VerificationEntityType EntityTypeFor(string job) => job switch
+        {
+            ProviderJobs.VerificationAirport => VerificationEntityType.Airport,
+            ProviderJobs.VerificationAirline => VerificationEntityType.Airline,
+            ProviderJobs.VerificationCountry => VerificationEntityType.Country,
+            _ => throw new InvalidOperationException($"'{job}' is not a verification routing key.")
+        };
     }
 }

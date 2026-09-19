@@ -2,10 +2,12 @@ using FlightAssistant.Application.Commands.Admin.Providers;
 using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Application.Interfaces.Providers;
 using FlightAssistant.Application.Interfaces.Repositories;
+using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Application.Providers;
 using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Providers.Entities;
+using FlightAssistant.Domain.Verification.Enums;
 using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
 
@@ -16,6 +18,7 @@ namespace FlightAssistant.Application.Tests.Commands.Admin.Providers
         private readonly IProviderRouteRepository _repository = Substitute.For<IProviderRouteRepository>();
         private readonly IAdminAuditRepository _audit = Substitute.For<IAdminAuditRepository>();
         private readonly IProviderRouteDefaults _defaults = Substitute.For<IProviderRouteDefaults>();
+        private readonly IVerificationSourceRegistry _registry = Substitute.For<IVerificationSourceRegistry>();
         private readonly IAdminContext _adminContext = Substitute.For<IAdminContext>();
         private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 9, 19, 12, 0, 0, TimeSpan.Zero));
 
@@ -26,8 +29,13 @@ namespace FlightAssistant.Application.Tests.Commands.Admin.Providers
             _adminContext.CorrelationId.Returns("corr-1");
             _defaults.For(ProviderJobs.FlightSearchRoute)
                      .Returns(new[] { ProviderJobs.AeroDataBox });
+            // NSubstitute has no Moq-style "DefaultValue.Empty": an unconfigured member returning
+            // IReadOnlyCollection<T> answers null, not an empty collection. Every verification-key
+            // test below reaches ProviderJobs.SupportedSourceNames, which enumerates this, so it
+            // needs a non-null baseline even for tests that don't care what it contains.
+            _registry.Sources.Returns(Array.Empty<IVerificationSource>());
             return new SetProviderRouteCommandHandler(
-                _repository, _defaults, _adminContext, _audit, _time);
+                _repository, _defaults, _registry, _adminContext, _audit, _time);
         }
 
         [Fact]
@@ -153,6 +161,55 @@ namespace FlightAssistant.Application.Tests.Commands.Admin.Providers
 
             Assert.Equal(new[] { ProviderJobs.AeroApi }, result.Providers);
             Assert.False(result.IsDefault);
+        }
+
+        [Fact]
+        public async Task Handle_VerificationKeyNamingAnUnregisteredSource_Throws400()
+        {
+            // Configuration cannot refuse this: VerificationDefaultSources.Validate checks only the
+            // join grammar, which is why a pre-#401 'aeroapi' default would have completed every
+            // request straight to Error. A write is a request/response, so it can refuse.
+            _registry.TryGet("nosuch").Returns((IVerificationSource?)null);
+
+            var handler = Build();
+            var ex = await Assert.ThrowsAsync<DomainException>(() => handler.Handle(
+                new SetProviderRouteCommand(ProviderJobs.VerificationAirport, new[] { "nosuch" }, null), default));
+
+            Assert.Equal(400, ex.StatusCode);
+            Assert.Contains("nosuch", ex.Message);
+        }
+
+        [Fact]
+        public async Task Handle_VerificationKeyNamingASourceThatDoesNotSupportTheEntityType_Throws400()
+        {
+            var countryOnly = Substitute.For<IVerificationSource>();
+            countryOnly.Name.Returns("mledoze");
+            countryOnly.SupportedEntityTypes.Returns(new[] { VerificationEntityType.Country });
+            _registry.TryGet("mledoze").Returns(countryOnly);
+
+            var handler = Build();
+            var ex = await Assert.ThrowsAsync<DomainException>(() => handler.Handle(
+                new SetProviderRouteCommand(ProviderJobs.VerificationAirport, new[] { "mledoze" }, null), default));
+
+            Assert.Equal(400, ex.StatusCode);
+            Assert.Contains("Airport", ex.Message);
+        }
+
+        [Fact]
+        public async Task Handle_VerificationKeyNamingASupportingSource_Upserts()
+        {
+            var airports = Substitute.For<IVerificationSource>();
+            airports.Name.Returns("ourairports");
+            airports.SupportedEntityTypes.Returns(new[] { VerificationEntityType.Airport });
+            _registry.TryGet("ourairports").Returns(airports);
+            _registry.Sources.Returns(new[] { airports });
+
+            await Build().Handle(new SetProviderRouteCommand(
+                ProviderJobs.VerificationAirport, new[] { "ourairports" }, null), default);
+
+            await _repository.Received(1).UpsertAsync(
+                Arg.Is<ProviderRoute>(row => row.Providers == "ourairports"),
+                Arg.Any<CancellationToken>());
         }
     }
 }
