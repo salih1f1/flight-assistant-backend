@@ -22,18 +22,23 @@ namespace FlightAssistant.Application.Tests.Queries.Admin.Providers
         [Fact]
         public async Task Handle_KeyIsCeilinged_ReportsTheEffectiveProvider_NotTheStoredRow()
         {
+            // ProviderJobs.All now carries the three verification keys alongside flight-search-route
+            // (#531 task 7), so both substitutes below must answer for any key -- not only the one
+            // this test cares about -- or GetProvidersRoutesQueryHandler's loop throws a null
+            // reference the moment it reaches one of the other three.
             var routing = Substitute.For<IProviderRouting>();
             var defaults = Substitute.For<IProviderRouteDefaults>();
-            routing.GetAsync(ProviderJobs.FlightSearchRoute, Arg.Any<CancellationToken>())
+            routing.GetAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
                 .Returns(new ProviderRouteState(ProviderJobs.FlightSearchRoute,
                     new[] { ProviderJobs.AeroDataBox }, false, DateTime.UtcNow, "Ada", "picked before rollback"));
             defaults.IsCeilinged(ProviderJobs.FlightSearchRoute).Returns(true);
-            defaults.For(ProviderJobs.FlightSearchRoute).Returns(new[] { ProviderJobs.AeroApi });
+            defaults.For(Arg.Any<string>()).Returns(new[] { ProviderJobs.AeroApi });
 
             var handler = new GetProviderRoutesQueryHandler(routing, defaults);
             var rows = await handler.Handle(new GetProviderRoutesQuery(), default);
 
-            Assert.Equal(new[] { ProviderJobs.AeroApi }, Assert.Single(rows).Providers);
+            var route = Assert.Single(rows, r => r.Job == ProviderJobs.FlightSearchRoute);
+            Assert.Equal(new[] { ProviderJobs.AeroApi }, route.Providers);
         }
 
         /// <summary>
@@ -45,18 +50,21 @@ namespace FlightAssistant.Application.Tests.Queries.Admin.Providers
         [Fact]
         public async Task Handle_KeyIsNotCeilinged_ReportsTheStoredRow()
         {
+            // Same reason as the ceilinged test above: answer for any key, then pick the
+            // flight-search-route row out of all four by predicate.
             var routing = Substitute.For<IProviderRouting>();
             var defaults = Substitute.For<IProviderRouteDefaults>();
-            routing.GetAsync(ProviderJobs.FlightSearchRoute, Arg.Any<CancellationToken>())
+            routing.GetAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
                 .Returns(new ProviderRouteState(ProviderJobs.FlightSearchRoute,
                     new[] { ProviderJobs.AeroDataBox }, false, DateTime.UtcNow, "Ada", "chosen deliberately"));
             defaults.IsCeilinged(ProviderJobs.FlightSearchRoute).Returns(false);
-            defaults.For(ProviderJobs.FlightSearchRoute).Returns(new[] { ProviderJobs.AeroApi });
+            defaults.For(Arg.Any<string>()).Returns(new[] { ProviderJobs.AeroApi });
 
             var handler = new GetProviderRoutesQueryHandler(routing, defaults);
             var rows = await handler.Handle(new GetProviderRoutesQuery(), default);
 
-            Assert.Equal(new[] { ProviderJobs.AeroDataBox }, Assert.Single(rows).Providers);
+            var route = Assert.Single(rows, r => r.Job == ProviderJobs.FlightSearchRoute);
+            Assert.Equal(new[] { ProviderJobs.AeroDataBox }, route.Providers);
         }
     }
 }

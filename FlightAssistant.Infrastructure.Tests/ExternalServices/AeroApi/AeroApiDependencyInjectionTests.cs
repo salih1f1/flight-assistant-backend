@@ -5,11 +5,13 @@ using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Application.Queries.Admin.Usage;
 using FlightAssistant.Application.Queries.Flights;
+using FlightAssistant.Application.Verification;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
 using FlightAssistant.Infrastructure.ExternalServices.AeroDataBox;
+using FlightAssistant.Infrastructure.Tests.TestSupport;
 using FluentValidation;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -57,6 +59,19 @@ public class AeroApiDependencyInjectionTests
         // isDevelopment: true so the unrelated Apns ValidateOnStart check (which AddInfrastructure
         // also registers) doesn't require Apns:* config this test has no reason to supply.
         services.AddInfrastructure(config, isDevelopment: true);
+
+        // ProviderRouteDefaults (Infrastructure) took IVerificationJobOptions as a second
+        // constructor dependency in #531 task 7, so its For/IsCeilinged can answer for the three
+        // verification routing keys as well as flight-search-route. The real registration lives
+        // only in the API layer's AddVerificationJob (Program.cs), which this container never
+        // calls, so every IFlightSearchProvider resolution below -- caching decorator ->
+        // FlightSearchProviderSelector -> IFlightSearchRouter -> IProviderRouting ->
+        // IProviderRouteDefaults -- would otherwise fail to resolve. FakeJobOptions already exists
+        // for exactly this "any direct construction site needs one" reason (see its own doc
+        // comment) and its DefaultSourcesFor mirrors the real ourairports/aeroapi/mledoze
+        // configuration defaults. Registered as a singleton to match ProviderRouteDefaults' own
+        // lifetime, the same pairing AddVerificationJob uses in production.
+        services.AddSingleton<IVerificationJobOptions>(new FakeJobOptions());
 
         // Program.cs calls AddApplication() and AddInfrastructure() together — needed here so
         // SearchFlightsQueryValidator, which now takes IFlightSearchHorizonOptions in its

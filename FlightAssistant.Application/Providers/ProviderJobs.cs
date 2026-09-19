@@ -1,3 +1,5 @@
+using FlightAssistant.Domain.Verification.Enums;
+
 namespace FlightAssistant.Application.Providers
 {
     /// <summary>
@@ -13,11 +15,29 @@ namespace FlightAssistant.Application.Providers
         public const string AeroApi = "aeroapi";
         public const string AeroDataBox = "aerodatabox";
 
-        public static readonly IReadOnlyList<string> All = [FlightSearchRoute];
+        public const string VerificationAirport = "verification-airport";
+        public const string VerificationAirline = "verification-airline";
+        public const string VerificationCountry = "verification-country";
+
+        public static readonly IReadOnlyList<string> All =
+            [FlightSearchRoute, VerificationAirport, VerificationAirline, VerificationCountry];
+
+        /// <summary>The routing key that decides which sources check one entity type.</summary>
+        public static string ForEntityType(VerificationEntityType entityType) => entityType switch
+        {
+            VerificationEntityType.Airport => VerificationAirport,
+            VerificationEntityType.Airline => VerificationAirline,
+            VerificationEntityType.Country => VerificationCountry,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(entityType), entityType, "Unknown verification entity type.")
+        };
 
         public static string DisplayNameFor(string job) => job switch
         {
             FlightSearchRoute => "Route search",
+            VerificationAirport => "Verification — airports",
+            VerificationAirline => "Verification — airlines",
+            VerificationCountry => "Verification — countries",
             _ => throw Unknown(job)
         };
 
@@ -29,6 +49,11 @@ namespace FlightAssistant.Application.Providers
         public static IReadOnlyList<string> OptionsFor(string job) => job switch
         {
             FlightSearchRoute => [AeroDataBox, AeroApi],
+            // Verification keys have no static option list: the real answer is every registered
+            // source whose SupportedEntityTypes includes this key's entity type, which only
+            // IVerificationSourceRegistry knows. GetProviderRoutesQueryHandler and the command
+            // validator both ask the registry instead.
+            VerificationAirport or VerificationAirline or VerificationCountry => [],
             _ => throw Unknown(job)
         };
 

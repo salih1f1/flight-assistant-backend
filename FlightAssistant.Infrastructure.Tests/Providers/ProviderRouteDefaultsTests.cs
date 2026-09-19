@@ -1,6 +1,8 @@
 using FlightAssistant.Application.Providers;
+using FlightAssistant.Application.Verification;
 using FlightAssistant.Infrastructure.ExternalServices.AeroDataBox;
 using FlightAssistant.Infrastructure.Providers;
+using FlightAssistant.Infrastructure.Tests.TestSupport;
 using Microsoft.Extensions.Options;
 
 namespace FlightAssistant.Infrastructure.Tests.Providers
@@ -26,8 +28,15 @@ namespace FlightAssistant.Infrastructure.Tests.Providers
     /// </summary>
     public class ProviderRouteDefaultsTests
     {
-        private static ProviderRouteDefaults Build(string? aeroDataBoxApiKey = "key") =>
-            new(Options.Create(new AeroDataBoxOptions { ApiKey = aeroDataBoxApiKey }));
+        // IVerificationJobOptions is #531 task 7's new second dependency -- FakeJobOptions is the
+        // same stand-in VerificationRequestRepository's own tests already use for "any direct
+        // construction site needs one"; its DefaultSourcesFor mirrors the real
+        // ourairports/aeroapi/mledoze configuration defaults, which is what keeps the obligation
+        // test below (empty-list check) honest for the three verification keys.
+        private static ProviderRouteDefaults Build(
+            string? aeroDataBoxApiKey = "key", IVerificationJobOptions? verificationOptions = null) =>
+            new(Options.Create(new AeroDataBoxOptions { ApiKey = aeroDataBoxApiKey }),
+                verificationOptions ?? new FakeJobOptions());
 
         [Fact]
         public void ForAndIsCeilinged_AnswerForEveryKeyInProviderJobsAll()
