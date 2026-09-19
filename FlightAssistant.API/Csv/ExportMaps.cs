@@ -88,7 +88,6 @@ public sealed class LoyaltyProgramExportDtoMap : ClassMap<LoyaltyProgramExportDt
         Map(m => m.Name);
         Map(m => m.KindCode);
         Map(m => m.AirlineIata);
-        Map(m => m.AllianceCode);
         Map(m => m.Tiers).TypeConverter(CsvExportWriter.JsonCollection);
         this.MapExportVerificationColumns(m => m.VerifiedAt, m => m.VerifiedBy, m => m.VerificationSource);
     }

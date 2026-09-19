@@ -233,7 +233,7 @@ public class AdminLoyaltyTierCommandHandlerTests
     /// </summary>
     private LoyaltyProgram GivenProgram(int programId, params (string Code, int Rank, int Id)[] tiers)
     {
-        var program = LoyaltyProgram.Create("BAEC", "BA Executive Club", 1, null, null);
+        var program = LoyaltyProgram.Create("BAEC", "BA Executive Club", 1, null);
         SetId(program, programId);
         foreach (var (code, rank, id) in tiers)
         {

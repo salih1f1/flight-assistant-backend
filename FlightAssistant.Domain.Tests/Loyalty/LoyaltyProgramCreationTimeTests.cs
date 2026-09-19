@@ -27,7 +27,7 @@ namespace FlightAssistant.Domain.Tests.Loyalty
             var program = LoyaltyProgram.Create("BA", "British Airways Executive Club", kindId: 1);
             var created = program.CreatedUtc;
 
-            program.Update("BA", "The Club", 2, airlineId: null, allianceCode: "OW");
+            program.Update("BA", "The Club", 2, airlineId: null);
 
             Assert.Equal(created, program.CreatedUtc);
         }
@@ -35,14 +35,16 @@ namespace FlightAssistant.Domain.Tests.Loyalty
         [Fact]
         public void CreateSeeded_LeavesCreatedUtcUnknown_AndSetsEverythingElse()
         {
-            var program = LoyaltyProgram.CreateSeeded("BA", "British Airways Executive Club", 2, airlineId: 7, allianceCode: "OW");
+            var program = LoyaltyProgram.CreateSeeded("BA", "British Airways Executive Club", 2, airlineId: 7);
 
             Assert.Null(program.CreatedUtc);
             Assert.Equal("BA", program.Code);
             Assert.Equal("British Airways Executive Club", program.Name);
             Assert.Equal(2, program.KindId);
             Assert.Equal(7, program.AirlineId);
-            Assert.Equal("OW", program.AllianceCode);
+            // #504: a program has no alliance of its own — it is the airline's. Fails if
+            // AllianceCode were restored to the entity — the assertions above would not catch that.
+            Assert.Empty(typeof(LoyaltyProgram).GetProperties().Where(p => p.Name == "AllianceCode"));
         }
     }
 }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FlightAssistant.Application.Administration;
 using FlightAssistant.Application.Commands.Admin.Import;
 using FlightAssistant.Application.Interfaces.Administration;
@@ -26,7 +27,7 @@ public class ImportLoyaltyProgramsCommandHandlerTests
         _loyaltyRepo.FindProgramByCodeWithTiersAsync("BAEC", Arg.Any<CancellationToken>()).ReturnsNull();
 
         var handler = Handler();
-        var dto = new LoyaltyProgramImportDto("BAEC", "British Airways Executive Club", "airline", "BA", null, []);
+        var dto = new LoyaltyProgramImportDto("BAEC", "British Airways Executive Club", "airline", "BA", []);
 
         var result = await handler.Handle(new ImportLoyaltyProgramsCommand([dto]), CancellationToken.None);
 
@@ -42,7 +43,7 @@ public class ImportLoyaltyProgramsCommandHandlerTests
     {
         _loyaltyRepo.FindKindByCodeAsync("unknown", Arg.Any<CancellationToken>()).ReturnsNull();
         var handler = Handler();
-        var dto = new LoyaltyProgramImportDto("BAEC", "BA Executive Club", "unknown", null, null, []);
+        var dto = new LoyaltyProgramImportDto("BAEC", "BA Executive Club", "unknown", null, []);
 
         var result = await handler.Handle(new ImportLoyaltyProgramsCommand([dto]), CancellationToken.None);
 
@@ -61,7 +62,7 @@ public class ImportLoyaltyProgramsCommandHandlerTests
         _loyaltyRepo.FindProgramByCodeWithTiersAsync("BAEC", Arg.Any<CancellationToken>()).Returns(existing);
 
         var handler = Handler();
-        var dto = new LoyaltyProgramImportDto("BAEC", "British Airways Executive Club", "airline", "BA", null,
+        var dto = new LoyaltyProgramImportDto("BAEC", "British Airways Executive Club", "airline", "BA",
             [new LoyaltyTierImportDto("BLUE", "Blue", 1, null, null)]);
 
         var result = await handler.Handle(new ImportLoyaltyProgramsCommand([dto]), CancellationToken.None);
@@ -84,7 +85,7 @@ public class ImportLoyaltyProgramsCommandHandlerTests
         await _loyaltyRepo.AddProgramAsync(Arg.Do<LoyaltyProgram>(p => added = p), Arg.Any<CancellationToken>());
 
         var handler = Handler();
-        var dto = new LoyaltyProgramImportDto("BAEC", "British Airways Executive Club", "airline", null, null, []);
+        var dto = new LoyaltyProgramImportDto("BAEC", "British Airways Executive Club", "airline", null, []);
 
         await handler.Handle(new ImportLoyaltyProgramsCommand([dto]), CancellationToken.None);
 
@@ -105,7 +106,7 @@ public class ImportLoyaltyProgramsCommandHandlerTests
 
         var handler = Handler();
         var verifiedAt = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
-        var dto = new LoyaltyProgramImportDto("BAEC", "British Airways Executive Club", "airline", null, null, [],
+        var dto = new LoyaltyProgramImportDto("BAEC", "British Airways Executive Club", "airline", null, [],
             verifiedAt, "prior-admin", "manual");
 
         await handler.Handle(new ImportLoyaltyProgramsCommand([dto]), CancellationToken.None);
@@ -124,9 +125,9 @@ public class ImportLoyaltyProgramsCommandHandlerTests
         _loyaltyRepo.FindProgramByCodeWithTiersAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).ReturnsNull();
 
         var handler = Handler();
-        var partial = new LoyaltyProgramImportDto("BAEC", "British Airways Executive Club", "airline", null, null, [],
+        var partial = new LoyaltyProgramImportDto("BAEC", "British Airways Executive Club", "airline", null, [],
             VerifiedBy: "prior-admin"); // VerifiedAt/VerificationSource missing
-        var valid = new LoyaltyProgramImportDto("FFMM", "Miles & More", "airline", null, null, []);
+        var valid = new LoyaltyProgramImportDto("FFMM", "Miles & More", "airline", null, []);
 
         var result = await handler.Handle(new ImportLoyaltyProgramsCommand([partial, valid]), CancellationToken.None);
 
@@ -149,12 +150,57 @@ public class ImportLoyaltyProgramsCommandHandlerTests
         _loyaltyRepo.FindProgramByCodeWithTiersAsync("BAEC", Arg.Any<CancellationToken>()).Returns(existing);
 
         var handler = Handler();
-        var dto = new LoyaltyProgramImportDto("BAEC", "British Airways Executive Club", "airline", null, null, []);
+        var dto = new LoyaltyProgramImportDto("BAEC", "British Airways Executive Club", "airline", null, []);
 
         await handler.Handle(new ImportLoyaltyProgramsCommand([dto]), CancellationToken.None);
 
         Assert.True(existing.IsVerified);
         Assert.Null(existing.VerificationIssue);
         Assert.Equal(VerificationSources.Import, existing.VerificationSource);
+    }
+
+    /// <summary>
+    /// #504: a program-level allianceCode is no longer part of the import contract. A file written
+    /// before the change still imports — System.Text.Json ignores the unmapped property — and the
+    /// program is created without an alliance, because the alliance belongs to its airline.
+    ///
+    /// <para>The JSON-still-binds assertions alone would stay green even if <c>AllianceCode</c> were
+    /// restored to <see cref="LoyaltyProgramImportDto"/>, so this also asserts the property is gone
+    /// from the DTO's shape, and actually runs the handler on the deserialized item to prove the
+    /// import pipeline accepts the older file end to end.</para>
+    /// </summary>
+    [Fact]
+    public async Task Handle_IgnoresAProgramLevelAllianceCodeFromAnOlderFile()
+    {
+        var json = """
+        [
+          { "code": "BA-EXEC", "name": "British Airways Executive Club", "kindCode": "FF",
+            "airlineIata": "BA", "allianceCode": "OW", "tiers": [] }
+        ]
+        """;
+
+        var items = JsonSerializer.Deserialize<List<LoyaltyProgramImportDto>>(
+            json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+
+        Assert.Single(items);
+        Assert.Equal("BA-EXEC", items[0].Code);
+        Assert.Equal("BA", items[0].AirlineIata);
+        // Fails if AllianceCode were restored to the DTO — the assertions above would not catch that.
+        Assert.Empty(typeof(LoyaltyProgramImportDto).GetProperties().Where(p => p.Name == "AllianceCode"));
+
+        var kind = LoyaltyProgramKind.Create("FF", "Airline");
+        _loyaltyRepo.FindKindByCodeAsync("FF", Arg.Any<CancellationToken>()).Returns(kind);
+        _refRepo.GetAirlineIdByIataAsync("BA", Arg.Any<CancellationToken>()).Returns(5);
+        _loyaltyRepo.FindProgramByCodeWithTiersAsync("BA-EXEC", Arg.Any<CancellationToken>()).ReturnsNull();
+        LoyaltyProgram? added = null;
+        await _loyaltyRepo.AddProgramAsync(Arg.Do<LoyaltyProgram>(p => added = p), Arg.Any<CancellationToken>());
+
+        var handler = Handler();
+        var result = await handler.Handle(new ImportLoyaltyProgramsCommand(items), CancellationToken.None);
+
+        Assert.Equal(1, result.Inserted);
+        Assert.Empty(result.Errors);
+        Assert.NotNull(added);
+        Assert.Equal("BA-EXEC", added!.Code);
     }
 }

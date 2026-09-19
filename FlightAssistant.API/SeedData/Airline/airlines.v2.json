@@ -1,0 +1,4 @@
+[
+  { "Name": "Cathay Pacific", "Iata": "CX", "Icao": "CPA", "CountryCode": "HK", "AllianceCode": "OW" },
+  { "Name": "Korean Air", "Iata": "KE", "Icao": "KAL", "CountryCode": "KR", "AllianceCode": "ST" }
+]

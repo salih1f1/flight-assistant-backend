@@ -1165,7 +1165,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"code\": \"BAEC\",\n  \"name\": \"Executive Club\",\n  \"kindId\": 1,\n  \"airlineId\": 1,\n  \"allianceCode\": \"OW\"\n}",
+                  "raw": "{\n  \"code\": \"BAEC\",\n  \"name\": \"Executive Club\",\n  \"kindId\": 1,\n  \"airlineId\": 1\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -1199,7 +1199,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"code\": \"BAEC\",\n  \"name\": \"Executive Club\",\n  \"kindId\": 1,\n  \"airlineId\": 1,\n  \"allianceCode\": \"OW\"\n}",
+                  "raw": "{\n  \"code\": \"BAEC\",\n  \"name\": \"Executive Club\",\n  \"kindId\": 1,\n  \"airlineId\": 1\n}",
                   "options": {
                     "raw": {
                       "language": "json"

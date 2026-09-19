@@ -7,7 +7,7 @@ public record LoyaltyTierExportDto(string Code, string Name, int Rank, string? A
 
 public record LoyaltyProgramExportDto(
     string Code, string Name, string KindCode,
-    string? AirlineIata, string? AllianceCode,
+    string? AirlineIata,
     IReadOnlyList<LoyaltyTierExportDto> Tiers,
     DateTime? VerifiedAt, string? VerifiedBy, string? VerificationSource);
 
@@ -41,7 +41,6 @@ public sealed class ExportLoyaltyProgramsQueryHandler : IRequestHandler<ExportLo
             p.Code, p.Name,
             kindMap.GetValueOrDefault(p.KindId, p.KindId.ToString()),
             p.AirlineId.HasValue ? airlineMap.GetValueOrDefault(p.AirlineId.Value) : null,
-            p.AllianceCode,
             p.Tiers.Select(t => new LoyaltyTierExportDto(
                 t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode)).ToList(),
             p.VerifiedAt, p.VerifiedBy, p.VerificationSource

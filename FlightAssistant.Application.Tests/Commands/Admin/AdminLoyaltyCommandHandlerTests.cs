@@ -25,7 +25,7 @@ public class AdminLoyaltyCommandHandlerTests
         var handler = new CreateLoyaltyProgramCommandHandler(_repo, _airlines);
 
         await handler.Handle(
-            new CreateLoyaltyProgramCommand("BAEC", "BA Executive Club", 1, null, null),
+            new CreateLoyaltyProgramCommand("BAEC", "BA Executive Club", 1, null),
             CancellationToken.None);
 
         await _repo.Received(1).AddProgramAsync(Arg.Any<LoyaltyProgram>(), Arg.Any<CancellationToken>());
@@ -38,11 +38,11 @@ public class AdminLoyaltyCommandHandlerTests
     public async Task Update_ExistingProgram_CallsSave()
     {
         var handler = new UpdateLoyaltyProgramCommandHandler(_repo, _airlines);
-        var program = LoyaltyProgram.Create("BAEC", "BA Executive Club", 1, null, null);
+        var program = LoyaltyProgram.Create("BAEC", "BA Executive Club", 1, null);
         _repo.GetProgramByIdAsync(1, Arg.Any<CancellationToken>()).Returns(program);
 
         await handler.Handle(
-            new UpdateLoyaltyProgramCommand(1, "BAEC", "BA Executive Club Updated", 1, null, "OW"),
+            new UpdateLoyaltyProgramCommand(1, "BAEC", "BA Executive Club Updated", 1, null),
             CancellationToken.None);
 
         await _repo.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
@@ -56,7 +56,7 @@ public class AdminLoyaltyCommandHandlerTests
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(
-                new UpdateLoyaltyProgramCommand(99, "BAEC", "BA Executive Club", 1, null, null),
+                new UpdateLoyaltyProgramCommand(99, "BAEC", "BA Executive Club", 1, null),
                 CancellationToken.None));
         Assert.Equal(404, ex.StatusCode);
 
@@ -69,7 +69,7 @@ public class AdminLoyaltyCommandHandlerTests
     public async Task Delete_ExistingProgram_DeletesAndSaves()
     {
         var handler = new DeleteLoyaltyProgramCommandHandler(_repo);
-        var program = LoyaltyProgram.Create("BAEC", "BA Executive Club", 1, null, null);
+        var program = LoyaltyProgram.Create("BAEC", "BA Executive Club", 1, null);
         _repo.GetProgramByIdAsync(1, Arg.Any<CancellationToken>()).Returns(program);
 
         await handler.Handle(new DeleteLoyaltyProgramCommand(1), CancellationToken.None);
@@ -100,7 +100,7 @@ public class AdminLoyaltyCommandHandlerTests
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(
-                new CreateLoyaltyProgramCommand("BAEC", "BA Executive Club", 99, null, null),
+                new CreateLoyaltyProgramCommand("BAEC", "BA Executive Club", 99, null),
                 CancellationToken.None));
 
         Assert.Equal(409, ex.StatusCode);
@@ -116,7 +116,7 @@ public class AdminLoyaltyCommandHandlerTests
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(
-                new CreateLoyaltyProgramCommand("BAEC", "BA Executive Club", 1, 404, null),
+                new CreateLoyaltyProgramCommand("BAEC", "BA Executive Club", 1, 404),
                 CancellationToken.None));
 
         Assert.Equal(409, ex.StatusCode);
@@ -131,7 +131,7 @@ public class AdminLoyaltyCommandHandlerTests
         var handler = new CreateLoyaltyProgramCommandHandler(_repo, _airlines);
 
         await handler.Handle(
-            new CreateLoyaltyProgramCommand("BAEC", "BA Executive Club", 1, null, null),
+            new CreateLoyaltyProgramCommand("BAEC", "BA Executive Club", 1, null),
             CancellationToken.None);
 
         await _airlines.DidNotReceive().GetByIdAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
@@ -143,12 +143,12 @@ public class AdminLoyaltyCommandHandlerTests
     {
         var handler = new UpdateLoyaltyProgramCommandHandler(_repo, _airlines);
         _repo.GetProgramByIdAsync(1, Arg.Any<CancellationToken>())
-            .Returns(LoyaltyProgram.Create("BAEC", "BA Executive Club", 1, null, null));
+            .Returns(LoyaltyProgram.Create("BAEC", "BA Executive Club", 1, null));
         _repo.FindKindByIdAsync(99, Arg.Any<CancellationToken>()).ReturnsNull();
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(
-                new UpdateLoyaltyProgramCommand(1, "BAEC", "BA Executive Club", 99, null, null),
+                new UpdateLoyaltyProgramCommand(1, "BAEC", "BA Executive Club", 99, null),
                 CancellationToken.None));
 
         Assert.Equal(409, ex.StatusCode);

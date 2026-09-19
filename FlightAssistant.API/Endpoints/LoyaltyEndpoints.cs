@@ -21,7 +21,7 @@ namespace FlightAssistant.API.Endpoints
             {
                 var results = await mediator.Send(new SearchLoyaltyProgramsQuery(airlineIata), ct);
                 var dtos = results.Select(p => new LoyaltyProgramDto(
-                    p.Id, p.Code, p.Name, p.Kind, p.AirlineId, p.AllianceCode,
+                    p.Id, p.Code, p.Name, p.Kind, p.AirlineId,
                     p.Tiers.Select(t => new LoyaltyTierDto(t.Id, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode)).ToList())).ToList();
                 return Results.Ok(dtos);
             })
@@ -39,7 +39,7 @@ namespace FlightAssistant.API.Endpoints
             {
                 var result = await mediator.Send(new GetLoyaltyProgramsQuery(paging), ct);
                 var dtos = result.Items.Select(p => new LoyaltyProgramDto(
-                    p.Id, p.Code, p.Name, p.Kind, p.AirlineId, p.AllianceCode,
+                    p.Id, p.Code, p.Name, p.Kind, p.AirlineId,
                     p.Tiers.Select(t => new LoyaltyTierDto(t.Id, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode)).ToList())).ToList();
                 return Results.Ok(new PagedResult<LoyaltyProgramDto>(dtos, result.Total, result.Page, result.PageSize));
             })

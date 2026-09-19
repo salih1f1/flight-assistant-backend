@@ -294,7 +294,8 @@
     "Icao": "QFA",
     "Callsign": "QANTAS",
     "CountryCode": "AU",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "OW"
   },
   {
     "Id": 34,
@@ -681,7 +682,8 @@
     "Icao": "ACA",
     "Callsign": "AIR CANADA",
     "CountryCode": "CA",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "SA"
   },
   {
     "Id": 77,
@@ -1419,7 +1421,8 @@
     "Icao": "DLH",
     "Callsign": "LUFTHANSA",
     "CountryCode": "DE",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "SA"
   },
   {
     "Id": 159,
@@ -1725,7 +1728,8 @@
     "Icao": "IBE",
     "Callsign": "IBERIA",
     "CountryCode": "ES",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "OW"
   },
   {
     "Id": 193,
@@ -1779,7 +1783,8 @@
     "Icao": "ETH",
     "Callsign": "ETHIOPIAN",
     "CountryCode": "ET",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "SA"
   },
   {
     "Id": 199,
@@ -1806,7 +1811,8 @@
     "Icao": "FIN",
     "Callsign": "FINNAIR",
     "CountryCode": "FI",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "OW"
   },
   {
     "Id": 202,
@@ -1887,7 +1893,8 @@
     "Icao": "AFR",
     "Callsign": "AIRFRANS",
     "CountryCode": "FR",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "ST"
   },
   {
     "Id": 211,
@@ -2085,7 +2092,8 @@
     "Icao": "BAW",
     "Callsign": "SPEEDBIRD",
     "CountryCode": "GB",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "OW"
   },
   {
     "Id": 233,
@@ -2220,7 +2228,8 @@
     "Icao": "VIR",
     "Callsign": "VIRGIN",
     "CountryCode": "GB",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "ST"
   },
   {
     "Id": 248,
@@ -2310,7 +2319,8 @@
     "Icao": "AEE",
     "Callsign": "AEGEAN",
     "CountryCode": "GR",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "SA"
   },
   {
     "Id": 258,
@@ -2958,7 +2968,8 @@
     "Icao": "ANA",
     "Callsign": "ALL NIPPON",
     "CountryCode": "JP",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "SA"
   },
   {
     "Id": 330,
@@ -3012,7 +3023,8 @@
     "Icao": "JAL",
     "Callsign": "JAPANAIR",
     "CountryCode": "JP",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "OW"
   },
   {
     "Id": 336,
@@ -3633,7 +3645,8 @@
     "Icao": "MAS",
     "Callsign": "MALAYSIAN",
     "CountryCode": "MY",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "OW"
   },
   {
     "Id": 405,
@@ -4137,7 +4150,8 @@
     "Icao": "TAP",
     "Callsign": "AIR PORTUGAL",
     "CountryCode": "PT",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "SA"
   },
   {
     "Id": 461,
@@ -4182,7 +4196,8 @@
     "Icao": "QTR",
     "Callsign": "QATARI",
     "CountryCode": "QA",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "OW"
   },
   {
     "Id": 466,
@@ -4848,7 +4863,8 @@
     "Icao": "SIA",
     "Callsign": "SINGAPORE",
     "CountryCode": "SG",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "SA"
   },
   {
     "Id": 540,
@@ -4992,7 +5008,8 @@
     "Icao": "THA",
     "Callsign": "THAI",
     "CountryCode": "TH",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "SA"
   },
   {
     "Id": 556,
@@ -5091,7 +5108,8 @@
     "Icao": "THY",
     "Callsign": "TURKAIR",
     "CountryCode": "TR",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "SA"
   },
   {
     "Id": 567,
@@ -5334,7 +5352,8 @@
     "Icao": "AAL",
     "Callsign": "AMERICAN",
     "CountryCode": "US",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "OW"
   },
   {
     "Id": 594,
@@ -5496,7 +5515,8 @@
     "Icao": "DAL",
     "Callsign": "DELTA",
     "CountryCode": "US",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "ST"
   },
   {
     "Id": 612,
@@ -5991,7 +6011,8 @@
     "Icao": "UAL",
     "Callsign": "UNITED",
     "CountryCode": "US",
-    "Active": true
+    "Active": true,
+    "AllianceCode": "SA"
   },
   {
     "Id": 667,

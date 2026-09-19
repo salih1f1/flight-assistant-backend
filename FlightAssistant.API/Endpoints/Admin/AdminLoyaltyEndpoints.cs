@@ -22,7 +22,7 @@ namespace FlightAssistant.API.Endpoints.Admin
             {
                 var result = await mediator.Send(new GetLoyaltyProgramsQuery(paging), ct);
                 var dtos = result.Items.Select(p => new LoyaltyProgramDto(
-                    p.Id, p.Code, p.Name, p.Kind, p.AirlineId, p.AllianceCode,
+                    p.Id, p.Code, p.Name, p.Kind, p.AirlineId,
                     p.Tiers.Select(t => new LoyaltyTierDto(t.Id, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode))
                            .ToList())).ToList();
                 return Results.Ok(new PagedResult<LoyaltyProgramDto>(dtos, result.Total, result.Page, result.PageSize));
@@ -35,7 +35,7 @@ namespace FlightAssistant.API.Endpoints.Admin
             // POST /admin/loyalty/programs
             group.MapPost("programs", async ([FromBody] CreateLoyaltyProgramRequest req, IMediator mediator, CancellationToken ct) =>
             {
-                var id = await mediator.Send(new CreateLoyaltyProgramCommand(req.Code, req.Name, req.KindId, req.AirlineId, req.AllianceCode), ct);
+                var id = await mediator.Send(new CreateLoyaltyProgramCommand(req.Code, req.Name, req.KindId, req.AirlineId), ct);
                 return Results.Created($"/admin/loyalty/programs/{id}", new { id });
             })
             .WithName("AdminCreateLoyaltyProgram")
@@ -48,7 +48,7 @@ namespace FlightAssistant.API.Endpoints.Admin
             // PUT /admin/loyalty/programs/{id}
             group.MapPut("programs/{id:int}", async (int id, [FromBody] UpdateLoyaltyProgramRequest req, IMediator mediator, CancellationToken ct) =>
             {
-                await mediator.Send(new UpdateLoyaltyProgramCommand(id, req.Code, req.Name, req.KindId, req.AirlineId, req.AllianceCode), ct);
+                await mediator.Send(new UpdateLoyaltyProgramCommand(id, req.Code, req.Name, req.KindId, req.AirlineId), ct);
                 return Results.NoContent();
             })
             .WithName("AdminUpdateLoyaltyProgram")

@@ -11,7 +11,7 @@ public record LoyaltyTierImportDto(string Code, string Name, int Rank, string? A
 
 public record LoyaltyProgramImportDto(
     string Code, string Name, string KindCode,
-    string? AirlineIata, string? AllianceCode,
+    string? AirlineIata,
     IReadOnlyList<LoyaltyTierImportDto> Tiers,
     DateTime? VerifiedAt = null, string? VerifiedBy = null, string? VerificationSource = null);
 
@@ -30,7 +30,6 @@ public sealed class ImportLoyaltyProgramsCommandValidator : AbstractValidator<Im
             item.RuleFor(d => d.AirlineIata)
                 .Matches("^[A-Z0-9]{2}$", RegexOptions.IgnoreCase).When(d => d.AirlineIata is not null)
                 .WithMessage("'{PropertyName}' must be a 2-character IATA code.");
-            item.RuleFor(d => d.AllianceCode).MaximumLength(8).When(d => d.AllianceCode is not null);
             item.RuleFor(d => d.Tiers).NotNull();
             item.RuleForEach(d => d.Tiers).ChildRules(t =>
             {
@@ -96,7 +95,7 @@ public sealed class ImportLoyaltyProgramsCommandHandler : IRequestHandler<Import
                 var existing = await _loyaltyRepo.FindProgramByCodeWithTiersAsync(dto.Code, ct);
                 if (existing is null)
                 {
-                    var program = LoyaltyProgram.Create(dto.Code, dto.Name, kind.Id, airlineId, dto.AllianceCode);
+                    var program = LoyaltyProgram.Create(dto.Code, dto.Name, kind.Id, airlineId);
                     foreach (var t in dto.Tiers)
                         program.AddTier(LoyaltyTier.Create(0, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode));
                     verification.Apply(program);
@@ -105,7 +104,7 @@ public sealed class ImportLoyaltyProgramsCommandHandler : IRequestHandler<Import
                 }
                 else
                 {
-                    existing.Update(dto.Code, dto.Name, kind.Id, airlineId, dto.AllianceCode);
+                    existing.Update(dto.Code, dto.Name, kind.Id, airlineId);
                     existing.ReplaceAllTiers(dto.Tiers.Select(t =>
                         LoyaltyTier.Create(existing.Id, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode)));
                     verification.Apply(existing);

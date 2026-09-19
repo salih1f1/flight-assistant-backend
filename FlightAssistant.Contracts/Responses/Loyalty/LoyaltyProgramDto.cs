@@ -8,7 +8,6 @@ namespace FlightAssistant.Contracts.Responses.Loyalty
         string Name,
         string Kind,
         int? AirlineId,
-        string? AllianceCode,
         IReadOnlyList<LoyaltyTierDto> Tiers
     );
 }

@@ -189,7 +189,6 @@ namespace FlightAssistant.Application.Administration
                 nameof(LoyaltyProgram.Name),
                 nameof(LoyaltyProgram.KindId),
                 nameof(LoyaltyProgram.AirlineId),
-                nameof(LoyaltyProgram.AllianceCode),
                 nameof(LoyaltyProgram.CreatedUtc),
                 nameof(LoyaltyProgram.IsVerified),
                 nameof(LoyaltyProgram.VerifiedAt),

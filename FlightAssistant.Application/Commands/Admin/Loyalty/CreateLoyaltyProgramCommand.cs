@@ -10,8 +10,7 @@ namespace FlightAssistant.Application.Commands.Admin.Loyalty
         string Code,
         string Name,
         int KindId,
-        int? AirlineId,
-        string? AllianceCode
+        int? AirlineId
     ) : IRequest<int>;
 
     public sealed class CreateLoyaltyProgramCommandHandler : IRequestHandler<CreateLoyaltyProgramCommand, int>
@@ -28,7 +27,7 @@ namespace FlightAssistant.Application.Commands.Admin.Loyalty
         {
             await ReferenceExistence.EnsureLoyaltyProgramKindExistsAsync(_repo, cmd.KindId, ct);
             await ReferenceExistence.EnsureAirlineExistsAsync(_airlines, cmd.AirlineId, "LoyaltyProgram", ct);
-            var program = LoyaltyProgram.Create(cmd.Code, cmd.Name, cmd.KindId, cmd.AirlineId, cmd.AllianceCode);
+            var program = LoyaltyProgram.Create(cmd.Code, cmd.Name, cmd.KindId, cmd.AirlineId);
             await _repo.AddProgramAsync(program, ct);
             await _repo.SaveChangesAsync(ct);
             return program.Id;
@@ -42,7 +41,6 @@ namespace FlightAssistant.Application.Commands.Admin.Loyalty
             RuleFor(x => x.Code).NotEmpty().MaximumLength(16);
             RuleFor(x => x.Name).NotEmpty().MaximumLength(200);
             RuleFor(x => x.KindId).GreaterThan(0);
-            RuleFor(x => x.AllianceCode).MaximumLength(8).When(x => x.AllianceCode is not null);
         }
     }
 }
