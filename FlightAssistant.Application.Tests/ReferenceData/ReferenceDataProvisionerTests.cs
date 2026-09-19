@@ -855,12 +855,12 @@ public class ReferenceDataProvisionerTests
     }
 
     [Fact]
-    public async Task AnAirportWeHoldByIcao_IsCompleted_NotInsertedASecondTime()
+    public async Task AnAirportHeldWithABlankIata_IsCompleted_NotInsertedASecondTime()
     {
         // airports.Icao carries the same filtered unique index, so the same insert would fail the
-        // same way. Here the row's own Iata is not the code the caller asked for, so it is left
-        // alone; the columns it genuinely lacks are the ones filled in.
-        var held = Airport.Create("ZZZ", "ZZZZ", name: "", city: "", countryCode: "GB");
+        // same way. The row lacks an Iata, so the requested code is the one thing it is safe to
+        // fill in -- alongside the other columns it genuinely lacks.
+        var held = Airport.Create("", "ZZZZ", name: "", city: "", countryCode: "GB");
         _airports.FindByIcaoAsync("ZZZZ", Arg.Any<CancellationToken>()).Returns(held);
         _registry.TryGet("ourairports").Returns(
             new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR")));
@@ -869,12 +869,75 @@ public class ReferenceDataProvisionerTests
             [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
 
         Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+        Assert.Equal("LHR", held.Iata);
         Assert.Equal("Test Airport", held.Name);
         Assert.Equal("Testville", held.City);
         Assert.Equal(51.5, held.Latitude);
-        Assert.Equal("ZZZ", held.Iata);                 // never overwritten
+        Assert.Null(held.VerificationIssue);
         await _airports.DidNotReceive().AddAsync(Arg.Any<Airport>(), Arg.Any<CancellationToken>());
         await _airports.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AnAirportHeldUnderAConflictingIata_IsFlaggedForAnAdmin_NotSilentlyCompleted()
+    {
+        // We hold ZZZ under ICAO ZZZZ; the source says that same ICAO is LHR. One of the two is
+        // wrong and only a human can say which, so the row is flagged rather than renamed (#494).
+        // Before this it was "completed" without the requested code, the handler re-resolved by
+        // LHR, missed, and 404'd with nothing cached -- re-billing the source on every retry.
+        var held = Airport.Create("ZZZ", "ZZZZ", name: "Held Airport", city: "Heldville", countryCode: "GB");
+        _airports.FindByIcaoAsync("ZZZZ", Arg.Any<CancellationToken>()).Returns(held);
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR")));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.NotFound, result.Status);
+        Assert.Equal("ZZZ", held.Iata);                 // never renamed
+        Assert.Equal("Held Airport", held.Name);        // nothing else touched either
+        Assert.False(held.IsVerified);
+        Assert.NotNull(held.VerificationIssue);
+        Assert.Contains("LHR", held.VerificationIssue);
+        Assert.Contains("ZZZ", held.VerificationIssue);
+        // The flag is the point, so it is saved -- but nothing was ever added, so this save
+        // commits that one mutation and nothing else.
+        await _airports.DidNotReceive().AddAsync(Arg.Any<Airport>(), Arg.Any<CancellationToken>());
+        await _airports.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+        // And it is remembered, so a retry costs nothing until an admin fixes the row.
+        await _cache.Received(1).SetAsync(
+            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "LHR"),
+            Arg.Any<string>(),
+            _options.NegativeCacheTtl,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AnAirlineHeldUnderAConflictingIata_IsFlaggedForAnAdmin_NotSilentlyCompleted()
+    {
+        // The metered twin of the airport case above, and the reason #494 was filed: aeroapi bills
+        // $0.015 per lookup, and the old behaviour re-paid it on every retry of a 404 that could
+        // never resolve itself.
+        var held = Airline.Create("XX", "BAW", "Held Airways", "GB");
+        _airlines.FindByIcaoAsync("BAW", Arg.Any<CancellationToken>()).Returns(held);
+        _registry.TryGet("aeroapi").Returns(
+            new FakeSource("aeroapi", 0.015m, [VerificationEntityType.Airline], _ => FoundAirline("BA", "United Kingdom")));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airline, "BA")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.NotFound, result.Status);
+        Assert.Equal("XX", held.Iata);                  // never renamed
+        Assert.False(held.IsVerified);
+        Assert.NotNull(held.VerificationIssue);
+        Assert.Contains("BA", held.VerificationIssue);
+        Assert.Contains("XX", held.VerificationIssue);
+        await _airlines.DidNotReceive().AddAsync(Arg.Any<Airline>(), Arg.Any<CancellationToken>());
+        await _cache.Received(1).SetAsync(
+            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airline, "BA"),
+            Arg.Any<string>(),
+            _options.NegativeCacheTtl,
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
