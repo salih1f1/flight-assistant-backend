@@ -2,6 +2,7 @@ using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Commands.Admin.DataSources;
 using FlightAssistant.Application.Queries.Admin.DataSources;
+using FlightAssistant.Application.Queries.Admin.Health;
 using FlightAssistant.Contracts.Responses.Admin;
 using FlightAssistant.Infrastructure.Persistance;
 using MediatR;
@@ -114,6 +115,27 @@ namespace FlightAssistant.API.Endpoints.Admin
             .ProducesProblem(400)
             .ProducesProblem(404)
             .ProducesProblem(429);
+
+            // GET /admin/health/app-service
+            admin.MapGet("health/app-service", async (IMediator mediator, CancellationToken ct) =>
+                Results.Ok(await mediator.Send(new GetAppServiceStatusQuery(), ct)))
+            .WithTags("Admin - Health")
+            .WithName("AdminGetAppServiceStatus")
+            .WithSummary("The App Service hosting this API")
+            .WithDescription(
+                "Whether the API's own App Service is running, and whether Always On is enabled. With Always " +
+                "On off, App Service unloads the app after roughly twenty minutes idle and the background " +
+                "jobs stop with it — so they run while the panel is in use and pause afterwards. " +
+                "'state' says whether the resource could be read: Ok, NotConfigured when not hosted on App " +
+                "Service, NotAuthorized when the managed identity lacks Reader on the resource group, or " +
+                "Unavailable. 'siteState' is Azure's own word for the site. 'alwaysOn' null means unknown, " +
+                "not false. Cached for five minutes, except refusals and outages, which are not cached.")
+            // Always 200: every failure is a state in the body, because the panel must render "not
+            // authorized" as information rather than as a failed request. No .ProducesProblem(500) —
+            // AdminServerErrorDeclarationTests allows a declared 500 only where the handler throws
+            // its own DomainException(…, 500), and this one never does (#513 made and reverted
+            // exactly this mistake on the sibling usage route).
+            .Produces<AppServiceStatusDto>(200);
         }
     }
 }

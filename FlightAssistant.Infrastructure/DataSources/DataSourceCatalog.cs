@@ -24,10 +24,16 @@ namespace FlightAssistant.Infrastructure.DataSources
         // 2, for AddDataSourceObservation to tag it with. The DataSourceDescriptor below is what
         // makes EveryNamedHttpClientHasACatalogEntry pass again (task 2 deliberately left it red).
         public const string AzureCost = "azurecost";
+
+        // #530 task 3: same split as AzureCost above. AppServiceProvider's named HttpClient was
+        // registered under this key in task 2. The DataSourceDescriptor below is what makes
+        // EveryNamedHttpClientHasACatalogEntry pass again (task 2 deliberately left it red, naming
+        // "AppService").
+        public const string AppService = "appservice";
     }
 
     /// <summary>
-    /// The ten outside dependencies, as the health page describes them. A hard-coded list rather
+    /// The eleven outside dependencies, as the health page describes them. A hard-coded list rather
     /// than a scan: the "what is checked" sentence and the link are author-written prose that
     /// cannot be derived, and the completeness test is what keeps the list honest.
     /// </summary>
@@ -108,6 +114,31 @@ namespace FlightAssistant.Infrastructure.DataSources
                     "Reads the subscription's budget and month-to-date spend. Reports only; it cannot change anything in Azure.",
                     "https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis",
                     AzureCostProvider.HttpClientName, SupportsProbe: true, ProbeCostNote: null),
+
+                // #530 task 3. Optional for the same reason AzureCost above is -- the API plainly
+                // runs without being able to read its own resource metadata. The probe reports only
+                // on whether the resource could be READ, never on what the answer was: a site with
+                // Always On off, read successfully, is Ok, so ProbeCostNote stays null (there is
+                // nothing to warn about -- this never costs money and never changes a site fact).
+                //
+                // The browse blade, not a deep link to the resource. A per-resource portal URL needs
+                // the subscription id, which is resolved at runtime from WEBSITE_OWNER_NAME and is
+                // not knowable here -- and this list is environment-independent, so a dev-specific
+                // resource group and site name baked into it would be wrong everywhere else. The
+                // AzureCost row above takes the same approach for the same reason. A link that
+                // lands on a portal error is the kind of small untruth this whole page exists to
+                // remove, so it is better to land one click away and correct.
+                //
+                // This is the route the portal itself emits when you browse App Services, and the
+                // same #view/ family the AzureCost row above uses. Portal routes are client-side
+                // hash fragments: they never reach a server, so no request, status code or test can
+                // confirm this one resolves. Clicking it is the only check there is, and it has not
+                // been done -- treat the link as unverified until someone with portal access has.
+                new(DataSourceKeys.AppService, "Azure App Service", DataSourceKind.Infrastructure,
+                    DataSourceCriticality.Optional,
+                    "Reads the App Service's own state and whether Always On is enabled. Reports only; it cannot change anything in Azure.",
+                    "https://portal.azure.com/#view/HubsExtension/BrowseResource/resourceType/Microsoft.Web%2Fsites",
+                    AppServiceProvider.HttpClientName, SupportsProbe: true, ProbeCostNote: null),
             ];
 
             _byKey = Sources.ToDictionary(s => s.Key, StringComparer.Ordinal);

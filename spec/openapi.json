@@ -1768,6 +1768,28 @@
         }
       }
     },
+    "/admin/health/app-service": {
+      "get": {
+        "tags": [
+          "Admin - Health"
+        ],
+        "summary": "The App Service hosting this API",
+        "description": "Whether the API's own App Service is running, and whether Always On is enabled. With Always On off, App Service unloads the app after roughly twenty minutes idle and the background jobs stop with it — so they run while the panel is in use and pause afterwards. 'state' says whether the resource could be read: Ok, NotConfigured when not hosted on App Service, NotAuthorized when the managed identity lacks Reader on the resource group, or Unavailable. 'siteState' is Azure's own word for the site. 'alwaysOn' null means unknown, not false. Cached for five minutes, except refusals and outages, which are not cached.",
+        "operationId": "AdminGetAppServiceStatus",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppServiceStatusDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/import/alliances": {
       "post": {
         "tags": [
@@ -6477,6 +6499,45 @@
             "items": {
               "$ref": "#/components/schemas/AllianceAirlineDto"
             },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AppServiceStatusDto": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "nullable": true
+          },
+          "siteName": {
+            "type": "string",
+            "nullable": true
+          },
+          "siteState": {
+            "type": "string",
+            "nullable": true
+          },
+          "availabilityState": {
+            "type": "string",
+            "nullable": true
+          },
+          "enabled": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "alwaysOn": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "instanceCount": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "message": {
+            "type": "string",
             "nullable": true
           }
         },
