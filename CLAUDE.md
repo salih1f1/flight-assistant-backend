@@ -347,7 +347,7 @@ Most values are pulled from Azure Key Vault in deployed environments; for local 
 | `AdminPanel:AllowedOrigin` | CORS origin for admin UI. Code default `http://localhost:5173`; Development sets `http://localhost:5175` to match the panel's Entra redirect URI |
 | `GitHub:Token` | Optional; fine-grained, read-only, Actions: read on this repository. Without it `/admin/ci/*` answers 503. Key Vault: `GitHub--Token` |
 | `GitHub:Owner`, `GitHub:Repo`, `GitHub:Workflow` | Optional; default `salih1f1`, `flight-assistant-backend`, `ci.yml` |
-| `AzureCost:SubscriptionId` | Optional (#496); absent means "not configured" — a local developer has none, and the panel renders that rather than failing |
+| `AzureCost:SubscriptionId` | Optional (#496); absent means "not configured", which the panel renders rather than failing. Deployed environments leave it unset and take the subscription from `WEBSITE_OWNER_NAME` (#523); a local run has no such variable, so `appsettings.Development.json` names the dev subscription outright (#533) and a developer signed in with `az login` sees the same spend the dev card reports. A subscription id is an identifier, not a credential — reading anything with it still needs a token and `Cost Management Reader` |
 | `AzureCost:BudgetName` | Optional; which budget to read when the subscription defines more than one. A configured value matching none of them answers `Unavailable`, naming the value — never a silent fallback to whichever budget Azure lists first |
 
 ## Tech Stack
