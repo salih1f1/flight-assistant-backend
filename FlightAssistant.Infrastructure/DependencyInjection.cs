@@ -288,6 +288,16 @@ namespace FlightAssistant.Infrastructure
                 .ValidateDataAnnotations()
                 .ValidateOnStart();
 
+            // AeroDataBox quota (#531 task 10): the free RapidAPI plan reports remaining quota on
+            // its own x-ratelimit-requests-remaining/-limit response headers rather than being
+            // billed or counted locally — captured here off traffic already being sent, at zero
+            // extra cost, the same principle as AeroAPI's own /account/usage-sourced spend. Registered
+            // as a concrete singleton AND behind IProviderQuotaReader mapped to that SAME instance:
+            // the handler below needs the concrete type to call Record, and a future reader needs
+            // the interface — two separate singletons would silently never see each other's data.
+            services.AddSingleton<AeroDataBoxQuotaHolder>();
+            services.AddSingleton<IProviderQuotaReader>(sp => sp.GetRequiredService<AeroDataBoxQuotaHolder>());
+
             // No AeroApiThrottleGate and no resilience handler on this client: the gate exists to
             // stay inside a METERED tier's rate limit, and every resilience timeout in this repo is
             // derived from AeroApi:MinRequestInterval — neither applies to a free, quota-based API.
@@ -307,6 +317,9 @@ namespace FlightAssistant.Infrastructure
                 client.DefaultRequestHeaders.Add("X-RapidAPI-Host", AeroDataBoxOptions.RapidApiHost);
                 client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
             })
+            .AddHttpMessageHandler(sp => new AeroDataBoxQuotaHandler(
+                sp.GetRequiredService<AeroDataBoxQuotaHolder>(),
+                sp.GetRequiredService<TimeProvider>()))
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
             .AddDataSourceObservation(DataSourceKeys.AeroDataBox);
 

@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using FlightAssistant.Application;
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Application.Interfaces.Providers;
 using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Application.Queries.Admin.Usage;
 using FlightAssistant.Application.Queries.Flights;
@@ -354,6 +355,63 @@ public class AeroApiDependencyInjectionTests
         var search = provider.GetRequiredService<IFlightSearchProvider>();
 
         Assert.NotNull(search);
+    }
+
+    /// <summary>
+    /// #531 task 10: mirrors AddInfrastructure_ResolvesIAeroApiThrottleObserver_AsTheVerySameGateInstance
+    /// below. AeroDataBoxQuotaHolder is registered as a concrete singleton AND behind
+    /// IProviderQuotaReader, mapped to that same instance — AeroDataBoxQuotaHandlerTests only ever
+    /// constructs the holder directly with `new`, so it can't catch the registration reverting to
+    /// two independent singletons, which would leave AeroDataBoxQuotaHandler's writes and
+    /// IProviderQuotaReader's reads looking at different objects.
+    /// </summary>
+    [Fact]
+    public void AddInfrastructure_ResolvesIProviderQuotaReader_AsTheVerySameHolderInstance()
+    {
+        using var provider = BuildContainer();
+
+        var holder = provider.GetRequiredService<AeroDataBoxQuotaHolder>();
+        var reader = provider.GetRequiredService<IProviderQuotaReader>();
+
+        Assert.Same(holder, reader);
+    }
+
+    /// <summary>
+    /// #531 task 10: proves AeroDataBoxQuotaHandler is actually attached to the AeroDataBox named
+    /// client's pipeline in the real container, not only unit-tested against a hand-built
+    /// HttpClient the way AeroDataBoxQuotaHandlerTests does. If the handler were missing,
+    /// mis-registered, or attached to the wrong client, the holder would stay null here.
+    /// </summary>
+    [Fact]
+    public async Task AddInfrastructure_AeroDataBoxClient_RecordsQuotaThroughTheRealPipeline()
+    {
+        using var provider = BuildContainer(configure: services =>
+            services.AddHttpClient(AeroDataBoxFlightSearchProvider.HttpClientName)
+                .ConfigurePrimaryHttpMessageHandler(() => new QuotaHeaderTransport()));
+
+        var client = provider.GetRequiredService<IHttpClientFactory>()
+            .CreateClient(AeroDataBoxFlightSearchProvider.HttpClientName);
+        await client.GetAsync("anything");
+
+        var reader = provider.GetRequiredService<IProviderQuotaReader>();
+        Assert.NotNull(reader.AeroDataBox);
+        Assert.Equal(1487, reader.AeroDataBox!.Remaining);
+        Assert.Equal(1505, reader.AeroDataBox!.Limit);
+    }
+
+    /// <summary>Stands in for AeroDataBox answering with its own quota headers attached.</summary>
+    private sealed class QuotaHeaderTransport : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+            };
+            response.Headers.Add("x-ratelimit-requests-remaining", "1487");
+            response.Headers.Add("x-ratelimit-requests-limit", "1505");
+            return Task.FromResult(response);
+        }
     }
 
     [Fact]
