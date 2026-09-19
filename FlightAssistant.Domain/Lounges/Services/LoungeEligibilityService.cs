@@ -71,7 +71,17 @@ namespace FlightAssistant.Domain.Lounges.Services
                             m.TierId is not null &&
                             tierById.TryGetValue(m.TierId.Value, out var tier) &&
                             tier.AllianceTierCode is not null &&
-                            tier.AllianceCode == provider.Code &&
+                            // OrdinalIgnoreCase, not ==, and for consistency rather than leniency:
+                            // every rank table above is already OrdinalIgnoreCase, and so is the
+                            // alliance -> ranks lookup in MeetsMinTier, so a lower-case "sa" got
+                            // past the tier-rank rules and then failed only here. Neither
+                            // LoyaltyTier.AllianceCode nor LoungeProvider.Code is canonicalised on
+                            // write, so both sides are free-form; canonicalising one side alone
+                            // would have broken a pair that matches in lower case on both today.
+                            // Widening the comparison can only make more pairs match, never fewer,
+                            // and cannot conflate two alliances, since alliances.Code is unique
+                            // under a canonicalising value converter.
+                            string.Equals(tier.AllianceCode, provider.Code, StringComparison.OrdinalIgnoreCase) &&
                             MeetsMinTier(provider.Code, tier.AllianceTierCode, link.MinAllianceTierCode));
                         if (allianceMatch)
                             return new EligibilityResult(true, provider.Name, LoungeProviderKind.Alliance);

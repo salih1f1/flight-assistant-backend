@@ -133,6 +133,49 @@ namespace FlightAssistant.Domain.Tests.Lounges
             Assert.False(result.IsEligible);
         }
 
+        /// <summary>
+        /// Neither LoyaltyTier.AllianceCode nor LoungeProvider.Code is canonicalised on write, so
+        /// the two sides of this comparison can differ in case alone. Every rank table in this
+        /// service, and the alliance -> ranks lookup in MeetsMinTier, is already OrdinalIgnoreCase,
+        /// so a lower-case code satisfied the tier rules and then failed only on the code match —
+        /// silently denying a traveler lounge access they hold the status for (#508).
+        /// </summary>
+        [Theory]
+        [InlineData("OW", "ow")]
+        [InlineData("ow", "OW")]
+        [InlineData("Ow", "oW")]
+        public void CheckEligibility_AllianceCodeCasingDiffersFromTheProviders_ReturnsEligible(
+            string providerCode, string tierAllianceCode)
+        {
+            var lounge = BuildLounge(LoungeProviderKind.Alliance, providerCode, minAllianceTierCode: "SAPPHIRE");
+            var tier = Tier(10, tierAllianceCode, "EMERALD");
+            var membership = Membership(programId: 1, tierId: 10);
+
+            var result = LoungeEligibilityService.CheckEligibility(
+                lounge, [membership], [], [tier]);
+
+            Assert.True(result.IsEligible);
+            Assert.Equal(LoungeProviderKind.Alliance, result.ProviderKind);
+        }
+
+        /// <summary>
+        /// Widening that comparison must not make a *different* alliance match. It cannot in
+        /// practice — alliances.Code is unique under a canonicalising value converter, so two codes
+        /// can never differ by case alone — but the comparison itself still has to reject them.
+        /// </summary>
+        [Fact]
+        public void CheckEligibility_DifferentAllianceCode_StaysNotEligible()
+        {
+            var lounge = BuildLounge(LoungeProviderKind.Alliance, "OW", minAllianceTierCode: "SAPPHIRE");
+            var tier = Tier(10, "SA", "GOLD");
+            var membership = Membership(programId: 1, tierId: 10);
+
+            var result = LoungeEligibilityService.CheckEligibility(
+                lounge, [membership], [], [tier]);
+
+            Assert.False(result.IsEligible);
+        }
+
         [Theory]
         [InlineData("SA", "SILVER", "SILVER", true)]
         [InlineData("SA", "SILVER", "GOLD", false)]

@@ -31,20 +31,36 @@ namespace FlightAssistant.Application.Commands.Admin.Common
     public static class ReferenceExistence
     {
         /// <summary>
-        /// Refuses an <c>AllianceCode</c> that is not in <c>alliances</c>, which
-        /// <c>airlines.AllianceCode</c> references by foreign key (#449). Canonicalises first, so a
+        /// Refuses an <c>AllianceCode</c> that is not in <c>alliances</c>. Canonicalises first, so a
         /// blank code is "no alliance" — exactly what <c>Airline.Update</c> stores — and the
         /// caller's casing never decides the answer.
+        ///
+        /// <para>
+        /// Two entities carry such a column and neither has a database foreign key to
+        /// <c>alliances</c>, so this check is the only thing standing between a typo and bad data:
+        /// <c>airlines.AllianceCode</c> (#449), and <c>loyalty_tiers.AllianceCode</c> (#508), where
+        /// the stakes are higher — <c>LoungeEligibilityService</c> matches it against a
+        /// <c>LoungeProvider.Code</c> whose <c>Kind</c> is <c>Alliance</c>, so a tier typed
+        /// <c>"STAR"</c> where the real code is <c>SA</c> silently denies a traveler lounge access
+        /// they are entitled to, rather than merely rendering a wrong DTO field.
+        /// </para>
+        ///
+        /// <para>
+        /// <paramref name="entity"/> names the entity in the 409, the way
+        /// <see cref="EnsureCountryExistsAsync"/> already does. It is a parameter rather than a
+        /// hardcoded <c>"Airline"</c> because a tier's refusal that said "Airline" would send an
+        /// admin looking at the wrong record.
+        /// </para>
         /// </summary>
         public static async Task EnsureAllianceExistsAsync(
-            IAllianceRepository alliances, string? allianceCode, CancellationToken ct)
+            IAllianceRepository alliances, string? allianceCode, string entity, CancellationToken ct)
         {
             var code = allianceCode.ToCanonicalCodeOrNull();
             if (code is null)
                 return;
 
             if (await alliances.FindByCodeAsync(code, ct) is null)
-                throw Missing("Airline", nameof(Domain.ReferenceData.Entities.Airline.AllianceCode), code,
+                throw Missing(entity, nameof(Domain.ReferenceData.Entities.Airline.AllianceCode), code,
                     "an alliance", "the alliance");
         }
 

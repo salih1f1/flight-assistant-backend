@@ -2,6 +2,7 @@ using FlightAssistant.Application.Commands.Admin.Loyalty;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Domain.Loyalty.Entities;
+using FlightAssistant.Domain.ReferenceData.Entities;
 using NSubstitute;
 using NSubstitute.ReturnsExtensions;
 
@@ -14,6 +15,14 @@ namespace FlightAssistant.Application.Tests.Commands.Admin;
 public class AdminLoyaltyTierCommandHandlerTests
 {
     private readonly ILoyaltyRepository _repo = Substitute.For<ILoyaltyRepository>();
+    private readonly IAllianceRepository _alliances = Substitute.For<IAllianceRepository>();
+
+    public AdminLoyaltyTierCommandHandlerTests() =>
+        // Every alliance code these tests use is a real one unless a test says otherwise, so the
+        // #508 guard is satisfied by default and the tests below still cover what they were written
+        // for rather than tripping over a lookup they never meant to exercise.
+        _alliances.FindByCodeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(ci => Alliance.Create(ci.Arg<string>(), "Some Alliance"));
 
     // ── Create ────────────────────────────────────────────────────────────────
 
@@ -21,7 +30,7 @@ public class AdminLoyaltyTierCommandHandlerTests
     public async Task Create_AddsTheTierToTheProgramAndSaves()
     {
         var program = GivenProgram(1);
-        var handler = new CreateLoyaltyTierCommandHandler(_repo);
+        var handler = new CreateLoyaltyTierCommandHandler(_repo, _alliances);
 
         await handler.Handle(
             new CreateLoyaltyTierCommand(1, "GOLD", "Gold", 3, "STAR", "*G"),
@@ -41,7 +50,7 @@ public class AdminLoyaltyTierCommandHandlerTests
     public async Task Create_UnknownProgram_Throws404AndSavesNothing()
     {
         _repo.GetProgramByIdAsync(99, Arg.Any<CancellationToken>()).ReturnsNull();
-        var handler = new CreateLoyaltyTierCommandHandler(_repo);
+        var handler = new CreateLoyaltyTierCommandHandler(_repo, _alliances);
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(new CreateLoyaltyTierCommand(99, "GOLD", "Gold", 3, null, null), CancellationToken.None));
@@ -58,7 +67,7 @@ public class AdminLoyaltyTierCommandHandlerTests
     public async Task Create_CodeAlreadyOnThisProgram_Throws409AndSavesNothing()
     {
         var program = GivenProgram(1, ("GOLD", 3, 10));
-        var handler = new CreateLoyaltyTierCommandHandler(_repo);
+        var handler = new CreateLoyaltyTierCommandHandler(_repo, _alliances);
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(new CreateLoyaltyTierCommand(1, "GOLD", "Gold reissued", 4, null, null), CancellationToken.None));
@@ -74,7 +83,7 @@ public class AdminLoyaltyTierCommandHandlerTests
     public async Task Create_RankAlreadyOnThisProgram_Throws409AndSavesNothing()
     {
         var program = GivenProgram(1, ("GOLD", 3, 10));
-        var handler = new CreateLoyaltyTierCommandHandler(_repo);
+        var handler = new CreateLoyaltyTierCommandHandler(_repo, _alliances);
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(new CreateLoyaltyTierCommand(1, "SILVER", "Silver", 3, null, null), CancellationToken.None));
@@ -91,7 +100,7 @@ public class AdminLoyaltyTierCommandHandlerTests
     public async Task Update_ExistingTier_UpdatesItAndSaves()
     {
         var program = GivenProgram(1, ("GOLD", 3, 10));
-        var handler = new UpdateLoyaltyTierCommandHandler(_repo);
+        var handler = new UpdateLoyaltyTierCommandHandler(_repo, _alliances);
 
         await handler.Handle(
             new UpdateLoyaltyTierCommand(1, 10, "GOLD", "Gold Elite", 4, "OW", "EMD"),
@@ -113,7 +122,7 @@ public class AdminLoyaltyTierCommandHandlerTests
     public async Task Update_TierThatIsNotOnThisProgram_Throws404AndSavesNothing()
     {
         GivenProgram(1, ("GOLD", 3, 10));
-        var handler = new UpdateLoyaltyTierCommandHandler(_repo);
+        var handler = new UpdateLoyaltyTierCommandHandler(_repo, _alliances);
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(new UpdateLoyaltyTierCommand(1, 77, "GOLD", "Gold", 3, null, null), CancellationToken.None));
@@ -126,7 +135,7 @@ public class AdminLoyaltyTierCommandHandlerTests
     public async Task Update_CodeTakenByAnotherTierOfTheProgram_Throws409AndSavesNothing()
     {
         var program = GivenProgram(1, ("GOLD", 3, 10), ("SILVER", 2, 11));
-        var handler = new UpdateLoyaltyTierCommandHandler(_repo);
+        var handler = new UpdateLoyaltyTierCommandHandler(_repo, _alliances);
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(new UpdateLoyaltyTierCommand(1, 11, "GOLD", "Silver", 2, null, null), CancellationToken.None));
@@ -140,7 +149,7 @@ public class AdminLoyaltyTierCommandHandlerTests
     public async Task Update_RankTakenByAnotherTierOfTheProgram_Throws409AndSavesNothing()
     {
         var program = GivenProgram(1, ("GOLD", 3, 10), ("SILVER", 2, 11));
-        var handler = new UpdateLoyaltyTierCommandHandler(_repo);
+        var handler = new UpdateLoyaltyTierCommandHandler(_repo, _alliances);
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(new UpdateLoyaltyTierCommand(1, 11, "SILVER", "Silver", 3, null, null), CancellationToken.None));
@@ -158,7 +167,7 @@ public class AdminLoyaltyTierCommandHandlerTests
     public async Task Update_KeepingItsOwnCodeAndRank_Saves()
     {
         var program = GivenProgram(1, ("GOLD", 3, 10));
-        var handler = new UpdateLoyaltyTierCommandHandler(_repo);
+        var handler = new UpdateLoyaltyTierCommandHandler(_repo, _alliances);
 
         await handler.Handle(
             new UpdateLoyaltyTierCommand(1, 10, "GOLD", "Gold renamed", 3, null, null),
@@ -172,7 +181,7 @@ public class AdminLoyaltyTierCommandHandlerTests
     public async Task Update_UnknownProgram_Throws404AndSavesNothing()
     {
         _repo.GetProgramByIdAsync(99, Arg.Any<CancellationToken>()).ReturnsNull();
-        var handler = new UpdateLoyaltyTierCommandHandler(_repo);
+        var handler = new UpdateLoyaltyTierCommandHandler(_repo, _alliances);
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             handler.Handle(new UpdateLoyaltyTierCommand(99, 10, "GOLD", "Gold", 3, null, null), CancellationToken.None));
@@ -231,6 +240,91 @@ public class AdminLoyaltyTierCommandHandlerTests
     /// A program with the given tiers, wired into the repository under `programId`. Ids are set the
     /// way the rest of the suite sets them — the database assigns them in real life.
     /// </summary>
+    // ── The alliance-code guard (#508) ────────────────────────────────────────
+
+    /// <summary>
+    /// loyalty_tiers.AllianceCode has no foreign key to alliances, and unlike a bad Code or Rank
+    /// nothing downstream ever complains about it: LoungeEligibilityService just fails to match a
+    /// LoungeProvider of Kind Alliance, so the traveler is silently denied lounge access they are
+    /// entitled to. A 409 at write time is the only place this is catchable.
+    /// </summary>
+    [Fact]
+    public async Task Create_AllianceCodeThatIsNotAnAlliance_Throws409AndSavesNothing()
+    {
+        var program = GivenProgram(1);
+        _alliances.FindByCodeAsync("STAR", Arg.Any<CancellationToken>()).ReturnsNull();
+        var handler = new CreateLoyaltyTierCommandHandler(_repo, _alliances);
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
+            handler.Handle(new CreateLoyaltyTierCommand(1, "GOLD", "Gold", 3, "STAR", "*G"),
+                CancellationToken.None));
+
+        Assert.Equal(409, ex.StatusCode);
+        Assert.Contains("STAR", ex.Message);
+        Assert.Contains("LoyaltyTier", ex.Message);
+        Assert.Empty(program.Tiers);
+        await _repo.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Update_AllianceCodeThatIsNotAnAlliance_Throws409AndLeavesTheTierAlone()
+    {
+        var program = GivenProgram(1, ("GOLD", 3, 10));
+        _alliances.FindByCodeAsync("STAR", Arg.Any<CancellationToken>()).ReturnsNull();
+        var handler = new UpdateLoyaltyTierCommandHandler(_repo, _alliances);
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() =>
+            handler.Handle(new UpdateLoyaltyTierCommand(1, 10, "GOLD", "Gold Elite", 4, "STAR", "*G"),
+                CancellationToken.None));
+
+        Assert.Equal(409, ex.StatusCode);
+        var tier = Assert.Single(program.Tiers);
+        Assert.Equal("gold", tier.Name);
+        Assert.Null(tier.AllianceCode);
+        await _repo.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// An optional reference left unset is not an unknown one: a tier belonging to no alliance is
+    /// the common case, so it must cost no lookup and can never be refused.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Create_NoAllianceCode_LooksNothingUpAndSaves(string? allianceCode)
+    {
+        GivenProgram(1);
+        var handler = new CreateLoyaltyTierCommandHandler(_repo, _alliances);
+
+        await handler.Handle(
+            new CreateLoyaltyTierCommand(1, "GOLD", "Gold", 3, allianceCode, null),
+            CancellationToken.None);
+
+        await _alliances.DidNotReceive().FindByCodeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _repo.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// The caller's casing never decides the answer — the same rule every other
+    /// <c>ReferenceExistence</c> check follows. The lookup is made with the canonical code, which is
+    /// also what LoungeEligibilityService now compares case-insensitively, so what this accepts is
+    /// what eligibility will actually match.
+    /// </summary>
+    [Fact]
+    public async Task Create_LowerCaseAllianceCode_LooksTheCanonicalCodeUpAndSaves()
+    {
+        GivenProgram(1);
+        var handler = new CreateLoyaltyTierCommandHandler(_repo, _alliances);
+
+        await handler.Handle(
+            new CreateLoyaltyTierCommand(1, "GOLD", "Gold", 3, "ow", "EMD"),
+            CancellationToken.None);
+
+        await _alliances.Received(1).FindByCodeAsync("OW", Arg.Any<CancellationToken>());
+        await _repo.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
     private LoyaltyProgram GivenProgram(int programId, params (string Code, int Rank, int Id)[] tiers)
     {
         var program = LoyaltyProgram.Create("BAEC", "BA Executive Club", 1, null);

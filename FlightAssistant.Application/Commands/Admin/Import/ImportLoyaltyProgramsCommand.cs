@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using FlightAssistant.Application.Commands.Admin.Common;
 using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Loyalty.Entities;
@@ -47,12 +48,18 @@ public sealed class ImportLoyaltyProgramsCommandHandler : IRequestHandler<Import
 {
     private readonly ILoyaltyRepository _loyaltyRepo;
     private readonly IRefDataRepository _refDataRepo;
+    private readonly IAllianceRepository _alliances;
     private readonly IAdminContext _adminContext;
 
-    public ImportLoyaltyProgramsCommandHandler(ILoyaltyRepository loyaltyRepo, IRefDataRepository refDataRepo, IAdminContext adminContext)
+    public ImportLoyaltyProgramsCommandHandler(
+        ILoyaltyRepository loyaltyRepo,
+        IRefDataRepository refDataRepo,
+        IAllianceRepository alliances,
+        IAdminContext adminContext)
     {
         _loyaltyRepo = loyaltyRepo;
         _refDataRepo = refDataRepo;
+        _alliances = alliances;
         _adminContext = adminContext;
     }
 
@@ -72,6 +79,20 @@ public sealed class ImportLoyaltyProgramsCommandHandler : IRequestHandler<Import
                 {
                     errors.Add($"LoyaltyProgram '{dto.Code}': {verification.RejectionReason}");
                     continue;
+                }
+
+                // Inside the per-row try, and *before* the first mutation below, for two separate
+                // reasons. Inside, because this handler saves once after the loop (see CLAUDE.md on
+                // the two airline/airport importers): a bad alliance code is this row's error and
+                // the rest of the file still imports. Before, because the update branch mutates a
+                // tracked LoyaltyProgram before it builds the tiers, and that single save would
+                // otherwise persist the program edit of a row whose tier was refused.
+                foreach (var allianceCode in dto.Tiers
+                             .Select(t => t.AllianceCode)
+                             .Where(c => !string.IsNullOrWhiteSpace(c))
+                             .Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    await ReferenceExistence.EnsureAllianceExistsAsync(_alliances, allianceCode, "LoyaltyTier", ct);
                 }
 
                 var kind = await _loyaltyRepo.FindKindByCodeAsync(dto.KindCode, ct);

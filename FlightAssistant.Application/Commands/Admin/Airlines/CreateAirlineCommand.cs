@@ -30,7 +30,7 @@ namespace FlightAssistant.Application.Commands.Admin.Airlines
 
         public async Task<int> Handle(CreateAirlineCommand cmd, CancellationToken ct)
         {
-            await ReferenceExistence.EnsureAllianceExistsAsync(_alliances, cmd.AllianceCode, ct);
+            await ReferenceExistence.EnsureAllianceExistsAsync(_alliances, cmd.AllianceCode, "Airline", ct);
             await ReferenceExistence.EnsureCountryExistsAsync(_countries, cmd.CountryCode, "Airline", ct);
             var airline = Airline.Create(cmd.Iata, cmd.Icao, cmd.Name, cmd.CountryCode, cmd.AllianceCode);
             await _repo.AddAsync(airline, ct);

@@ -80,7 +80,7 @@ public sealed class ImportAirlinesCommandHandler : IRequestHandler<ImportAirline
                 // Inside the per-row try on purpose (#449): the guard's 409 becomes this row's
                 // error, where the constraint failure it replaces could not — SaveChangesAsync
                 // runs once after the loop, so one bad code used to fail every row with a 500.
-                await ReferenceExistence.EnsureAllianceExistsAsync(_alliances, dto.AllianceCode, ct);
+                await ReferenceExistence.EnsureAllianceExistsAsync(_alliances, dto.AllianceCode, "Airline", ct);
                 await ReferenceExistence.EnsureCountryExistsAsync(_countries, dto.CountryCode, "Airline", ct);
 
                 Airline? existing = null;
