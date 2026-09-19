@@ -81,7 +81,7 @@ namespace FlightAssistant.Application.Providers
 
             new("Verification", "Airline checks",
                 [AeroApi], ProviderJobs.VerificationAirline, null,
-                "aeroapi $0.015/lookup, list as of 2026-09-19 — the most steerable cost here"),
+                "aeroapi $0.015/lookup, list as of 2026-09-19 — the priciest verification check here, with no cheaper source registered for Airline"),
 
             new("Verification", "Country checks",
                 [Mledoze], ProviderJobs.VerificationCountry, null,

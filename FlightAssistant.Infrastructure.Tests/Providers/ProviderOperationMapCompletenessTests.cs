@@ -112,5 +112,37 @@ namespace FlightAssistant.Infrastructure.Tests.Providers
             Assert.NotNull(row.Note);
             Assert.Contains("SoftLimit", row.Note!);
         }
+
+        // The expected number of ProviderOperationMap.Entries rows. Change this number in the same
+        // commit as any row addition or removal -- see TheMapHasNotSilentlyLostOrGainedARow below.
+        private const int ExpectedEntryCount = 10;
+
+        /// <summary>
+        /// Fix round 1 (#531 task 11): the four guards above each check the <i>shape</i> of whatever
+        /// rows happen to be present -- none of them can see a row that is simply gone.
+        /// <see cref="EveryRealProviderAppearsOnTheMap"/> only fails when a deletion removes the
+        /// *last* surviving row naming a given provider (six rows name "aeroapi", so deleting any one
+        /// of them alone leaves it green); <see cref="EveryRoutingKeyAppearsOnExactlyOneRow"/> only
+        /// fires for a row that carried a <c>RoutingKey</c>; and
+        /// <see cref="EveryRowIsEitherSwitchableOrExplainsWhyNot"/> iterates <c>Entries</c> as it
+        /// stands, so an absent row leaves it nothing to fail. Measured: deleting the fixed,
+        /// AeroApi-named "Status sync -- Fast and Live modes" row left all four of those tests green.
+        /// This is the one guard that would catch such a deletion, or an unreviewed addition: a
+        /// failure here means "you changed the map -- confirm you meant to", not "the map is broken".
+        ///
+        /// <para>
+        /// Deliberately a count, not a pin on every (Trigger, Operation) pair: that would be a second
+        /// registry to keep in step with the map itself -- the exact duplication this codebase avoids
+        /// elsewhere (one copy of the routing rule, one copy of the options rule, one copy of the
+        /// entity-type mapping). A count can't say <i>which</i> row went missing, and that is an
+        /// accepted limitation -- it still turns a silent loss into a failing test, which is this
+        /// guard's entire purpose.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void TheMapHasNotSilentlyLostOrGainedARow()
+        {
+            Assert.Equal(ExpectedEntryCount, ProviderOperationMap.Entries.Count);
+        }
     }
 }
