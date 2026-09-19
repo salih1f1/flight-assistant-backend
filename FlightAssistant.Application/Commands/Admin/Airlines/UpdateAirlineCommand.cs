@@ -33,7 +33,7 @@ namespace FlightAssistant.Application.Commands.Admin.Airlines
         {
             var airline = await _repo.GetByIdAsync(cmd.Id, ct)
                 ?? throw new DomainException($"Airline {cmd.Id} not found.", 404);
-            await ReferenceExistence.EnsureAllianceExistsAsync(_alliances, cmd.AllianceCode, ct);
+            await ReferenceExistence.EnsureAllianceExistsAsync(_alliances, cmd.AllianceCode, "Airline", ct);
             await ReferenceExistence.EnsureCountryExistsAsync(_countries, cmd.CountryCode, "Airline", ct);
             airline.Update(cmd.Iata, cmd.Icao, cmd.Name, cmd.CountryCode, cmd.AllianceCode);
             await _repo.SaveChangesAsync(ct);

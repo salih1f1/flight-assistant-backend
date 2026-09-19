@@ -1,3 +1,4 @@
+using FlightAssistant.Application.Commands.Admin.Common;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FluentValidation;
@@ -17,12 +18,18 @@ namespace FlightAssistant.Application.Commands.Admin.Loyalty
     public sealed class CreateLoyaltyTierCommandHandler : IRequestHandler<CreateLoyaltyTierCommand, int>
     {
         private readonly ILoyaltyRepository _repo;
-        public CreateLoyaltyTierCommandHandler(ILoyaltyRepository repo) => _repo = repo;
+        private readonly IAllianceRepository _alliances;
+        public CreateLoyaltyTierCommandHandler(ILoyaltyRepository repo, IAllianceRepository alliances)
+        {
+            _repo = repo;
+            _alliances = alliances;
+        }
 
         public async Task<int> Handle(CreateLoyaltyTierCommand cmd, CancellationToken ct)
         {
             var program = LoyaltyTierGuard.EnsureProgram(await _repo.GetProgramByIdAsync(cmd.ProgramId, ct), cmd.ProgramId);
             LoyaltyTierGuard.EnsureNoClash(program, cmd.Code, cmd.Rank);
+            await ReferenceExistence.EnsureAllianceExistsAsync(_alliances, cmd.AllianceCode, "LoyaltyTier", ct);
 
             var tier = LoyaltyTier.Create(program.Id, cmd.Code, cmd.Name, cmd.Rank, cmd.AllianceCode, cmd.AllianceTierCode);
             // The program owns its tiers, so adding through the aggregate is the whole write: the

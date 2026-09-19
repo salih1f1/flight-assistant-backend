@@ -5,6 +5,7 @@ using FlightAssistant.Application.Interfaces.Administration;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Loyalty.Entities;
+using FlightAssistant.Domain.ReferenceData.Entities;
 using NSubstitute;
 using NSubstitute.ReturnsExtensions;
 
@@ -14,9 +15,16 @@ public class ImportLoyaltyProgramsCommandHandlerTests
 {
     private readonly ILoyaltyRepository _loyaltyRepo = Substitute.For<ILoyaltyRepository>();
     private readonly IRefDataRepository _refRepo = Substitute.For<IRefDataRepository>();
+    private readonly IAllianceRepository _alliances = Substitute.For<IAllianceRepository>();
     private readonly IAdminContext _adminContext = new AdminContext { ActorId = "importing-admin" };
 
-    private ImportLoyaltyProgramsCommandHandler Handler() => new(_loyaltyRepo, _refRepo, _adminContext);
+    public ImportLoyaltyProgramsCommandHandlerTests() =>
+        // Alliance codes resolve unless a test says otherwise — see the same note on
+        // AdminLoyaltyTierCommandHandlerTests.
+        _alliances.FindByCodeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(ci => Alliance.Create(ci.Arg<string>(), "Some Alliance"));
+
+    private ImportLoyaltyProgramsCommandHandler Handler() => new(_loyaltyRepo, _refRepo, _alliances, _adminContext);
 
     [Fact]
     public async Task Handle_NewProgram_ResolvesKindAndAirlineThenInserts()
@@ -202,5 +210,105 @@ public class ImportLoyaltyProgramsCommandHandlerTests
         Assert.Empty(result.Errors);
         Assert.NotNull(added);
         Assert.Equal("BA-EXEC", added!.Code);
+    }
+
+    // ── The alliance-code guard (#508) ────────────────────────────────────────
+
+    /// <summary>
+    /// The guard sits inside the per-row try, like the two airline/airport importers': this handler
+    /// saves once after the loop, so without it one bad alliance code in a file of 500 programs
+    /// would fail every row with a 500 while Errors came back empty.
+    /// </summary>
+    [Fact]
+    public async Task Handle_TierNamesAnUnknownAlliance_IsThatRowsErrorAndTheRestStillImports()
+    {
+        var kind = LoyaltyProgramKind.Create("airline", "Airline");
+        _loyaltyRepo.FindKindByCodeAsync("airline", Arg.Any<CancellationToken>()).Returns(kind);
+        _loyaltyRepo.FindProgramByCodeWithTiersAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).ReturnsNull();
+        _alliances.FindByCodeAsync("STAR", Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var bad = new LoyaltyProgramImportDto("MS", "Miles and Smiles", "airline", null,
+            [new LoyaltyTierImportDto("ELITE", "Elite", 1, "STAR", "*G")]);
+        var good = new LoyaltyProgramImportDto("BAEC", "Executive Club", "airline", null,
+            [new LoyaltyTierImportDto("SILVER", "Silver", 1, "OW", "SAPPHIRE")]);
+
+        var result = await Handler().Handle(new ImportLoyaltyProgramsCommand([bad, good]), CancellationToken.None);
+
+        Assert.Equal(1, result.Inserted);
+        var error = Assert.Single(result.Errors);
+        Assert.Contains("MS", error);
+        Assert.Contains("STAR", error);
+        await _loyaltyRepo.Received(1).AddProgramAsync(
+            Arg.Is<LoyaltyProgram>(p => p.Code == "BAEC"), Arg.Any<CancellationToken>());
+        await _loyaltyRepo.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// And it sits before the first mutation, not merely inside the try. The update branch edits a
+    /// tracked LoyaltyProgram before it rebuilds the tiers, and the one SaveChangesAsync after the
+    /// loop would otherwise commit that edit for a row whose tier was refused — a half-applied row,
+    /// reported as an error.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ExistingProgramWhoseTierNamesAnUnknownAlliance_IsNotPartlyUpdated()
+    {
+        var kind = LoyaltyProgramKind.Create("airline", "Airline");
+        _loyaltyRepo.FindKindByCodeAsync("airline", Arg.Any<CancellationToken>()).Returns(kind);
+        var existing = LoyaltyProgram.Create("MS", "Miles and Smiles", kind.Id, null);
+        _loyaltyRepo.FindProgramByCodeWithTiersAsync("MS", Arg.Any<CancellationToken>()).Returns(existing);
+        _alliances.FindByCodeAsync("STAR", Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var dto = new LoyaltyProgramImportDto("MS", "Renamed By The Import", "airline", null,
+            [new LoyaltyTierImportDto("ELITE", "Elite", 1, "STAR", "*G")]);
+
+        var result = await Handler().Handle(new ImportLoyaltyProgramsCommand([dto]), CancellationToken.None);
+
+        Assert.Equal(0, result.Updated);
+        Assert.Single(result.Errors);
+        Assert.Equal("Miles and Smiles", existing.Name);
+        Assert.Empty(existing.Tiers);
+    }
+
+    /// <summary>
+    /// A tier belonging to no alliance is the common case and must cost no lookup.
+    /// </summary>
+    [Fact]
+    public async Task Handle_TiersWithNoAllianceCode_LookNothingUp()
+    {
+        var kind = LoyaltyProgramKind.Create("airline", "Airline");
+        _loyaltyRepo.FindKindByCodeAsync("airline", Arg.Any<CancellationToken>()).Returns(kind);
+        _loyaltyRepo.FindProgramByCodeWithTiersAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var dto = new LoyaltyProgramImportDto("BAEC", "Executive Club", "airline", null,
+            [new LoyaltyTierImportDto("SILVER", "Silver", 1, null, null),
+             new LoyaltyTierImportDto("BRONZE", "Bronze", 2, "  ", null)]);
+
+        var result = await Handler().Handle(new ImportLoyaltyProgramsCommand([dto]), CancellationToken.None);
+
+        Assert.Equal(1, result.Inserted);
+        Assert.Empty(result.Errors);
+        await _alliances.DidNotReceive().FindByCodeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// One lookup per distinct code, not one per tier: a programme's tiers normally all belong to
+    /// the same alliance, and a 20-tier file should not issue 20 identical queries.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ManyTiersOfOneAlliance_LooksTheCodeUpOnce()
+    {
+        var kind = LoyaltyProgramKind.Create("airline", "Airline");
+        _loyaltyRepo.FindKindByCodeAsync("airline", Arg.Any<CancellationToken>()).Returns(kind);
+        _loyaltyRepo.FindProgramByCodeWithTiersAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).ReturnsNull();
+
+        var dto = new LoyaltyProgramImportDto("BAEC", "Executive Club", "airline", null,
+            [new LoyaltyTierImportDto("SILVER", "Silver", 1, "OW", "SAPPHIRE"),
+             new LoyaltyTierImportDto("GOLD", "Gold", 2, "ow", "EMERALD"),
+             new LoyaltyTierImportDto("BRONZE", "Bronze", 3, "OW", "RUBY")]);
+
+        var result = await Handler().Handle(new ImportLoyaltyProgramsCommand([dto]), CancellationToken.None);
+
+        Assert.Empty(result.Errors);
+        await _alliances.Received(1).FindByCodeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 }

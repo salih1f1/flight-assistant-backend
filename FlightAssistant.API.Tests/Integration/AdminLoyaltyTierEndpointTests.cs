@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FlightAssistant.Domain.Loyalty.Entities;
+using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
 using FlightAssistant.Infrastructure.Persistance;
 using Microsoft.EntityFrameworkCore;
@@ -12,7 +13,9 @@ namespace FlightAssistant.API.Tests.Integration;
 /// <summary>
 /// Writing a loyalty program's tiers (#488) end to end: that the routes are mapped, that a tier is
 /// reachable only through the program that owns it, and that the unique indexes on the table are
-/// reported as conflicts rather than reaching Postgres as 500s.
+/// reported as conflicts rather than reaching Postgres as 500s. Since #508 a tier's allianceCode
+/// must name a row in <c>alliances</c>, so every test here that sets one seeds it first — which is
+/// also why the codes below are the real two-letter ones rather than "STAR".
 /// </summary>
 [Collection("Integration")]
 public class AdminLoyaltyTierEndpointTests(FlightAssistantWebApplicationFactory factory)
@@ -28,13 +31,14 @@ public class AdminLoyaltyTierEndpointTests(FlightAssistantWebApplicationFactory 
     {
         var client = factory.CreateAdminClient();
         var programId = await SeedProgramAsync();
+        await SeedAllianceAsync("SA");
 
         var response = await client.PostAsJsonAsync($"admin/loyalty/programs/{programId}/tiers", new
         {
             code = "GOLD",
             name = "Gold",
             rank = 3,
-            allianceCode = "STAR",
+            allianceCode = "SA",
             allianceTierCode = "*G"
         });
 
@@ -48,7 +52,7 @@ public class AdminLoyaltyTierEndpointTests(FlightAssistantWebApplicationFactory 
         Assert.Equal("GOLD", tier.Code);
         Assert.Equal("Gold", tier.Name);
         Assert.Equal(3, tier.Rank);
-        Assert.Equal("STAR", tier.AllianceCode);
+        Assert.Equal("SA", tier.AllianceCode);
         Assert.Equal("*G", tier.AllianceTierCode);
     }
 
@@ -146,6 +150,7 @@ public class AdminLoyaltyTierEndpointTests(FlightAssistantWebApplicationFactory 
         var client = factory.CreateAdminClient();
         var programId = await SeedProgramAsync();
         var tierId = await CreateTierAsync(client, programId, "GOLD", "Gold", 3);
+        await SeedAllianceAsync("OW");
 
         var response = await client.PutAsJsonAsync($"admin/loyalty/programs/{programId}/tiers/{tierId}", new
         {
@@ -314,6 +319,60 @@ public class AdminLoyaltyTierEndpointTests(FlightAssistantWebApplicationFactory 
             "Deleting a tier must not take the memberships that pointed at it with it.");
     }
 
+    // ── The alliance-code guard (#508) ────────────────────────────────────────
+
+    /// <summary>
+    /// loyalty_tiers.AllianceCode has no foreign key, so unlike the unique indexes above this guard
+    /// is not standing in for a database failure — nothing downstream ever objects to a bad code.
+    /// It just stops <c>LoungeEligibilityService</c> matching a <c>LoungeProvider</c> of Kind
+    /// Alliance, denying a traveler lounge access they hold the status for, silently. These two
+    /// prove the guard is wired through DI — both tier handlers gained an
+    /// <c>IAllianceRepository</c> — and that the route answers 409 rather than 201/204.
+    /// </summary>
+    [Fact]
+    public async Task CreateTier_AllianceCodeThatIsNoAlliance_Returns409AsAProblemDocument()
+    {
+        var client = factory.CreateAdminClient();
+        var programId = await SeedProgramAsync();
+
+        var response = await client.PostAsJsonAsync($"admin/loyalty/programs/{programId}/tiers", new
+        {
+            code = "ELITE",
+            name = "Elite",
+            rank = 1,
+            allianceCode = "ZZ",
+            allianceTierCode = "*G"
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("ZZ", await response.Content.ReadAsStringAsync());
+        Assert.Empty(await GetTiersAsync(client, programId));
+    }
+
+    [Fact]
+    public async Task UpdateTier_AllianceCodeThatIsNoAlliance_Returns409AndLeavesTheTierAlone()
+    {
+        var client = factory.CreateAdminClient();
+        var programId = await SeedProgramAsync();
+        var tierId = await CreateTierAsync(client, programId, "SILVER", "Silver", 1);
+
+        var response = await client.PutAsJsonAsync($"admin/loyalty/programs/{programId}/tiers/{tierId}", new
+        {
+            code = "SILVER",
+            name = "Silver Elite",
+            rank = 2,
+            allianceCode = "ZZ",
+            allianceTierCode = "SILVER"
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("ZZ", await response.Content.ReadAsStringAsync());
+        var tier = Assert.Single(await GetTiersAsync(client, programId));
+        Assert.Equal("Silver", tier.Name);
+        Assert.Null(tier.AllianceCode);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -334,6 +393,23 @@ public class AdminLoyaltyTierEndpointTests(FlightAssistantWebApplicationFactory 
         db.LoyaltyPrograms.Add(program);
         await db.SaveChangesAsync();
         return program.Id;
+    }
+
+    /// <summary>
+    /// The alliance a tier's code has to name (#508). Idempotent, because the "Integration"
+    /// collection shares one database across every class in it and more than one test here wants
+    /// the same alliance.
+    /// </summary>
+    private async Task SeedAllianceAsync(string code)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+
+        if (await db.Alliances.AsNoTracking().AnyAsync(a => a.Code == code))
+            return;
+
+        db.Alliances.Add(Alliance.Create(code, code + " Alliance"));
+        await db.SaveChangesAsync();
     }
 
     /// <summary>A traveler holding the given tier, for the delete-with-membership test.</summary>

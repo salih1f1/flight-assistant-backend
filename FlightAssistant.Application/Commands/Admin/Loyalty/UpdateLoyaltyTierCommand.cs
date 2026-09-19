@@ -1,3 +1,4 @@
+using FlightAssistant.Application.Commands.Admin.Common;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FluentValidation;
 using MediatR;
@@ -17,13 +18,19 @@ namespace FlightAssistant.Application.Commands.Admin.Loyalty
     public sealed class UpdateLoyaltyTierCommandHandler : IRequestHandler<UpdateLoyaltyTierCommand>
     {
         private readonly ILoyaltyRepository _repo;
-        public UpdateLoyaltyTierCommandHandler(ILoyaltyRepository repo) => _repo = repo;
+        private readonly IAllianceRepository _alliances;
+        public UpdateLoyaltyTierCommandHandler(ILoyaltyRepository repo, IAllianceRepository alliances)
+        {
+            _repo = repo;
+            _alliances = alliances;
+        }
 
         public async Task Handle(UpdateLoyaltyTierCommand cmd, CancellationToken ct)
         {
             var program = LoyaltyTierGuard.EnsureProgram(await _repo.GetProgramByIdAsync(cmd.ProgramId, ct), cmd.ProgramId);
             var tier = LoyaltyTierGuard.EnsureTier(program, cmd.TierId);
             LoyaltyTierGuard.EnsureNoClash(program, cmd.Code, cmd.Rank, exceptTierId: tier.Id);
+            await ReferenceExistence.EnsureAllianceExistsAsync(_alliances, cmd.AllianceCode, "LoyaltyTier", ct);
 
             tier.Update(cmd.Code, cmd.Name, cmd.Rank, cmd.AllianceCode, cmd.AllianceTierCode);
             await _repo.SaveChangesAsync(ct);
