@@ -25,12 +25,51 @@ namespace FlightAssistant.Application.ReferenceData
     /// The outcome of one <see cref="IReferenceDataProvisioner.ProvisionAsync"/> call, naming the
     /// entity that failed so the caller's 404 or 503 can say which one it was.
     /// </summary>
-    public sealed record ReferenceProvisionResult(
-        ReferenceProvisionStatus Status,
-        VerificationEntityType? FailedType,
-        string? FailedCode,
-        string? DiagnosticDetail)
+    public sealed record ReferenceProvisionResult
     {
+        /// <summary>
+        /// Private so the three factories below are the <b>only</b> way to build one (#510). This
+        /// was a public positional constructor, which meant
+        /// <c>new ReferenceProvisionResult(ReferenceProvisionStatus.NotFound, null, null, null)</c>
+        /// compiled -- a <c>NotFound</c> naming no entity. Nothing built one, because the factories
+        /// were already the only path anything used, but <c>TrackFlightCommandHandler</c>'s
+        /// <c>ToDomainException</c> dereferences <c>FailedType!.Value</c> and <c>FailedCode!</c> on
+        /// exactly that branch, so such a result would have been a <c>NullReferenceException</c>
+        /// inside <c>POST /flights</c>. The <c>!</c> there is now provably correct rather than
+        /// correct by convention.
+        ///
+        /// <para>
+        /// The properties are get-only rather than <c>init</c> for the same reason: an <c>init</c>
+        /// setter would let a <c>with</c> expression rebuild the type into a state the factories
+        /// refuse, which is the hole this closes from the other side. Value equality, which the
+        /// tests rely on, is unaffected -- it comes from being a record, not from the constructor's
+        /// accessibility.
+        /// </para>
+        /// </summary>
+        private ReferenceProvisionResult(
+            ReferenceProvisionStatus status,
+            VerificationEntityType? failedType,
+            string? failedCode,
+            string? diagnosticDetail)
+        {
+            Status = status;
+            FailedType = failedType;
+            FailedCode = failedCode;
+            DiagnosticDetail = diagnosticDetail;
+        }
+
+        public ReferenceProvisionStatus Status { get; }
+
+        /// <summary>The entity that failed. Non-null for <c>NotFound</c> and <c>Unavailable</c>,
+        /// null for <c>Provisioned</c> -- guaranteed by the factories being the only constructor.</summary>
+        public VerificationEntityType? FailedType { get; }
+
+        /// <summary>The code that entity was looked up by. Non-null exactly when
+        /// <see cref="FailedType"/> is.</summary>
+        public string? FailedCode { get; }
+
+        public string? DiagnosticDetail { get; }
+
         public static readonly ReferenceProvisionResult Provisioned =
             new(ReferenceProvisionStatus.Provisioned, null, null, null);
 

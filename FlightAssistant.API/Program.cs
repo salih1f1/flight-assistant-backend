@@ -5,6 +5,7 @@ using FlightAssistant.API.Endpoints.Admin;
 using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Interfaces.DataSources;
 using FlightAssistant.API.Infrastructure;
+using FlightAssistant.API.Authentication;
 using FlightAssistant.API.Middleware;
 using FlightAssistant.Application;
 using FlightAssistant.Application.Administration;
@@ -139,7 +140,23 @@ if (aiConnectionString is not null)
         options.EnableAdaptiveSampling = true;
     });
 }
-builder.Services.AddProblemDetails();
+// Framework-produced problem documents — minimal-API parameter binding, an endpoint's own
+// Results.NotFound(), anything UseStatusCodePages fills in — are written by ASP.NET's own problem
+// writer, never by GlobalExceptionHandler, and that writer stamps traceId as
+// Activity.Current?.Id ?? HttpContext.TraceIdentifier. Nothing in this app registers an
+// ActivityListener unless Application Insights is configured, so on every other deployment that
+// fell through to the connection id — a string that appears in no log line, which is exactly the
+// hole #319 set out to close and the one place a caller can actually read an id back (#413).
+// Overwrite it with the request's correlation id, the same value CorrelationIdMiddleware put on the
+// X-Correlation-Id header and every Serilog line. GlobalExceptionHandler writes its problems
+// directly and deliberately does not route through IProblemDetailsService, so it is untouched by
+// this and keeps setting the same id itself.
+builder.Services.AddProblemDetails(options =>
+    options.CustomizeProblemDetails = context =>
+    {
+        if (context.HttpContext.Items[CorrelationIdMiddleware.ItemsKey] is string correlationId)
+            context.ProblemDetails.Extensions["traceId"] = correlationId;
+    });
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddScoped<TravelerContext>();
 
@@ -216,6 +233,23 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("AdminOnly", policy =>
         policy.RequireAuthenticatedUser()
               .RequireRole("admin"));
+
+    // Traveler-facing scope enforcement, previously a VerifyUserHasAnyAcceptedScope call at the top
+    // of each of twenty handlers (#413). That helper commits a 403 and *then* throws, and because
+    // the response has already started UseExceptionHandler declines to run — so the exception
+    // escaped the entire pipeline, the caller got a 403 with no body and no content type, and
+    // Serilog's request logging (which logs a hardcoded 500 for any exception passing through it)
+    // recorded the request as a 500. As a policy the check runs before the handler, nothing has
+    // started, and the refusal is an ordinary authorization 403 that UseStatusCodePages renders as
+    // a problem document like every other error this API returns.
+    //
+    // Consequence worth knowing: the check now runs before model binding rather than after, so a
+    // request that both lacks the scope and fails binding answers 403 where it used to answer 400.
+    // That is the better order — an unauthorized request should not be parsed first — but it is a
+    // change in precedence, not just in plumbing.
+    options.AddPolicy("AccessAsUser", policy =>
+        policy.RequireAuthenticatedUser()
+              .RequireAssertion(context => context.User.HasScope("access_as_user")));
 });
 
 // App Service terminates TLS and proxies every request, so without the forwarded headers
@@ -392,9 +426,23 @@ if (app.Environment.IsDevelopment() || app.Environment.IsStaging())
 }
 
 app.UseMiddleware<CorrelationIdMiddleware>();
+
+// Request logging sits OUTSIDE the exception handler, and the order is the point (#413).
+// Serilog's request-logging middleware logs a hardcoded 500 for any exception that passes through
+// it, then rethrows. With it registered inside UseExceptionHandler, every exception-derived
+// response was logged as "responded 500" at Error while the client received something else
+// entirely: measured, a DomainException(404) produced "[ERR] ... responded 500" on the line before
+// Kestrel's own "Request finished ... 404". That covered every DomainException status — 404, 409,
+// 503 — and every FluentValidation 400, so the Error level was wrong too, and since the
+// Application Insights sink ships Warning-and-above only (#440), those bogus Errors were exactly
+// what was being shipped. Outside it, the handler converts the exception first and Serilog logs
+// what was actually sent, at the level that status deserves. The exception itself is not lost: it
+// stays on GlobalExceptionHandler's own "Unhandled exception on {Method} {Path}" line for the 500s
+// that warrant one, rather than being attached to every 404.
+// CorrelationIdMiddleware stays outermost so its LogContext property is still on this line.
+app.UseSerilogRequestLogging();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
-app.UseSerilogRequestLogging();
 app.UseHttpsRedirection();
 app.UseCors();
 app.UseAuthentication();

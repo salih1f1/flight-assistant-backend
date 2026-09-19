@@ -27,7 +27,10 @@ public class AdminServerErrorDeclarationTests(FlightAssistantWebApplicationFacto
     /// or rejected (<c>GetCiRunsQuery</c>, <c>GetCiRunTestsQuery</c>).</item>
     /// <item><c>/admin/flights/search</c>, <c>/admin/flights/{id}/sync</c> — AeroAPI key missing or
     /// rejected (<c>SearchFlightsQuery</c>, <c>SyncFlightStatusCommand</c>).</item>
-    /// <item><c>/admin/usage/aeroapi</c> — same key, on the usage route.</item>
+    /// <item><c>/admin/usage/aeroapi</c>, <c>/admin/usage/flight-data</c> — same key, on the two
+    /// usage routes: both read AeroAPI's own account-usage report through the shared
+    /// <c>AeroApiUsageCache</c>, and <c>AeroApiResponse</c> maps a 401/403 there (our key or plan)
+    /// to a 500 (#503).</item>
     /// </list>
     /// A new entry here is a claim that the operation throws its own 500. Check that it does before
     /// adding one: the alternative is that the ambient 500 has crept back in under a new name.
@@ -38,6 +41,7 @@ public class AdminServerErrorDeclarationTests(FlightAssistantWebApplicationFacto
         "GET /admin/ci/runs/{id}/tests",
         "GET /admin/flights/search",
         "GET /admin/usage/aeroapi",
+        "GET /admin/usage/flight-data",
         "POST /admin/flights/{id}/sync",
     ];
 

@@ -16,7 +16,11 @@ public class TestAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions
         UrlEncoder encoder)
         : base(options, logger, encoder) { }
 
-    // Accepts "Bearer test-{guid}" for users and "Bearer test-admin-{guid}" for admins.
+    // Accepts "Bearer test-{guid}" for users, "Bearer test-admin-{guid}" for admins, and
+    // "Bearer test-noscope-{guid}" for an authenticated caller whose token carries no API scope
+    // (#413). Without that third form no test could produce a scope failure at all, so the defect
+    // it causes — a bodyless 403 whose escaping exception was logged as a 500 — was unreachable
+    // from this suite.
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         var authHeader = Request.Headers.Authorization.ToString();
@@ -25,15 +29,20 @@ public class TestAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions
 
         var token = authHeader["Bearer test-".Length..];
         var isAdmin = token.StartsWith("admin-");
-        var userId = isAdmin ? token["admin-".Length..] : token;
+        var hasNoScope = token.StartsWith("noscope-");
+        var userId = isAdmin
+            ? token["admin-".Length..]
+            : hasNoScope ? token["noscope-".Length..] : token;
 
-        var claims = new List<Claim>
+        var claims = new List<Claim> { new("oid", userId) };
+
+        if (!hasNoScope)
         {
-            new("oid", userId),
-            // Both scope claim forms for compatibility with VerifyUserHasAnyAcceptedScope
-            new("scp", "access_as_user"),
-            new("http://schemas.microsoft.com/identity/claims/scope", "access_as_user"),
-        };
+            // Both claim forms, because both occur in the real tenant and ClaimsPrincipalExtensions
+            // .HasScope accepts either.
+            claims.Add(new Claim("scp", "access_as_user"));
+            claims.Add(new Claim("http://schemas.microsoft.com/identity/claims/scope", "access_as_user"));
+        }
 
         if (isAdmin)
             claims.Add(new Claim("roles", "admin"));

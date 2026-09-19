@@ -206,6 +206,16 @@ namespace FlightAssistant.Application.ReferenceData
                             icao => airports.FindByIcaoAsync(icao, ct)).ConfigureAwait(false);
                         if (heldAirport is not null)
                         {
+                            // A row whose own Iata is a *different* non-blank code is a data
+                            // conflict, not something to complete: see FlagIataConflictAsync.
+                            if (IsIataConflict(heldAirport.Iata, entry.Code))
+                            {
+                                await FlagIataConflictAsync(
+                                    heldAirport, heldAirport.Iata, heldAirport.Icao, entry,
+                                    fetch.SourceName!, airports.SaveChangesAsync, ct).ConfigureAwait(false);
+                                return ReferenceProvisionResult.NotFound(entry.Type, entry.Code);
+                            }
+
                             CompleteAirport(heldAirport, entry.Code, fetch.Values!);
                             wroteAnything = true;
                             break;
@@ -235,6 +245,14 @@ namespace FlightAssistant.Application.ReferenceData
                             icao => airlines.FindByIcaoAsync(icao, ct)).ConfigureAwait(false);
                         if (heldAirline is not null)
                         {
+                            if (IsIataConflict(heldAirline.Iata, entry.Code))
+                            {
+                                await FlagIataConflictAsync(
+                                    heldAirline, heldAirline.Iata, heldAirline.Icao, entry,
+                                    fetch.SourceName!, airlines.SaveChangesAsync, ct).ConfigureAwait(false);
+                                return ReferenceProvisionResult.NotFound(entry.Type, entry.Code);
+                            }
+
                             CompleteAirline(heldAirline, entry.Code, fetch.Values!);
                             wroteAnything = true;
                             break;
@@ -445,6 +463,76 @@ namespace FlightAssistant.Application.ReferenceData
                 name: FillRequired(existing.Name, Value(values, nameof(Airline.Name)) ?? requestedIata),
                 countryCode: existing.CountryCode,
                 allianceCode: existing.AllianceCode);
+
+        /// <summary>
+        /// Whether a row found by the source's ICAO already carries a <em>different</em> non-blank
+        /// IATA than the one the caller asked for. A blank one is not a conflict -- that is the
+        /// ICAO-only row #465 exists to complete -- and an equal one cannot occur here, since the
+        /// handler's own lookup by that code would have found the row and never called this service.
+        /// </summary>
+        private static bool IsIataConflict(string? heldIata, string requestedIata) =>
+            !string.IsNullOrWhiteSpace(heldIata) &&
+            !heldIata.Equals(requestedIata, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Records that a row we hold and the source disagree about which IATA belongs to an ICAO,
+        /// and leaves the row's own data untouched (#494).
+        ///
+        /// <para>
+        /// <b>Why flag rather than rename or complete.</b> One of the two is wrong and nothing here
+        /// can tell which, so renaming on the source's word risks corrupting a row a human entered
+        /// deliberately. Completing it silently was the pre-#494 behaviour and was worse than
+        /// either: the row kept its own code, the handler re-resolved by the requested one, missed,
+        /// and answered 404 -- while this service reported <c>Provisioned</c>, so nothing was
+        /// negative-cached and every retry re-billed the source. For <c>aeroapi</c> that is $0.015
+        /// a time, at 10 requests a minute.
+        /// </para>
+        ///
+        /// <para>
+        /// <b>Where it surfaces.</b> <c>MarkVerificationFailed</c> is the same mechanism the
+        /// verification job's own mismatch path uses, so the row appears in
+        /// <c>GET /admin/verification-needs-attention</c> and under the data browser's
+        /// <c>VerificationIssue:*</c> filter with no new plumbing. It also stops the
+        /// flight-tracking trigger (#410) re-queueing the row while an admin is looking at it,
+        /// which is the documented behaviour for a flagged row and the right one here.
+        /// </para>
+        ///
+        /// <para>
+        /// <b>The save.</b> The flag is the whole deliverable, so it is committed even though the
+        /// outcome is <c>NotFound</c>. That does not weaken the all-or-nothing guarantee: rows this
+        /// service creates are collected in local lists and only <c>AddAsync</c>'d after the entry
+        /// loop, so returning from inside the loop means nothing was ever added and this save
+        /// commits exactly one mutation -- the flag on a row that already existed.
+        /// </para>
+        ///
+        /// <para>
+        /// A stale negative-cache entry cannot outlive the fix: once an admin corrects the IATA the
+        /// handler's own lookup succeeds, so this service is never called for that code again and
+        /// the entry is never read.
+        /// </para>
+        /// </summary>
+        private async Task FlagIataConflictAsync(
+            SeedableEntity held,
+            string? heldIata,
+            string? heldIcao,
+            MissingReference entry,
+            string sourceName,
+            Func<CancellationToken, Task> saveAsync,
+            CancellationToken ct)
+        {
+            held.MarkVerificationFailed(
+                $"IATA conflict: this row holds '{heldIata}' for ICAO '{heldIcao}', but {sourceName} " +
+                $"reports that ICAO as '{entry.Code}'. One of the two is wrong. Auto-provisioning will " +
+                $"not rename an existing row, so tracking a flight on '{entry.Code}' answers 404 until " +
+                "this is corrected by hand.");
+
+            _logger.LogWarning(
+                "Reference {EntityType} '{Code}' conflicts with the row held under ICAO {Icao} as '{HeldIata}'; flagged for review.",
+                entry.Type, entry.Code, heldIcao, heldIata);
+
+            await saveAsync(ct).ConfigureAwait(false);
+            await RememberMissAsync(entry.Type, entry.Code, ct).ConfigureAwait(false);
+        }
 
         /// <summary>The source's value only where the row has none. Blank counts as none: a row
         /// imported with an empty name has nothing worth keeping there.</summary>

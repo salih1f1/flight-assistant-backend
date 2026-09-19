@@ -12,7 +12,8 @@ namespace FlightAssistant.API.Tests.Integration;
 [Collection("Integration")]
 public class AdminAllianceEndpointTests(FlightAssistantWebApplicationFactory factory)
 {
-    private sealed record AllianceAirline(int Id, string? Iata, string? Icao, string Name, string CountryCode);
+    private sealed record AllianceAirline(
+        int Id, string? Iata, string? Icao, string Name, string CountryCode, string? LoyaltyProgramName);
     private sealed record AllianceDetail(int Id, string Code, string Name, List<AllianceAirline> Airlines);
 
     private static async Task ImportAsync(HttpClient client, string dataset, string csv)
@@ -40,6 +41,12 @@ public class AdminAllianceEndpointTests(FlightAssistantWebApplicationFactory fac
             "Iata,Icao,Name,CountryCode,AllianceCode\n"
             + "Z1,ZZA,Zeta Airways,GB,ZZ\n"
             + "Z2,ZZB,Alpha Airways,GB,ZZ");
+        // One of the two airlines runs a program and the other does not, so the response has to
+        // carry both the name and the null.
+        await ImportAsync(client, "loyalty-program-kinds", "Code,Name,Description\nAIRLINE,Airline,");
+        await ImportAsync(client, "loyalty-programs",
+            "Code,Name,KindCode,AirlineIata,AllianceCode,Tiers\n"
+            + "ZZAP,Zeta Miles,AIRLINE,Z1,,[]");
 
         var rows = await client.GetFromJsonAsync<BrowsablePage>("admin/data/alliances?PageSize=200");
         var row = rows!.Items.Single(r => r["Code"].GetString() == "ZZ");
@@ -62,6 +69,24 @@ public class AdminAllianceEndpointTests(FlightAssistantWebApplicationFactory fac
         Assert.Equal(["Alpha Airways", "Zeta Airways"], detail.Airlines.Select(a => a.Name));
         Assert.Equal("Z2", detail.Airlines[0].Iata);
         Assert.Equal("GB", detail.Airlines[0].CountryCode);
+    }
+
+    /// <summary>
+    /// The airline's own loyalty program travels with the row (#495): the panel shows this list on
+    /// the alliance's record page, and the program is what a member airline is read for.
+    /// </summary>
+    [Fact]
+    public async Task GetAllianceDetail_CarriesEachAirlinesLoyaltyProgramName()
+    {
+        var client = factory.CreateAdminClient();
+        var id = await GivenAllianceWithAirlinesAsync(client);
+
+        var detail = await client.GetFromJsonAsync<AllianceDetail>($"admin/alliances/{id}/detail");
+
+        Assert.NotNull(detail);
+        Assert.Equal("Zeta Miles", detail.Airlines.Single(a => a.Iata == "Z1").LoyaltyProgramName);
+        // An airline with no program of its own is still on the list, with an empty cell.
+        Assert.Null(detail.Airlines.Single(a => a.Iata == "Z2").LoyaltyProgramName);
     }
 
     [Fact]

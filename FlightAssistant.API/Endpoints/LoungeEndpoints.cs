@@ -2,22 +2,18 @@ using FlightAssistant.API.Authentication;
 using FlightAssistant.Application.Queries.Lounges;
 using FlightAssistant.Contracts.Responses.Lounges;
 using MediatR;
-using Microsoft.Identity.Web.Resource;
 
 namespace FlightAssistant.API.Endpoints
 {
     public static class LoungeEndpoints
     {
-        private const string ScopeAccessAsUser = "access_as_user";
-
         public static void MapLoungeEndpoints(this IEndpointRouteBuilder app)
         {
-            var group = app.MapGroup("lounges").RequireAuthorization().WithTags("Lounges");
+            var group = app.MapGroup("lounges").RequireAuthorization("AccessAsUser").WithTags("Lounges");
 
             // GET /lounges?airportIata=LHR — list lounges at an airport, annotated with eligibility
             group.MapGet("", async (HttpContext http, string airportIata, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = (Guid?)http.User.GetTravelerId();
 
                 var results = await mediator.Send(new GetLoungesAtAirportQuery(airportIata, travelerId), ct);
