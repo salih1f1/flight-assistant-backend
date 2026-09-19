@@ -23,5 +23,37 @@ namespace FlightAssistant.API.Authentication
         /// </summary>
         public static string GetAdminActorId(this ClaimsPrincipal user) =>
             user.FindFirstValue("oid") ?? user.FindFirstValue("sub") ?? "admin";
+
+        /// <summary>
+        /// Whether the token carries the given API scope. The one copy of this rule (#413), read by
+        /// the <c>AccessAsUser</c> authorization policy that replaced the per-handler
+        /// <c>VerifyUserHasAnyAcceptedScope</c> calls.
+        ///
+        /// <para>
+        /// Both claim types are accepted because both occur: Entra issues <c>scp</c> on a v2 access
+        /// token, while the v1 URI form is what <c>ClaimsIdentity</c> ends up with in some
+        /// configurations, and Microsoft.Identity.Web's own scope check reads both. The value is
+        /// <b>space-delimited</b> — a token granted more than one scope carries
+        /// <c>"access_as_user Files.Read"</c> in a single claim — so this splits rather than
+        /// comparing the whole string, which would reject exactly the multi-scope tokens it should
+        /// admit.
+        /// </para>
+        /// </summary>
+        public static bool HasScope(this ClaimsPrincipal user, string scope)
+        {
+            foreach (var claim in user.Claims)
+            {
+                if (claim.Type is not ("scp" or "http://schemas.microsoft.com/identity/claims/scope"))
+                    continue;
+
+                foreach (var granted in claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    if (string.Equals(granted, scope, StringComparison.Ordinal))
+                        return true;
+                }
+            }
+
+            return false;
+        }
     }
 }
