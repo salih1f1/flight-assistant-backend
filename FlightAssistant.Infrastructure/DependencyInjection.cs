@@ -462,6 +462,18 @@ namespace FlightAssistant.Infrastructure
             services.AddOptions<AzureCostOptions>()
                 .BindConfiguration(AzureCostOptions.SectionName);
 
+            // #523: fall back to the subscription App Service says it is hosting us in. The panel
+            // reports on the subscription the API runs in, and WEBSITE_OWNER_NAME already names it,
+            // so requiring the setting duplicated something the platform knows. PostConfigure rather
+            // than a branch in the provider: the provider then needs no knowledge of where the id
+            // came from, and IsConfigured keeps meaning "we know which subscription".
+            services.PostConfigure<AzureCostOptions>(options =>
+            {
+                if (!string.IsNullOrWhiteSpace(options.SubscriptionId)) return;
+                options.SubscriptionId = AzureSubscription.FromWebsiteOwnerName(
+                    config["WEBSITE_OWNER_NAME"]);
+            });
+
             // The same credential MECHANISM Program.cs already uses for Key Vault (DefaultAzureCredential)
             // -- this is a new token SCOPE (management.azure.com), not a new credential type.
             // Registered once as a singleton and cached here, not per call: constructing
