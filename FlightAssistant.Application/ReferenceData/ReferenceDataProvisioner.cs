@@ -98,8 +98,12 @@ namespace FlightAssistant.Application.ReferenceData
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                // Our own budget ran out, not the caller abandoning the request. The dataset download
-                // this was waiting on is shared and keeps running, so a retry shortly finds it warm.
+                // Our own budget ran out, not the caller abandoning the request. For the two dataset
+                // sources the download this was waiting on is shared and keeps running, so a retry
+                // shortly finds it warm -- but NOT for aeroapi (#401 R6): HasCachedData is always
+                // false and it caches nothing, so an aborted airline lookup leaves nothing warm and
+                // the retry starts over behind AeroApiThrottleGate. An airline can therefore 503
+                // here repeatedly while the gate is busy.
                 var first = missing.First();
                 _logger.LogInformation(
                     "Provisioning {EntityType} '{Code}' exceeded the {Budget} budget.",

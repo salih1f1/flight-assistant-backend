@@ -157,13 +157,22 @@ reference writes audited under `system` and leaves the traveler's own write unau
 
 The free dataset sources are never gated; they cost nothing.
 
-### Why no background queue is needed
+### Why no background queue is needed (for the free dataset sources)
 
 `VerificationDatasetCache` already shares one download across concurrent callers, and a
 caller's own cancellation cancels only its own *wait*, never the shared download. On a
 deadline timeout we simply return 503 — the OurAirports or mledoze download keeps running,
 and a retry seconds later finds it warm. An abandoned `AeroApiThrottleGate` reservation is
 likewise released, so a retry just re-queues.
+
+**This is false for `aeroapi`, and `aeroapi` is the airline source.** Per #401 R6 it has
+`HasCachedData == false` and caches nothing — every lookup is its own billed call — so an
+aborted airline lookup leaves nothing warm, and the retry starts over behind the throttle
+gate. The airline path can therefore still 503 while that gate is busy. Two consequences:
+`ReferenceProvisioning:Budget` has to comfortably exceed `AeroApi:MinRequestInterval` (hence
+the 30 s default, not 10 — see Configuration below), and whether the airline path would be
+better as a frankly best-effort one on a shorter budget is a real question this design does
+not settle.
 
 ## Configuration
 
@@ -172,7 +181,7 @@ New `ReferenceProvisioning` section, options pattern with `ValidateOnStart` like
 | Key | Default | Range | Notes |
 |---|---|---|---|
 | `ReferenceProvisioning:Enabled` | `true` | — | `false` restores today's 404 for a missing reference, but the tracking cap is still checked first, so an at-cap request answers 409 |
-| `ReferenceProvisioning:Budget` | `00:00:10` | 1 s–60 s | One wall-clock budget for the whole step |
+| `ReferenceProvisioning:Budget` | `00:00:30` | 1 s–120 s | One wall-clock budget for the whole step. Must exceed `AeroApi:MinRequestInterval` (12 s) with room to spare: the airline lookup waits on the shared throttle gate before its request is sent, and a cold usage-report read can add a second such wait |
 | `ReferenceProvisioning:NegativeCacheTtl` | `24:00:00` | 0–7 days | `0` disables the cache, so every attempt re-queries the source |
 
 The sources themselves are not configured again here: provisioning reads

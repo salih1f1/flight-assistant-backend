@@ -18,10 +18,17 @@ namespace FlightAssistant.Application.ReferenceData
         /// </summary>
         bool Enabled { get; }
 
-        /// <summary>One wall-clock budget for the whole provisioning step, however many entities
-        /// and sources it touches. Exceeding it is a 503, never a 404: we did not learn that the
-        /// entity is absent, only that we ran out of time. The shared dataset download keeps
-        /// running afterwards, so a retry finds it warm.</summary>
+        /// <summary>
+        /// One wall-clock budget for the whole provisioning step, however many entities and sources
+        /// it touches. Exceeding it is a 503, never a 404: we did not learn that the entity is
+        /// absent, only that we ran out of time. For <c>ourairports</c> and <c>mledoze</c> the
+        /// shared dataset download keeps running afterwards, so a retry finds it warm -- but
+        /// <c>aeroapi</c> caches nothing (#401 R6: <c>HasCachedData</c> is always false), so an
+        /// aborted airline lookup leaves nothing warm and the retry starts over behind
+        /// <c>AeroApiThrottleGate</c>. The airline path can therefore keep answering 503 while that
+        /// gate is busy, which is why this value has to exceed <c>AeroApi:MinRequestInterval</c>
+        /// with room to spare.
+        /// </summary>
         TimeSpan Budget { get; }
 
         /// <summary>How long "this source has no such entity" is remembered, so a repeated bogus

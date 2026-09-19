@@ -19,18 +19,30 @@ public class ReferenceProvisioningOptionsTests
     }
 
     [Fact]
-    public void Defaults_AreEnabledTenSecondsAndADay()
+    public void Defaults_AreEnabledThirtySecondsAndADay()
     {
         var options = new ReferenceProvisioningOptions();
 
         Assert.True(options.Enabled);
-        Assert.Equal(TimeSpan.FromSeconds(10), options.Budget);
+        // 30 s, not 10: the airline lookup waits on the shared AeroApiThrottleGate for up to a
+        // whole AeroApi:MinRequestInterval (12 s by default) before its request is even sent, and a
+        // cold usage-report read for the budget guard can add a second such wait. A 10 s budget was
+        // systematically shorter than the waiting it had to sit through.
+        Assert.Equal(TimeSpan.FromSeconds(30), options.Budget);
         Assert.Equal(TimeSpan.FromHours(24), options.NegativeCacheTtl);
+    }
+
+    [Fact]
+    public void Budget_AtTheTwoMinuteCeiling_IsValid()
+    {
+        var options = new ReferenceProvisioningOptions { Budget = TimeSpan.FromMinutes(2) };
+
+        Assert.Empty(Validate(options));
     }
 
     [Theory]
     [InlineData("00:00:00")]   // below the 1 s floor — a zero budget would fail every provision
-    [InlineData("00:01:01")]   // above the 60 s ceiling — a traveler request must not hang this long
+    [InlineData("00:02:01")]   // above the 120 s ceiling — a traveler request must not hang this long
     public void Budget_OutsideRange_FailsValidation(string budget)
     {
         var options = new ReferenceProvisioningOptions { Budget = TimeSpan.Parse(budget) };
