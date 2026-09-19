@@ -44,8 +44,7 @@ public static class AdminImportEndpoints
           .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
-          .ProducesValidationProblem()
-          .ProducesProblem(400);
+          .ProducesValidationProblem();
 
         group.MapPost("countries", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
@@ -58,8 +57,7 @@ public static class AdminImportEndpoints
           .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
-          .ProducesValidationProblem()
-          .ProducesProblem(400);
+          .ProducesValidationProblem();
 
         group.MapPost("airports", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
@@ -72,8 +70,7 @@ public static class AdminImportEndpoints
           .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
-          .ProducesValidationProblem()
-          .ProducesProblem(400);
+          .ProducesValidationProblem();
 
         group.MapPost("airlines", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
@@ -86,8 +83,7 @@ public static class AdminImportEndpoints
           .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
-          .ProducesValidationProblem()
-          .ProducesProblem(400);
+          .ProducesValidationProblem();
 
         group.MapPost("lounge-providers", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
@@ -100,8 +96,7 @@ public static class AdminImportEndpoints
           .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
-          .ProducesValidationProblem()
-          .ProducesProblem(400);
+          .ProducesValidationProblem();
 
         group.MapPost("loyalty-program-kinds", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
@@ -114,8 +109,7 @@ public static class AdminImportEndpoints
           .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
-          .ProducesValidationProblem()
-          .ProducesProblem(400);
+          .ProducesValidationProblem();
 
         group.MapPost("lounges", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
@@ -128,8 +122,7 @@ public static class AdminImportEndpoints
           .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
-          .ProducesValidationProblem()
-          .ProducesProblem(400);
+          .ProducesValidationProblem();
 
         group.MapPost("loyalty-programs", async Task<IResult> (IFormFile file, IMediator mediator, CancellationToken ct) =>
         {
@@ -142,7 +135,6 @@ public static class AdminImportEndpoints
           .WithDescription(VerificationDescription)
           .Produces<ImportResult>(200)
           .Produces<ImportResult>(207)
-          .ProducesValidationProblem()
-          .ProducesProblem(400);
+          .ProducesValidationProblem();
     }
 }
