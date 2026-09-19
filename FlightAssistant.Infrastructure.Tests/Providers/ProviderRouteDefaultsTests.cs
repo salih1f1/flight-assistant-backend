@@ -64,5 +64,31 @@ namespace FlightAssistant.Infrastructure.Tests.Providers
                 "ProviderRouteDefaults does not answer for every key in ProviderJobs.All -- " +
                 $"GET /admin/providers would 500 for at least one of them: {string.Join("; ", failures)}");
         }
+
+        // #531 fix round 2, GAP 2: the obligation test above proves For/IsCeilinged answer for
+        // every key without throwing, but pins nothing about what they return. That matters because
+        // the "is AeroDataBox reachable" rule is now duplicated in two places --
+        // FlightSearchRouter.ResolveAsync has its own `!_aeroDataBoxOptions.Value.IsConfigured`
+        // check, under its own test coverage -- and this copy, in ProviderRouteDefaults, had none.
+        // The two could diverge silently: one accepting a change the other ignores, or refusing one
+        // the other would honour.
+
+        [Fact]
+        public void IsCeilingedAndFor_WhenAeroDataBoxApiKeyIsUnset_CeilingedIsTrue_AndForReturnsAeroApi()
+        {
+            var defaults = Build(aeroDataBoxApiKey: null);
+
+            Assert.True(defaults.IsCeilinged(ProviderJobs.FlightSearchRoute));
+            Assert.Equal(new[] { ProviderJobs.AeroApi }, defaults.For(ProviderJobs.FlightSearchRoute));
+        }
+
+        [Fact]
+        public void IsCeilingedAndFor_WhenAeroDataBoxApiKeyIsSet_CeilingedIsFalse_AndForReturnsAeroDataBox()
+        {
+            var defaults = Build(aeroDataBoxApiKey: "key");
+
+            Assert.False(defaults.IsCeilinged(ProviderJobs.FlightSearchRoute));
+            Assert.Equal(new[] { ProviderJobs.AeroDataBox }, defaults.For(ProviderJobs.FlightSearchRoute));
+        }
     }
 }
