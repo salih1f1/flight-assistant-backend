@@ -71,6 +71,7 @@ namespace FlightAssistant.Application.Queries.Admin.Usage
                 snapshot.BudgetAmount,
                 snapshot.CurrentSpendAmount,
                 snapshot.Currency,
+                snapshot.TimeGrain,
                 snapshot.PeriodStartUtc,
                 snapshot.PeriodEndUtc,
                 snapshot.DataAsOfUtc,

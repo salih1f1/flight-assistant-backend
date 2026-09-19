@@ -107,7 +107,7 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Azure
                     // operator nothing about spend, so this is the one case worth a second call.
                     var (spend, currency) = await GetCostQuerySpendAsync(ct).ConfigureAwait(false);
                     return new AzureBudgetSnapshot(
-                        AzureBudgetState.NoBudget, null, null, spend, currency, null, null, null, null);
+                        AzureBudgetState.NoBudget, null, null, spend, currency, null, null, null, null, null);
                 }
 
                 return await MapBudgetAsync(budget.Value, ct).ConfigureAwait(false);
@@ -226,8 +226,14 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Azure
 
             var (periodStart, periodEnd) = ReadPeriod(properties);
 
+            // How often the budget resets. Reported rather than inferred from the period: a budget's
+            // validity window can span years while the spend figure covers one month (#525).
+            var timeGrain = properties.TryGetProperty("timeGrain", out var grain) && grain.ValueKind == JsonValueKind.String
+                ? grain.GetString()
+                : null;
+
             return new AzureBudgetSnapshot(
-                AzureBudgetState.Ok, name, amount, spend, currency, periodStart, periodEnd, DataAsOfUtc: null, Message: null);
+                AzureBudgetState.Ok, name, amount, spend, currency, timeGrain, periodStart, periodEnd, DataAsOfUtc: null, Message: null);
         }
 
         /// <summary>The budget's own <c>currentSpend</c>, when it carries one. Split out from

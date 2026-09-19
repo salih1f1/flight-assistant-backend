@@ -23,7 +23,7 @@ namespace FlightAssistant.Infrastructure.Tests.DataSources.Probes
         }
 
         private static AzureBudgetSnapshot Snapshot(AzureBudgetState state) => new(
-            state, null, null, null, null, null, null, null, null);
+            state, null, null, null, null, null, null, null, null, null);
 
         [Fact]
         public async Task Ok_MapsToOk()

@@ -17,6 +17,10 @@ namespace FlightAssistant.Contracts.Responses.Admin
         decimal? BudgetAmount,
         decimal? CurrentSpendAmount,
         string? Currency,
+        /// <param name="TimeGrain">How often the budget resets, as Azure reports it. The panel
+        /// describes the figure by this rather than by the period: a budget's validity window can
+        /// span years while its spend figure covers one month (#525).</param>
+        string? TimeGrain,
         DateTimeOffset? PeriodStartUtc,
         DateTimeOffset? PeriodEndUtc,
         DateTimeOffset? DataAsOfUtc,
