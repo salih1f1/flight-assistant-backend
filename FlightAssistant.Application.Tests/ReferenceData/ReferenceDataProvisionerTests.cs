@@ -890,4 +890,74 @@ public class ReferenceDataProvisionerTests
         await _airports.Received(1).AddAsync(
             Arg.Is<Airport>(a => a.Iata == "LHR" && a.SourceType == "auto"), Arg.Any<CancellationToken>());
     }
+
+    [Fact]
+    public async Task AnAirline_WhoseCountryNameCannotBeResolved_IsRemembered()
+    {
+        // The one NotFound this service decides *after* a billed lookup, and the one that needs no
+        // misconfiguration to hit: the mledoze reverse index covers name.common only, so any
+        // carrier whose aeroapi country differs from it -- "Czech Republic" vs Czechia, "Burma" vs
+        // Myanmar -- is a permanent 404. Without the entry below, the feature's own documented
+        // guarantee ("a repeated bogus designator is paid for once") does not hold for the only
+        // path that actually spends money.
+        _registry.TryGet("aeroapi").Returns(
+            new FakeSource("aeroapi", 0.015m, [VerificationEntityType.Airline], _ => FoundAirline("BA", "Atlantis")));
+        _countryNames.TryResolveCodeByNameAsync("Atlantis", Arg.Any<CancellationToken>())
+            .Returns(CountryCodeResolution.NotFound);
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airline, "BA")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.NotFound, result.Status);
+        await _cache.Received(1).SetAsync(
+            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airline, "BA"),
+            Arg.Any<string>(),
+            _options.NegativeCacheTtl,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AnAirport_TheSourceReportsWithNoCountryCode_IsRemembered()
+    {
+        // The other post-lookup NotFound: an airport with no country cannot satisfy its `countries`
+        // foreign key. Free source, so no money is at stake -- but the rule is uniform, because a
+        // rule applied per-branch is the one that gets a branch missed off it next time.
+        var noCountry = VerificationSourceFetchResult.Found(new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            [nameof(Airport.Iata)] = "LHR",
+            [nameof(Airport.Name)] = "Test Airport",
+            [nameof(Airport.CountryCode)] = null
+        });
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => noCountry));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.NotFound, result.Status);
+        await _cache.Received(1).SetAsync(
+            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "LHR"),
+            Arg.Any<string>(),
+            _options.NegativeCacheTtl,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task APostLookupUnavailable_IsStillNeverCached()
+    {
+        // The counterpart of the two tests above, on the same code path: Unavailable means we did
+        // not learn the entity is absent, so remembering it would turn a brief mledoze outage into
+        // hours of 404s for a carrier that exists.
+        _registry.TryGet("aeroapi").Returns(
+            new FakeSource("aeroapi", 0.015m, [VerificationEntityType.Airline], _ => FoundAirline("BA", "United Kingdom")));
+        _countryNames.TryResolveCodeByNameAsync("United Kingdom", Arg.Any<CancellationToken>())
+            .Returns(CountryCodeResolution.Failed("mledoze download failed: HTTP 503"));
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airline, "BA")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Unavailable, result.Status);
+        await _cache.DidNotReceive().SetAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken>());
+    }
 }

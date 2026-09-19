@@ -167,7 +167,12 @@ namespace FlightAssistant.Application.ReferenceData
 
                         var airport = BuildAirport(entry.Code, fetch.SourceName!, fetch.Values!);
                         if (airport is null)
+                        {
+                            // A NotFound decided after the lookup is remembered just like one the
+                            // source itself reported -- see RememberMissAsync.
+                            await RememberMissAsync(entry.Type, entry.Code, ct).ConfigureAwait(false);
                             return ReferenceProvisionResult.NotFound(entry.Type, entry.Code);
+                        }
 
                         createdAirports.Add(airport);
                         requiredCountryCodes.Add(airport.CountryCode);
@@ -206,6 +211,10 @@ namespace FlightAssistant.Application.ReferenceData
                             _logger.LogInformation(
                                 "Cannot provision airline '{Code}': its country '{CountryName}' did not resolve to a code.",
                                 entry.Code, countryName);
+                            // The billed lookup already happened, so this miss is remembered too --
+                            // otherwise a carrier whose country name mledoze spells differently
+                            // costs $0.015 on every attempt, forever. See RememberMissAsync.
+                            await RememberMissAsync(entry.Type, entry.Code, ct).ConfigureAwait(false);
                             return ReferenceProvisionResult.NotFound(entry.Type, entry.Code);
                         }
 
@@ -505,6 +514,9 @@ namespace FlightAssistant.Application.ReferenceData
         /// source has already said it does not have costs nothing to ask about again. Only a miss is
         /// remembered -- never a hit, and never a failure, which would turn a brief outage into
         /// hours of 404s. A cache outage fails open, exactly as the manual-sync cooldown does (#369).
+        /// The write itself lives in <see cref="RememberMissAsync"/>, which the two post-lookup
+        /// NotFound decisions in <see cref="ProvisionCoreAsync"/> call as well: a miss must cost one
+        /// lookup wherever it is decided, not only where the source reported it.
         /// </summary>
         private async Task<Fetch> FetchAsync(VerificationEntityType type, string code, CancellationToken ct)
         {
@@ -527,19 +539,48 @@ namespace FlightAssistant.Application.ReferenceData
 
             var fetch = await FetchFromSourcesAsync(type, code, ct).ConfigureAwait(false);
 
-            if (fetch.Status == FetchStatus.NotFound && ttl > TimeSpan.Zero)
-            {
-                try
-                {
-                    await _cache.SetAsync(cacheKey, "1", ttl, ct).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogWarning(ex, "Writing the reference-provisioning negative cache failed for {CacheKey}.", cacheKey);
-                }
-            }
+            if (fetch.Status == FetchStatus.NotFound)
+                await RememberMissAsync(type, code, ct).ConfigureAwait(false);
 
             return fetch;
+        }
+
+        /// <summary>
+        /// Remembers that this entity cannot be provisioned, so the next attempt costs nothing.
+        ///
+        /// <para>
+        /// Called wherever the final outcome for a <em>fetched</em> entry is
+        /// <see cref="ReferenceProvisionStatus.NotFound"/> -- not only where the source itself said
+        /// no. Two of those decisions are made after a successful, billed lookup: an airline whose
+        /// country name will not resolve to a code, and an airport the source reports with no
+        /// country at all. The airline one needs no misconfiguration to hit -- the mledoze reverse
+        /// index covers <c>name.common</c> only, so any carrier whose <c>aeroapi</c> country differs
+        /// from it ("Czech Republic" vs Czechia, "Burma" vs Myanmar) is a permanent 404 that would
+        /// otherwise cost $0.015 on every single attempt.
+        /// </para>
+        ///
+        /// <para>
+        /// <b>Never called for <see cref="ReferenceProvisionStatus.Unavailable"/>.</b> That
+        /// distinction is load-bearing: a source error, a budget refusal or a deadline teaches us
+        /// nothing about whether the entity exists, and caching one would turn a brief outage into
+        /// hours of 404s. A cache outage fails open, exactly as the read side does.
+        /// </para>
+        /// </summary>
+        private async Task RememberMissAsync(VerificationEntityType type, string code, CancellationToken ct)
+        {
+            var ttl = _options.NegativeCacheTtl;
+            if (ttl <= TimeSpan.Zero)
+                return;
+
+            var cacheKey = NegativeCacheKeyFor(type, code);
+            try
+            {
+                await _cache.SetAsync(cacheKey, "1", ttl, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Writing the reference-provisioning negative cache failed for {CacheKey}.", cacheKey);
+            }
         }
 
         /// <summary>
