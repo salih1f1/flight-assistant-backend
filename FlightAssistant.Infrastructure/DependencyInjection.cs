@@ -90,6 +90,7 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<IDataSourceProbe, MledozeProbe>();
             services.AddScoped<IDataSourceProbe, AeroDataBoxProbe>();
             services.AddScoped<IDataSourceProbe, AzureCostProbe>();
+            services.AddScoped<IDataSourceProbe, AppServiceProbe>();
 
             // Verification sources (#367 task 3): the two free outside datasets an automated check
             // can name. Both hold no credentials — OurAirports and mledoze's raw GitHub file are

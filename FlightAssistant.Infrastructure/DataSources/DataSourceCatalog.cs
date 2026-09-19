@@ -25,15 +25,15 @@ namespace FlightAssistant.Infrastructure.DataSources
         // makes EveryNamedHttpClientHasACatalogEntry pass again (task 2 deliberately left it red).
         public const string AzureCost = "azurecost";
 
-        // #530 task 3: same split as AzureCost above. AppServiceProvider's named HttpClient is
-        // registered under this key in task 2, with no DataSourceDescriptor yet -- task 3 adds the
-        // catalog entry that makes EveryNamedHttpClientHasACatalogEntry pass again. Until then that
-        // test is expected to fail naming "AppService".
+        // #530 task 3: same split as AzureCost above. AppServiceProvider's named HttpClient was
+        // registered under this key in task 2. The DataSourceDescriptor below is what makes
+        // EveryNamedHttpClientHasACatalogEntry pass again (task 2 deliberately left it red, naming
+        // "AppService").
         public const string AppService = "appservice";
     }
 
     /// <summary>
-    /// The ten outside dependencies, as the health page describes them. A hard-coded list rather
+    /// The eleven outside dependencies, as the health page describes them. A hard-coded list rather
     /// than a scan: the "what is checked" sentence and the link are author-written prose that
     /// cannot be derived, and the completeness test is what keeps the list honest.
     /// </summary>
@@ -114,6 +114,17 @@ namespace FlightAssistant.Infrastructure.DataSources
                     "Reads the subscription's budget and month-to-date spend. Reports only; it cannot change anything in Azure.",
                     "https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis",
                     AzureCostProvider.HttpClientName, SupportsProbe: true, ProbeCostNote: null),
+
+                // #530 task 3. Optional for the same reason AzureCost above is -- the API plainly
+                // runs without being able to read its own resource metadata. The probe reports only
+                // on whether the resource could be READ, never on what the answer was: a site with
+                // Always On off, read successfully, is Ok, so ProbeCostNote stays null (there is
+                // nothing to warn about -- this never costs money and never changes a site fact).
+                new(DataSourceKeys.AppService, "Azure App Service", DataSourceKind.Infrastructure,
+                    DataSourceCriticality.Optional,
+                    "Reads the App Service's own state and whether Always On is enabled. Reports only; it cannot change anything in Azure.",
+                    "https://portal.azure.com/#@/resource/subscriptions/_/resourceGroups/flight-assistant-dev/providers/Microsoft.Web/sites/flight-assistant-dev-api",
+                    AppServiceProvider.HttpClientName, SupportsProbe: true, ProbeCostNote: null),
             ];
 
             _byKey = Sources.ToDictionary(s => s.Key, StringComparer.Ordinal);

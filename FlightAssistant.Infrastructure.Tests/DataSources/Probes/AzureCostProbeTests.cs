@@ -7,9 +7,9 @@ using NSubstitute;
 namespace FlightAssistant.Infrastructure.Tests.DataSources.Probes
 {
     /// <summary>
-    /// <see cref="AzureCostProbe"/> is the only bespoke state-to-outcome branching among the data
-    /// source probes (#496 task 3, final review) -- every other probe in <c>HttpSourceProbes.cs</c>
-    /// extends <see cref="HttpDataSourceProbe"/> and reduces to its uniform HTTP-status mapping.
+    /// <see cref="AzureCostProbe"/> is bespoke state-to-outcome branching (#496 task 3, final
+    /// review) -- unlike every HTTP-status-mapping probe in <c>HttpSourceProbes.cs</c>, though
+    /// <see cref="AppServiceProbe"/> (see its own tests) is now the same shape for the same reason.
     /// This pins each of the five <see cref="AzureBudgetState"/> values against the
     /// <see cref="DataSourceOutcome"/> the probe reports for it.
     /// </summary>

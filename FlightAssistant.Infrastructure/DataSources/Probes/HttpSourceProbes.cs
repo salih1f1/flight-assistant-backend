@@ -1,4 +1,5 @@
 using FlightAssistant.Application.DataSources;
+using FlightAssistant.Application.Hosting;
 using FlightAssistant.Application.Interfaces.DataSources;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Usage;
@@ -97,6 +98,41 @@ namespace FlightAssistant.Infrastructure.DataSources.Probes
                 AzureBudgetState.Ok or AzureBudgetState.NoBudget => DataSourceOutcome.Ok,
                 AzureBudgetState.NotConfigured => DataSourceOutcome.NotConfigured,
                 AzureBudgetState.NotAuthorized => DataSourceOutcome.Unauthorized,
+                _ => DataSourceOutcome.Failed,
+            };
+        }
+    }
+
+    /// <summary>
+    /// Delegates to <see cref="IAppServiceProvider"/> instead of extending <see cref="HttpDataSourceProbe"/>,
+    /// for the same reason <see cref="AzureCostProbe"/> above does: reading the site needs a bearer
+    /// token fetched asynchronously (Azure AD, not an API key on the client), and
+    /// <see cref="HttpDataSourceProbe.BuildRequest"/> is a synchronous method called outside its own
+    /// try/catch, so a credential failure there would escape <c>ProbeAsync</c> as an unhandled
+    /// exception -- breaking the "never throws" contract <see cref="IDataSourceProbe"/> documents,
+    /// and skip both the status write and the audit write on the one screen an operator uses to
+    /// diagnose a credential problem. The provider already maps every expected failure to an
+    /// <see cref="AppServiceState"/> and never throws (#530 task 2), so reusing it is both the safer
+    /// answer and the actual production code path. It reaches Azure through the named
+    /// <c>AppService</c> client, so <c>DataSourceObservingHandler</c> already records the HTTP call —
+    /// this must not record a second time.
+    /// </summary>
+    public sealed class AppServiceProbe(IAppServiceProvider provider) : IDataSourceProbe
+    {
+        public string Key => DataSourceKeys.AppService;
+
+        public async Task<DataSourceOutcome> ProbeAsync(CancellationToken ct)
+        {
+            var snapshot = await provider.GetStatusAsync(ct);
+
+            // AlwaysOn is never consulted here, deliberately: this probe reports on whether the
+            // resource could be READ, never on what the answer was. A site with Always On off, read
+            // successfully, is State=Ok -- see AppServiceProvider's own note on State vs SiteState.
+            return snapshot.State switch
+            {
+                AppServiceState.Ok => DataSourceOutcome.Ok,
+                AppServiceState.NotConfigured => DataSourceOutcome.NotConfigured,
+                AppServiceState.NotAuthorized => DataSourceOutcome.Unauthorized,
                 _ => DataSourceOutcome.Failed,
             };
         }
