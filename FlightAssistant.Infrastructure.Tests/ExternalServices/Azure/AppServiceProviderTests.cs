@@ -100,7 +100,7 @@ public class AppServiceProviderTests
         var snapshot = await provider.GetStatusAsync(CancellationToken.None);
 
         Assert.Equal(AppServiceState.NotConfigured, snapshot.State);
-        Assert.Equal(0, calls.Count);
+        Assert.Empty(calls);
     }
 
     [Fact]
