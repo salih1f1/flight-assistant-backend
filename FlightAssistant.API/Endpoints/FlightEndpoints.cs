@@ -138,8 +138,10 @@ namespace FlightAssistant.API.Endpoints
                 "Returns 404 only when a source answered and genuinely has no such airline, airport or country — the country case " +
                 "names one the reference data itself requires (a CountryCode foreign key on the airline or airport), never one the caller sent. " +
                 "Returns 503 with a Retry-After header when the lookup could not be completed — a source was " +
-                "unreachable, the flight data budget is spent, or the lookup took longer than the configured budget; " +
-                "the dataset download continues in the background, so a retry shortly afterwards usually succeeds.")
+                "unreachable, the flight data budget is spent, or the lookup took longer than the configured budget. " +
+                "When the unknown entity is an airport or a country, that reference data keeps loading in the background, " +
+                "so a retry shortly afterwards usually succeeds; an unknown airline can take longer and may keep returning " +
+                "503 while upstream capacity is busy.")
             .Produces(201)
             .ProducesValidationProblem()
             .ProducesProblem(404)
