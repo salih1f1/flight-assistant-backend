@@ -174,6 +174,39 @@ public class ReferenceDataProvisionerTests
     }
 
     [Fact]
+    public async Task ASwitchedSource_IsAskedInsteadOfTheConfiguredDefault()
+    {
+        // #531: every other test in this file leaves _sourceDefaults at its constructor baseline,
+        // which mirrors Verification:DefaultSources:* exactly -- so none of them can tell a
+        // provisioner that genuinely reads the switch apart from one that silently ignores it and
+        // keeps asking the configured default forever. Without this test, that regression is
+        // undetectable here: it was proven by temporarily hardcoding the old static
+        // Airport/Airline/Country mapping back into ReferenceDataProvisioner and confirming the
+        // other 45 tests all still passed (see task-8-report.md, "Fix round 1"). The airline source
+        // is metered ($0.015/row), so which source gets asked has a real dollar consequence.
+        var configuredDefault = new FakeSource(
+            "ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR"));
+        var switched = new FakeSource(
+            "mledoze", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR"));
+        _registry.TryGet("ourairports").Returns(configuredDefault);
+        _registry.TryGet("mledoze").Returns(switched);
+
+        // An admin has routed Airport checks to mledoze instead of the configured ourairports.
+        _sourceDefaults.ForAsync(VerificationEntityType.Airport, Arg.Any<CancellationToken>())
+            .Returns(new[] { "mledoze" });
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+        Assert.Equal(1, switched.Calls);
+        Assert.Equal(0, configuredDefault.Calls); // the configured default must not run once switched away from
+        await _airports.Received(1).AddAsync(
+            Arg.Is<Airport>(a => a.Iata == "LHR" && a.VerificationSource == "mledoze"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task UnknownAirport_ThatTheSourceDoesNotHave_IsNotFound()
     {
         var source = new FakeSource("ourairports", 0m, [VerificationEntityType.Airport],
