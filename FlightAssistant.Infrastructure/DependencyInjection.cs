@@ -8,6 +8,7 @@ using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.DataSources;
 using FlightAssistant.Application.Interfaces.Jobs;
+using FlightAssistant.Application.Interfaces.Providers;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Application.ProviderBudget;
@@ -24,6 +25,7 @@ using FlightAssistant.Infrastructure.Jobs;
 using FlightAssistant.Infrastructure.Notifications;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
+using FlightAssistant.Infrastructure.Providers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -313,6 +315,18 @@ namespace FlightAssistant.Infrastructure
                 sp.GetRequiredService<IOptions<AeroDataBoxOptions>>(),
                 sp.GetRequiredService<ILogger<AeroDataBoxFlightSearchProvider>>()));
 
+            // Runtime provider routing (#531): the admin switch for which provider serves a given
+            // job. Registered here, ahead of the search registration below, because
+            // FlightSearchRouter — and so the IFlightSearchProvider registration that depends on
+            // it — cannot resolve without IProviderRouting and IProviderRouteDefaults in the
+            // container. IProviderRouteRepository has no reader here yet (the admin write endpoint
+            // is a later task in #531) but is registered alongside its read-side counterparts so
+            // the whole provider_routes stack is wired up in one place.
+            services.AddSingleton<IProviderRouteDefaults, ProviderRouteDefaults>();
+            services.AddSingleton<IProviderRouting, CachedProviderRouting>();
+            services.AddScoped<IProviderRouteRepository, ProviderRouteRepository>();
+            services.AddScoped<IFlightSearchRouter, FlightSearchRouter>();
+
             // IFlightSearchProvider resolves to the caching decorator, which now fronts BOTH
             // providers (issue #282, widened by #422) — GET /flights/search is anonymous and only
             // rate-limited per IP, so without a cache in front of it, a scripted client could drain
@@ -351,7 +365,7 @@ namespace FlightAssistant.Infrastructure
                         sp.GetRequiredService<AeroApiFlightSearchProvider>(),
                         sp.GetRequiredService<IProviderBudgetGuard>(),
                         sp.GetRequiredService<ILogger<AeroApiFlightSearchBudgetDecorator>>()),
-                    sp.GetRequiredService<IOptions<AeroDataBoxOptions>>(),
+                    sp.GetRequiredService<IFlightSearchRouter>(),
                     sp.GetRequiredService<ILogger<FlightSearchProviderSelector>>()),
                 sp.GetRequiredService<ICacheService>(),
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
