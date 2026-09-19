@@ -139,7 +139,23 @@ if (aiConnectionString is not null)
         options.EnableAdaptiveSampling = true;
     });
 }
-builder.Services.AddProblemDetails();
+// Framework-produced problem documents — minimal-API parameter binding, an endpoint's own
+// Results.NotFound(), anything UseStatusCodePages fills in — are written by ASP.NET's own problem
+// writer, never by GlobalExceptionHandler, and that writer stamps traceId as
+// Activity.Current?.Id ?? HttpContext.TraceIdentifier. Nothing in this app registers an
+// ActivityListener unless Application Insights is configured, so on every other deployment that
+// fell through to the connection id — a string that appears in no log line, which is exactly the
+// hole #319 set out to close and the one place a caller can actually read an id back (#413).
+// Overwrite it with the request's correlation id, the same value CorrelationIdMiddleware put on the
+// X-Correlation-Id header and every Serilog line. GlobalExceptionHandler writes its problems
+// directly and deliberately does not route through IProblemDetailsService, so it is untouched by
+// this and keeps setting the same id itself.
+builder.Services.AddProblemDetails(options =>
+    options.CustomizeProblemDetails = context =>
+    {
+        if (context.HttpContext.Items[CorrelationIdMiddleware.ItemsKey] is string correlationId)
+            context.ProblemDetails.Extensions["traceId"] = correlationId;
+    });
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddScoped<TravelerContext>();
 
