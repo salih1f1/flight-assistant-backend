@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
+using Azure.Core;
+using Azure.Identity;
 using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Caching;
@@ -12,6 +14,7 @@ using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Infrastructure.ExternalServices;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
+using FlightAssistant.Infrastructure.ExternalServices.Azure;
 using FlightAssistant.Infrastructure.DataSources;
 using FlightAssistant.Infrastructure.DataSources.Probes;
 using FlightAssistant.Infrastructure.ExternalServices.AeroDataBox;
@@ -86,6 +89,7 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<IDataSourceProbe, OurAirportsProbe>();
             services.AddScoped<IDataSourceProbe, MledozeProbe>();
             services.AddScoped<IDataSourceProbe, AeroDataBoxProbe>();
+            services.AddScoped<IDataSourceProbe, AzureCostProbe>();
 
             // Verification sources (#367 task 3): the two free outside datasets an automated check
             // can name. Both hold no credentials — OurAirports and mledoze's raw GitHub file are
@@ -450,6 +454,40 @@ namespace FlightAssistant.Infrastructure
             // repository above, since ToggleJobCommandHandler's write must land in the same request's
             // DbContext/transaction, not a singleton's own long-lived scope.
             services.AddScoped<IJobSwitchRepository, JobSwitchRepository>();
+
+            // Azure subscription budget (#496 task 2). SubscriptionId/BudgetName are both
+            // optional -- AzureCostOptions.IsConfigured following GitHubOptions.IsConfigured's
+            // precedent -- so a local developer with no AzureCost:SubscriptionId still starts; the
+            // provider answers NotConfigured instead of failing.
+            services.AddOptions<AzureCostOptions>()
+                .BindConfiguration(AzureCostOptions.SectionName);
+
+            // The same credential MECHANISM Program.cs already uses for Key Vault (DefaultAzureCredential)
+            // -- this is a new token SCOPE (management.azure.com), not a new credential type.
+            // Registered once as a singleton and cached here, not per call: constructing
+            // DefaultAzureCredential does no I/O itself, but it does probe which of its chained
+            // sources (environment, managed identity, Azure CLI, ...) is available, and it caches
+            // tokens internally once acquired -- re-creating it per request would throw that cache
+            // away every time. TryAdd so a test container providing its own TokenCredential (e.g. a
+            // stub) is never overridden.
+            services.TryAddSingleton<TokenCredential>(new DefaultAzureCredential());
+
+            services.AddHttpClient(AzureCostProvider.HttpClientName, client =>
+                {
+                    client.BaseAddress = new Uri("https://management.azure.com/");
+                    client.Timeout = TimeSpan.FromSeconds(30);
+                })
+                // Last on the chain, so the observing handler is innermost and sees each transport
+                // result rather than the resilience pipeline's verdict after retries (no resilience
+                // pipeline is added here, but the ordering rule is the same one AeroApi and GitHub
+                // follow, so it stays correct if one is added later).
+                .AddDataSourceObservation(DataSourceKeys.AzureCost);
+
+            services.AddScoped<IAzureCostProvider>(sp => new AzureCostProvider(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(AzureCostProvider.HttpClientName),
+                sp.GetRequiredService<IOptions<AzureCostOptions>>(),
+                sp.GetRequiredService<TokenCredential>(),
+                sp.GetRequiredService<ILogger<AzureCostProvider>>()));
 
             return services;
         }

@@ -1,6 +1,7 @@
 using FlightAssistant.Application.DataSources;
 using FlightAssistant.Application.Interfaces.DataSources;
 using FlightAssistant.Infrastructure.ExternalServices.AeroDataBox;
+using FlightAssistant.Infrastructure.ExternalServices.Azure;
 using FlightAssistant.Infrastructure.ExternalServices.GitHub;
 using FlightAssistant.Infrastructure.ExternalServices.Verification;
 
@@ -18,10 +19,15 @@ namespace FlightAssistant.Infrastructure.DataSources
         public const string Redis = "redis";
         public const string Apns = "apns";
         public const string AppInsights = "appinsights";
+
+        // #496 task 3: AzureCostProvider's named HttpClient was registered under this key in task
+        // 2, for AddDataSourceObservation to tag it with. The DataSourceDescriptor below is what
+        // makes EveryNamedHttpClientHasACatalogEntry pass again (task 2 deliberately left it red).
+        public const string AzureCost = "azurecost";
     }
 
     /// <summary>
-    /// The nine outside dependencies, as the health page describes them. A hard-coded list rather
+    /// The ten outside dependencies, as the health page describes them. A hard-coded list rather
     /// than a scan: the "what is checked" sentence and the link are author-written prose that
     /// cannot be derived, and the completeness test is what keeps the list honest.
     /// </summary>
@@ -92,6 +98,16 @@ namespace FlightAssistant.Infrastructure.DataSources
                     DataSourceCriticality.Optional,
                     "Checks only that a connection string resolves. Telemetry leaves through the SDK's own pipeline, which this process cannot observe.",
                     ExternalUrl: null, HttpClientName: null, SupportsProbe: true, ProbeCostNote: null),
+
+                // #496 task 3. Optional because the application runs fine without it -- a local
+                // developer has no subscription configured, same as GitHub above. Cost Management
+                // reads are not billed, so ProbeCostNote is null (contrast AeroDataBox, where every
+                // real call costs money and the probe must say so before it fires).
+                new(DataSourceKeys.AzureCost, "Azure Cost Management", DataSourceKind.Infrastructure,
+                    DataSourceCriticality.Optional,
+                    "Reads the subscription's budget and month-to-date spend. Reports only; it cannot change anything in Azure.",
+                    "https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis",
+                    AzureCostProvider.HttpClientName, SupportsProbe: true, ProbeCostNote: null),
             ];
 
             _byKey = Sources.ToDictionary(s => s.Key, StringComparer.Ordinal);

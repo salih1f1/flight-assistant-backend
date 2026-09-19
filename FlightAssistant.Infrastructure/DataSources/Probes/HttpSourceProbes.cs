@@ -1,3 +1,7 @@
+using FlightAssistant.Application.DataSources;
+using FlightAssistant.Application.Interfaces.DataSources;
+using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Application.Usage;
 using FlightAssistant.Infrastructure.ExternalServices.AeroDataBox;
 using FlightAssistant.Infrastructure.ExternalServices.GitHub;
 using FlightAssistant.Infrastructure.ExternalServices.Verification;
@@ -52,5 +56,49 @@ namespace FlightAssistant.Infrastructure.DataSources.Probes
         public override string Key => DataSourceKeys.AeroDataBox;
         protected override string HttpClientName => AeroDataBoxFlightSearchProvider.HttpClientName;
         protected override HttpRequestMessage BuildRequest() => new(HttpMethod.Head, string.Empty);
+    }
+
+    /// <summary>
+    /// Delegates to <see cref="IAzureCostProvider"/> instead of extending <see cref="HttpDataSourceProbe"/>
+    /// like the probes above: reaching Cost Management needs a bearer token fetched asynchronously
+    /// (Azure AD, not an API key on the client), and <see cref="HttpDataSourceProbe.BuildRequest"/>
+    /// is a synchronous method called outside its own try/catch, so a credential failure there would
+    /// escape <c>ProbeAsync</c> as an unhandled exception -- breaking the "never throws" contract
+    /// <see cref="IDataSourceProbe"/> documents. The provider already does this correctly (#496 task
+    /// 2: every expected failure, auth included, maps to an <see cref="AzureBudgetState"/> and never
+    /// throws), so reusing it is the safer and, given it is also the exact production code path,
+    /// the more faithful answer to "does the operator's role actually work" than a second
+    /// hand-rolled request would be. It still reaches Azure through the named
+    /// <c>AzureCost</c> client, so <c>DataSourceObservingHandler</c> already records the HTTP call —
+    /// this must not record a second time.
+    /// </summary>
+    public sealed class AzureCostProbe(IAzureCostProvider provider) : IDataSourceProbe
+    {
+        public string Key => DataSourceKeys.AzureCost;
+
+        public async Task<DataSourceOutcome> ProbeAsync(CancellationToken ct)
+        {
+            var snapshot = await provider.GetBudgetAsync(ct);
+
+            // NoBudget still answered from Cost Management with a clean response, which already
+            // proves the role is granted -- the question this probe exists to answer -- so it counts
+            // as Ok here, the same way the dashboard card does not treat "no budget defined" as a
+            // fault.
+            // ACCEPTED DEVIATION: a 429 from Cost Management reaches here as
+            // AzureBudgetState.Unavailable and is mapped to Failed below, but the same HTTP
+            // response, seen by DataSourceObservingHandler on the underlying "AzureCost" client, is
+            // recorded as RateLimited -- so the probe outcome and the observed outcome disagree for
+            // this one source. Left as-is deliberately: adding a RateLimited branch here would need
+            // a state the panel has no use for (AzureBudgetState carries no RateLimited of its own,
+            // only Unavailable), and threading one through purely to match an observation the probe
+            // doesn't otherwise use is the scope creep YAGNI rules out.
+            return snapshot.State switch
+            {
+                AzureBudgetState.Ok or AzureBudgetState.NoBudget => DataSourceOutcome.Ok,
+                AzureBudgetState.NotConfigured => DataSourceOutcome.NotConfigured,
+                AzureBudgetState.NotAuthorized => DataSourceOutcome.Unauthorized,
+                _ => DataSourceOutcome.Failed,
+            };
+        }
     }
 }
