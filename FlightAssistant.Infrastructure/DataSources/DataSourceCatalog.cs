@@ -24,6 +24,12 @@ namespace FlightAssistant.Infrastructure.DataSources
         // 2, for AddDataSourceObservation to tag it with. The DataSourceDescriptor below is what
         // makes EveryNamedHttpClientHasACatalogEntry pass again (task 2 deliberately left it red).
         public const string AzureCost = "azurecost";
+
+        // #530 task 3: same split as AzureCost above. AppServiceProvider's named HttpClient is
+        // registered under this key in task 2, with no DataSourceDescriptor yet -- task 3 adds the
+        // catalog entry that makes EveryNamedHttpClientHasACatalogEntry pass again. Until then that
+        // test is expected to fail naming "AppService".
+        public const string AppService = "appservice";
     }
 
     /// <summary>

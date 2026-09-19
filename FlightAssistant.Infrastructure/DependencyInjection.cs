@@ -501,6 +501,31 @@ namespace FlightAssistant.Infrastructure
                 sp.GetRequiredService<TokenCredential>(),
                 sp.GetRequiredService<ILogger<AzureCostProvider>>()));
 
+            // App Service health (#530 task 2): reads the App Service's own state and AlwaysOn
+            // from ARM, the same host and TokenCredential singleton AzureCostProvider uses above.
+            // The subscription comes from WEBSITE_OWNER_NAME directly (AzureSubscription), not
+            // AzureCostOptions -- that option exists to point the COST panel at a subscription
+            // other than the one hosting the API, which is never what this provider wants: the
+            // site it reads is always the one running this process.
+            //
+            // No DataSourceCatalog entry yet -- task 3 adds it. Until then,
+            // DataSourceCatalogTests.EveryNamedHttpClientHasACatalogEntry is expected to fail
+            // naming "AppService", the same deliberate gap AzureCost left at the end of #496 task 2.
+            services.AddHttpClient(AppServiceProvider.HttpClientName, client =>
+                {
+                    client.BaseAddress = new Uri("https://management.azure.com/");
+                    client.Timeout = TimeSpan.FromSeconds(30);
+                })
+                // Last on the chain, so the observing handler is innermost and sees each transport
+                // result -- same ordering rule as the AzureCost client above.
+                .AddDataSourceObservation(DataSourceKeys.AppService);
+
+            services.AddScoped<IAppServiceProvider>(sp => new AppServiceProvider(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(AppServiceProvider.HttpClientName),
+                sp.GetRequiredService<IConfiguration>(),
+                sp.GetRequiredService<TokenCredential>(),
+                sp.GetRequiredService<ILogger<AppServiceProvider>>()));
+
             return services;
         }
     }
