@@ -27,34 +27,18 @@ public class ReferenceDataProvisionerTests
     private readonly ICacheService _cache = Substitute.For<ICacheService>();
     private readonly IProviderBudgetGuard _budget = Substitute.For<IProviderBudgetGuard>();
 
+    // #531: replaces the old JobOptions/IVerificationJobOptions.DefaultSourcesFor stand-in that
+    // used to sit here. Configured in the constructor below to return the exact same source names
+    // per entity type it returned before (Airport -> ourairports, Airline -> aeroapi,
+    // Country -> mledoze), so every existing test in this file keeps seeing what it saw
+    // before -- none of them are about the switch itself.
+    private readonly IVerificationSourceDefaults _sourceDefaults = Substitute.For<IVerificationSourceDefaults>();
+
     private sealed class Options : IReferenceProvisioningOptions
     {
         public bool Enabled { get; set; } = true;
         public TimeSpan Budget { get; set; } = TimeSpan.FromSeconds(10);
         public TimeSpan NegativeCacheTtl { get; set; } = TimeSpan.FromHours(24);
-    }
-
-    // Read IVerificationJobOptions and implement every member it declares — the list below is
-    // what it had when this plan was written, and the compiler will tell you if it has since
-    // grown. Only DefaultSourcesFor is actually exercised here.
-    private sealed class JobOptions : IVerificationJobOptions
-    {
-        public bool Enabled => true;
-        public TimeSpan PollInterval => TimeSpan.FromSeconds(30);
-        public int BatchSize => 10;
-        public int MaxAttempts => 3;
-        public TimeSpan IdleRelease => TimeSpan.FromMinutes(30);
-        public int StaleAfterDays => 180;
-        public TimeSpan ErrorCooldown => TimeSpan.FromHours(6);
-        public TimeSpan ClaimPromotionAge => TimeSpan.FromMinutes(10);
-
-        public IReadOnlyList<string> DefaultSourcesFor(VerificationEntityType entityType) =>
-            entityType switch
-            {
-                VerificationEntityType.Airport => ["ourairports"],
-                VerificationEntityType.Airline => ["aeroapi"],
-                _ => ["mledoze"]
-            };
     }
 
     private readonly Options _options = new();
@@ -122,7 +106,7 @@ public class ReferenceDataProvisionerTests
 
         return new ReferenceDataProvisioner(
             _registry,
-            new JobOptions(),
+            _sourceDefaults,
             _countryNames,
             _cache,
             _budget,
@@ -133,6 +117,16 @@ public class ReferenceDataProvisionerTests
 
     public ReferenceDataProvisionerTests()
     {
+        // #531: the same fixed mapping the old JobOptions.DefaultSourcesFor gave every test in this
+        // file -- nothing below is about the switch itself, so every test keeps asking the same
+        // sources it always did.
+        _sourceDefaults.ForAsync(VerificationEntityType.Airport, Arg.Any<CancellationToken>())
+            .Returns(new[] { "ourairports" });
+        _sourceDefaults.ForAsync(VerificationEntityType.Airline, Arg.Any<CancellationToken>())
+            .Returns(new[] { "aeroapi" });
+        _sourceDefaults.ForAsync(VerificationEntityType.Country, Arg.Any<CancellationToken>())
+            .Returns(new[] { "mledoze" });
+
         _budget.GetStateAsync(Arg.Any<CancellationToken>()).Returns(ProviderBudgetState.Normal);
 
         // NSubstitute's built-in default for an unconfigured member returning `string` is "",

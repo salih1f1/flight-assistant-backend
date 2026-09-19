@@ -48,7 +48,7 @@ namespace FlightAssistant.Application.ReferenceData
             $"refdata:missing:{type}:{code.Trim().ToUpperInvariant()}";
 
         private readonly IVerificationSourceRegistry _registry;
-        private readonly IVerificationJobOptions _verificationOptions;
+        private readonly IVerificationSourceDefaults _sourceDefaults;
         private readonly ICountryNameResolver _countryNames;
         private readonly ICacheService _cache;
         private readonly IProviderBudgetGuard _budget;
@@ -58,7 +58,7 @@ namespace FlightAssistant.Application.ReferenceData
 
         public ReferenceDataProvisioner(
             IVerificationSourceRegistry registry,
-            IVerificationJobOptions verificationOptions,
+            IVerificationSourceDefaults sourceDefaults,
             ICountryNameResolver countryNames,
             ICacheService cache,
             IProviderBudgetGuard budget,
@@ -67,7 +67,7 @@ namespace FlightAssistant.Application.ReferenceData
             ILogger<ReferenceDataProvisioner> logger)
         {
             _registry = registry;
-            _verificationOptions = verificationOptions;
+            _sourceDefaults = sourceDefaults;
             _countryNames = countryNames;
             _cache = cache;
             _budget = budget;
@@ -728,7 +728,8 @@ namespace FlightAssistant.Application.ReferenceData
         /// </summary>
         private async Task<Fetch> FetchFromSourcesAsync(VerificationEntityType type, string code, CancellationToken ct)
         {
-            var sourceNames = _verificationOptions.DefaultSourcesFor(type);
+            // #531: the runtime switch, falling back to Verification:DefaultSources:*.
+            var sourceNames = await _sourceDefaults.ForAsync(type, ct).ConfigureAwait(false);
             if (sourceNames.Count == 0)
                 return Fetch.Unavailable($"No source is configured for {type}.");
 

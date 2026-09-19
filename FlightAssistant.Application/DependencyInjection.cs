@@ -2,6 +2,7 @@ using FlightAssistant.Application.Administration;
 using FlightAssistant.Application.Behaviours;
 using FlightAssistant.Application.Commands.Admin.Verify;
 using FlightAssistant.Application.Interfaces.Administration;
+using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Application.ReferenceData;
 using FlightAssistant.Application.Verification;
 using FlightAssistant.Domain.Lounges.Entities;
@@ -48,6 +49,11 @@ namespace FlightAssistant.Application
 
             // Auto-provisioning of a missing reference row on track (#465).
             services.AddScoped<IReferenceDataProvisioner, ReferenceDataProvisioner>();
+
+            // The runtime provider-routing switch's read side for verification sources (#531),
+            // falling back to Verification:DefaultSources:* -- consumed by both
+            // FlightTrackedVerificationEventHandler and ReferenceDataProvisioner.
+            services.AddScoped<IVerificationSourceDefaults, VerificationSourceDefaults>();
 
             // VerifyEntityCommandHandler is a generic handler; register a concrete instance per entity type
             // so MediatR's assembly scan (which doesn't resolve open generics) can find them.

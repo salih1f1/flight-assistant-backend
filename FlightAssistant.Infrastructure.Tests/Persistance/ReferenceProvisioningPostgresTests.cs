@@ -49,6 +49,13 @@ public class ReferenceProvisioningPostgresTests : PostgresTestBase
     private readonly ICacheService _cache = Substitute.For<ICacheService>();
     private readonly IProviderBudgetGuard _budget = Substitute.For<IProviderBudgetGuard>();
 
+    // #531: replaces the old JobOptions/IVerificationJobOptions.DefaultSourcesFor fake that used to
+    // sit here, mirroring ReferenceDataProvisionerTests's own switch to IVerificationSourceDefaults.
+    // Configured below to return the exact same source names per entity type it returned before
+    // (Airport -> ourairports, Airline -> aeroapi, Country -> mledoze) -- nothing in this file is
+    // about the switch itself.
+    private readonly IVerificationSourceDefaults _sourceDefaults = Substitute.For<IVerificationSourceDefaults>();
+
     public ReferenceProvisioningPostgresTests(PostgresContainerFixture fixture) : base(fixture)
     {
         _fixture = fixture;
@@ -57,6 +64,13 @@ public class ReferenceProvisioningPostgresTests : PostgresTestBase
         // unconfigured Task<string?> is "", not null, which would read as an existing negative-
         // cache hit and short-circuit every test below before it ever reaches a source.
         _cache.GetAsync<string>(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns((string?)null);
+
+        _sourceDefaults.ForAsync(VerificationEntityType.Airport, Arg.Any<CancellationToken>())
+            .Returns(new[] { "ourairports" });
+        _sourceDefaults.ForAsync(VerificationEntityType.Airline, Arg.Any<CancellationToken>())
+            .Returns(new[] { "aeroapi" });
+        _sourceDefaults.ForAsync(VerificationEntityType.Country, Arg.Any<CancellationToken>())
+            .Returns(new[] { "mledoze" });
     }
 
     private sealed class Options : IReferenceProvisioningOptions
@@ -64,28 +78,6 @@ public class ReferenceProvisioningPostgresTests : PostgresTestBase
         public bool Enabled { get; set; } = true;
         public TimeSpan Budget { get; set; } = TimeSpan.FromSeconds(10);
         public TimeSpan NegativeCacheTtl { get; set; } = TimeSpan.FromHours(24);
-    }
-
-    // Read IVerificationJobOptions and implement every member it declares, mirroring
-    // ReferenceDataProvisionerTests's own JobOptions fake -- only DefaultSourcesFor is exercised.
-    private sealed class JobOptions : IVerificationJobOptions
-    {
-        public bool Enabled => true;
-        public TimeSpan PollInterval => TimeSpan.FromSeconds(30);
-        public int BatchSize => 10;
-        public int MaxAttempts => 3;
-        public TimeSpan IdleRelease => TimeSpan.FromMinutes(30);
-        public int StaleAfterDays => 180;
-        public TimeSpan ErrorCooldown => TimeSpan.FromHours(6);
-        public TimeSpan ClaimPromotionAge => TimeSpan.FromMinutes(10);
-
-        public IReadOnlyList<string> DefaultSourcesFor(VerificationEntityType entityType) =>
-            entityType switch
-            {
-                VerificationEntityType.Airport => ["ourairports"],
-                VerificationEntityType.Airline => ["aeroapi"],
-                _ => ["mledoze"]
-            };
     }
 
     /// <summary>A stand-in source whose answer is fixed at construction, mirroring
@@ -164,7 +156,7 @@ public class ReferenceProvisioningPostgresTests : PostgresTestBase
 
         return new ReferenceDataProvisioner(
             _registry,
-            new JobOptions(),
+            _sourceDefaults,
             _countryNames,
             _cache,
             _budget,
