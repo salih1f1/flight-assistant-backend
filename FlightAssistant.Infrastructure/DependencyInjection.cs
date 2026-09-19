@@ -343,17 +343,11 @@ namespace FlightAssistant.Infrastructure
             // refuses from SoftLimit onward, not only Exhausted), because it never touches AeroAPI
             // once AeroDataBox is configured — an improvement, and a real behaviour change.
             //
-            // The cache key (AeroApiFlightSearchCachingDecorator.BuildCacheKey) has no provider
-            // dimension. #422 final review, finding 4: that is NOT safe merely because routing is
-            // deterministic by criteria shape — it also depends on whether AeroDataBox:ApiKey is
-            // configured (AeroDataBoxOptions.IsConfigured), which is fixed for a process's lifetime
-            // but not across a restart or an instance sharing Redis. After the key is added or
-            // removed, a route-search key can be served the OTHER provider's cached rows until the
-            // TTL runs out (AeroApiOptions.SearchCacheTtlPastOrToday 5 min / SearchCacheTtlFuture
-            // 12h). On a rollback — pulling the key because AeroDataBox rows turned out wrong or
-            // empty — flush the "aeroapi:flight-search:" cache prefix rather than waiting out the
-            // TTL. If a shape is ever routed to both providers AT ONCE (not merely at different
-            // times), the key must gain a provider dimension.
+            // The cache key carries the resolved provider as of #531, so the two providers can no
+            // longer serve each other's cached rows and the prefix-flush-on-rollback step this
+            // comment used to require is gone. Routing is now a persisted admin decision
+            // (provider_routes) on top of the AeroDataBox:ApiKey ceiling, read through
+            // IFlightSearchRouter by both the selector and the cache.
             //
             // AeroApiFlightSearchProvider itself stays registered and resolvable — the decorator
             // wraps it, it does not replace it.
@@ -367,6 +361,7 @@ namespace FlightAssistant.Infrastructure
                         sp.GetRequiredService<ILogger<AeroApiFlightSearchBudgetDecorator>>()),
                     sp.GetRequiredService<IFlightSearchRouter>(),
                     sp.GetRequiredService<ILogger<FlightSearchProviderSelector>>()),
+                sp.GetRequiredService<IFlightSearchRouter>(),
                 sp.GetRequiredService<ICacheService>(),
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
                 sp.GetRequiredService<TimeProvider>(),
