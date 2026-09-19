@@ -78,15 +78,10 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "real, just unmeasurable from the response. Amounts are in 'currency', which is the " +
                 "subscription's billing currency and not necessarily USD. Cached for an hour, " +
                 "except refusals and outages, which are not cached.")
-            // Every MODELED failure is a state in the body, because the panel must render "not
-            // authorized" as information rather than as a failed request — unlike AeroAPI above,
-            // there is no validation to reject and no upstream Cost Management error this passes
-            // through. Not literally always 200, though: AzureBudgetCache.GetOrFetchAsync calls
-            // ICacheService with no try/catch, and RedisCacheService rethrows on a Redis outage,
-            // which GlobalExceptionHandler turns into a 500 — declared so a generated client has an
-            // error branch for it, matching AeroAPI's endpoint above.
-            .Produces<AzureBudgetDto>(200)
-            .ProducesProblem(500);
+            // Always 200: every failure is a state in the body, because the panel must render
+            // "not authorized" as information rather than as a failed request — unlike AeroAPI
+            // above, there is no validation to reject and no upstream error this passes through.
+            .Produces<AzureBudgetDto>(200);
         }
     }
 }
