@@ -218,12 +218,18 @@ builder.Services
         });
 
 
+// The panel is a separate origin, and there is more than one of it: a developer's localhost and the
+// deployed panel (#535). A single configured origin cannot serve both, because the deployed dev API
+// runs as Development and so reads the same appsettings.Development.json a developer does — pointing
+// the one value at the deployed panel would break every local panel the moment it shipped.
+var adminPanelOrigins = builder.Configuration
+    .GetSection("AdminPanel:AllowedOrigins")
+    .Get<string[]>() ?? [];
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AdminPanel", policy =>
-        policy.WithOrigins(
-                builder.Configuration["AdminPanel:AllowedOrigin"] ?? "http://localhost:5173"
-            )
+        policy.WithOrigins(adminPanelOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod());
 });
