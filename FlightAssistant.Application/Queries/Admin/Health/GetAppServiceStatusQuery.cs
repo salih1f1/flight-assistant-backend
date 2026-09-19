@@ -19,10 +19,10 @@ namespace FlightAssistant.Application.Queries.Admin.Health
     /// and <see cref="AppServiceState.Unavailable"/> are refusals an operator can act on -- grant
     /// the Reader role, wait out an outage -- and caching either for the five-minute window would
     /// leave a stale wrong answer on screen for exactly the moment it is most annoying: right after
-    /// the grant was fixed. Unlike the budget query, <see cref="AppServiceState.NotConfigured"/> is
-    /// not cached alongside Ok either: it is not a refusal, but it never occurs anywhere except a
-    /// developer machine that will not still be running five minutes from now in a way anyone is
-    /// watching, so there is nothing to gain by writing it.
+    /// the grant was fixed. <see cref="AppServiceState.NotConfigured"/> is not cached either -- it
+    /// is not a refusal, but it occurs nowhere except a developer machine, and the provider answers
+    /// it without an HTTP call, so caching it would save nothing. (The budget query caches a second
+    /// state alongside Ok, <c>NoBudget</c>; it has no NotConfigured equivalent to skip.)
     /// </summary>
     internal static class AppServiceStatusCache
     {

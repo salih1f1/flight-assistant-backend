@@ -116,6 +116,14 @@ namespace FlightAssistant.Infrastructure.DataSources.Probes
     /// answer and the actual production code path. It reaches Azure through the named
     /// <c>AppService</c> client, so <c>DataSourceObservingHandler</c> already records the HTTP call —
     /// this must not record a second time.
+    ///
+    /// <para>
+    /// It inherits <see cref="AzureCostProbe"/>'s accepted deviation too, so it is written down here
+    /// rather than left to be rediscovered: ARM answering 429 lands on <c>Failed</c>, while the
+    /// observing handler records the same response as <c>RateLimited</c>. The provider collapses
+    /// every non-401/403 status into <see cref="AppServiceState.Unavailable"/>, and a throttled read
+    /// is a read that did not happen -- which is what <c>Failed</c> says.
+    /// </para>
     /// </summary>
     public sealed class AppServiceProbe(IAppServiceProvider provider) : IDataSourceProbe
     {

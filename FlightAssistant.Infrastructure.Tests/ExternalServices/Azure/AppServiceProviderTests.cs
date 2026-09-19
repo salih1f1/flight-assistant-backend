@@ -42,27 +42,33 @@ public class AppServiceProviderTests
     private const string ResourceGroup = "flight-assistant-dev";
     private const string SubscriptionId = "a39b9c33-675b-40ca-84fc-6e548ef6d6c5";
 
+    private const string SiteName = "flight-assistant-dev-api";
+
     /// <summary>Defaults to a fully-configured App Service (site name, resource group and
-    /// subscription id all present) so every test but the "not configured" one can ignore
-    /// configuration entirely. <paramref name="siteName"/> is nullable so that one test can leave
-    /// <c>WEBSITE_SITE_NAME</c> unset, the way a developer machine does.</summary>
+    /// subscription id all present) so every test but the "not configured" ones can ignore
+    /// configuration entirely. All three are nullable because the provider requires all three, and
+    /// each has to be shown to be load-bearing on its own -- a guard that only one test reaches can
+    /// lose the other two conditions without any test noticing.</summary>
     private static (AppServiceProvider Provider, List<HttpRequestMessage> Calls) Build(
-        string? siteName = "flight-assistant-dev-api",
-        Func<HttpRequestMessage, HttpResponseMessage>? respond = null)
+        string? siteName = SiteName,
+        Func<HttpRequestMessage, HttpResponseMessage>? respond = null,
+        string? resourceGroup = ResourceGroup,
+        string? ownerName = SubscriptionId + "+" + ResourceGroup + "-WestEuropewebspace")
     {
         var calls = new List<HttpRequestMessage>();
         var handler = new StubHttpMessageHandler(respond ?? (_ => Json("{}")), calls);
         var http = new HttpClient(handler) { BaseAddress = new Uri("https://management.azure.com/") };
 
-        var settings = new Dictionary<string, string?>
-        {
-            ["WEBSITE_RESOURCE_GROUP"] = ResourceGroup,
-            ["WEBSITE_OWNER_NAME"] = $"{SubscriptionId}+{ResourceGroup}-WestEuropewebspace",
-        };
+        var settings = new Dictionary<string, string?>();
+
         // Omitted rather than set to null: IConfiguration treats an absent key the same way a real
         // developer machine leaves it -- never present at all.
         if (siteName is not null)
             settings["WEBSITE_SITE_NAME"] = siteName;
+        if (resourceGroup is not null)
+            settings["WEBSITE_RESOURCE_GROUP"] = resourceGroup;
+        if (ownerName is not null)
+            settings["WEBSITE_OWNER_NAME"] = ownerName;
 
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
 
@@ -193,6 +199,76 @@ public class AppServiceProviderTests
         var (provider, _) = Build(respond: _ => Json("not json at all"));
 
         Assert.Equal(AppServiceState.Unavailable, (await provider.GetStatusAsync(CancellationToken.None)).State);
+    }
+
+    // A 200 carrying valid JSON that is not an object. TryGetProperty THROWS on those, so without
+    // a ValueKind guard this escapes as InvalidOperationException rather than becoming a state --
+    // which would 500 the endpoint (where every failure is meant to be a state in the body) and
+    // make "Check now" skip both the status and the audit write. Found by the final review; the
+    // "not a crash" case above only ever covered bodies that are not JSON at all.
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("null")]
+    [InlineData("123")]
+    [InlineData("\"a string\"")]
+    public async Task AValidJsonBodyThatIsNotAnObject_IsUnavailable_NotACrash(string body)
+    {
+        var (provider, _) = Build(respond: _ => Json(body));
+
+        var snapshot = await provider.GetStatusAsync(CancellationToken.None);
+
+        Assert.Equal(AppServiceState.Unavailable, snapshot.State);
+        Assert.Null(snapshot.AlwaysOn);
+    }
+
+    // The site name is not the only thing that can be missing. Each of the three is required, and
+    // each needs its own test: with only the site-name case covered, the other two conditions could
+    // be deleted from the guard and every test would still pass.
+    [Fact]
+    public async Task NoResourceGroup_IsNotConfigured_AndMakesNoCall()
+    {
+        var (provider, calls) = Build(resourceGroup: null);
+
+        Assert.Equal(AppServiceState.NotConfigured, (await provider.GetStatusAsync(CancellationToken.None)).State);
+        Assert.Empty(calls);
+    }
+
+    [Fact]
+    public async Task NoOwnerName_IsNotConfigured_AndMakesNoCall()
+    {
+        var (provider, calls) = Build(ownerName: null);
+
+        Assert.Equal(AppServiceState.NotConfigured, (await provider.GetStatusAsync(CancellationToken.None)).State);
+        Assert.Empty(calls);
+    }
+
+    // A malformed owner name yields no subscription id, which is the same as not having one. It
+    // must not be passed through as if it were: that would query a subscription nobody asked about.
+    [Fact]
+    public async Task AMalformedOwnerName_IsNotConfigured_AndMakesNoCall()
+    {
+        var (provider, calls) = Build(ownerName: "not-a-subscription+rg-WestEuropewebspace");
+
+        Assert.Equal(AppServiceState.NotConfigured, (await provider.GetStatusAsync(CancellationToken.None)).State);
+        Assert.Empty(calls);
+    }
+
+    // Pins the ARM path and api-version. Verified against the live resource during the final review,
+    // so this is regression cover: a wrong path or a dropped api-version would 404 in production
+    // while every behavioural test above still passed, because they stub the response.
+    [Fact]
+    public async Task TheRequestGoesToTheSitesResourcePath_WithTheApiVersion()
+    {
+        var (provider, calls) = Build(respond: _ => Json(RealSiteResponse()));
+
+        await provider.GetStatusAsync(CancellationToken.None);
+
+        var request = Assert.Single(calls);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal(
+            $"https://management.azure.com/subscriptions/{SubscriptionId}/resourceGroups/{ResourceGroup}" +
+            $"/providers/Microsoft.Web/sites/{SiteName}?api-version=2023-12-01",
+            request.RequestUri?.ToString());
     }
 
     // An upstream message can name an internal address; admins read this field in every environment.

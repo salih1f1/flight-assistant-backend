@@ -138,6 +138,16 @@ namespace FlightAssistant.Infrastructure.ExternalServices.Azure
         /// </summary>
         private static AppServiceSnapshot MapSite(JsonElement root)
         {
+            // TryGetProperty THROWS on a non-object element, so a 200 carrying valid JSON that is
+            // an array, a number or a bare string would escape as InvalidOperationException rather
+            // than becoming a state. That breaks the contract twice over: the endpoint would 500
+            // where every failure is supposed to be a state in the body, and "Check now" would skip
+            // both the status and the audit write, which is the precise hazard AppServiceProbe
+            // delegates here to avoid. ARM itself returns an object; an intercepting proxy is the
+            // realistic way to get anything else.
+            if (root.ValueKind != JsonValueKind.Object)
+                return AppServiceSnapshot.Unavailable("Azure Resource Manager returned a response that could not be read.");
+
             var name = ReadString(root, "name");
             var hasProperties = root.TryGetProperty("properties", out var properties) && properties.ValueKind == JsonValueKind.Object;
 

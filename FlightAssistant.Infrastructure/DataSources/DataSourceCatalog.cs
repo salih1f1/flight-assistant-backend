@@ -129,10 +129,11 @@ namespace FlightAssistant.Infrastructure.DataSources
                 // lands on a portal error is the kind of small untruth this whole page exists to
                 // remove, so it is better to land one click away and correct.
                 //
-                // This is the route the portal itself emits when you browse App Services. The older
-                // #browse/{type} shorthand reaches the same blade, but portal routes are client-side
-                // hash fragments, so no automated check can confirm either one -- nothing here is
-                // reachable by a request. Verified by clicking it, which is the only way to.
+                // This is the route the portal itself emits when you browse App Services, and the
+                // same #view/ family the AzureCost row above uses. Portal routes are client-side
+                // hash fragments: they never reach a server, so no request, status code or test can
+                // confirm this one resolves. Clicking it is the only check there is, and it has not
+                // been done -- treat the link as unverified until someone with portal access has.
                 new(DataSourceKeys.AppService, "Azure App Service", DataSourceKind.Infrastructure,
                     DataSourceCriticality.Optional,
                     "Reads the App Service's own state and whether Always On is enabled. Reports only; it cannot change anything in Azure.",
