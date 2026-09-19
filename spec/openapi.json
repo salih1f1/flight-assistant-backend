@@ -2288,6 +2288,93 @@
         }
       }
     },
+    "/admin/jobs": {
+      "get": {
+        "tags": [
+          "Admin - Jobs"
+        ],
+        "summary": "The background jobs and whether they are running",
+        "description": "Both scheduled jobs: the deployment config ceiling, the runtime switch, and the effective state, alongside who last changed the switch and why. 'canToggle' is false when config has the job off — config is a hard ceiling and no toggle can start a job it has disabled.",
+        "operationId": "AdminGetJobs",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminJobDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/jobs/{job}": {
+      "put": {
+        "tags": [
+          "Admin - Jobs"
+        ],
+        "summary": "Switch a background job on or off",
+        "description": "Stops or starts a job's scheduled loop. Worst case is the cache window plus one full loop interval, because a cycle already in flight is never aborted -- about 70 seconds for flight sync, about 40 for verification. Manual triggers are unaffected and keep working while a job is switched off. Audited. 409 when config has the job off, 404 when the job name is unknown.",
+        "operationId": "AdminToggleJob",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToggleJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminJobDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/lounge-providers/{id}/verify": {
       "patch": {
         "tags": [
@@ -2782,6 +2869,200 @@
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/loyalty/programs/{programId}/tiers": {
+      "post": {
+        "tags": [
+          "Admin - Loyalty"
+        ],
+        "summary": "Add a tier to a loyalty program",
+        "description": "404 when the program does not exist. 409 when the program already has a tier with that code or at that rank — loyalty_tiers is unique on both, per program.",
+        "operationId": "AdminCreateLoyaltyTier",
+        "parameters": [
+          {
+            "name": "programId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLoyaltyTierRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/loyalty/programs/{programId}/tiers/{tierId}": {
+      "put": {
+        "tags": [
+          "Admin - Loyalty"
+        ],
+        "summary": "Update one of a loyalty program's tiers",
+        "description": "404 when the program does not exist, or when the tier is not one of its tiers. 409 when another tier of the program already has that code or rank.",
+        "operationId": "AdminUpdateLoyaltyTier",
+        "parameters": [
+          {
+            "name": "programId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "tierId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLoyaltyTierRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Admin - Loyalty"
+        ],
+        "summary": "Delete one of a loyalty program's tiers",
+        "description": "404 when the program does not exist, or when the tier is not one of its tiers. Travelers holding the tier keep their membership and lose the tier: a membership's TierId is set to null rather than the delete failing.",
+        "operationId": "AdminDeleteLoyaltyTier",
+        "parameters": [
+          {
+            "name": "programId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "tierId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
                 }
               }
             }
@@ -5498,6 +5779,54 @@
         },
         "additionalProperties": false
       },
+      "AdminJobDto": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "string",
+            "nullable": true
+          },
+          "displayName": {
+            "type": "string",
+            "nullable": true
+          },
+          "configEnabled": {
+            "type": "boolean"
+          },
+          "switchEnabled": {
+            "type": "boolean"
+          },
+          "effectiveEnabled": {
+            "type": "boolean"
+          },
+          "canToggle": {
+            "type": "boolean"
+          },
+          "changedUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "changedBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastOutcome": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastRunUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "AdminLoungeDto": {
         "type": "object",
         "properties": {
@@ -6424,6 +6753,32 @@
         },
         "additionalProperties": false
       },
+      "CreateLoyaltyTierRequest": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "rank": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "allianceCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "allianceTierCode": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "DeviceTokenDto": {
         "type": "object",
         "properties": {
@@ -6968,6 +7323,19 @@
         },
         "additionalProperties": false
       },
+      "ToggleJobRequest": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "ToggleNotifyRequest": {
         "type": "object",
         "properties": {
@@ -7181,6 +7549,32 @@
             "nullable": true
           },
           "allianceCode": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateLoyaltyTierRequest": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "rank": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "allianceCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "allianceTierCode": {
             "type": "string",
             "nullable": true
           }
