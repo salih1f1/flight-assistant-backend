@@ -295,11 +295,12 @@ public class ReferenceProvisioningPostgresTests : PostgresTestBase
     public async Task AnAirportWeHoldByIcao_IsCompleted_RatherThanViolatingItsUniqueIndex()
     {
         // airports.Icao carries the same filtered unique index (AirportConfiguration), so the same
-        // insert fails the same way -- again invisible to every non-PostgreSQL suite.
+        // insert fails the same way -- again invisible to every non-PostgreSQL suite. The held row
+        // has no Iata of its own, which is the case completion exists for.
         await using (var seed = _fixture.CreateDbContext())
         {
             seed.Countries.Add(Country.Create("GB", "United Kingdom"));
-            seed.Airports.Add(Airport.Create("ZZZ", "EGLL", name: "", city: "", countryCode: "GB"));
+            seed.Airports.Add(Airport.Create("", "EGLL", name: "", city: "", countryCode: "GB"));
             await seed.SaveChangesAsync();
         }
 
@@ -316,6 +317,39 @@ public class ReferenceProvisioningPostgresTests : PostgresTestBase
         var airport = Assert.Single(await db.Airports.Where(a => a.Icao == "EGLL").ToListAsync());
         Assert.Equal("London Heathrow", airport.Name);      // blank columns filled from the source
         Assert.Equal("London", airport.City);
-        Assert.Equal("ZZZ", airport.Iata);                  // a code the row already has, kept
+        Assert.Equal("LHR", airport.Iata);                  // the code it lacked, filled in
+    }
+
+    [Fact]
+    public async Task AnAirportHeldUnderAConflictingIata_PersistsTheFlagAndNothingElse()
+    {
+        // The flag is #494's whole deliverable, and it is written on a NotFound outcome -- so what
+        // actually needs proving against a real database is that it COMMITS, and that the row's own
+        // data does not move with it. Neither is observable from a substitute.
+        await using (var seed = _fixture.CreateDbContext())
+        {
+            seed.Countries.Add(Country.Create("GB", "United Kingdom"));
+            seed.Airports.Add(Airport.Create("ZZZ", "EGLL", name: "Held", city: "Heldville", countryCode: "GB"));
+            await seed.SaveChangesAsync();
+        }
+
+        _registry.TryGet("ourairports").Returns(
+            new FakeSource("ourairports", [VerificationEntityType.Airport], _ => FoundAirport("LHR")));
+        var provisioner = CreateProvisioner(new Options());
+
+        var result = await provisioner.ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.NotFound, result.Status);
+
+        await using var db = _fixture.CreateDbContext();
+        var airport = Assert.Single(await db.Airports.Where(a => a.Icao == "EGLL").ToListAsync());
+        Assert.False(airport.IsVerified);
+        Assert.NotNull(airport.VerificationIssue);
+        Assert.Contains("LHR", airport.VerificationIssue);
+        Assert.Equal("ZZZ", airport.Iata);                  // never renamed
+        Assert.Equal("Held", airport.Name);                 // and nothing else filled in either
+        // No second row was inserted under the requested code.
+        Assert.Empty(await db.Airports.Where(a => a.Iata == "LHR").ToListAsync());
     }
 }
