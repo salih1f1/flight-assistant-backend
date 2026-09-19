@@ -408,9 +408,23 @@ if (app.Environment.IsDevelopment() || app.Environment.IsStaging())
 }
 
 app.UseMiddleware<CorrelationIdMiddleware>();
+
+// Request logging sits OUTSIDE the exception handler, and the order is the point (#413).
+// Serilog's request-logging middleware logs a hardcoded 500 for any exception that passes through
+// it, then rethrows. With it registered inside UseExceptionHandler, every exception-derived
+// response was logged as "responded 500" at Error while the client received something else
+// entirely: measured, a DomainException(404) produced "[ERR] ... responded 500" on the line before
+// Kestrel's own "Request finished ... 404". That covered every DomainException status — 404, 409,
+// 503 — and every FluentValidation 400, so the Error level was wrong too, and since the
+// Application Insights sink ships Warning-and-above only (#440), those bogus Errors were exactly
+// what was being shipped. Outside it, the handler converts the exception first and Serilog logs
+// what was actually sent, at the level that status deserves. The exception itself is not lost: it
+// stays on GlobalExceptionHandler's own "Unhandled exception on {Method} {Path}" line for the 500s
+// that warrant one, rather than being attached to every 404.
+// CorrelationIdMiddleware stays outermost so its LogContext property is still on this line.
+app.UseSerilogRequestLogging();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
-app.UseSerilogRequestLogging();
 app.UseHttpsRedirection();
 app.UseCors();
 app.UseAuthentication();
