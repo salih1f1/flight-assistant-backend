@@ -69,6 +69,66 @@ namespace FlightAssistant.API.Endpoints.Admin
             .WithSummary("Delete loyalty program")
             .Produces(204)
             .ProducesValidationProblem();
+
+            MapTierEndpoints(group);
+        }
+
+        /// <summary>
+        /// Writing a program's tiers (#488). A tier is always addressed through the program that
+        /// owns it, which is what stops one program's route from reaching another program's tier:
+        /// the handlers look the tier up inside the program, so anything else is a 404.
+        /// </summary>
+        private static void MapTierEndpoints(RouteGroupBuilder group)
+        {
+            // POST /admin/loyalty/programs/{programId}/tiers
+            group.MapPost("programs/{programId:int}/tiers", async (
+                int programId, [FromBody] CreateLoyaltyTierRequest req, IMediator mediator, CancellationToken ct) =>
+            {
+                var id = await mediator.Send(new CreateLoyaltyTierCommand(
+                    programId, req.Code, req.Name, req.Rank, req.AllianceCode, req.AllianceTierCode), ct);
+                return Results.Created($"/admin/loyalty/programs/{programId}/tiers/{id}", new { id });
+            })
+            .WithName("AdminCreateLoyaltyTier")
+            .WithSummary("Add a tier to a loyalty program")
+            .WithDescription("404 when the program does not exist. 409 when the program already has a tier with that "
+                + "code or at that rank — loyalty_tiers is unique on both, per program.")
+            .Produces(201)
+            .ProducesValidationProblem()
+            .ProducesProblem(404)
+            .ProducesProblem(409);
+
+            // PUT /admin/loyalty/programs/{programId}/tiers/{tierId}
+            group.MapPut("programs/{programId:int}/tiers/{tierId:int}", async (
+                int programId, int tierId, [FromBody] UpdateLoyaltyTierRequest req, IMediator mediator, CancellationToken ct) =>
+            {
+                await mediator.Send(new UpdateLoyaltyTierCommand(
+                    programId, tierId, req.Code, req.Name, req.Rank, req.AllianceCode, req.AllianceTierCode), ct);
+                return Results.NoContent();
+            })
+            .WithName("AdminUpdateLoyaltyTier")
+            .WithSummary("Update one of a loyalty program's tiers")
+            .WithDescription("404 when the program does not exist, or when the tier is not one of its tiers. "
+                + "409 when another tier of the program already has that code or rank.")
+            .Produces(204)
+            .ProducesValidationProblem()
+            .ProducesProblem(404)
+            .ProducesProblem(409);
+
+            // DELETE /admin/loyalty/programs/{programId}/tiers/{tierId}
+            group.MapDelete("programs/{programId:int}/tiers/{tierId:int}", async (
+                int programId, int tierId, IMediator mediator, CancellationToken ct) =>
+            {
+                await mediator.Send(new DeleteLoyaltyTierCommand(programId, tierId), ct);
+                return Results.NoContent();
+            })
+            .WithName("AdminDeleteLoyaltyTier")
+            .WithSummary("Delete one of a loyalty program's tiers")
+            .WithDescription("404 when the program does not exist, or when the tier is not one of its tiers. "
+                + "Travelers holding the tier keep their membership and lose the tier: a membership's TierId is "
+                + "set to null rather than the delete failing.")
+            .Produces(204)
+            .ProducesValidationProblem()
+            .ProducesProblem(404);
         }
     }
 }
