@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Http;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
@@ -75,6 +76,41 @@ public class FlightAssistantWebApplicationFactory : WebApplicationFactory<Progra
             // download a dataset: anything reaching either source's named client fails loudly instead.
             foreach (var clientName in new[] { OurAirportsVerificationSource.HttpClientName, MledozeCountriesVerificationSource.HttpClientName })
                 services.AddHttpClient(clientName).ConfigurePrimaryHttpMessageHandler(() => new VerificationDownloadRefusingHandler());
+
+            // ── Refuse every outbound AeroAPI call, at the client itself (#509) ──────────────
+            // The three service-level stubs above and below (IFlightSearchProvider, and #465's
+            // IReferenceDataProvisioner) each guard one path to this one client, and each was added
+            // only after a test tripped over it: a test with nothing to do with flight data waited
+            // out a real, doomed network call. This backstops the resource instead of the paths, so
+            // a future service reaching AeroAPI cannot reintroduce that.
+            //
+            // ConfigurePrimaryHttpMessageHandler alone -- what the verification clients above use --
+            // is not enough here, and the reason is narrower than it first looks, so it is worth
+            // stating precisely (measured, not reasoned):
+            //
+            //   * The throw is NOT retried. An InvalidOperationException is not transient by
+            //     HttpClientResiliencePredicates.IsTransient, so the resilience handler passes it
+            //     straight out. The first call is refused in 18 ms even with the whole pipeline in
+            //     place -- a single-call test therefore passes either way and proves nothing.
+            //   * AeroApiThrottleGate is the cost, and only from the SECOND call on. It hands out
+            //     the first slot immediately, then spaces every later call by
+            //     AeroApi:MinRequestInterval. Measured: the second call took 12,002 ms with the
+            //     pipeline in place, against 0 ms with it cleared.
+            //
+            // So the slow-test problem returns as soon as more than one test touches AeroAPI, which
+            // is exactly the situation a backstop is for.
+            //
+            // Clearing HttpMessageHandlerBuilderActions drops that pipeline for tests, so the
+            // refusal is immediate. HttpClientActions are left alone: BaseAddress, the x-apikey
+            // header and Timeout are harmless on a client that never reaches a network.
+            services.Configure<HttpClientFactoryOptions>(
+                AeroApiVerificationSource.HttpClientName,
+                options =>
+                {
+                    options.HttpMessageHandlerBuilderActions.Clear();
+                    options.HttpMessageHandlerBuilderActions.Add(builder =>
+                        builder.PrimaryHandler = new AeroApiCallRefusingHandler());
+                });
 
             // ── Remove health checks that require real DB / Redis / APNs ─────
             services.Configure<HealthCheckServiceOptions>(opts =>
@@ -180,6 +216,21 @@ public class FlightAssistantWebApplicationFactory : WebApplicationFactory<Progra
 
     /// <summary>The message a test gets when anything tries to download a verification dataset.</summary>
     public const string VerificationDownloadRefused = "Tests must not download verification datasets";
+
+    /// <summary>The message a test gets when anything tries to call AeroAPI (#509). Public so a
+    /// test that deliberately drives this path can assert on it rather than matching a literal.</summary>
+    public const string AeroApiCallRefused = "Tests must not call AeroAPI";
+
+    /// <summary>
+    /// Refuses at the transport. Reached only because the registration above strips this client's
+    /// resilience pipeline and throttle handler in tests -- with those in place the throw would be
+    /// retried behind a throttle wait instead of surfacing.
+    /// </summary>
+    private sealed class AeroApiCallRefusingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException($"{AeroApiCallRefused} ({request.Method} {request.RequestUri}).");
+    }
 
     private sealed class VerificationDownloadRefusingHandler : HttpMessageHandler
     {
