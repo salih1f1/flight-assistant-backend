@@ -81,23 +81,48 @@ namespace FlightAssistant.Infrastructure.Jobs
             if (_cache.TryGetValue(job, out var cached) && now - cached.ReadUtc < CacheWindow)
                 return cached.Enabled;
 
+            // Sticky per job for this singleton's lifetime: true once ANY read of this job has ever
+            // completed without throwing -- including one that found no row, which is a successful
+            // read of "nobody has touched this switch", not a failure. That is what the fail-open vs.
+            // fail-closed split below keys on; what that read said is irrelevant here. `cached` is
+            // the zero-value CacheEntry (HasSucceeded false) when the job has never been read at all,
+            // which is exactly the cold-start case this is meant to catch.
+            var everSucceeded = cached.HasSucceeded;
+
             bool enabled;
             try
             {
                 var state = await _read(job, ct);
                 enabled = state?.Enabled ?? true; // no row yet -- nobody has touched this switch
+                everSucceeded = true;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // FAIL OPEN, deliberately: this is a stop switch, not a start switch, and a database
-                // blip must never stop a healthy job. A failed read is treated exactly like an
-                // "enabled" answer, cache entry included -- the next real attempt happens when this
-                // entry ages out of CacheWindow, not on some separate retry schedule.
-                _logger.LogWarning(ex, "Failed to read job switch {Job}; leaving it enabled.", job);
-                enabled = true;
+                if (everSucceeded)
+                {
+                    // FAIL OPEN, deliberately: a read of this job has worked before, so this is
+                    // steady-state noise -- a database blip -- not a signal, and a stop switch must
+                    // never let a blip stop an otherwise-healthy job. Cached like a real "enabled"
+                    // answer, so the next real attempt happens when this entry ages out of
+                    // CacheWindow, not on some separate retry schedule.
+                    _logger.LogWarning(ex, "Failed to read job switch {Job}; leaving it enabled.", job);
+                    enabled = true;
+                }
+                else
+                {
+                    // FAIL CLOSED: this is the first read ever attempted for this job, most likely a
+                    // cold start racing DataSourceSeeder for a still-warming connection pool. Nothing
+                    // has yet confirmed this job is meant to be running, so default to the outcome
+                    // that costs nothing when wrong -- skipping one tick -- rather than the one that
+                    // can spend real AeroAPI budget on a job an operator switched off before this
+                    // instance came up. The next tick tries a real read again.
+                    _logger.LogWarning(ex,
+                        "Failed to read job switch {Job} before any prior read has succeeded; treating it as disabled.", job);
+                    enabled = false;
+                }
             }
 
-            _cache[job] = new CacheEntry(enabled, now);
+            _cache[job] = new CacheEntry(enabled, now, everSucceeded);
             return enabled;
         }
 
@@ -112,6 +137,10 @@ namespace FlightAssistant.Infrastructure.Jobs
             return state ?? new JobSwitchState(job, true, null, null, null);
         }
 
-        private readonly record struct CacheEntry(bool Enabled, DateTimeOffset ReadUtc);
+        /// <param name="HasSucceeded">Whether ANY read of this job has ever completed without
+        /// throwing -- not whether this particular cached value came from one. Carried forward
+        /// unchanged on a fail-closed/fail-open entry so a later read failure can still tell a
+        /// cold start (never succeeded) from a steady-state blip (succeeded at least once).</param>
+        private readonly record struct CacheEntry(bool Enabled, DateTimeOffset ReadUtc, bool HasSucceeded);
     }
 }

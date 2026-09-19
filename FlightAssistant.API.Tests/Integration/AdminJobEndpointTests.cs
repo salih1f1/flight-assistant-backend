@@ -129,6 +129,14 @@ public class AdminJobEndpointTests(FlightAssistantWebApplicationFactory factory)
         Assert.False(job!.SwitchEnabled);
         Assert.False(job.EffectiveEnabled);
         Assert.Equal("burning AeroAPI budget", job.Reason);
+
+        // The 200 body above is built entirely from the request, never read back (ToggleJobCommandHandler),
+        // so on its own it would say "off" even if UpsertAsync silently stopped persisting -- a switched-off
+        // job that keeps calling AeroAPI forever. Reading the row back is what actually proves it stuck.
+        var persisted = await SnapshotFlightSyncSwitchAsync(factory.Services);
+        Assert.NotNull(persisted);
+        Assert.False(persisted!.Value.Enabled);
+        Assert.Equal("burning AeroAPI budget", persisted!.Value.Reason);
     }
 
     // The config ceiling, enforced at the API rather than only in the UI.

@@ -37,7 +37,7 @@ namespace FlightAssistant.Infrastructure.Tests.Jobs
             await sut.IsEnabledAsync(JobNames.FlightSync, CancellationToken.None);
             await sut.IsEnabledAsync(JobNames.FlightSync, CancellationToken.None);
 
-            Assert.Equal(1, reads.Count);
+            Assert.Single(reads);
         }
 
         // The window is what bounds how long a toggle takes to take effect, so it is asserted
@@ -82,11 +82,43 @@ namespace FlightAssistant.Infrastructure.Tests.Jobs
             Assert.True(await sut.IsEnabledAsync(JobNames.Verification, CancellationToken.None));
         }
 
-        // Diagnostics must not become an outage: a database blip must not stop a running job.
+        // Cold start: an operator switched this job off, the API restarts, and the very first read of
+        // this job's row throws -- e.g. the Npgsql pool is still warming and DataSourceSeeder is
+        // contending for it. Failing open here would run a full cycle against AeroAPI for a job
+        // someone deliberately stopped. Nothing has yet confirmed the job should run, so this fails
+        // closed and skips the tick instead.
+        [Fact]
+        public async Task AFirstEverFailedRead_DoesNotEnableTheJob()
+        {
+            var (sut, _, _) = Build(rows: [], throwOnRead: true);
+
+            Assert.False(await sut.IsEnabledAsync(JobNames.FlightSync, CancellationToken.None));
+        }
+
+        // Steady state: diagnostics must not become an outage, so once this job's read has worked at
+        // least once, a later blip must not be able to stop it. Unlike Build's shared throwOnRead
+        // (fixed for the sut's whole lifetime), this test needs a read that succeeds and THEN starts
+        // failing, so it wires its own reader rather than reusing Build -- seeding a real success is
+        // what tells this apart from AFirstEverFailedRead_DoesNotEnableTheJob just above, which is
+        // the cold-start case this same fix now handles differently.
         [Fact]
         public async Task AFailedRead_LeavesTheJobEnabled()
         {
-            var (sut, _, _) = Build(rows: [], throwOnRead: true);
+            var time = new FakeTimeProvider(Start);
+            var throwOnRead = false;
+
+            JobSwitchReader read = (job, _) =>
+            {
+                if (throwOnRead) throw new InvalidOperationException("Simulated database failure.");
+                return Task.FromResult<JobSwitchState?>(new JobSwitchState(job, true, null, null, null));
+            };
+
+            var sut = new CachedJobSwitch(read, time, NullLogger<CachedJobSwitch>.Instance);
+            Assert.True(await sut.IsEnabledAsync(JobNames.FlightSync, CancellationToken.None));
+
+            // Past the cache window, so the next call is a real read rather than a cache hit.
+            time.Advance(CachedJobSwitch.CacheWindow + TimeSpan.FromSeconds(1));
+            throwOnRead = true;
 
             Assert.True(await sut.IsEnabledAsync(JobNames.FlightSync, CancellationToken.None));
         }

@@ -62,9 +62,11 @@ namespace FlightAssistant.API.Endpoints.Admin
             .WithName("AdminToggleJob")
             .WithSummary("Switch a background job on or off")
             .WithDescription(
-                "Stops or starts a job's scheduled loop, taking effect within about ten seconds. Manual " +
-                "triggers are unaffected and keep working while a job is switched off. Audited. 409 when " +
-                "config has the job off, 404 when the job name is unknown.")
+                "Stops or starts a job's scheduled loop. Worst case is the cache window plus one full " +
+                "loop interval, because a cycle already in flight is never aborted -- about 70 seconds " +
+                "for flight sync, about 40 for verification. Manual triggers are unaffected and keep " +
+                "working while a job is switched off. Audited. 409 when config has the job off, 404 when " +
+                "the job name is unknown.")
             .Produces<AdminJobDto>(200)
             .ProducesProblem(404)
             .ProducesProblem(409);
