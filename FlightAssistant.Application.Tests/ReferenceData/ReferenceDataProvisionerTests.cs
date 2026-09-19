@@ -698,6 +698,10 @@ public class ReferenceDataProvisionerTests
         Assert.Equal(ReferenceProvisionStatus.Unavailable, result.Status);
         Assert.Equal(VerificationEntityType.Airport, result.FailedType);
         Assert.Equal("LHR", result.FailedCode);
+        // Which Unavailable this is matters: the status alone cannot be told apart from a budget
+        // refusal, an unregistered source or a save failure, and DiagnosticDetail is what an
+        // operator reads outside Production to tell them apart.
+        Assert.Contains("took longer than", result.DiagnosticDetail);
     }
 
     [Fact]
@@ -959,5 +963,26 @@ public class ReferenceDataProvisionerTests
         Assert.Equal(ReferenceProvisionStatus.Unavailable, result.Status);
         await _cache.DidNotReceive().SetAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken>());
+    }
+    [Fact]
+    public async Task TheSameUnknownAirportOnBothEndsOfTheRoute_IsFetchedAndCreatedOnce()
+    {
+        // A flight departing and arriving at the same airport is nonsense, but POST /flights
+        // accepts it -- and so does one naming the same code in two different cases. Building two
+        // rows with one canonical IATA in a single save violates the unique index on airports.Iata:
+        // a save failure, so Unavailable, so a permanent 503 plus an Error log on every attempt.
+        var source = new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR"));
+        _registry.TryGet("ourairports").Returns(source);
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [
+                new MissingReference(VerificationEntityType.Airport, "LHR"),
+                new MissingReference(VerificationEntityType.Airport, "lhr")
+            ],
+            CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+        Assert.Equal(1, source.Calls);
+        await _airports.Received(1).AddAsync(Arg.Any<Airport>(), Arg.Any<CancellationToken>());
     }
 }

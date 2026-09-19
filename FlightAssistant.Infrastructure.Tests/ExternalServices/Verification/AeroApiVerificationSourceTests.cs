@@ -341,7 +341,7 @@ public class AeroApiVerificationSourceTests
     }
 
     [Fact]
-    public async Task LookupAsync_Airline_MapsExactlyIataIcaoName()
+    public async Task LookupAsync_Airline_MapsExactlyIataIcaoNameAndTheRawCountryName()
     {
         var handler = new StubHttpMessageHandler(HttpStatusCode.OK, ReadFixture("operator-baw.json"));
 

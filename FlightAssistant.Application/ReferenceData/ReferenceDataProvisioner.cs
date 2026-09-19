@@ -82,10 +82,12 @@ namespace FlightAssistant.Application.ReferenceData
             if (missing.Count == 0)
                 return ReferenceProvisionResult.Provisioned;
 
+            var entries = Deduplicate(missing);
+
             // Disabled behaves exactly like "the source has no such entity", which is today's 404.
             if (!_options.Enabled)
             {
-                var disabledFirst = missing.First();
+                var disabledFirst = entries.First();
                 return ReferenceProvisionResult.NotFound(disabledFirst.Type, disabledFirst.Code);
             }
 
@@ -94,7 +96,7 @@ namespace FlightAssistant.Application.ReferenceData
 
             try
             {
-                return await ProvisionCoreAsync(missing, deadline.Token).ConfigureAwait(false);
+                return await ProvisionCoreAsync(entries, deadline.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
@@ -104,15 +106,54 @@ namespace FlightAssistant.Application.ReferenceData
                 // false and it caches nothing, so an aborted airline lookup leaves nothing warm and
                 // the retry starts over behind AeroApiThrottleGate. An airline can therefore 503
                 // here repeatedly while the gate is busy.
-                var first = missing.First();
+                // Every entity the attempt covered, not just the first: the deadline is one budget
+                // for the whole step, so which entry was in flight when it fired is not knowable
+                // here -- naming one made an airline's timeout read as the airport's. The response
+                // names no entity either (ToDomainException uses a fixed message for Unavailable).
                 _logger.LogInformation(
-                    "Provisioning {EntityType} '{Code}' exceeded the {Budget} budget.",
-                    first.Type, first.Code, _options.Budget);
+                    "Provisioning {Entities} exceeded the {Budget} budget.",
+                    Describe(entries), _options.Budget);
+                var first = entries.First();
                 return ReferenceProvisionResult.Unavailable(
                     first.Type, first.Code,
                     $"Looking up reference data took longer than {_options.Budget}.");
             }
         }
+
+        /// <summary>
+        /// One entry per <c>(Type, canonical code)</c>, keeping the first occurrence so the caller's
+        /// own order survives.
+        ///
+        /// <para>
+        /// <c>POST /flights</c> accepts a departure and arrival IATA that are the same unknown code,
+        /// or the same code in two different cases, and <c>TrackFlightCommandHandler</c> adds one
+        /// <see cref="MissingReference"/> per airport without comparing them. Building two rows with
+        /// one canonical IATA in a single save violates the unique index on <c>airports.Iata</c>:
+        /// the save fails, which is <see cref="ReferenceProvisionStatus.Unavailable"/> -- a permanent
+        /// 503 plus an Error log on every attempt. Canonicalised the same way
+        /// <see cref="NegativeCacheKeyFor"/> does, so the two agree on what "the same code" means.
+        /// </para>
+        /// </summary>
+        private static IReadOnlyCollection<MissingReference> Deduplicate(
+            IReadOnlyCollection<MissingReference> missing)
+        {
+            if (missing.Count < 2)
+                return missing;
+
+            var seen = new HashSet<(VerificationEntityType Type, string Code)>();
+            var unique = new List<MissingReference>(missing.Count);
+            foreach (var entry in missing)
+            {
+                if (seen.Add((entry.Type, entry.Code.Trim().ToUpperInvariant())))
+                    unique.Add(entry);
+            }
+
+            return unique;
+        }
+
+        /// <summary>The entities an attempt covered, for a log line that must not single one out.</summary>
+        private static string Describe(IReadOnlyCollection<MissingReference> entries) =>
+            string.Join(", ", entries.Select(e => $"{e.Type} '{e.Code}'"));
 
         /// <summary>
         /// The provisioning walk itself, oblivious to the wall-clock budget -- <see cref="ProvisionAsync"/>
