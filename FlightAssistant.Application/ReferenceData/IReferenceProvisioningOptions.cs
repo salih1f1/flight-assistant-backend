@@ -8,9 +8,14 @@ namespace FlightAssistant.Application.ReferenceData
     /// </summary>
     public interface IReferenceProvisioningOptions
     {
-        /// <summary>Whether a missing airline, airport or country is looked up in the external
-        /// sources at all. When false, <c>POST /flights</c> answers exactly the 404 it did before
-        /// #465.</summary>
+        /// <summary>
+        /// Whether a missing airline, airport or country is looked up in the external sources at
+        /// all. When false, <c>POST /flights</c> answers the pre-#465 404 for a missing reference --
+        /// but not quite the pre-#465 behaviour for every request: the tracking cap is checked
+        /// <em>before</em> provisioning (this flag is read inside
+        /// <see cref="IReferenceDataProvisioner.ProvisionAsync"/>, one step later), so an at-cap
+        /// traveler naming an unknown reference still gets 409 where pre-#465 they got 404.
+        /// </summary>
         bool Enabled { get; }
 
         /// <summary>One wall-clock budget for the whole provisioning step, however many entities

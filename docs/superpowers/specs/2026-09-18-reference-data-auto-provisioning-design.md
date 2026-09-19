@@ -171,7 +171,7 @@ New `ReferenceProvisioning` section, options pattern with `ValidateOnStart` like
 
 | Key | Default | Range | Notes |
 |---|---|---|---|
-| `ReferenceProvisioning:Enabled` | `true` | — | `false` restores today's 404 exactly |
+| `ReferenceProvisioning:Enabled` | `true` | — | `false` restores today's 404 for a missing reference, but the tracking cap is still checked first, so an at-cap request answers 409 |
 | `ReferenceProvisioning:Budget` | `00:00:10` | 1 s–60 s | One wall-clock budget for the whole step |
 | `ReferenceProvisioning:NegativeCacheTtl` | `24:00:00` | 0–7 days | `0` disables the cache, so every attempt re-queries the source |
 
@@ -191,7 +191,7 @@ entity type rather than two that can drift.
 | Source error (timeout, 5xx, parse) | 503, fixed category in `DiagnosticDetail` |
 | Airline country name unresolvable | 404 naming the airline; nothing written |
 | Traveler at the tracking cap | 409, before any provisioning, nothing written |
-| `ReferenceProvisioning:Enabled` false | today's 404 |
+| `ReferenceProvisioning:Enabled` false | today's 404 for the missing reference -- but the cap is checked before the flag is read, so an at-cap request is 409, not 404 |
 
 **Provisioning is all-or-nothing.** If the airports resolve and the airline does not, nothing
 is written and the response is 404.
