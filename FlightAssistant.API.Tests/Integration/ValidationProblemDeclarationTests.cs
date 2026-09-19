@@ -70,8 +70,20 @@ public class ValidationProblemDeclarationTests(FlightAssistantWebApplicationFact
     }
 
     /// <summary>
-    /// And the positive half: each of them really does declare a 400 at all. A route that dropped
-    /// the declaration entirely would satisfy the check above by having nothing to downgrade.
+    /// And the positive half: every operation that can actually fail validation declares its 400.
+    /// A route that dropped the declaration entirely would satisfy the check above by having
+    /// nothing to downgrade.
+    ///
+    /// <para>
+    /// Narrowed to operations <see cref="CanFailValidation"/> says can produce one at all: an
+    /// operation with no parameters and no request body has nothing a validator could ever reject,
+    /// so requiring a 400 from it would make the route declare a response it can never return.
+    /// <c>GET /admin/usage/azure</c> (#500) is the first of these — <c>GetAzureBudgetQuery</c>
+    /// takes no input — and publishing a 400 that can't happen is the same category of error
+    /// <see cref="AdminServerErrorDeclarationTests"/> already guards against for an ambient 500.
+    /// Derived from the document rather than named, for the same reason as the rest of this class:
+    /// a hand-maintained exclusion list would just be another thing to drift.
+    /// </para>
     /// </summary>
     [Fact]
     public void EveryImportAndUsageOperation_DeclaresItsValidation400()
@@ -82,6 +94,7 @@ public class ValidationProblemDeclarationTests(FlightAssistantWebApplicationFact
             .Where(p => p.Key.StartsWith("/admin/import/", StringComparison.Ordinal)
                         || p.Key.StartsWith("/admin/usage/", StringComparison.Ordinal))
             .SelectMany(p => p.Value.Operations.Select(o => (Route: $"{o.Key.ToString().ToUpperInvariant()} {p.Key}", Operation: o.Value)))
+            .Where(r => CanFailValidation(r.Operation))
             .Where(r => !r.Operation.Responses.ContainsKey("400"))
             .Select(r => r.Route)
             .OrderBy(r => r, StringComparer.Ordinal)
@@ -89,6 +102,14 @@ public class ValidationProblemDeclarationTests(FlightAssistantWebApplicationFact
 
         Assert.Empty(missing);
     }
+
+    /// <summary>
+    /// Whether an operation has any client-supplied input for a validator to reject: a query,
+    /// route, header or cookie parameter, or a request body. An operation with neither cannot
+    /// produce a validation 400 by construction, no matter what route it is mapped on.
+    /// </summary>
+    private static bool CanFailValidation(OpenApiOperation operation) =>
+        operation.Parameters is { Count: > 0 } || operation.RequestBody is not null;
 
     private static string? SchemaIdOf(OpenApiResponse response) =>
         response.Content.TryGetValue("application/problem+json", out var media)
