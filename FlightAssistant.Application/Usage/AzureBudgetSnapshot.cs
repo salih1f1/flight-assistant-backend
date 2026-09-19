@@ -15,20 +15,25 @@ namespace FlightAssistant.Application.Usage
         decimal? BudgetAmount,
         decimal? CurrentSpendAmount,
         string? Currency,
+        /// <param name="TimeGrain">How often the budget resets — "Monthly", "Quarterly",
+        /// "Annually" — as Azure reports it. This, not the period, is what describes the spend
+        /// figure: a budget's timePeriod is its validity window and can span years while the
+        /// figure covers one month (#525). Null when the budget omits it; never guessed.</param>
+        string? TimeGrain,
         DateTimeOffset? PeriodStartUtc,
         DateTimeOffset? PeriodEndUtc,
         DateTimeOffset? DataAsOfUtc,
         string? Message)
     {
         public static AzureBudgetSnapshot NotConfigured() => new(
-            AzureBudgetState.NotConfigured, null, null, null, null, null, null, null,
+            AzureBudgetState.NotConfigured, null, null, null, null, null, null, null, null,
             "AzureCost:SubscriptionId is not set.");
 
         public static AzureBudgetSnapshot NotAuthorized() => new(
-            AzureBudgetState.NotAuthorized, null, null, null, null, null, null, null,
+            AzureBudgetState.NotAuthorized, null, null, null, null, null, null, null, null,
             "Grant the API's managed identity the Cost Management Reader role on the subscription.");
 
         public static AzureBudgetSnapshot Unavailable(string message) => new(
-            AzureBudgetState.Unavailable, null, null, null, null, null, null, null, message);
+            AzureBudgetState.Unavailable, null, null, null, null, null, null, null, null, message);
     }
 }

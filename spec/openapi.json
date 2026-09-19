@@ -6507,6 +6507,10 @@
             "type": "string",
             "nullable": true
           },
+          "timeGrain": {
+            "type": "string",
+            "nullable": true
+          },
           "periodStartUtc": {
             "type": "string",
             "format": "date-time",

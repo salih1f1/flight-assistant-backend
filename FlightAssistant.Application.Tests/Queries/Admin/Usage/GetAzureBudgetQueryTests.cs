@@ -48,13 +48,13 @@ public class GetAzureBudgetQueryTests
     }
 
     private static AzureBudgetSnapshot OkSnapshot() => new(
-        AzureBudgetState.Ok, "monthly", 500m, 123.45m, "USD",
+        AzureBudgetState.Ok, "monthly", 500m, 123.45m, "USD", "Monthly",
         new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero),
         new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero),
         DataAsOfUtc: null, Message: null);
 
     private static AzureBudgetSnapshot NoBudgetSnapshot() => new(
-        AzureBudgetState.NoBudget, null, null, 42.10m, "EUR", null, null, null, null);
+        AzureBudgetState.NoBudget, null, null, 42.10m, "EUR", null, null, null, null, null);
 
     private static GetAzureBudgetQueryHandler BuildHandler(IAzureCostProvider provider, FakeCache? cache = null) =>
         new(provider, cache ?? new FakeCache());

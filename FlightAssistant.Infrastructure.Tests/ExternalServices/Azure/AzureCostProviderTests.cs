@@ -84,6 +84,19 @@ public class AzureCostProviderTests
             "amount": {{amount.ToString(CultureInfo.InvariantCulture)}}, "currentSpend": { "amount": {{spend.ToString(CultureInfo.InvariantCulture)}}, "unit": "{{currency}}" } } } ] }
         """;
 
+    /// <summary>
+    /// The real subscription's budget, verified against <c>az consumption budget list</c> (#525):
+    /// a <b>Monthly</b> grain with a validity window spanning years. That gap is the whole point —
+    /// the spend figure covers the month, while timePeriod describes how long the budget exists.
+    /// </summary>
+    private static string MonthlyBudgetValidForYears() => """
+        { "value": [ { "name": "FlightAssistant-Dev-Budget", "properties": {
+            "amount": 100.0,
+            "timeGrain": "Monthly",
+            "timePeriod": { "startDate": "2025-08-01T00:00:00Z", "endDate": "2028-07-31T00:00:00Z" },
+            "currentSpend": { "amount": 16.58, "unit": "EUR" } } } ] }
+        """;
+
     /// <summary>Shaped as the Cost Management query API actually answers (verified against
     /// 2023-03-01's <c>QueryResult</c>): <c>properties.columns</c> naming the columns,
     /// <c>properties.rows</c> holding the values in the same order.</summary>
@@ -426,5 +439,46 @@ public class AzureCostProviderTests
         var snapshot = await provider.GetBudgetAsync(CancellationToken.None);
 
         Assert.Null(snapshot.DataAsOfUtc);
+    }
+    /// <summary>
+    /// #525: the grain is what describes the figure. Without it the panel could only show the
+    /// validity window, and a reader would take a three-year range beside a month's spend to mean
+    /// the spend accumulated over three years.
+    /// </summary>
+    [Fact]
+    public async Task ABudgetsTimeGrainIsReported()
+    {
+        var (provider, _) = Build(respond: _ => Json(MonthlyBudgetValidForYears()));
+
+        var snapshot = await provider.GetBudgetAsync(CancellationToken.None);
+
+        Assert.Equal("Monthly", snapshot.TimeGrain);
+    }
+
+    /// <summary>
+    /// The validity window is still reported — it is real, and the panel decides what to do with
+    /// it. What must not happen is losing the grain that gives it meaning.
+    /// </summary>
+    [Fact]
+    public async Task AValidityWindowLongerThanTheGrainIsStillReported()
+    {
+        var (provider, _) = Build(respond: _ => Json(MonthlyBudgetValidForYears()));
+
+        var snapshot = await provider.GetBudgetAsync(CancellationToken.None);
+
+        Assert.Equal(new DateTimeOffset(2025, 8, 1, 0, 0, 0, TimeSpan.Zero), snapshot.PeriodStartUtc);
+        Assert.Equal(new DateTimeOffset(2028, 7, 31, 0, 0, 0, TimeSpan.Zero), snapshot.PeriodEndUtc);
+        Assert.Equal("Monthly", snapshot.TimeGrain);
+    }
+
+    /// <summary>A budget that omits the grain reports null rather than guessing "Monthly".</summary>
+    [Fact]
+    public async Task AMissingTimeGrainIsNull()
+    {
+        var (provider, _) = Build(respond: _ => Json(BudgetWith(50.0m, 12.34m, "USD")));
+
+        var snapshot = await provider.GetBudgetAsync(CancellationToken.None);
+
+        Assert.Null(snapshot.TimeGrain);
     }
 }
