@@ -53,12 +53,15 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "one year of history, so an earlier start is rejected. Cached for 10 minutes, " +
                 "matching FlightAware's own refresh cadence.")
             .Produces<AeroApiUsageDto>(200)
+            // Only ProducesValidationProblem, never it *and* ProducesProblem(400) (#506): OpenAPI
+            // allows one entry per status and the later declaration wins, so the pair rendered this
+            // 400 as a bare ProblemDetails and silently dropped the errors dictionary the route
+            // actually returns. This operation really can produce both shapes -- its validator's
+            // 400, and UsageRange.Resolve's DomainException(400) inverted-range backstop -- and
+            // HttpValidationProblemDetails extends ProblemDetails, so declaring only this one is
+            // the better of two imperfect options. A real oneOf is what this wants; Swashbuckle
+            // will not emit one from these attributes.
             .ProducesValidationProblem()
-            // A plain ProblemDetails 400 as well as the ValidationProblemDetails one above:
-            // UsageRange.Resolve throws DomainException(400) as a backstop if a resolved range
-            // is ever inverted, which GlobalExceptionHandler renders without an errors
-            // dictionary. Same shape-at-one-status split AdminImportEndpoints declares.
-            .ProducesProblem(400)
             .ProducesProblem(500)
             .ProducesProblem(502)
             .ProducesProblem(503);
