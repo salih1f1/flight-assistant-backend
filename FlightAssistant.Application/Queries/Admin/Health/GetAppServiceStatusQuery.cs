@@ -13,16 +13,16 @@ namespace FlightAssistant.Application.Queries.Admin.Health
     public sealed record GetAppServiceStatusQuery : IRequest<AppServiceStatusDto>;
 
     /// <summary>
-    /// The one copy of how the App Service snapshot is cached -- the same shape
-    /// <c>AzureBudgetCache</c> (in <c>GetAzureBudgetQuery.cs</c>) uses, narrowed further: only
-    /// <see cref="AppServiceState.Ok"/> is ever written. <see cref="AppServiceState.NotAuthorized"/>
+    /// The one copy of how the App Service snapshot is cached, built like
+    /// <c>AzureBudgetCache</c> in <c>GetAzureBudgetQuery.cs</c> -- same <c>ICacheService</c>, same
+    /// get-or-fetch shape. What it caches is its own decision, described below rather than borrowed:
+    /// only <see cref="AppServiceState.Ok"/> is ever written. <see cref="AppServiceState.NotAuthorized"/>
     /// and <see cref="AppServiceState.Unavailable"/> are refusals an operator can act on -- grant
     /// the Reader role, wait out an outage -- and caching either for the five-minute window would
     /// leave a stale wrong answer on screen for exactly the moment it is most annoying: right after
     /// the grant was fixed. <see cref="AppServiceState.NotConfigured"/> is not cached either -- it
     /// is not a refusal, but it occurs nowhere except a developer machine, and the provider answers
-    /// it without an HTTP call, so caching it would save nothing. (The budget query caches a second
-    /// state alongside Ok, <c>NoBudget</c>; it has no NotConfigured equivalent to skip.)
+    /// it without an HTTP call, so caching it would save nothing.
     /// </summary>
     internal static class AppServiceStatusCache
     {
