@@ -144,16 +144,21 @@ actor, so setting an actor on the traveler's scope would begin auditing ordinary
 flight writes — which CLAUDE.md states must stay untouched. A separate scope gets the
 reference writes audited under `system` and leaves the traveler's own write unaudited.
 
-### Guards, in front of metered calls only
+### Guards, and their deliberately different reach
 
 - **Negative cache.** `ICacheService`, key `refdata:missing:{type}:{code}`, TTL
-  `ReferenceProvisioning:NegativeCacheTtl` (default 24 h). Read before any lookup, written on
-  an upstream `NotFound`, so a repeated bogus designator costs nothing after the first.
-- **Budget guard.** `IProviderBudgetGuard` refuses metered lookups from `SoftLimit` onward,
-  matching `AeroApiFlightSearchBudgetDecorator` — the closest analogue, also traveler-facing
-  and also discretionary spend — rather than #401's `Exhausted`-only rule, which exists for
-  work an admin explicitly asked for. The result is 503, never 404: at the cap we do not know
-  whether the airline exists.
+  `ReferenceProvisioning:NegativeCacheTtl` (default 24 h). Fronts **every** fetch — airports
+  and countries from the free sources included, not only metered ones. Read before any lookup,
+  and written wherever the outcome for a fetched entry is decided to be `NotFound`: the
+  source's own miss, an airport the source reports with no country, and an airline whose
+  country name will not resolve to a code. So a repeated bogus designator costs nothing after
+  the first, whichever of those decided it.
+- **Budget guard.** The metered-only one: consulted for a source with `CostPerRowUsd > 0m`,
+  which today means `aeroapi` alone. `IProviderBudgetGuard` refuses those lookups from
+  `SoftLimit` onward, matching `AeroApiFlightSearchBudgetDecorator` — the closest analogue,
+  also traveler-facing and also discretionary spend — rather than #401's `Exhausted`-only
+  rule, which exists for work an admin explicitly asked for. The result is 503, never 404: at
+  the cap we do not know whether the airline exists.
 
 The free dataset sources are never gated; they cost nothing.
 
