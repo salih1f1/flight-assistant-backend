@@ -412,14 +412,7 @@ public class ValidatorEdgeCaseTests
     public void CreateLoyaltyProgram_CodeExceeds16_Fails()
     {
         var v = new CreateLoyaltyProgramCommandValidator();
-        AssertInvalid(v, new CreateLoyaltyProgramCommand(new string('A', 17), "BA Executive Club", 1, null, null), "Code");
-    }
-
-    [Fact]
-    public void CreateLoyaltyProgram_AllianceCodeExceeds8_Fails()
-    {
-        var v = new CreateLoyaltyProgramCommandValidator();
-        AssertInvalid(v, new CreateLoyaltyProgramCommand("BAEC", "BA Executive Club", 1, null, "TOOLONGCODE"), "AllianceCode");
+        AssertInvalid(v, new CreateLoyaltyProgramCommand(new string('A', 17), "BA Executive Club", 1, null), "Code");
     }
 
     // ── Flight search ─────────────────────────────────────────────────────────
@@ -708,7 +701,7 @@ public class ValidatorEdgeCaseTests
     {
         var v = new ImportLoyaltyProgramsCommandValidator();
         AssertInvalid(v, new ImportLoyaltyProgramsCommand([
-            new LoyaltyProgramImportDto(new string('A', 17), "Club", "AIRLINE", null, null, [])]), "Code");
+            new LoyaltyProgramImportDto(new string('A', 17), "Club", "AIRLINE", null, [])]), "Code");
     }
 
     [Fact]
@@ -717,7 +710,7 @@ public class ValidatorEdgeCaseTests
         var v = new ImportLoyaltyProgramsCommandValidator();
         var tier = new LoyaltyTierImportDto("GOLD", "Gold", 0, null, null);
         AssertInvalid(v, new ImportLoyaltyProgramsCommand([
-            new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", null, null, [tier])]), "Rank");
+            new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", null, [tier])]), "Rank");
     }
 
     [Fact]
@@ -726,7 +719,7 @@ public class ValidatorEdgeCaseTests
         var v = new ImportLoyaltyProgramsCommandValidator();
         var tier = new LoyaltyTierImportDto("GOLD", "Gold", 1, null, null);
         AssertValid(v, new ImportLoyaltyProgramsCommand([
-            new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", "BA", null, [tier])]));
+            new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", "BA", [tier])]));
     }
 
     // ── Import: verification columns (#362) — VerifiedBy ≤ 255, VerificationSource ≤ 100 ──────
@@ -859,7 +852,7 @@ public class ValidatorEdgeCaseTests
     public void ImportLoyaltyPrograms_VerifiedByExceeds255_Fails()
     {
         var v = new ImportLoyaltyProgramsCommandValidator();
-        var dto = new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", "BA", null, [],
+        var dto = new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", "BA", [],
             VerifiedBy: new string('A', 256));
         AssertInvalid(v, new ImportLoyaltyProgramsCommand([dto]), "VerifiedBy");
     }
@@ -868,7 +861,7 @@ public class ValidatorEdgeCaseTests
     public void ImportLoyaltyPrograms_VerificationSourceExceeds100_Fails()
     {
         var v = new ImportLoyaltyProgramsCommandValidator();
-        var dto = new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", "BA", null, [],
+        var dto = new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", "BA", [],
             VerificationSource: new string('A', 101));
         AssertInvalid(v, new ImportLoyaltyProgramsCommand([dto]), "VerificationSource");
     }
@@ -1069,7 +1062,7 @@ public class ValidatorEdgeCaseTests
         var v = new ImportLoyaltyProgramsCommandValidator();
         var tier = new LoyaltyTierImportDto("GOLD", "Gold", 1, null, null);
         AssertValid(v, new ImportLoyaltyProgramsCommand([
-            new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", "ba", null, [tier])]));
+            new LoyaltyProgramImportDto("BAEC", "Executive Club", "AIRLINE", "ba", [tier])]));
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

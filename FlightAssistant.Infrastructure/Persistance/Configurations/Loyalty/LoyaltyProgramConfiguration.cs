@@ -14,7 +14,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Configurations.Loyalty
 
             b.Property(x => x.Code).IsRequired().HasMaxLength(16);
             b.Property(x => x.Name).IsRequired().HasMaxLength(200);
-            b.Property(x => x.AllianceCode).HasMaxLength(8);
 
             b.HasIndex(x => x.Code).IsUnique();
 

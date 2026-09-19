@@ -13,7 +13,7 @@ public class ExportLoyaltyProgramsQueryHandlerTests
     [Fact]
     public async Task Handle_MapsKindCodeAndAirlineIataAndTiers()
     {
-        var program = LoyaltyProgram.Create("BAEC", "BA Executive Club", kindId: 1, airlineId: 2, "OW");
+        var program = LoyaltyProgram.Create("BAEC", "BA Executive Club", kindId: 1, airlineId: 2);
         program.AddTier(LoyaltyTier.Create(0, "Bronze", "Bronze", 1, "OW", "ONEWORLD_BRONZE"));
         var verifiedAt = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
         program.Verify("admin@example.com", "manual", verifiedAt);
@@ -36,7 +36,6 @@ public class ExportLoyaltyProgramsQueryHandlerTests
         Assert.Equal("BA Executive Club", dto.Name);
         Assert.Equal("Airline", dto.KindCode);
         Assert.Equal("BA", dto.AirlineIata);
-        Assert.Equal("OW", dto.AllianceCode);
         Assert.Single(dto.Tiers);
         Assert.Equal("Bronze", dto.Tiers[0].Code);
         Assert.Equal(1, dto.Tiers[0].Rank);
@@ -50,7 +49,7 @@ public class ExportLoyaltyProgramsQueryHandlerTests
     [Fact]
     public async Task Handle_ProgramWithoutAirlineId_MapsNullAirlineIata()
     {
-        var program = LoyaltyProgram.Create("FFMM", "Miles & More", kindId: 1, airlineId: null, null);
+        var program = LoyaltyProgram.Create("FFMM", "Miles & More", kindId: 1, airlineId: null);
 
         _loyaltyRepo.GetAllVerifiedWithTiersAsync(Arg.Any<CancellationToken>())
             .Returns(new List<LoyaltyProgram> { program });

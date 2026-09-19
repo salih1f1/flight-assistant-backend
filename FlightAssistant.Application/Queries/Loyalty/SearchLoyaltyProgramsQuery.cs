@@ -35,7 +35,7 @@ namespace FlightAssistant.Application.Queries.Loyalty
             var programs = await _loyalty.SearchProgramsByAirlineIdAsync(airlineId.Value, ct);
 
             return programs.Select(p => new LoyaltyProgramResult(
-                p.Id, p.Code, p.Name, p.Kind.Code, p.AirlineId, p.AllianceCode,
+                p.Id, p.Code, p.Name, p.Kind.Code, p.AirlineId,
                 p.Tiers.Select(t => new LoyaltyTierResult(t.Id, t.Code, t.Name, t.Rank, t.AllianceCode, t.AllianceTierCode)).ToList()
             )).ToList();
         }

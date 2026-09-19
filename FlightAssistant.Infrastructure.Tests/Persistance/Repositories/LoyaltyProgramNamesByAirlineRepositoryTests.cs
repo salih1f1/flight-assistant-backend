@@ -42,7 +42,7 @@ public class LoyaltyProgramNamesByAirlineRepositoryTests : PostgresTestBase
             LoyaltyProgram.Create("BAEC", "Executive Club", kind.Id, withTwo.Id),
             LoyaltyProgram.Create("BAAV", "Avios", kind.Id, withTwo.Id),
             // No airline: an alliance-wide program, and never anyone's answer.
-            LoyaltyProgram.Create("OWRP", "oneworld Rewards", kind.Id, null, "OW"));
+            LoyaltyProgram.Create("OWRP", "oneworld Rewards", kind.Id, null));
         await db.SaveChangesAsync();
 
         return (withOne.Id, withTwo.Id, withNone.Id);

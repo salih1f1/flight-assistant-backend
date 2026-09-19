@@ -62,7 +62,7 @@ public class CsvExportWriterTests
     {
         var data = new List<LoyaltyProgramExportDto>
         {
-            new("BAEC", "Executive Club", "AIRLINE", "BA", null,
+            new("BAEC", "Executive Club", "AIRLINE", "BA",
                 [new LoyaltyTierExportDto("GOLD", "Gold", 1, null, null)], null, null, null)
         };
 

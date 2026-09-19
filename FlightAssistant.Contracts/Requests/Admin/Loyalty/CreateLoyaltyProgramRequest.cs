@@ -4,7 +4,6 @@ namespace FlightAssistant.Contracts.Requests.Admin.Loyalty
         string Code,
         string Name,
         int KindId,
-        int? AirlineId,
-        string? AllianceCode
+        int? AirlineId
     );
 }

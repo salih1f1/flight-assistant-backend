@@ -6769,10 +6769,6 @@
             "type": "integer",
             "format": "int32",
             "nullable": true
-          },
-          "allianceCode": {
-            "type": "string",
-            "nullable": true
           }
         },
         "additionalProperties": false
@@ -7144,10 +7140,6 @@
           "airlineId": {
             "type": "integer",
             "format": "int32",
-            "nullable": true
-          },
-          "allianceCode": {
-            "type": "string",
             "nullable": true
           },
           "tiers": {
@@ -7570,10 +7562,6 @@
           "airlineId": {
             "type": "integer",
             "format": "int32",
-            "nullable": true
-          },
-          "allianceCode": {
-            "type": "string",
             "nullable": true
           }
         },

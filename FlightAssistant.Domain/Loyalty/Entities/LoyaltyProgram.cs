@@ -14,7 +14,11 @@ namespace FlightAssistant.Domain.Loyalty.Entities
         public LoyaltyProgramKind Kind { get; private set; } = default!;
 
         public int? AirlineId { get; private set; }             // FK -> airlines (optional)
-        public string? AllianceCode { get; private set; }       // "STAR","OW","ST" (optional)
+
+        // #504: no AllianceCode here. An alliance is an airline alliance and this program's airline
+        // carries it (airlines.AllianceCode, a foreign key into alliances); a second copy on the
+        // program could only agree or be wrong, and it was free text with no foreign key at all.
+        // A program with no airline has no alliance.
 
         /// <summary>
         /// When an admin or an import added the program. Null when unknown: rows from before this
@@ -32,26 +36,25 @@ namespace FlightAssistant.Domain.Loyalty.Entities
         private readonly List<LoyaltyTier> _tiers = new();
         public IReadOnlyCollection<LoyaltyTier> Tiers => _tiers;
 
-        public static LoyaltyProgram Create(string code, string name, int kindId, int? airlineId = null, string? allianceCode = null) =>
+        public static LoyaltyProgram Create(string code, string name, int kindId, int? airlineId = null) =>
             new()
             {
                 Code = code,
                 Name = name,
                 KindId = kindId,
                 AirlineId = airlineId,
-                AllianceCode = allianceCode,
                 CreatedUtc = DateTime.UtcNow
             };
 
         /// <summary>A program from the seed files: as <see cref="Create"/>, but with no creation time.</summary>
-        public static LoyaltyProgram CreateSeeded(string code, string name, int kindId, int? airlineId = null, string? allianceCode = null)
+        public static LoyaltyProgram CreateSeeded(string code, string name, int kindId, int? airlineId = null)
         {
-            var program = Create(code, name, kindId, airlineId, allianceCode);
+            var program = Create(code, name, kindId, airlineId);
             program.CreatedUtc = null;
             return program;
         }
 
-        public void Update(string code, string name, int kindId, int? airlineId, string? allianceCode)
+        public void Update(string code, string name, int kindId, int? airlineId)
         {
             if (string.IsNullOrWhiteSpace(code))
                 throw new DomainException("Loyalty program code is required.");
@@ -62,7 +65,6 @@ namespace FlightAssistant.Domain.Loyalty.Entities
             Name = name;
             KindId = kindId;
             AirlineId = airlineId;
-            AllianceCode = allianceCode;
         }
 
         public void Verify(string verifiedBy, string source) => Verify(verifiedBy, source, DateTime.UtcNow);

@@ -120,7 +120,6 @@ public sealed class LoyaltyProgramImportDtoMap : ClassMap<LoyaltyProgramImportDt
         Parameter("Name").Name("Name");
         Parameter("KindCode").Name("KindCode");
         Parameter("AirlineIata").Name("AirlineIata");
-        Parameter("AllianceCode").Name("AllianceCode");
         Parameter("Tiers").Name("Tiers")
             .TypeConverter(CsvImportParser.JsonListOf(typeof(IReadOnlyList<LoyaltyTierImportDto>)));
         this.MapImportVerificationParameters();

@@ -168,7 +168,7 @@ namespace FlightAssistant.API.HostedServices
                 }
 
                 // Seeded, not added by anyone: no creation time, so a fresh environment's seed never reads as new (#334).
-                var program = LoyaltyProgram.CreateSeeded(dto.Code, dto.Name, kindId.Value, airlineId, dto.AllianceCode);
+                var program = LoyaltyProgram.CreateSeeded(dto.Code, dto.Name, kindId.Value, airlineId);
                 await d.LoyaltyPrograms.AddAsync(program, c);
                 await d.SaveChangesAsync(c);
 
@@ -539,7 +539,6 @@ namespace FlightAssistant.API.HostedServices
             string Name,
             string KindCode,
             string? AirlineIata,
-            string? AllianceCode,
             List<LoyaltyTierDto> Tiers);
 
         private record LoungeProviderSeedDto(string Code, string Name, string Kind, string? Description = null);

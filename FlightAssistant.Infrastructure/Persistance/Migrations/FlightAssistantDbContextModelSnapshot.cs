@@ -614,10 +614,6 @@ namespace FlightAssistant.Infrastructure.Persistance.Migrations
                     b.Property<int?>("AirlineId")
                         .HasColumnType("integer");
 
-                    b.Property<string>("AllianceCode")
-                        .HasMaxLength(8)
-                        .HasColumnType("character varying(8)");
-
                     b.Property<string>("Code")
                         .IsRequired()
                         .HasMaxLength(16)
