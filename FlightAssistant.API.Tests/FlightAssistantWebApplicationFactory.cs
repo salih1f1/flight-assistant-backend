@@ -198,6 +198,20 @@ public class FlightAssistantWebApplicationFactory : WebApplicationFactory<Progra
     }
 
     // Convenience: create a client pre-authenticated as an admin
+    /// <summary>
+    /// An authenticated caller whose token carries no API scope (#413) — the shape that produced a
+    /// bodyless 403 and, because the exception escaped after the response had started, a log line
+    /// claiming 500.
+    /// </summary>
+    public HttpClient CreateScopelessUserClient(string? userId = null)
+    {
+        userId ??= Guid.NewGuid().ToString();
+        var client = CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", $"test-noscope-{userId}");
+        return client;
+    }
+
     public HttpClient CreateAdminClient(string? userId = null)
     {
         userId ??= Guid.NewGuid().ToString();

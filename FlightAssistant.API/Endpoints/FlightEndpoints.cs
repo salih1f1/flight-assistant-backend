@@ -18,7 +18,7 @@ namespace FlightAssistant.API.Endpoints
 
         public static void MapFlightEndpoints(this IEndpointRouteBuilder app)
         {
-            var group = app.MapGroup("flights").RequireAuthorization().WithTags("Flights");
+            var group = app.MapGroup("flights").RequireAuthorization("AccessAsUser").WithTags("Flights");
 
             // GET /flights/search?date=2025-06-01&from=LHR&to=JFK
             // GET /flights/search?date=2025-06-01&flightNumber=BA123
@@ -68,7 +68,6 @@ namespace FlightAssistant.API.Endpoints
             // GET /flights — paginated list of tracked flights for the authenticated traveler
             group.MapGet("", async (HttpContext http, [AsParameters] PagedRequest paging, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
 
                 var result = await mediator.Send(new GetTravelerFlightsQuery(travelerId, paging), ct);
@@ -103,7 +102,6 @@ namespace FlightAssistant.API.Endpoints
             // POST /flights — track a flight
             group.MapPost("", async (HttpContext http, [FromBody] TrackFlightRequest req, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
 
                 var flightId = await mediator.Send(new TrackFlightCommand(
@@ -152,7 +150,6 @@ namespace FlightAssistant.API.Endpoints
             // DELETE /flights/{flightId} — stop tracking a flight
             group.MapDelete("{flightId:int}", async (HttpContext http, int flightId, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
                 await mediator.Send(new UntrackFlightCommand(travelerId, flightId), ct);
                 return Results.NoContent();
@@ -169,7 +166,6 @@ namespace FlightAssistant.API.Endpoints
             // PATCH /flights/{flightId}/notify — toggle push notifications for a flight
             group.MapPatch("{flightId:int}/notify", async (HttpContext http, int flightId, [FromBody] ToggleNotifyRequest request, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
                 await mediator.Send(new ToggleFlightNotificationCommand(travelerId, flightId, request.Notify), ct);
                 return Results.NoContent();
@@ -189,7 +185,6 @@ namespace FlightAssistant.API.Endpoints
             // GET /flights/{flightId}/status — get flight status event history
             group.MapGet("{flightId:int}/status", async (HttpContext http, int flightId, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
                 var events = await mediator.Send(new GetFlightStatusQuery(travelerId, flightId), ct);
                 var dtos = events.Select(e => new FlightStatusEventDto(e.Id, e.StatusCode, e.StatusName, e.EffectiveAtUtc, e.Source, e.Gate, e.Terminal, e.BaggageClaim, e.Remarks));
@@ -212,7 +207,6 @@ namespace FlightAssistant.API.Endpoints
             // POST /flights/{flightId}/sync — manually trigger a status refresh; the flight's sync mode decides whether the provider is called
             group.MapPost("{flightId:int}/sync", async (HttpContext http, int flightId, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
                 var result = await mediator.Send(new SyncFlightStatusCommand(travelerId, flightId, SyncTrigger.Traveler), ct);
                 // The traveler contract is unchanged (#443): the richer outcome is the admin route's.

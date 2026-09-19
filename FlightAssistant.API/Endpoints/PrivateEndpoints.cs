@@ -20,18 +20,16 @@ namespace FlightAssistant.API.Endpoints
             // GET /private/secure-test — verifies token is accepted
             group.MapGet("secure-test", (HttpContext http) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 return Results.Ok(new { ok = true, at = DateTime.UtcNow });
             })
             .WithName("SecureTest")
             .WithSummary("Authenticated ping")
             .Produces(200)
-            .RequireAuthorization();
+            .RequireAuthorization("AccessAsUser");
 
             // GET /private/whoami — returns decoded token claims
             group.MapGet("whoami", (HttpContext http) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 return Results.Ok(new
                 {
                     name = http.User.Identity?.Name,
@@ -43,7 +41,7 @@ namespace FlightAssistant.API.Endpoints
             .WithName("WhoAmI")
             .WithSummary("Return decoded token claims")
             .Produces(200)
-            .RequireAuthorization();
+            .RequireAuthorization("AccessAsUser");
         }
     }
 }

@@ -17,12 +17,11 @@ namespace FlightAssistant.API.Endpoints
 
         public static void MapLoyaltyEndpoints(this IEndpointRouteBuilder app)
         {
-            var group = app.MapGroup("loyalty").RequireAuthorization().WithTags("Loyalty");
+            var group = app.MapGroup("loyalty").RequireAuthorization("AccessAsUser").WithTags("Loyalty");
 
             // GET /loyalty/programs/search?airlineIata=BA — filter programs by airline
             group.MapGet("programs/search", async (HttpContext http, string airlineIata, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var results = await mediator.Send(new SearchLoyaltyProgramsQuery(airlineIata), ct);
                 var dtos = results.Select(p => new LoyaltyProgramDto(
                     p.Id, p.Code, p.Name, p.Kind, p.AirlineId, p.AllianceCode,
@@ -41,7 +40,6 @@ namespace FlightAssistant.API.Endpoints
             // GET /loyalty/programs — paginated programs with tiers (reference data)
             group.MapGet("programs", async (HttpContext http, [AsParameters] PagedRequest paging, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var result = await mediator.Send(new GetLoyaltyProgramsQuery(paging), ct);
                 var dtos = result.Items.Select(p => new LoyaltyProgramDto(
                     p.Id, p.Code, p.Name, p.Kind, p.AirlineId, p.AllianceCode,
@@ -60,7 +58,6 @@ namespace FlightAssistant.API.Endpoints
             // GET /loyalty/memberships — traveler's own memberships (paginated)
             group.MapGet("memberships", async (HttpContext http, [AsParameters] PagedRequest paging, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
                 var result = await mediator.Send(new GetTravelerMembershipsQuery(travelerId, paging), ct);
                 var dtos = result.Items.Select(m => new LoyaltyMembershipDto(m.Id, m.ProgramId, m.AccountNumber, m.TierId, m.TierExpiryDate)).ToList();
@@ -75,7 +72,6 @@ namespace FlightAssistant.API.Endpoints
             // POST /loyalty/memberships — add a membership
             group.MapPost("memberships", async (HttpContext http, [FromBody] AddMembershipRequest req, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
                 var id = await mediator.Send(new AddLoyaltyMembershipCommand(travelerId, req.ProgramId, req.AccountNumber, req.TierId, req.TierExpiryDate), ct);
                 return Results.Created($"/loyalty/memberships/{id}", new { id });
@@ -94,7 +90,6 @@ namespace FlightAssistant.API.Endpoints
             // PUT /loyalty/memberships/{id} — update a membership
             group.MapPut("memberships/{id:guid}", async (HttpContext http, Guid id, [FromBody] UpdateMembershipRequest req, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
                 await mediator.Send(new UpdateLoyaltyMembershipCommand(travelerId, id, req.AccountNumber, req.TierId, req.TierExpiryDate), ct);
                 return Results.NoContent();
@@ -114,7 +109,6 @@ namespace FlightAssistant.API.Endpoints
             // DELETE /loyalty/memberships/{id}
             group.MapDelete("memberships/{id:guid}", async (HttpContext http, Guid id, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
                 await mediator.Send(new RemoveLoyaltyMembershipCommand(travelerId, id), ct);
                 return Results.NoContent();

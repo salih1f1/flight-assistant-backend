@@ -5,6 +5,7 @@ using FlightAssistant.API.Endpoints.Admin;
 using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Interfaces.DataSources;
 using FlightAssistant.API.Infrastructure;
+using FlightAssistant.API.Authentication;
 using FlightAssistant.API.Middleware;
 using FlightAssistant.Application;
 using FlightAssistant.Application.Administration;
@@ -232,6 +233,23 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("AdminOnly", policy =>
         policy.RequireAuthenticatedUser()
               .RequireRole("admin"));
+
+    // Traveler-facing scope enforcement, previously a VerifyUserHasAnyAcceptedScope call at the top
+    // of each of twenty handlers (#413). That helper commits a 403 and *then* throws, and because
+    // the response has already started UseExceptionHandler declines to run — so the exception
+    // escaped the entire pipeline, the caller got a 403 with no body and no content type, and
+    // Serilog's request logging (which logs a hardcoded 500 for any exception passing through it)
+    // recorded the request as a 500. As a policy the check runs before the handler, nothing has
+    // started, and the refusal is an ordinary authorization 403 that UseStatusCodePages renders as
+    // a problem document like every other error this API returns.
+    //
+    // Consequence worth knowing: the check now runs before model binding rather than after, so a
+    // request that both lacks the scope and fails binding answers 403 where it used to answer 400.
+    // That is the better order — an unauthorized request should not be parsed first — but it is a
+    // change in precedence, not just in plumbing.
+    options.AddPolicy("AccessAsUser", policy =>
+        policy.RequireAuthenticatedUser()
+              .RequireAssertion(context => context.User.HasScope("access_as_user")));
 });
 
 // App Service terminates TLS and proxies every request, so without the forwarded headers

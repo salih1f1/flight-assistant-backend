@@ -16,12 +16,11 @@ namespace FlightAssistant.API.Endpoints
 
         public static void MapTravelerEndpoints(this IEndpointRouteBuilder app)
         {
-            var group = app.MapGroup("travelers").RequireAuthorization().WithTags("Travelers");
+            var group = app.MapGroup("travelers").RequireAuthorization("AccessAsUser").WithTags("Travelers");
 
             // POST /travelers — register (idempotent, called on first login)
             group.MapPost("", async (HttpContext http, [FromBody] RegisterTravelerRequest req, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
                 var newTravelerId = await mediator.Send(new RegisterTravelerCommand(travelerId, req.Email, req.DisplayName), ct);
                 return Results.Created("/travelers/me", new RegisterTravelerResponse(newTravelerId));
@@ -37,7 +36,6 @@ namespace FlightAssistant.API.Endpoints
             // GET /travelers/me — get own profile
             group.MapGet("me", async (HttpContext http, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
                 var result = await mediator.Send(new GetTravelerProfileQuery(travelerId), ct);
                 if (result is null) return Results.NotFound();
@@ -54,7 +52,6 @@ namespace FlightAssistant.API.Endpoints
             // POST /travelers/me/device-tokens — register a push notification token
             group.MapPost("me/device-tokens", async (HttpContext http, [FromBody] AddDeviceTokenRequest req, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
                 await mediator.Send(new AddDeviceTokenCommand(travelerId, req.Platform, req.Token), ct);
                 return Results.NoContent();
@@ -70,7 +67,6 @@ namespace FlightAssistant.API.Endpoints
             // GET /travelers/me/device-tokens — list registered push tokens
             group.MapGet("me/device-tokens", async (HttpContext http, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
                 var tokens = await mediator.Send(new GetDeviceTokensQuery(travelerId), ct);
                 var dtos = tokens.Select(t => new DeviceTokenDto(t.Id, t.Platform, t.Token, t.LastSeenUtc)).ToList();
@@ -84,7 +80,6 @@ namespace FlightAssistant.API.Endpoints
             // DELETE /travelers/me/device-tokens/{deviceTokenId}
             group.MapDelete("me/device-tokens/{deviceTokenId:guid}", async (HttpContext http, Guid deviceTokenId, IMediator mediator, CancellationToken ct) =>
             {
-                http.VerifyUserHasAnyAcceptedScope(ScopeAccessAsUser);
                 var travelerId = http.User.GetTravelerId();
                 await mediator.Send(new RemoveDeviceTokenCommand(travelerId, deviceTokenId), ct);
                 return Results.NoContent();
