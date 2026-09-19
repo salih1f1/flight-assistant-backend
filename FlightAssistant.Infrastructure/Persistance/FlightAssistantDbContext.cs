@@ -3,6 +3,7 @@ using FlightAssistant.Domain.DataSources.Entities;
 using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Domain.Flights.Entities;
+using FlightAssistant.Domain.Jobs.Entities;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
@@ -55,6 +56,9 @@ namespace FlightAssistant.Infrastructure.Persistance
 
         // Health
         public DbSet<DataSourceStatus> DataSourceStatuses => Set<DataSourceStatus>();
+
+        // Jobs
+        public DbSet<JobSwitch> JobSwitches => Set<JobSwitch>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

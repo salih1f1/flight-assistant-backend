@@ -6,6 +6,7 @@ using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.Common;
 using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Domain.DataSources.Entities;
+using FlightAssistant.Domain.Jobs.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
@@ -95,6 +96,45 @@ public class AdminAuditInterceptorTests
             VerificationEntityType.Airport, "42", ["ourairports"], VerificationTrigger.Admin,
             requestedBy: "admin-oid-1", estimatedCostUsd: 0m,
             requestedUtc: new DateTime(2026, 9, 18, 12, 0, 0, DateTimeKind.Utc)));
+        await db.SaveChangesAsync();
+
+        Assert.Empty(await db.AdminAuditLogs.ToListAsync());
+    }
+
+    /// <summary>
+    /// #471: excluded for the opposite reason to <see cref="DataSourceStatus"/> above — this one
+    /// is written rarely and deliberately, and its writes are audited explicitly by
+    /// <c>ToggleJobCommandHandler</c> so the operator's reason text can be carried. Letting this
+    /// interceptor fire too would put two rows in the audit log for one toggle.
+    /// </summary>
+    [Fact]
+    public async Task SaveChangesAsync_JobSwitch_WritesNoAuditRow()
+    {
+        var dbName = Guid.NewGuid().ToString();
+
+        using var db = CreateContext(dbName, AdminActor());
+        db.JobSwitches.Add(new JobSwitch { Job = "flight-sync", Enabled = true });
+        await db.SaveChangesAsync();
+
+        Assert.Empty(await db.AdminAuditLogs.ToListAsync());
+    }
+
+    // A toggle is an update, and the update is the shape that would double-audit against the
+    // explicit row the command handler writes.
+    [Fact]
+    public async Task SaveChangesAsync_UpdatedJobSwitch_WritesNoAuditRow()
+    {
+        var dbName = Guid.NewGuid().ToString();
+
+        using (var seed = CreateContext(dbName, AdminActor()))
+        {
+            seed.JobSwitches.Add(new JobSwitch { Job = "flight-sync", Enabled = true });
+            await seed.SaveChangesAsync();
+        }
+
+        using var db = CreateContext(dbName, AdminActor());
+        var row = await db.JobSwitches.SingleAsync();
+        row.Enabled = false;
         await db.SaveChangesAsync();
 
         Assert.Empty(await db.AdminAuditLogs.ToListAsync());

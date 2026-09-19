@@ -1,6 +1,8 @@
 using FlightAssistant.API.HostedServices;
 using FlightAssistant.Application.Administration;
 using FlightAssistant.Application.Interfaces.Administration;
+using FlightAssistant.Application.Interfaces.Jobs;
+using FlightAssistant.Application.Jobs;
 using FlightAssistant.Application.Verification;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -286,6 +288,17 @@ public class ReferenceVerificationBackgroundServiceTests
         public Task<VerificationCycleResult> RunCycleAsync(CancellationToken ct = default) => script.NextAsync(adminContext, ct);
     }
 
+    /// <summary>Always-on stub for the constructor's <see cref="IJobSwitch"/> parameter (#471): this
+    /// file is entirely about the config ceiling and the cycle's own behaviour, never about the
+    /// switch, which <c>VerificationSwitchTests</c> covers on its own.</summary>
+    private sealed class AlwaysOnJobSwitch : IJobSwitch
+    {
+        public Task<bool> IsEnabledAsync(string job, CancellationToken ct) => Task.FromResult(true);
+
+        public Task<JobSwitchState> GetAsync(string job, CancellationToken ct) =>
+            throw new NotSupportedException("The loop only ever calls IsEnabledAsync.");
+    }
+
     private sealed class Job : IAsyncDisposable
     {
         private readonly ServiceProvider _provider;
@@ -314,7 +327,8 @@ public class ReferenceVerificationBackgroundServiceTests
                 Options.Create(new VerificationOptions { Enabled = enabled, PollInterval = PollInterval }),
                 heartbeat,
                 time,
-                NullLogger<ReferenceVerificationBackgroundService>.Instance);
+                NullLogger<ReferenceVerificationBackgroundService>.Instance,
+                new AlwaysOnJobSwitch());
 
             return new Job(provider, service, heartbeat);
         }

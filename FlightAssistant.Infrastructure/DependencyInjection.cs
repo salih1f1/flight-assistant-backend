@@ -5,6 +5,7 @@ using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.DataSources;
+using FlightAssistant.Application.Interfaces.Jobs;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Application.ProviderBudget;
@@ -16,6 +17,7 @@ using FlightAssistant.Infrastructure.DataSources.Probes;
 using FlightAssistant.Infrastructure.ExternalServices.AeroDataBox;
 using FlightAssistant.Infrastructure.ExternalServices.GitHub;
 using FlightAssistant.Infrastructure.ExternalServices.Verification;
+using FlightAssistant.Infrastructure.Jobs;
 using FlightAssistant.Infrastructure.Notifications;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
@@ -434,6 +436,16 @@ namespace FlightAssistant.Infrastructure
                 .ValidateOnStart();
 
             services.AddSingleton<IPushNotificationService, ApplePushNotificationService>();
+
+            // Job switches (#471): singleton so IsEnabledAsync's per-job cache survives across
+            // ticks; it resolves its own DbContext scope per read (CachedJobSwitch), the same
+            // shape DataSourceFlushService uses for the same singleton/scoped mismatch.
+            services.AddSingleton<IJobSwitch, CachedJobSwitch>();
+
+            // The write side behind PUT /admin/jobs/{job} (Task 8): scoped, like every other
+            // repository above, since ToggleJobCommandHandler's write must land in the same request's
+            // DbContext/transaction, not a singleton's own long-lived scope.
+            services.AddScoped<IJobSwitchRepository, JobSwitchRepository>();
 
             return services;
         }

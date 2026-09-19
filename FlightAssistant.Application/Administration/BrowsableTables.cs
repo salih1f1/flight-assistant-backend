@@ -2,6 +2,7 @@ using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Domain.DataSources.Entities;
 using FlightAssistant.Domain.Flights.Entities;
+using FlightAssistant.Domain.Jobs.Entities;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
@@ -365,6 +366,19 @@ namespace FlightAssistant.Application.Administration
                 nameof(DataSourceStatus.ConsecutiveFailures),
                 nameof(DataSourceStatus.LastProbeUtc),
                 nameof(DataSourceStatus.LastProbeBy),
+            }),
+
+            // #471. Toggled through the dedicated admin endpoint (audited explicitly there, see
+            // AdminAuditInterceptor's JobSwitch exclusion) — but browsable all the same, following
+            // this registry's "default to including things" rule. Nothing here is sensitive:
+            // ChangedBy is an admin id, like VerifiedBy elsewhere in this registry.
+            new("job-switches", typeof(JobSwitch), "Job Switches", new[]
+            {
+                nameof(JobSwitch.Job),
+                nameof(JobSwitch.Enabled),
+                nameof(JobSwitch.ChangedUtc),
+                nameof(JobSwitch.ChangedBy),
+                nameof(JobSwitch.Reason),
             }),
         };
 

@@ -4,6 +4,7 @@ using FlightAssistant.Application.Commands.Flights;
 using FlightAssistant.Application.FlightSync;
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Application.Interfaces.Jobs;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.ProviderBudget;
 using FlightAssistant.Domain.Common;
@@ -28,6 +29,9 @@ public class FlightStatusSyncBackgroundServiceTests
     private readonly IFlightRepository _flights = Substitute.For<IFlightRepository>();
     private readonly IMediator _mediator = Substitute.For<IMediator>();
     private readonly FlightSyncHeartbeat _heartbeat = new();
+    // Always on: this file is about the sync cycle itself (#356 etc.), not the switch, which
+    // FlightSyncSwitchTests covers -- a stubbed switch keeps that concern out of every test here.
+    private readonly IJobSwitch _jobSwitch = Substitute.For<IJobSwitch>();
     private int _mediatorScopes;
 
     private FlightStatusSyncBackgroundService Service(
@@ -37,13 +41,15 @@ public class FlightStatusSyncBackgroundServiceTests
         services.AddScoped(_ => _flights);
         // Counts how many scopes resolved a mediator: one per flight.
         services.AddScoped(_ => { _mediatorScopes++; return _mediator; });
+        _jobSwitch.IsEnabledAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(true);
 
         return new FlightStatusSyncBackgroundService(
             services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
             Options.Create(options ?? new FlightSyncOptions()),
             _clock,
             logger ?? NullLogger<FlightStatusSyncBackgroundService>.Instance,
-            _heartbeat);
+            _heartbeat,
+            _jobSwitch);
     }
 
     /// <summary>

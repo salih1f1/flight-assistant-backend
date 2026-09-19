@@ -1,4 +1,6 @@
 using FlightAssistant.Application.Administration;
+using FlightAssistant.Application.Interfaces.Jobs;
+using FlightAssistant.Application.Jobs;
 using FlightAssistant.Application.Verification;
 using Microsoft.Extensions.Options;
 
@@ -31,19 +33,22 @@ namespace FlightAssistant.API.HostedServices
         private readonly VerificationJobHeartbeat _heartbeat;
         private readonly TimeProvider _timeProvider;
         private readonly ILogger<ReferenceVerificationBackgroundService> _log;
+        private readonly IJobSwitch _jobSwitch;
 
         public ReferenceVerificationBackgroundService(
             IServiceScopeFactory scopeFactory,
             IOptions<VerificationOptions> options,
             VerificationJobHeartbeat heartbeat,
             TimeProvider timeProvider,
-            ILogger<ReferenceVerificationBackgroundService> log)
+            ILogger<ReferenceVerificationBackgroundService> log,
+            IJobSwitch jobSwitch)
         {
             _scopeFactory = scopeFactory;
             _options = options.Value;
             _heartbeat = heartbeat;
             _timeProvider = timeProvider;
             _log = log;
+            _jobSwitch = jobSwitch;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -57,6 +62,15 @@ namespace FlightAssistant.API.HostedServices
 
             while (!stoppingToken.IsCancellationRequested)
             {
+                // Read per tick, before MarkRunStarted: this tick may do nothing, and marking a run
+                // started before knowing that would put a run in the heartbeat that never happened.
+                if (!await _jobSwitch.IsEnabledAsync(JobNames.Verification, stoppingToken))
+                {
+                    _heartbeat.MarkSwitchedOff();
+                    await DelayUntilNextCycleAsync(stoppingToken);
+                    continue;
+                }
+
                 _heartbeat.MarkRunStarted();
 
                 try
@@ -93,14 +107,26 @@ namespace FlightAssistant.API.HostedServices
                     _heartbeat.MarkRunFailed(ex, NextRunDueUtc());
                 }
 
-                try
-                {
-                    await Task.Delay(_options.PollInterval, _timeProvider, stoppingToken);
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    break;
-                }
+                await DelayUntilNextCycleAsync(stoppingToken);
+            }
+        }
+
+        /// <summary>
+        /// The loop's wait between cycles -- factored out (#471) so the switched-off branch above
+        /// polls the switch at <see cref="VerificationOptions.PollInterval"/> too, rather than
+        /// spinning or introducing a second waiting mechanism. Cancellation during the wait is a
+        /// clean shutdown: swallowing it here has the same effect as the explicit <c>break</c> this
+        /// replaced, since the while loop's own condition ends the loop on its next check.
+        /// </summary>
+        private async Task DelayUntilNextCycleAsync(CancellationToken stoppingToken)
+        {
+            try
+            {
+                await Task.Delay(_options.PollInterval, _timeProvider, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                // Clean shutdown, not a failed cycle -- same reasoning as the RunCycleAsync catch above.
             }
         }
 

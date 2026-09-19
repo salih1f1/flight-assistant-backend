@@ -6,6 +6,7 @@ using FlightAssistant.Domain.Administration.Entities;
 using FlightAssistant.Domain.DataSources.Entities;
 using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.Common.Interfaces;
+using FlightAssistant.Domain.Jobs.Entities;
 using FlightAssistant.Domain.Verification.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
@@ -66,12 +67,18 @@ namespace FlightAssistant.Infrastructure.Persistance
         //   application makes. The one operator action against this table — pressing "Check now" — writes
         //   its own audit row explicitly in ProbeDataSourceCommandHandler, so the deliberate act is
         //   audited while the automatic bookkeeping is not.
+        // - JobSwitch (#471): excluded for the OPPOSITE reason to DataSourceStatus above. That one is
+        //   written constantly and automatically; this one is written rarely and deliberately, and its
+        //   writes are audited EXPLICITLY by ToggleJobCommandHandler so the operator's reason text can
+        //   be carried. Letting the interceptor fire too would put two rows in the audit log for one
+        //   toggle, saying different things.
         // The append-only guard below is separate and still covers AdminAuditLog only.
         private static readonly HashSet<Type> NotAuditedTypes = new()
         {
             typeof(AdminAuditLog),
             typeof(VerificationRequest),
-            typeof(DataSourceStatus)
+            typeof(DataSourceStatus),
+            typeof(JobSwitch)
         };
 
         private readonly IAdminContext _adminContext;

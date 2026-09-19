@@ -4,7 +4,10 @@ namespace FlightAssistant.API.HostedServices
     /// some requests Pending because this month's AeroAPI budget is exhausted -- distinct from
     /// <c>Success</c> (nothing held back) and from <c>Failed</c> (the cycle itself broke), so an
     /// operator sees *why* the queue isn't draining without reading logs.</summary>
-    public enum VerificationJobOutcome { NeverRun, Running, Success, Paused, Failed }
+    // SwitchedOff (#471): an admin stopped this job from the panel. Distinct from Paused on the
+    // verification job, which means the cycle RAN and held work back because the AeroAPI budget is
+    // exhausted -- "we chose not to spend" and "an operator stopped us" need different responses.
+    public enum VerificationJobOutcome { NeverRun, Running, Success, Paused, Failed, SwitchedOff }
 
     public sealed record VerificationJobSnapshot(
         DateTime? LastRunStartedUtc,
@@ -177,6 +180,24 @@ namespace FlightAssistant.API.HostedServices
                     RequestsPaused = paused,
                     NextRunDueUtc = nextRunDueUtc,
                     LastError = $"{ex.GetType().Name}: {ex.Message}",
+                };
+            }
+        }
+
+        /// <summary>
+        /// Marks a tick that did no work because an admin switched this job off from the panel
+        /// (#471). Every other field carries over unchanged: the counts and timestamps still
+        /// describe the last real cycle. Distinct from <see cref="VerificationJobOutcome.Paused"/>,
+        /// which means the cycle ran and held work back for budget -- an operator stop is a
+        /// different situation needing a different remedy.
+        /// </summary>
+        public void MarkSwitchedOff()
+        {
+            lock (_lock)
+            {
+                _snapshot = _snapshot with
+                {
+                    LastOutcome = VerificationJobOutcome.SwitchedOff,
                 };
             }
         }
