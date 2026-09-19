@@ -66,6 +66,65 @@ namespace FlightAssistant.Application.Tests.Commands.Admin.Providers
 
             Assert.Equal(409, ex.StatusCode);
             await _repository.DidNotReceive().UpsertAsync(Arg.Any<ProviderRoute>(), Arg.Any<CancellationToken>());
+            // #531 fix round 1, extra finding: after Finding 1 moved the audit stage ahead of the
+            // routing upsert, "no audit row on a refusal" is no longer guaranteed by statement
+            // order alone (the audit stage happens to run after this check today, but nothing here
+            // proves that stays true) -- it needs its own assertion.
+            await _audit.DidNotReceive().AddAsync(Arg.Any<AdminAuditLog>(), Arg.Any<CancellationToken>());
+        }
+
+        // #531 fix round 1, Finding 3: provider_routes.reason is varchar(512) with nothing
+        // validating it beforehand, so an over-long reason reached Postgres as an unhandled
+        // DbUpdateException -- a 500 naming nothing the caller could act on.
+        [Fact]
+        public async Task Handle_ReasonTooLong_Throws400()
+        {
+            var handler = Build();
+            var reason = new string('x', SetProviderRouteCommandHandler.MaxReasonLength + 1);
+
+            var ex = await Assert.ThrowsAsync<DomainException>(() => handler.Handle(
+                new SetProviderRouteCommand(ProviderJobs.FlightSearchRoute, new[] { ProviderJobs.AeroApi }, reason),
+                default));
+
+            Assert.Equal(400, ex.StatusCode);
+            Assert.Contains(SetProviderRouteCommandHandler.MaxReasonLength.ToString(), ex.Message);
+            await _repository.DidNotReceive().UpsertAsync(Arg.Any<ProviderRoute>(), Arg.Any<CancellationToken>());
+        }
+
+        // #531 fix round 1, Finding 3: provider_routes.providers is varchar(256). Every individual
+        // name here is a valid option for flight-search-route, so the options loop lets all 25
+        // through -- only the joined-length check catches the overflow.
+        [Fact]
+        public async Task Handle_ProvidersJoinedTooLong_Throws400()
+        {
+            var handler = Build();
+            var providers = Enumerable.Repeat(ProviderJobs.AeroDataBox, 25).ToArray();
+            Assert.True(string.Join(',', providers).Length > SetProviderRouteCommandHandler.MaxProvidersLength);
+
+            var ex = await Assert.ThrowsAsync<DomainException>(() => handler.Handle(
+                new SetProviderRouteCommand(ProviderJobs.FlightSearchRoute, providers, null), default));
+
+            Assert.Equal(400, ex.StatusCode);
+            Assert.Contains(SetProviderRouteCommandHandler.MaxProvidersLength.ToString(), ex.Message);
+            await _repository.DidNotReceive().UpsertAsync(Arg.Any<ProviderRoute>(), Arg.Any<CancellationToken>());
+        }
+
+        // #531 fix round 1, Finding 3: a short duplicate list (well under the 256-character joined
+        // limit) isolates the duplicate-name check from the joined-length check above -- this input
+        // would sail past a length check alone.
+        [Fact]
+        public async Task Handle_DuplicateProviders_Throws400()
+        {
+            var handler = Build();
+            var providers = new[] { ProviderJobs.AeroDataBox, ProviderJobs.AeroDataBox };
+            Assert.True(string.Join(',', providers).Length <= SetProviderRouteCommandHandler.MaxProvidersLength);
+
+            var ex = await Assert.ThrowsAsync<DomainException>(() => handler.Handle(
+                new SetProviderRouteCommand(ProviderJobs.FlightSearchRoute, providers, null), default));
+
+            Assert.Equal(400, ex.StatusCode);
+            Assert.Contains(ProviderJobs.AeroDataBox, ex.Message);
+            await _repository.DidNotReceive().UpsertAsync(Arg.Any<ProviderRoute>(), Arg.Any<CancellationToken>());
         }
 
         [Fact]
