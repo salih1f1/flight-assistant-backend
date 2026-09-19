@@ -112,8 +112,14 @@ public class FlightSearchProviderSelectorTests
 
     /// <summary>A 1-character flight number is not "usable" per
     /// <c>AeroApiFlightSearchProvider.HasUsableFlightNumber</c> (needs the 2-character airline
-    /// prefix), so the selector must mirror that guard exactly rather than restate its own
-    /// threshold.</summary>
+    /// prefix). Before #531 the selector decided this itself and had to mirror that guard exactly
+    /// rather than restate its own threshold; that rule now lives entirely in
+    /// <see cref="FlightSearchRouter"/> and is pinned there by
+    /// <c>FlightSearchRouterTests.ResolveAsync_FullRoutePlusOneCharacterFlightNumber_ReturnsAeroDataBox_MirroringTheGuardExactly</c>.
+    /// This test's own <c>FlightNumber</c> value is no longer load-bearing for that rule — the
+    /// stubbed router below answers AeroDataBox regardless of what criteria it's called with — so
+    /// what remains here is only proof that the selector dispatches to whichever provider the
+    /// router names.</summary>
     [Fact]
     public Task SearchAsync_FullRoutePlusOneCharacterFlightNumber_RoutesToAeroDataBox_MirroringTheGuardExactly() =>
         AssertRoutesToAeroDataBoxAsync(new FlightSearchCriteria("IST", "JFK", Date, "B", false));
@@ -221,6 +227,58 @@ public class FlightSearchRouterTests
     {
         var router = Build(ProviderJobs.AeroDataBox);
         var criteria = new FlightSearchCriteria("SOF", null, new DateOnly(2026, 9, 20), null);
+
+        Assert.Equal(ProviderJobs.AeroApi, await router.ResolveAsync(criteria, default));
+    }
+
+    // ------------------------------------------------------------------
+    // The three tests below each pin one specific way IsRouteShaped could be broken while every
+    // other test in this file still passes (review round 1, Important finding): the selector-level
+    // tests that used to catch these moved their criteria to a stubbed router that answers the same
+    // way regardless of criteria shape, so this file is the only place left that can catch them.
+    // ------------------------------------------------------------------
+
+    /// <summary>A 1-character flight number is not "usable" per
+    /// <c>AeroApiFlightSearchProvider.HasUsableFlightNumber</c> (needs the 2-character airline
+    /// prefix), which <c>FlightSearchRouter.IsRouteShaped</c> must call directly rather than
+    /// restate — e.g. as a bare <c>IsNullOrWhiteSpace</c> check — since restating it would silently
+    /// lose the length-2 threshold and route a marketing number like "B1" (or worse, let a
+    /// genuinely short/invalid designator through) to AeroDataBox.</summary>
+    [Fact]
+    public async Task ResolveAsync_FullRoutePlusOneCharacterFlightNumber_ReturnsAeroDataBox_MirroringTheGuardExactly()
+    {
+        var router = Build(ProviderJobs.AeroDataBox);
+        var criteria = new FlightSearchCriteria("SOF", "IST", new DateOnly(2026, 9, 20), "B");
+
+        Assert.Equal(ProviderJobs.AeroDataBox, await router.ResolveAsync(criteria, default));
+    }
+
+    /// <summary>Both airports whitespace-only (not merely empty) must still fail the shape check —
+    /// <c>string.IsNullOrWhiteSpace</c>, not <c>string.IsNullOrEmpty</c>, is the correct guard on
+    /// <see cref="FlightSearchCriteria.DepartureIata"/>/<see cref="FlightSearchCriteria.ArrivalIata"/>,
+    /// since an <c>IsNullOrEmpty</c> swap would treat "   " as a real airport code and send a search
+    /// AeroAPI's own guard would otherwise refuse to AeroDataBox instead.</summary>
+    [Fact]
+    public async Task ResolveAsync_WhitespaceAirports_StaysOnAeroApi()
+    {
+        var router = Build(ProviderJobs.AeroDataBox);
+        var criteria = new FlightSearchCriteria("   ", "  ", new DateOnly(2026, 9, 20), null);
+
+        Assert.Equal(ProviderJobs.AeroApi, await router.ResolveAsync(criteria, default));
+    }
+
+    /// <summary>A non-blank <see cref="FlightSearchCriteria.ArrivalIata"/> alone is not a route:
+    /// <see cref="FlightSearchCriteria.DepartureIata"/> must independently be non-blank too, exactly
+    /// as <see cref="ResolveAsync_SingleAirport_StaysOnAeroApiSoItsOwnGuardStillRefuses"/> above
+    /// proves for the reverse (departure set, arrival blank). Every other test in this file uses
+    /// <see cref="Route"/>'s non-blank "SOF" departure, so this is the only case in the suite that
+    /// would catch the <c>DepartureIata</c> conjunct being dropped from
+    /// <c>FlightSearchRouter.IsRouteShaped</c> entirely.</summary>
+    [Fact]
+    public async Task ResolveAsync_ArrivalOnly_StaysOnAeroApi()
+    {
+        var router = Build(ProviderJobs.AeroDataBox);
+        var criteria = new FlightSearchCriteria(null, "JFK", new DateOnly(2026, 9, 20), null);
 
         Assert.Equal(ProviderJobs.AeroApi, await router.ResolveAsync(criteria, default));
     }
