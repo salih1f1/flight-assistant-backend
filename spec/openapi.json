@@ -2876,6 +2876,200 @@
         }
       }
     },
+    "/admin/loyalty/programs/{programId}/tiers": {
+      "post": {
+        "tags": [
+          "Admin - Loyalty"
+        ],
+        "summary": "Add a tier to a loyalty program",
+        "description": "404 when the program does not exist. 409 when the program already has a tier with that code or at that rank — loyalty_tiers is unique on both, per program.",
+        "operationId": "AdminCreateLoyaltyTier",
+        "parameters": [
+          {
+            "name": "programId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLoyaltyTierRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/loyalty/programs/{programId}/tiers/{tierId}": {
+      "put": {
+        "tags": [
+          "Admin - Loyalty"
+        ],
+        "summary": "Update one of a loyalty program's tiers",
+        "description": "404 when the program does not exist, or when the tier is not one of its tiers. 409 when another tier of the program already has that code or rank.",
+        "operationId": "AdminUpdateLoyaltyTier",
+        "parameters": [
+          {
+            "name": "programId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "tierId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLoyaltyTierRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Admin - Loyalty"
+        ],
+        "summary": "Delete one of a loyalty program's tiers",
+        "description": "404 when the program does not exist, or when the tier is not one of its tiers. Travelers holding the tier keep their membership and lose the tier: a membership's TierId is set to null rather than the delete failing.",
+        "operationId": "AdminDeleteLoyaltyTier",
+        "parameters": [
+          {
+            "name": "programId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "tierId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/loyalty-program-kinds/{id}/verify": {
       "patch": {
         "tags": [
@@ -6559,6 +6753,32 @@
         },
         "additionalProperties": false
       },
+      "CreateLoyaltyTierRequest": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "rank": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "allianceCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "allianceTierCode": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "DeviceTokenDto": {
         "type": "object",
         "properties": {
@@ -7329,6 +7549,32 @@
             "nullable": true
           },
           "allianceCode": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateLoyaltyTierRequest": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "rank": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "allianceCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "allianceTierCode": {
             "type": "string",
             "nullable": true
           }
