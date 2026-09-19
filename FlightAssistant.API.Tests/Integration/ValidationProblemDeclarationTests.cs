@@ -70,18 +70,51 @@ public class ValidationProblemDeclarationTests(FlightAssistantWebApplicationFact
     }
 
     /// <summary>
-    /// And the positive half: each of them really does declare a 400 at all. A route that dropped
-    /// the declaration entirely would satisfy the check above by having nothing to downgrade.
+    /// And the positive half: an operation that has something to validate really does declare its
+    /// 400. Without this, dropping a declaration outright would satisfy the check above by leaving
+    /// nothing to downgrade.
+    ///
+    /// <para>
+    /// <b>"Has something to validate" is the whole condition, and it was missing (#517).</b> This
+    /// originally required a 400 from <em>every</em> operation under these two prefixes, which
+    /// encoded "every usage route takes query parameters" — true of the only two that existed when
+    /// #506 was written (<c>aeroapi</c> and <c>flight-data</c>, both taking <c>start</c>/<c>end</c>)
+    /// and not a rule. #513 then added <c>GET /admin/usage/azure</c>, whose handler is
+    /// <c>(IMediator, CancellationToken)</c>: no parameters, nothing to validate, correctly no 400 —
+    /// and this test called that a defect and turned <c>development</c> red. Demanding a status a
+    /// handler cannot produce is the same error as declaring one (#405), in test form.
+    /// </para>
+    ///
+    /// <para>
+    /// A parameterless operation is therefore exempt. That is a real exemption rather than a
+    /// loophole: with no parameters there is no model binding and no validator, so a 400 could only
+    /// come from a <c>DomainException</c>, which carries no <c>errors</c> dictionary and is the
+    /// first test's business, not this one's.
+    /// </para>
     /// </summary>
     [Fact]
-    public void EveryImportAndUsageOperation_DeclaresItsValidation400()
+    public void EveryImportAndUsageOperation_WithSomethingToValidate_DeclaresItsValidation400()
     {
         var document = factory.Services.GetRequiredService<ISwaggerProvider>().GetSwagger("v1");
 
-        var missing = document.Paths
+        var candidates = document.Paths
             .Where(p => p.Key.StartsWith("/admin/import/", StringComparison.Ordinal)
                         || p.Key.StartsWith("/admin/usage/", StringComparison.Ordinal))
             .SelectMany(p => p.Value.Operations.Select(o => (Route: $"{o.Key.ToString().ToUpperInvariant()} {p.Key}", Operation: o.Value)))
+            .ToList();
+
+        // Guards the guard twice over: the prefixes must still match something, and the exemption
+        // must not be swallowing everything. A file upload counts as something to validate even
+        // though it is a body rather than a parameter, which is why RequestBody is considered too.
+        Assert.NotEmpty(candidates);
+
+        var obliged = candidates
+            .Where(r => r.Operation.Parameters.Count > 0 || r.Operation.RequestBody is not null)
+            .ToList();
+
+        Assert.NotEmpty(obliged);
+
+        var missing = obliged
             .Where(r => !r.Operation.Responses.ContainsKey("400"))
             .Select(r => r.Route)
             .OrderBy(r => r, StringComparer.Ordinal)
