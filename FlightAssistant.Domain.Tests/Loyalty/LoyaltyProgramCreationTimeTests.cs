@@ -42,8 +42,8 @@ namespace FlightAssistant.Domain.Tests.Loyalty
             Assert.Equal("British Airways Executive Club", program.Name);
             Assert.Equal(2, program.KindId);
             Assert.Equal(7, program.AirlineId);
-            // #504: a program has no alliance of its own — it is the airline's. The property is gone,
-            // so this type no longer compiles if anyone puts it back.
+            // #504: a program has no alliance of its own — it is the airline's. Fails if
+            // AllianceCode were restored to the entity — the assertions above would not catch that.
             Assert.Empty(typeof(LoyaltyProgram).GetProperties().Where(p => p.Name == "AllianceCode"));
         }
     }

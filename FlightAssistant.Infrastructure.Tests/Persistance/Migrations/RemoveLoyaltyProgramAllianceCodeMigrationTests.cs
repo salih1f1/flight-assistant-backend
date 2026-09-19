@@ -5,15 +5,17 @@ using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
-namespace FlightAssistant.Infrastructure.Tests.Persistance;
+namespace FlightAssistant.Infrastructure.Tests.Persistance.Migrations;
 
 /// <summary>
 /// #504: the migration that drops <c>loyalty_programs.AllianceCode</c> first copies each program's
-/// alliance onto its airline. The four guards that cannot be read off the SQL are pinned here: an
+/// alliance onto its airline. The guards that cannot be read off the SQL are pinned here: an
 /// alliance already on the airline is never overwritten, a code naming no alliance is discarded
 /// rather than failing the migration, a disagreement between two programs of one airline is settled
-/// by lowest program id, and that tiebreak only considers programs whose code is actually copyable —
-/// an invalid code on the lowest-id program must not veto a valid code held by a higher-id sibling.
+/// by lowest program id, that tiebreak only considers programs whose code is actually copyable — an
+/// invalid code on the lowest-id program must not veto a valid code held by a higher-id sibling —
+/// and a valid code stored in the wrong case or with surrounding whitespace is normalised before
+/// matching, so it is copied rather than discarded alongside genuine junk.
 ///
 /// <para>This class owns its own container instead of joining <see cref="TestSupport.PostgresCollection"/>:
 /// the shared fixture hands out a database already migrated to the latest migration, and this test
@@ -62,7 +64,8 @@ public sealed class RemoveLoyaltyProgramAllianceCodeMigrationTests : IAsyncLifet
                    ('LH', 'DLH', 'Lufthansa',       'GB', 'SA'),      -- keeps its own
                    ('XX', 'XXX', 'Junk Air',        'GB', NULL),      -- program's code is not an alliance
                    ('YY', 'YYY', 'Tie Air',         'GB', NULL),      -- two valid programs disagree
-                   ('ZZ', 'ZZZ', 'Rescue Air',      'GB', NULL);      -- lowest-id program is junk, higher is valid
+                   ('ZZ', 'ZZZ', 'Rescue Air',      'GB', NULL),      -- lowest-id program is junk, higher is valid
+                   ('WW', 'WWW', 'Case Air',        'GB', NULL);      -- valid code, badly cased and padded
 
             INSERT INTO loyalty_program_kinds ("Code", "Name") VALUES ('FF', 'Frequent Flyer');
 
@@ -71,7 +74,8 @@ public sealed class RemoveLoyaltyProgramAllianceCodeMigrationTests : IAsyncLifet
             FROM (VALUES
                     ('BA-EXEC', 'BA Executive Club', 'BA', 'OW'),
                     ('LH-MM',   'Miles & More',      'LH', 'OW'),
-                    ('XX-ONE',  'Junk Program',      'XX', 'STAR')
+                    ('XX-ONE',  'Junk Program',      'XX', 'STAR'),
+                    ('WW-ONE',  'Case Club',         'WW', '  ow  ')
                  ) AS v(code, name, iata, alliance)
             JOIN airlines a ON a."Iata" = v.iata
             CROSS JOIN loyalty_program_kinds k
@@ -133,6 +137,10 @@ public sealed class RemoveLoyaltyProgramAllianceCodeMigrationTests : IAsyncLifet
         // This is the case that fails against the pre-fix SQL, whose MIN("Id") subquery had no
         // validity guard: it would pick ZZ-JUNK's id, find its code invalid, and copy nothing.
         Assert.Equal("ST", await AllianceOfAsync("ZZ"));
+
+        // A valid code stored badly cased and padded ('  ow  ') is normalised before matching, so
+        // it is copied rather than discarded like a junk code would be.
+        Assert.Equal("OW", await AllianceOfAsync("WW"));
 
         // And the column is gone.
         Assert.Equal(0L, await ScalarAsync("""

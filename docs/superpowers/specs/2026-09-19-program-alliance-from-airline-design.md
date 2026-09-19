@@ -69,7 +69,8 @@ change; everything below is what it costs to get there.
 The alliance facts are currently held **only** by programs:
 
 - All **692** seeded airlines have `allianceCode: null`.
-- **21 of 25** seeded programs carry an alliance code.
+- **23 of 25** seeded programs carry an alliance code — 21 whose airline is in `airlines.v1.json`,
+  plus `CX-MPC` and `KE-SKY`, whose airlines are added by this change (see below).
 
 Drop the column first and the system forgets every alliance it knows, including on the
 alliance→airlines page shipped in #174. So the data moves down first, in the same pull request, in
@@ -115,20 +116,26 @@ like; the seeder reads none of it.
 Without them, dropping the column leaves those two programs with neither an airline nor an
 alliance.
 
-**Which database each file reaches.** `SeedCustomAsync` skips any dataset version already recorded
-in `seed_versions`, and `PopulateAirlinesAsync` only ever *inserts* — it never updates a row that is
-already there. So the two edits have different reach, and both are needed:
+**Which database each file reaches — none, deployed.** `ReferenceDataSeeder` (the class that reads
+`airlines.v1.json` / `airlines.v2.json` and calls `SeedCustomAsync`/`PopulateAirlinesAsync`) has been
+unregistered as a hosted service since commit `0bea71a` (#168, "deprecate ReferenceDataSeeder hosted
+service"). `FlightAssistant.API/Program.cs` registers `DataSourceSeeder` and other hosted services,
+but not this one. The class, the seed JSON and the `SeedVersion` entity are kept only as historical
+reference; `airlines.v2.json` is read solely by `ReferenceDataSeederTests`.
 
-| Change | Fresh database | Existing database |
-|---|---|---|
-| `AllianceCode` added to 21 rows of `airlines.v1.json` | applied | **skipped** — Airline v1 is already in `seed_versions`; the migration covers these rows instead |
-| New `airlines.v2.json` holding only Cathay Pacific and Korean Air | applied | **applied** — v2 is a version no database has seen |
+So **neither seed-file edit reaches a deployed database, fresh or existing**: not the 21
+`AllianceCode` additions to `airlines.v1.json`, and not the new `airlines.v2.json` carrying Cathay
+Pacific and Korean Air. Reference data is instead provisioned by `ReferenceDataProvisioner`, whose
+`CompleteAirline` only preserves an existing `AllianceCode` on a row it touches — it never sets one.
+Both seed-file edits are kept in this PR anyway: they are the repository's reference data, they keep
+`airlines.v1.json`/`airlines.v2.json` internally correct, and `ReferenceDataSeederTests` exercises
+them. But they are documentation of intent, not a delivery mechanism.
 
-Hence the two missing airlines go in a **new file**, `FlightAssistant.API/SeedData/Airline/airlines.v2.json`, not into `v1`:
-inserting them is the one thing the seeder can still do on a database that already exists. Airlines
-are seeded before loyalty programs (`SeedAirlinesAsync` precedes `SeedLoyaltyProgramsAsync` in
-`ReferenceDataSeeder.StartAsync`), so on a fresh database `CX-MPC` and `KE-SKY` find their airline
-and link to it. File order within the folder does not matter: inserts are guarded by IATA/ICAO.
+**The migration is the only mechanism that moves alliance data on any real database**, including
+production. It runs regardless of whether the seeder is registered, because EF Core migrations are
+applied independently of hosted services. Consequently the manual step below is bigger than a naive
+reading of the seed files would suggest: nothing auto-creates Cathay Pacific or Korean Air anywhere
+outside of tests.
 
 ### Part 2 — the migration, for databases that exist
 
@@ -207,13 +214,21 @@ alliance now arrives through the airline import. Worth a line in the PR descript
 - **A program with no airline has no alliance at all** — including the `ALLIANCE` kind in
   `loyalty-program-kinds` ("Multi-airline alliance program"). No such row exists in any seed. If one
   is ever needed, it belongs as a link from the alliance, not as a code on the program.
-- **On existing databases, `CX-MPC` and `KE-SKY` end up unlinked.** Their airlines are absent when
-  the migration runs, so it has nowhere to copy their alliance to, and those two alliance values are
-  lost. `airlines.v2.json` then inserts Cathay Pacific and Korean Air on the next boot, carrying
-  their alliances — but the loyalty seeder returns early for a program code that already exists, so
-  it never links the two programs to the new airlines. An admin does that from the panel: two rows,
-  once, and the *Not linked* signal is what makes them findable. Inserting reference data from a
-  migration was rejected — it duplicates the seeder's job and fights its id sequence.
+- **`CX-MPC` and `KE-SKY` end up unlinked, on every database, and stay that way until an admin acts.**
+  Their airlines are absent when the migration runs, so it has nowhere to copy their alliance to, and
+  those two alliance values are lost. The airlines do not arrive by themselves: `ReferenceDataSeeder`
+  — the only code that reads `airlines.v2.json` outside of tests — is unregistered (#168), so nothing
+  inserts Cathay Pacific or Korean Air on any deployed database, "on the next boot" or otherwise. The
+  manual step is therefore: an admin **creates** the Cathay Pacific (`CX`, `CPA`, `HK`, `OW`) and
+  Korean Air (`KE`, `KAL`, `KR`, `ST`) airline rows from the panel, and **then** links `CX-MPC` and
+  `KE-SKY` to them — two airlines and two links, once, and the *Not linked* signal is what makes the
+  programs findable in the meantime. Inserting reference data from a migration was rejected — it
+  duplicates the provisioner's job and fights its id sequence.
+- **Any program with no airline loses its alliance value, not only these two.** The copy-up joins on
+  `p."AirlineId" = a."Id"`, so a program that names no airline has nowhere to copy to, and its
+  alliance code — however well-formed — is dropped with the column. `CX-MPC` and `KE-SKY` are the
+  only such rows in the seed data, but this follows from the rule itself: production may hold other
+  unlinked programs, and this migration discards their alliance the same way.
 
 ---
 
