@@ -19,6 +19,18 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         Task AddProgramAsync(LoyaltyProgram program, CancellationToken ct = default);
         Task DeleteProgramAsync(LoyaltyProgram program, CancellationToken ct = default);
         Task<IReadOnlyList<LoyaltyProgram>> SearchProgramsByAirlineIdAsync(int airlineId, CancellationToken ct = default);
+
+        /// <summary>
+        /// The name of each of these airlines' own loyalty programs, keyed by airline id — the bulk
+        /// sibling of <see cref="SearchProgramsByAirlineIdAsync"/>, for callers holding a list of
+        /// airlines rather than one (the alliance drill-down, #495). Airlines with no program of
+        /// their own are absent from the dictionary rather than present with a null.
+        /// <para>
+        /// An airline may run several programs; the one named is the first by name, so that two
+        /// identical calls answer the same way whatever order the database returns rows in.
+        /// </para>
+        /// </summary>
+        Task<IReadOnlyDictionary<int, string>> GetProgramNamesByAirlineIdsAsync(IReadOnlyCollection<int> airlineIds, CancellationToken ct = default);
         Task<IReadOnlyList<LoyaltyProgram>> GetAllVerifiedWithTiersAsync(CancellationToken ct = default);
         Task<IReadOnlyDictionary<int, string>> GetKindCodeMapAsync(CancellationToken ct = default);
         Task<LoyaltyProgramKind?> FindKindByCodeAsync(string code, CancellationToken ct = default);

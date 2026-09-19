@@ -88,6 +88,33 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                 .ToListAsync(ct)
                 .ContinueWith(t => (IReadOnlyList<LoyaltyProgram>)t.Result, ct, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
+        public async Task<IReadOnlyDictionary<int, string>> GetProgramNamesByAirlineIdsAsync(IReadOnlyCollection<int> airlineIds, CancellationToken ct = default)
+        {
+            if (airlineIds.Count == 0)
+                return new Dictionary<int, string>();
+
+            // Only the two columns the caller names rows by: no Include, since neither the tiers
+            // nor the kind are part of the answer, and one IN (...) rather than a query per airline.
+            // The AirlineId null check is what lets .Value read without a null-forgiving operator;
+            // it is not what keeps alliance-wide programs out of the result, which SQL does on its
+            // own — NULL IN (...) is unknown, not true. Deleting it leaves the tests green.
+            var rows = await _db.LoyaltyPrograms
+                .AsNoTracking()
+                .Where(p => p.AirlineId != null && airlineIds.Contains(p.AirlineId.Value))
+                .OrderBy(p => p.Name)
+                // Id tiebreaker: Name is not unique, and "first by name" has to name the same row
+                // twice running (#328's rule, for a group rather than a page).
+                .ThenBy(p => p.Id)
+                .Select(p => new { AirlineId = p.AirlineId!.Value, p.Name })
+                .ToListAsync(ct);
+
+            // First per airline, grouped here rather than in SQL: the row count is one program per
+            // airline for all but a handful, and DISTINCT ON has no provider-portable translation.
+            return rows
+                .GroupBy(r => r.AirlineId)
+                .ToDictionary(g => g.Key, g => g.First().Name);
+        }
+
         public async Task<IReadOnlyList<LoyaltyProgram>> GetAllVerifiedWithTiersAsync(CancellationToken ct = default) =>
             await _db.LoyaltyPrograms
                 .Where(p => p.IsVerified)
