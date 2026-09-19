@@ -1,5 +1,6 @@
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Domain.Flights.Entities;
+using FlightAssistant.Domain.Flights.Enums;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
@@ -173,6 +174,61 @@ namespace FlightAssistant.Infrastructure.Persistance.Repositories
                                  && (f.CancelledAtUtc == null || f.CancelledAtUtc > stopBefore)
                                  && (f.ActualArrivalUtc != null
                                      || (f.EstimatedArrivalUtc ?? f.ScheduledArrivalUtc) > stopWithoutArrivalBefore), ct);
+        }
+
+        public Task<int> CountActiveTrackedFlightsAsync(
+            DateTime nowUtc, TimeSpan stopAfterArrival, TimeSpan stopWithoutArrivalAfter,
+            CancellationToken ct = default)
+        {
+            // Same predicate as the per-traveler count above -- deliberately the identical
+            // expression, so the two cannot drift; FlightRepositoryTests checks both against
+            // FlightSyncPlanner. Select(FlightId).Distinct() because one flight tracked by several
+            // travelers is polled once and costs once.
+            var stopBefore = nowUtc - stopAfterArrival;
+            var stopWithoutArrivalBefore = nowUtc - stopWithoutArrivalAfter;
+
+            return _db.TravelerFlights
+                .Select(tf => tf.FlightId)
+                .Distinct()
+                .Join(_db.Flights, id => id, f => f.Id, (id, f) => f)
+                .CountAsync(f => (f.ActualArrivalUtc == null || f.ActualArrivalUtc > stopBefore)
+                                 && (f.CancelledAtUtc == null || f.CancelledAtUtc > stopBefore)
+                                 && (f.ActualArrivalUtc != null
+                                     || (f.EstimatedArrivalUtc ?? f.ScheduledArrivalUtc) > stopWithoutArrivalBefore), ct);
+        }
+
+        public async Task<IReadOnlyList<(FlightSyncMode? Mode, int Count)>> CountTrackedFlightsByStoredSyncModeAsync(
+            CancellationToken ct = default)
+        {
+            var rows = await _db.TravelerFlights
+                .Select(tf => tf.FlightId)
+                .Distinct()
+                .Join(_db.Flights, id => id, f => f.Id, (id, f) => f.SyncMode)
+                .GroupBy(mode => mode)
+                .Select(g => new { Mode = g.Key, Count = g.Count() })
+                .ToListAsync(ct);
+
+            return rows.Select(r => (r.Mode, r.Count)).ToList();
+        }
+
+        public async Task<IReadOnlyList<(string Source, int Events, int DistinctFlights)>> CountStatusEventsBySourceAsync(
+            DateTime fromUtc, DateTime toUtc, CancellationToken ct = default)
+        {
+            // RecordedAtUtc, not EffectiveAtUtc: the question is what the polls in this window
+            // produced, and an effective time can be older than the poll that reported it (or move
+            // backwards when an estimate returns to an earlier value, #351).
+            var rows = await _db.FlightStatusEvents
+                .Where(e => e.RecordedAtUtc >= fromUtc && e.RecordedAtUtc <= toUtc)
+                .GroupBy(e => e.Source)
+                .Select(g => new
+                {
+                    Source = g.Key,
+                    Events = g.Count(),
+                    DistinctFlights = g.Select(e => e.FlightId).Distinct().Count()
+                })
+                .ToListAsync(ct);
+
+            return rows.Select(r => (r.Source, r.Events, r.DistinctFlights)).ToList();
         }
     }
 }

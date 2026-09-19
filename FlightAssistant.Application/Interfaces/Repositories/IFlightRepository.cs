@@ -1,5 +1,6 @@
 ﻿using FlightAssistant.Domain.Common.Interfaces;
 using FlightAssistant.Domain.Flights.Entities;
+using FlightAssistant.Domain.Flights.Enums;
 
 namespace FlightAssistant.Application.Interfaces.Repositories
 {
@@ -77,5 +78,42 @@ namespace FlightAssistant.Application.Interfaces.Repositories
         Task<int> CountActiveTrackedFlightsAsync(
             Guid travelerId, DateTime nowUtc, TimeSpan stopAfterArrival, TimeSpan stopWithoutArrivalAfter,
             CancellationToken ct = default);
+
+        /// <summary>
+        /// The same rule as <see cref="CountActiveTrackedFlightsAsync"/> across <b>every</b> traveler,
+        /// counted once rather than per traveler: how many distinct flights the status loop is still
+        /// polling right now (#503). Distinct, because one flight tracked by five travelers is polled
+        /// once and costs once -- counting tracking links instead would inflate the denominator of
+        /// every derived cost figure.
+        /// </summary>
+        Task<int> CountActiveTrackedFlightsAsync(
+            DateTime nowUtc, TimeSpan stopAfterArrival, TimeSpan stopWithoutArrivalAfter,
+            CancellationToken ct = default);
+
+        /// <summary>
+        /// Tracked flights grouped by their <b>stored</b> <see cref="FlightSyncMode"/> (#503), which
+        /// is the composition that explains poll volume -- Fast polls every few minutes, Schedule
+        /// once a day.
+        ///
+        /// <para>
+        /// Deliberately the stored mode, not the recomputed one, and the two can disagree: a stored
+        /// mode is at most one loop interval stale, and a flight tracked by an older build may have
+        /// none at all (null). That is the right choice here precisely because this reports what the
+        /// loop has actually been doing, which is what the spend was incurred on -- unlike the cap's
+        /// count above, which must be authoritative and so recomputes from times. A caller comparing
+        /// the two should expect a small difference, not treat it as a defect.
+        /// </para>
+        /// </summary>
+        Task<IReadOnlyList<(FlightSyncMode? Mode, int Count)>> CountTrackedFlightsByStoredSyncModeAsync(
+            CancellationToken ct = default);
+
+        /// <summary>
+        /// Status events recorded in the window, grouped by <c>Source</c>, with the number of
+        /// distinct flights they belong to (#503) -- the yield side of the spend. Spend with no
+        /// events is a loop polling flights nothing is happening to; spend concentrated on few
+        /// flights is a different problem from spend spread thin.
+        /// </summary>
+        Task<IReadOnlyList<(string Source, int Events, int DistinctFlights)>> CountStatusEventsBySourceAsync(
+            DateTime fromUtc, DateTime toUtc, CancellationToken ct = default);
     }
 }

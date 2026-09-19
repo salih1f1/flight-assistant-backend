@@ -3695,6 +3695,86 @@
         }
       }
     },
+    "/admin/usage/flight-data": {
+      "get": {
+        "tags": [
+          "Admin - Usage"
+        ],
+        "summary": "AeroAPI spend paired with our own sync activity",
+        "description": "What #364's Phase 4 decisions need and GET /admin/usage/aeroapi cannot answer: the same AeroAPI spend for the range, alongside how many distinct flights the status loop is still polling, how those flights are distributed across sync modes, and how many status events the window's polls actually produced. Optional 'start' and 'end' are UTC instants defaulting to the current UTC month to date, resolved and cached exactly as the aeroapi report is — so this costs no extra upstream call. The 'derived' figures are calculated, not measured: AeroAPI exposes no per-request identifier and bills per page, so nothing here attributes a page to a flight; they are whole-window spend over a whole-window denominator, and are null when that denominator is zero. 'byStoredSyncMode' reports each flight's stored mode, which can be up to one loop interval stale, so its total may differ slightly from 'activeTrackedFlights', which is recomputed from times and status.",
+        "operationId": "AdminGetFlightDataUsage",
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlightDataUsageDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/verification-sources": {
       "get": {
         "tags": [
@@ -6821,6 +6901,138 @@
           "lastSeenUtc": {
             "type": "string",
             "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FlightDataDerivedDto": {
+        "type": "object",
+        "properties": {
+          "costUsdPerActiveTrackedFlight": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "costUsdPerRecordedEvent": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "FlightDataEventYieldDto": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "nullable": true
+          },
+          "events": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "distinctFlights": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FlightDataSpendOperationDto": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "nullable": true
+          },
+          "calls": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pages": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "costUsd": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FlightDataSyncModeCountDto": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "nullable": true
+          },
+          "flights": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FlightDataUsageDto": {
+        "type": "object",
+        "properties": {
+          "rangeStartUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "rangeEndUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "totalCalls": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalPages": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalCostUsd": {
+            "type": "number",
+            "format": "double"
+          },
+          "monthlyBudgetUsd": {
+            "type": "number",
+            "format": "double"
+          },
+          "byOperation": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlightDataSpendOperationDto"
+            },
+            "nullable": true
+          },
+          "activeTrackedFlights": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "byStoredSyncMode": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlightDataSyncModeCountDto"
+            },
+            "nullable": true
+          },
+          "totalEventsRecorded": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "eventYield": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlightDataEventYieldDto"
+            },
+            "nullable": true
+          },
+          "derived": {
+            "$ref": "#/components/schemas/FlightDataDerivedDto"
           }
         },
         "additionalProperties": false
