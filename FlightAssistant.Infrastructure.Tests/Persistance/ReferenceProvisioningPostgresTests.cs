@@ -267,6 +267,13 @@ public class ReferenceProvisioningPostgresTests : PostgresTestBase
 
         _registry.TryGet("aeroapi").Returns(
             new FakeSource("aeroapi", [VerificationEntityType.Airline], _ => FoundAirline("PC", "PGT")));
+        // The completion path never resolves a country name -- the held row's own CountryCode
+        // already satisfies the foreign key. This is stubbed anyway so that the *pre-fix* code
+        // reaches its INSERT and fails on the unique index, which is the behaviour under test:
+        // without it, reverting the fix would fail this test on an unconfigured-double
+        // NullReferenceException at the resolver instead, and the index would never be exercised.
+        _countryNames.TryResolveCodeByNameAsync("Turkey", Arg.Any<CancellationToken>())
+            .Returns(CountryCodeResolution.Found("TR"));
         var provisioner = CreateProvisioner(new Options());
 
         var result = await provisioner.ProvisionAsync(
@@ -279,6 +286,9 @@ public class ReferenceProvisioningPostgresTests : PostgresTestBase
         Assert.Equal("PC", airline.Iata);                   // the code the row lacked
         Assert.Equal("Pegasus Airlines", airline.Name);     // a value it already had, kept
         Assert.Equal("TR", airline.CountryCode);
+        // And the stub above went unused: completing a held row resolves no country name.
+        await _countryNames.DidNotReceive()
+            .TryResolveCodeByNameAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

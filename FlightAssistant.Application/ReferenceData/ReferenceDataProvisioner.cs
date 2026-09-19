@@ -106,10 +106,11 @@ namespace FlightAssistant.Application.ReferenceData
                 // false and it caches nothing, so an aborted airline lookup leaves nothing warm and
                 // the retry starts over behind AeroApiThrottleGate. An airline can therefore 503
                 // here repeatedly while the gate is busy.
-                // Every entity the attempt covered, not just the first: the deadline is one budget
-                // for the whole step, so which entry was in flight when it fired is not knowable
-                // here -- naming one made an airline's timeout read as the airport's. The response
-                // names no entity either (ToDomainException uses a fixed message for Unavailable).
+                //
+                // The log names every entity the attempt covered, not just the first: this is one
+                // budget for the whole step, so which entry was in flight when it fired is not
+                // knowable here -- naming one made an airline's timeout read as the airport's. The
+                // response names none either (ToDomainException's Unavailable message is fixed).
                 _logger.LogInformation(
                     "Provisioning {Entities} exceeded the {Budget} budget.",
                     Describe(entries), _options.Budget);
