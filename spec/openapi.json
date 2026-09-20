@@ -5050,18 +5050,8 @@
           "Travelers"
         ],
         "summary": "Register traveler",
-        "description": "Creates a traveler profile linked to the authenticated Azure AD B2C identity. Idempotent — safe to call on every login; does nothing if the traveler already exists.",
+        "description": "Creates a traveler profile linked to the authenticated Azure AD B2C identity. Takes no request body: the email and display name are read from the sign-in token (the 'email', 'preferred_username' or 'emails' claim, and 'name'), so they always match the authenticated identity. Idempotent — safe to call on every login, and each call re-reads those claims, which is the only thing that refreshes them locally when they change in Azure. A token carrying no email claim at all is refused as unauthenticated; one whose claim is not an address — a phone sign-in, say — is a 400.",
         "operationId": "RegisterTraveler",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RegisterTravelerRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "201": {
             "description": "Created",
@@ -7850,20 +7840,6 @@
             "items": {
               "type": "string"
             },
-            "nullable": true
-          }
-        },
-        "additionalProperties": false
-      },
-      "RegisterTravelerRequest": {
-        "type": "object",
-        "properties": {
-          "email": {
-            "type": "string",
-            "nullable": true
-          },
-          "displayName": {
-            "type": "string",
             "nullable": true
           }
         },

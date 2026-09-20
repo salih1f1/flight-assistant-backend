@@ -5,6 +5,8 @@ namespace FlightAssistant.API.Authentication
 {
     public static class ClaimsPrincipalExtensions
     {
+        private static readonly string[] EmailClaimTypes = ["email", "preferred_username", "emails"];
+
         public static Guid GetTravelerId(this ClaimsPrincipal user)
         {
             var id = user.FindFirstValue("oid") ?? user.FindFirstValue("sub");
@@ -13,6 +15,52 @@ namespace FlightAssistant.API.Authentication
             if (!Guid.TryParse(id, out var guid))
                 throw new DomainException("Traveler identity claim is not a valid identifier.", 401);
             return guid;
+        }
+
+        /// <summary>
+        /// The traveler's email address, read from the validated token rather than from anything the
+        /// caller sent. The one copy of that rule.
+        ///
+        /// <para>
+        /// Three claims are accepted because the tenant emits different ones: Entra External ID puts
+        /// the sign-in address in <c>preferred_username</c> (and only there — a captured dev token
+        /// carries no <c>email</c> claim at all), while a B2C local account emits <c>emails</c>, an
+        /// array, of which the first entry is the sign-in address. <c>email</c> is preferred where the
+        /// tenant is configured to emit the optional claim, since it is the one that means an address
+        /// and nothing else. A blank claim is treated as absent rather than as an answer, so a
+        /// tenant emitting an empty <c>email</c> still falls through to the claim that has a value.
+        /// </para>
+        ///
+        /// <para>
+        /// Throws 401, like <see cref="GetTravelerId"/> does for a missing <c>oid</c>, rather than
+        /// registering a traveler with no address: every one of these claims being absent means the
+        /// token is not the one this API was configured for, which is a loud failure, not a blank
+        /// profile field. It is deliberately not a validation 400 — the caller sends no body here, so
+        /// an <c>Email</c> error would point them at a field they never controlled.
+        /// </para>
+        /// </summary>
+        public static string GetEmail(this ClaimsPrincipal user)
+        {
+            foreach (var claimType in EmailClaimTypes)
+            {
+                var value = user.FindFirstValue(claimType);
+                if (!string.IsNullOrWhiteSpace(value))
+                    return value;
+            }
+
+            throw new DomainException("No traveler email claim found.", 401);
+        }
+
+        /// <summary>
+        /// The traveler's display name, from the token's <c>name</c> claim — null when the tenant
+        /// does not emit one, since a display name is optional everywhere in this domain. Read from
+        /// the token for the same reason <see cref="GetEmail"/> is: Azure owns it, and
+        /// <c>PATCH /travelers/me</c> already refuses to edit it.
+        /// </summary>
+        public static string? GetDisplayName(this ClaimsPrincipal user)
+        {
+            var name = user.FindFirstValue("name");
+            return string.IsNullOrWhiteSpace(name) ? null : name;
         }
 
         /// <summary>

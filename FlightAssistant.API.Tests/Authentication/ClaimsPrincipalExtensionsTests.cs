@@ -18,6 +18,12 @@ public class ClaimsPrincipalExtensionsTests
         return new ClaimsPrincipal(identity);
     }
 
+    private static ClaimsPrincipal UserWithClaims(params (string Type, string Value)[] claims)
+    {
+        var identity = new ClaimsIdentity(claims.Select(c => new Claim(c.Type, c.Value)), "test");
+        return new ClaimsPrincipal(identity);
+    }
+
     [Fact]
     public void GetTravelerId_ValidOidClaim_ReturnsGuid()
     {
@@ -94,5 +100,78 @@ public class ClaimsPrincipalExtensionsTests
     public void GetAdminActorId_NoOidOrSub_IsAdmin()
     {
         Assert.Equal("admin", UserWithNoClaims().GetAdminActorId());
+    }
+
+    [Fact]
+    public void GetEmail_EmailClaim_ReturnsIt()
+    {
+        Assert.Equal("alice@example.com", UserWith("email", "alice@example.com").GetEmail());
+    }
+
+    [Fact]
+    public void GetEmail_NoEmail_FallsBackToPreferredUsername()
+    {
+        Assert.Equal("alice@example.com", UserWith("preferred_username", "alice@example.com").GetEmail());
+    }
+
+    [Fact]
+    public void GetEmail_NoEmailOrPreferredUsername_FallsBackToEmails()
+    {
+        Assert.Equal("alice@example.com", UserWith("emails", "alice@example.com").GetEmail());
+    }
+
+    [Fact]
+    public void GetEmail_EveryClaimPresent_PrefersEmail()
+    {
+        var user = UserWithClaims(
+            ("emails", "third@example.com"),
+            ("preferred_username", "second@example.com"),
+            ("email", "first@example.com"));
+
+        Assert.Equal("first@example.com", user.GetEmail());
+    }
+
+    [Fact]
+    public void GetEmail_BlankEmailClaim_FallsThroughToTheNextClaim()
+    {
+        var user = UserWithClaims(("email", "   "), ("preferred_username", "alice@example.com"));
+
+        Assert.Equal("alice@example.com", user.GetEmail());
+    }
+
+    [Fact]
+    public void GetEmail_NoEmailClaimOfAnyKind_ThrowsDomainException401()
+    {
+        var ex = Assert.Throws<DomainException>(() => UserWithNoClaims().GetEmail());
+
+        Assert.Equal(401, ex.StatusCode);
+    }
+
+    [Fact]
+    public void GetEmail_EveryEmailClaimBlank_ThrowsDomainException401()
+    {
+        var user = UserWithClaims(("email", " "), ("preferred_username", ""), ("emails", "\t"));
+
+        var ex = Assert.Throws<DomainException>(() => user.GetEmail());
+
+        Assert.Equal(401, ex.StatusCode);
+    }
+
+    [Fact]
+    public void GetDisplayName_NameClaim_ReturnsIt()
+    {
+        Assert.Equal("Salih", UserWith("name", "Salih").GetDisplayName());
+    }
+
+    [Fact]
+    public void GetDisplayName_NoNameClaim_IsNull()
+    {
+        Assert.Null(UserWithNoClaims().GetDisplayName());
+    }
+
+    [Fact]
+    public void GetDisplayName_BlankNameClaim_IsNull()
+    {
+        Assert.Null(UserWith("name", "   ").GetDisplayName());
     }
 }

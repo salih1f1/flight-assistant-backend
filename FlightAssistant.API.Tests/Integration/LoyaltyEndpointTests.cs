@@ -87,12 +87,7 @@ public class LoyaltyEndpointTests(FlightAssistantWebApplicationFactory factory)
         var client = factory.CreateUserClient(userId);
 
         // Register traveler first so the handler can resolve the traveler
-        await client.PostAsJsonAsync("travelers", new
-        {
-            email = $"{userId}@example.com",
-            displayName = "Test",
-            countryCode = (string?)null
-        });
+        await client.PostAsync("travelers", null);
 
         var response = await client.GetAsync("loyalty/memberships?page=1&pageSize=10");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

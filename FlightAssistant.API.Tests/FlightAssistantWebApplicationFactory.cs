@@ -238,13 +238,30 @@ public class FlightAssistantWebApplicationFactory : WebApplicationFactory<Progra
             throw new InvalidOperationException(VerificationDownloadRefused);
     }
 
-    // Convenience: create a client pre-authenticated as a regular user
-    public HttpClient CreateUserClient(string? userId = null)
+    // Convenience: create a client pre-authenticated as a regular user. The optional email and
+    // display name become that token's own identity claims (#544) — the default is
+    // "{userId}@example.com" and TestAuthHandler.DisplayName.
+    public HttpClient CreateUserClient(string? userId = null, string? email = null, string? displayName = null)
     {
         userId ??= Guid.NewGuid().ToString();
         var client = CreateClient();
         client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", $"test-{userId}");
+        if (email is not null) client.DefaultRequestHeaders.Add(TestAuthHandler.EmailHeader, email);
+        if (displayName is not null) client.DefaultRequestHeaders.Add(TestAuthHandler.DisplayNameHeader, displayName);
+        return client;
+    }
+
+    /// <summary>
+    /// An authenticated caller whose token carries no email claim of any kind (#544) — the shape
+    /// that must be refused rather than registered with a blank address.
+    /// </summary>
+    public HttpClient CreateEmaillessUserClient(string? userId = null)
+    {
+        userId ??= Guid.NewGuid().ToString();
+        var client = CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", $"test-noemail-{userId}");
         return client;
     }
 

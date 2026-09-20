@@ -15,18 +15,33 @@ namespace FlightAssistant.API.Endpoints
         {
             var group = app.MapGroup("travelers").RequireAuthorization("AccessAsUser").WithTags("Travelers");
 
-            // POST /travelers — register (idempotent, called on first login)
-            group.MapPost("", async (HttpContext http, [FromBody] RegisterTravelerRequest req, IMediator mediator, CancellationToken ct) =>
+            // POST /travelers — register (idempotent, called on every login).
+            // Every field it stores comes from the validated token, never from the request: this
+            // route takes no body at all (#544). It used to read Email and DisplayName from a
+            // RegisterTravelerRequest, so a traveler could write an address that appears nowhere in
+            // their own token — while the handler, PATCH /travelers/me and this endpoint's own
+            // description all already described Azure as the source of truth for both.
+            group.MapPost("", async (HttpContext http, IMediator mediator, CancellationToken ct) =>
             {
-                var travelerId = http.User.GetTravelerId();
-                var newTravelerId = await mediator.Send(new RegisterTravelerCommand(travelerId, req.Email, req.DisplayName), ct);
+                var command = new RegisterTravelerCommand(
+                    http.User.GetTravelerId(),
+                    http.User.GetEmail(),
+                    http.User.GetDisplayName());
+
+                var newTravelerId = await mediator.Send(command, ct);
                 return Results.Created("/travelers/me", new RegisterTravelerResponse(newTravelerId));
             })
             .WithName("RegisterTraveler")
             .WithSummary("Register traveler")
             .WithDescription(
                 "Creates a traveler profile linked to the authenticated Azure AD B2C identity. " +
-                "Idempotent — safe to call on every login; does nothing if the traveler already exists.")
+                "Takes no request body: the email and display name are read from the sign-in token " +
+                "(the 'email', 'preferred_username' or 'emails' claim, and 'name'), so they always " +
+                "match the authenticated identity. " +
+                "Idempotent — safe to call on every login, and each call re-reads those claims, " +
+                "which is the only thing that refreshes them locally when they change in Azure. " +
+                "A token carrying no email claim at all is refused as unauthenticated; one whose " +
+                "claim is not an address — a phone sign-in, say — is a 400.")
             .Produces<RegisterTravelerResponse>(201)
             .ProducesValidationProblem();
 
