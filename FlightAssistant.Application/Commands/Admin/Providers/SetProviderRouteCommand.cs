@@ -38,6 +38,23 @@ namespace FlightAssistant.Application.Commands.Admin.Providers
         /// (<c>varchar(512)</c>); see <see cref="MaxProvidersLength"/>'s remarks.</summary>
         public const int MaxReasonLength = 512;
 
+        /// <summary>
+        /// Mirrors <c>ProviderRouteConfiguration</c>'s <c>ChangedBy</c> column
+        /// (<c>varchar(256)</c>); see <see cref="MaxProvidersLength"/>'s remarks. Unlike the other
+        /// two this value is not request content — it is <c>IAdminContext.ActorName ?? ActorId</c>,
+        /// so its length is the token issuer's choice rather than the caller's, and it was the one
+        /// column of the three left unbounded.
+        /// </summary>
+        /// <remarks>
+        /// The same string also reaches <c>admin_audit_log.actor_name</c>, which is capped at 200 —
+        /// tighter than this. That cap is shared by every admin write path in the repository (the
+        /// interceptor writes it for all of them), so it is deliberately not re-guarded here: a
+        /// second, stricter copy of a rule that exists nowhere else yet would be the drift this
+        /// codebase avoids. A 201–256 character actor name therefore still fails at
+        /// <c>SaveChanges</c>, on that shared path rather than this column.
+        /// </remarks>
+        public const int MaxChangedByLength = 256;
+
         private readonly IProviderRouteRepository _repository;
         private readonly IProviderRouteDefaults _defaults;
         private readonly IVerificationSourceRegistry _registry;
@@ -94,6 +111,26 @@ namespace FlightAssistant.Application.Commands.Admin.Providers
             if (duplicate is not null)
                 throw new DomainException($"'{duplicate.Key}' is named more than once.", 400);
 
+            // A key whose reader honours a single provider must not store a list.
+            // ["aeroapi","aerodatabox"] otherwise passed every check here, stored as
+            // "aeroapi,aerodatabox", and FlightSearchRouter then took providers[0] and discarded the
+            // rest -- while GET /admin/providers echoed the whole list back as the current routing,
+            // publishing a routing that was not the one in force. Which keys take a list lives in
+            // ProviderJobs.TakesOrderedList, not here: a verification key legitimately takes an
+            // ordered list, since each source is asked in turn.
+            //
+            // Last of the list checks, deliberately: a long or duplicate-laden list for a
+            // single-choice key violates this rule too, and the more specific message is the more
+            // actionable one ("25 characters over the limit", "'aerodatabox' is named more than
+            // once") -- so this reports only the case the two above cannot, a short list of distinct
+            // names for a key that honours exactly one.
+            if (!ProviderJobs.TakesOrderedList(request.Job) && request.Providers.Count > 1)
+            {
+                throw new DomainException(
+                    $"'{request.Job}' takes exactly one provider; {request.Providers.Count} were named.",
+                    400);
+            }
+
             // Mirrors ProviderRouteConfiguration's Reason column (varchar(512)) -- same reasoning
             // as the providers-length check above.
             if (request.Reason is not null && request.Reason.Length > MaxReasonLength)
@@ -112,6 +149,17 @@ namespace FlightAssistant.Application.Commands.Admin.Providers
 
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             var changedBy = _adminContext.ActorName ?? _adminContext.ActorId;
+
+            // Same reasoning as the two length checks above, one step later in the method because
+            // this value is not request content: it comes from the caller's token, so it is only
+            // known once the environment ceiling has already had its say. Checked before
+            // StageAuditAsync so a refusal still writes nothing at all.
+            if (changedBy is not null && changedBy.Length > MaxChangedByLength)
+            {
+                throw new DomainException(
+                    $"The acting admin's name is {changedBy.Length} characters; the limit is {MaxChangedByLength}.",
+                    400);
+            }
 
             // Stage the audit row before the routing write -- see StageAuditAsync's own remarks.
             await StageAuditAsync(request, joined, now, ct);
@@ -135,10 +183,14 @@ namespace FlightAssistant.Application.Commands.Admin.Providers
                 Job: request.Job,
                 DisplayName: ProviderJobs.DisplayNameFor(request.Job),
                 Providers: request.Providers,
+                // Identical to Providers on this path, and that is a consequence rather than a
+                // shortcut: the ceiling check above already refused a ceilinged key with a 409, so
+                // reaching here means nothing overrides what was just stored. GET /admin/providers
+                // is where the two can differ.
+                EffectiveProviders: request.Providers,
                 Options: options,
                 IsDefault: false,
                 CanChange: true,
-                FixedReason: null,
                 ChangedUtc: now,
                 ChangedBy: changedBy,
                 Reason: request.Reason);

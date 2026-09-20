@@ -11,11 +11,13 @@ using NSubstitute;
 namespace FlightAssistant.Application.Tests.Queries.Admin.Providers
 {
     /// <summary>
-    /// <see cref="GetProviderRoutesQueryHandler"/> (#531 fix round 1, Finding 2). Pins both branches
-    /// of the ceiling check, which the fix shipped in round 1 with no dedicated test at all. Neither
-    /// test here cares about <c>Headroom</c> -- that is <c>GetProviderRoutesQueryHandlerHeadroomTests</c>'
-    /// job -- so the six headroom-only dependencies below are stubbed just enough that the AeroAPI
-    /// branch's own try/catch never has anything to catch.
+    /// <see cref="GetProviderRoutesQueryHandler"/> (#531 fix round 1, Finding 2; extended by the
+    /// whole-branch review). Pins both branches of the ceiling check -- which round 1 shipped with no
+    /// dedicated test at all -- now as the <c>Providers</c>/<c>EffectiveProviders</c> split rather than
+    /// one collapsed field, and pins that a switchable operation-map row publishes the live provider
+    /// rather than its authored default. No test here cares about <c>Headroom</c> -- that is
+    /// <c>GetProviderRoutesQueryHandlerHeadroomTests</c>' job -- so the six headroom-only dependencies
+    /// below are stubbed just enough that the AeroAPI branch's own try/catch never has anything to catch.
     /// </summary>
     public class GetProviderRoutesQueryTests
     {
@@ -49,15 +51,24 @@ namespace FlightAssistant.Application.Tests.Queries.Admin.Providers
         }
 
         /// <summary>
-        /// The documented rollback scenario this fix exists for: an operator picked "aerodatabox"
-        /// while it was reachable and the row persisted; <c>AeroDataBox:ApiKey</c> was then removed,
-        /// so <c>IsCeilinged</c> flips to true and every real search now goes to AeroAPI regardless
-        /// of what the stored row says. Reporting the stored value here would have this endpoint
-        /// publish "aerodatabox" while no search can actually reach it -- this pins that a ceilinged
-        /// key reports the EFFECTIVE provider (the configured default) instead.
+        /// The documented rollback scenario these two tests exist for: an operator picked
+        /// "aerodatabox" while it was reachable and the row persisted; <c>AeroDataBox:ApiKey</c> was
+        /// then removed, so <c>IsCeilinged</c> flips to true and every real search now goes to AeroAPI
+        /// regardless of what the stored row says.
+        ///
+        /// <para>
+        /// Both halves are load-bearing, which is why this asserts on two fields rather than one.
+        /// Publishing only the stored value would advertise "aerodatabox" while no search can reach
+        /// it; publishing only the effective value -- this handler's shape before the whole-branch
+        /// review -- put configuration's providers beside the stored row's <c>changedBy</c>,
+        /// <c>changedUtc</c> and <c>reason</c> with <c>isDefault: false</c>, which reads as a named
+        /// admin having chosen the provider configuration forced. <c>AdminJobDto</c> keeps
+        /// <c>ConfigEnabled</c> and <c>SwitchEnabled</c> and derives <c>EffectiveEnabled</c> from
+        /// them; this follows it.
+        /// </para>
         /// </summary>
         [Fact]
-        public async Task Handle_KeyIsCeilinged_ReportsTheEffectiveProvider_NotTheStoredRow()
+        public async Task Handle_KeyIsCeilinged_ReportsTheStoredRowAndTheEffectiveProvidersSeparately()
         {
             // ProviderJobs.All now carries the three verification keys alongside flight-search-route
             // (#531 task 7), so both substitutes below must answer for any key -- not only the one
@@ -80,17 +91,24 @@ namespace FlightAssistant.Application.Tests.Queries.Admin.Providers
             var map = await handler.Handle(new GetProviderRoutesQuery(), default);
 
             var route = Assert.Single(map.Routes, r => r.Job == ProviderJobs.FlightSearchRoute);
-            Assert.Equal(new[] { ProviderJobs.AeroApi }, route.Providers);
+            // What an operator chose, which is what changedBy/changedUtc/reason describe...
+            Assert.Equal(new[] { ProviderJobs.AeroDataBox }, route.Providers);
+            Assert.Equal("Ada", route.ChangedBy);
+            Assert.False(route.IsDefault);
+            // ...and what every search actually uses now that the environment has changed under it.
+            Assert.Equal(new[] { ProviderJobs.AeroApi }, route.EffectiveProviders);
+            Assert.False(route.CanChange);
         }
 
         /// <summary>
         /// Companion to the ceilinged case above, so both branches of the ternary are pinned rather
         /// than just one: with nothing ceilinging the key, the stored row IS the answer -- an
         /// operator's saved choice must not be silently overridden by the configured default when no
-        /// environment fact forces it.
+        /// environment fact forces it -- and the two fields then carry the same value, so a panel
+        /// rendering either one is right.
         /// </summary>
         [Fact]
-        public async Task Handle_KeyIsNotCeilinged_ReportsTheStoredRow()
+        public async Task Handle_KeyIsNotCeilinged_ReportsTheStoredRowInBothFields()
         {
             // Same reason as the ceilinged test above: answer for any key, then pick the
             // flight-search-route row out of all four by predicate.
@@ -110,6 +128,42 @@ namespace FlightAssistant.Application.Tests.Queries.Admin.Providers
 
             var route = Assert.Single(map.Routes, r => r.Job == ProviderJobs.FlightSearchRoute);
             Assert.Equal(new[] { ProviderJobs.AeroDataBox }, route.Providers);
+            Assert.Equal(new[] { ProviderJobs.AeroDataBox }, route.EffectiveProviders);
+        }
+
+        /// <summary>
+        /// <c>ProviderOperationMap</c> authors each row's providers, and the route-search row is
+        /// authored <c>["aerodatabox"]</c> -- so a flip to <c>aeroapi</c> left the map still claiming
+        /// AeroDataBox serves route search, which is exactly what
+        /// <c>ProviderOperationMapCompletenessTests</c> calls out: "a stale map is worse than no map:
+        /// it states with apparent authority that a provider is not called". A switchable row's
+        /// providers now come from that key's <c>EffectiveProviders</c>.
+        /// </summary>
+        [Fact]
+        public async Task Handle_AStoredRowFlipsRouteSearch_TheMapRowReportsTheLiveProvider()
+        {
+            var routing = Substitute.For<IProviderRouting>();
+            var defaults = Substitute.For<IProviderRouteDefaults>();
+            var registry = Substitute.For<IVerificationSourceRegistry>();
+            routing.GetAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns(new ProviderRouteState(ProviderJobs.FlightSearchRoute,
+                    new[] { ProviderJobs.AeroApi }, false, DateTime.UtcNow, "Ada", "AeroDataBox rows looked wrong"));
+            defaults.IsCeilinged(Arg.Any<string>()).Returns(false);
+            defaults.For(Arg.Any<string>()).Returns(new[] { ProviderJobs.AeroDataBox });
+            registry.Sources.Returns(Array.Empty<IVerificationSource>());
+
+            var handler = CreateHandler(routing, defaults, registry);
+            var map = await handler.Handle(new GetProviderRoutesQuery(), default);
+
+            var operation = Assert.Single(map.Operations,
+                o => o.RoutingKey == ProviderJobs.FlightSearchRoute);
+            Assert.Equal(new[] { ProviderJobs.AeroApi }, operation.Providers);
+
+            // A fixed row is untouched by the overlay: it keeps exactly what it was authored with.
+            var flightNumberSearch = Assert.Single(map.Operations,
+                o => o.Operation.Contains("anchored on a flight number"));
+            Assert.Null(flightNumberSearch.RoutingKey);
+            Assert.Equal(new[] { ProviderJobs.AeroApi }, flightNumberSearch.Providers);
         }
     }
 }

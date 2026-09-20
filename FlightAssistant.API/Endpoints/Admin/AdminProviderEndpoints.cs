@@ -52,8 +52,10 @@ namespace FlightAssistant.API.Endpoints.Admin
                 "the provider, so the two providers never serve each other's rows. A verification key " +
                 "affects newly queued requests and track-time provisioning only -- the job uses each " +
                 "request's own stored sources, so requests already in the queue keep the sources they " +
-                "were queued with. Audited. 400 when a provider is not an option for this key, 404 " +
-                "when the key is unknown, 409 when this environment configures no alternative.")
+                "were queued with. Audited. 400 when a provider is not an option for this key, when " +
+                "more than one is named for a key that honours only one (route search: a verification " +
+                "key does take an ordered list), or when a value is longer than its column allows; " +
+                "404 when the key is unknown; 409 when this environment configures no alternative.")
             .Produces<AdminProviderRouteDto>(200)
             .ProducesProblem(400)
             .ProducesProblem(404)

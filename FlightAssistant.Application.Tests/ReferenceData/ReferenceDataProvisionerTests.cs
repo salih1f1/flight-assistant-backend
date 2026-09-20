@@ -550,7 +550,7 @@ public class ReferenceDataProvisionerTests
         var source = new FakeSource("ourairports", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR"));
         _registry.TryGet("ourairports").Returns(source);
         _cache.GetAsync<string>(
-                ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "ZZZ"),
+                ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "ZZZ", ["ourairports"]),
                 Arg.Any<CancellationToken>())
             .Returns("1");
 
@@ -572,7 +572,7 @@ public class ReferenceDataProvisionerTests
             [new MissingReference(VerificationEntityType.Airport, "ZZZ")], CancellationToken.None);
 
         await _cache.Received(1).SetAsync(
-            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "ZZZ"),
+            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "ZZZ", ["ourairports"]),
             Arg.Any<string>(),
             _options.NegativeCacheTtl,
             Arg.Any<CancellationToken>());
@@ -626,8 +626,46 @@ public class ReferenceDataProvisionerTests
     public async Task TheCacheKey_IsCaseInsensitiveOnTheCode()
     {
         Assert.Equal(
-            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "zzz"),
-            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "ZZZ"));
+            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "zzz", ["ourairports"]),
+            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "ZZZ", ["ourairports"]));
+    }
+
+    [Fact]
+    public async Task AMissRememberedUnderOneSource_IsNotReusedAfterTheSwitchMovesToAnother()
+    {
+        // #531 final review: "this entity does not exist" is only ever the answer *those* sources
+        // gave, so the negative cache key carries them. Without that dimension, an operator flipping
+        // verification-airport from ourairports to another source left every airport already
+        // remembered under the old one 404-ing POST /flights for up to NegativeCacheTtl (24 h), with
+        // no way out at all -- ICacheService has no prefix flush. The same hazard the search cache
+        // key closed by carrying its resolved provider.
+        //
+        // Mutation-proven, not reasoned: dropping `sourceNames` back out of NegativeCacheKeyFor's
+        // interpolation (keeping the parameter, so everything still compiles) makes the seeded
+        // old-source key equal the new-source key, so the switched source is never asked and this
+        // returns NotFound -- red on all three assertions below.
+        var switched = new FakeSource(
+            "mledoze", 0m, [VerificationEntityType.Airport], _ => FoundAirport("LHR"));
+        _registry.TryGet("mledoze").Returns(switched);
+
+        // Remembered earlier, while Airport checks were still routed to ourairports.
+        _cache.GetAsync<string>(
+                ReferenceDataProvisioner.NegativeCacheKeyFor(
+                    VerificationEntityType.Airport, "LHR", ["ourairports"]),
+                Arg.Any<CancellationToken>())
+            .Returns("1");
+
+        // An admin has since routed them to mledoze.
+        _sourceDefaults.ForAsync(VerificationEntityType.Airport, Arg.Any<CancellationToken>())
+            .Returns(new[] { "mledoze" });
+
+        var result = await CreateProvisioner().ProvisionAsync(
+            [new MissingReference(VerificationEntityType.Airport, "LHR")], CancellationToken.None);
+
+        Assert.Equal(ReferenceProvisionStatus.Provisioned, result.Status);
+        Assert.Equal(1, switched.Calls);
+        await _airports.Received(1).AddAsync(
+            Arg.Is<Airport>(a => a.Iata == "LHR"), Arg.Any<CancellationToken>());
     }
 
     [Theory]
@@ -933,7 +971,7 @@ public class ReferenceDataProvisionerTests
         await _airports.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
         // And it is remembered, so a retry costs nothing until an admin fixes the row.
         await _cache.Received(1).SetAsync(
-            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "LHR"),
+            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "LHR", ["ourairports"]),
             Arg.Any<string>(),
             _options.NegativeCacheTtl,
             Arg.Any<CancellationToken>());
@@ -961,7 +999,7 @@ public class ReferenceDataProvisionerTests
         Assert.Contains("XX", held.VerificationIssue);
         await _airlines.DidNotReceive().AddAsync(Arg.Any<Airline>(), Arg.Any<CancellationToken>());
         await _cache.Received(1).SetAsync(
-            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airline, "BA"),
+            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airline, "BA", ["aeroapi"]),
             Arg.Any<string>(),
             _options.NegativeCacheTtl,
             Arg.Any<CancellationToken>());
@@ -1004,7 +1042,7 @@ public class ReferenceDataProvisionerTests
 
         Assert.Equal(ReferenceProvisionStatus.NotFound, result.Status);
         await _cache.Received(1).SetAsync(
-            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airline, "BA"),
+            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airline, "BA", ["aeroapi"]),
             Arg.Any<string>(),
             _options.NegativeCacheTtl,
             Arg.Any<CancellationToken>());
@@ -1030,7 +1068,7 @@ public class ReferenceDataProvisionerTests
 
         Assert.Equal(ReferenceProvisionStatus.NotFound, result.Status);
         await _cache.Received(1).SetAsync(
-            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "LHR"),
+            ReferenceDataProvisioner.NegativeCacheKeyFor(VerificationEntityType.Airport, "LHR", ["ourairports"]),
             Arg.Any<string>(),
             _options.NegativeCacheTtl,
             Arg.Any<CancellationToken>());

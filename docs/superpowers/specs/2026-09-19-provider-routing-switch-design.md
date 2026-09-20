@@ -160,6 +160,20 @@ requires a deploy and a runbook step ("flush the `aeroapi:flight-search:` prefix
 would make it a per-button-press problem. `BuildCacheKey` therefore gains the resolved provider,
 which retires the runbook step permanently.
 
+> **Correction, found during execution (2026-09-20).** "Permanently" overstates it, and CLAUDE.md
+> documents the residual honestly, so this sentence should not be read as contradicting it. The
+> *systematic* staleness is gone — a changed resolution simply computes a different key, so old
+> entries age out unread instead of being handed to the new provider under the wrong label. But the
+> decorator and `FlightSearchProviderSelector` each read `IFlightSearchRouter` independently, so an
+> uncached search reads it **twice**. If `CachedProviderRouting`'s 10-second window expires between
+> those two reads *and* the stored row changes in that exact gap, the decorator builds the key under
+> the pre-flip provider while the selector dispatches to the post-flip one — caching the new
+> provider's rows under the old provider's key, poisoning that one key for its TTL. The prefix flush
+> remains the remedy for that case; it is simply no longer a blanket step after every rollback. The
+> double read is recorded as a deliberate follow-up rather than fixed here: collapsing it means
+> passing the resolved provider from the decorator into the selector, which changes
+> `IFlightSearchProvider`'s own shape.
+
 The decorator must **not** read the switch itself — that would be a second copy of the routing rule,
 free to drift. `FlightSearchProviderSelector` already avoids exactly this by *calling*
 `AeroApiFlightSearchProvider.HasUsableFlightNumber` rather than restating its `>= 2` rule.
@@ -211,6 +225,32 @@ switchable), `canToggle`, the selectable options, list price per option, and —
 **An authored registry, not a scan**, following `DataSourceCatalog`'s own precedent: the trigger
 prose and the fixed-reasons cannot be derived from the code, and a completeness guard is what keeps
 an authored list honest (see §5).
+
+> **Correction, found during execution (2026-09-20).** The row above is specified as *one* row per
+> operation, and the section never says which type owns the live routing value. The implementation
+> splits it across **two** types joined on the routing key, and this spec should record that contract
+> rather than leave it to be rediscovered — the omission is what let the map ship publishing each
+> switchable row's authored default instead of its live value.
+>
+> - `AdminProviderOperationDto` (`Operations`) is the map row: `trigger`, `operation`, `providers`,
+>   `routingKey`, `fixedReason`, `listPrice`, `note`. Its `routingKey` is null exactly when the row is
+>   fixed, and `fixedReason` is non-null exactly then. It carries no operator provenance.
+> - `AdminProviderRouteDto` (`Routes`) is the switch row, one per `ProviderJobs.All` key: `job`,
+>   `displayName`, `providers`, `effectiveProviders`, `options`, `isDefault`, `canChange`,
+>   `changedUtc`, `changedBy`, `reason`.
+> - **The join is `AdminProviderOperationDto.routingKey` → `AdminProviderRouteDto.job`**, and it is
+>   one-to-one in both directions for switchable rows: `EveryRoutingKeyAppearsOnExactlyOneRow` and
+>   `EverySwitchableRowNamesAKnownRoutingKey` pin both halves.
+> - **A switchable map row's `providers` is overlaid from that route's `effectiveProviders`**, not
+>   from the authored list, so the map states what is actually called right now. A fixed row keeps
+>   exactly what it was authored with.
+> - `AdminProviderRouteDto` deliberately carries **no** `fixedReason`: a switch row is by definition
+>   not fixed, and the reason belongs to the map row. It briefly had an always-null one, whose doc
+>   promised a value "only on the read-only map rows" that are a different type entirely.
+> - `providers` and `effectiveProviders` are separate because they diverge under a configuration
+>   ceiling — see §1's "Configuration is a hard ceiling" — and `providers` is the value
+>   `isDefault`/`changedUtc`/`changedBy`/`reason` describe, following `AdminJobDto`'s
+>   keep-both-and-derive-the-third shape.
 
 ---
 

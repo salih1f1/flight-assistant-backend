@@ -70,6 +70,25 @@ namespace FlightAssistant.Infrastructure.Tests.ExternalServices.AeroDataBox
             Assert.Equal(1487, holder.AeroDataBox!.Remaining);
         }
 
+        /// <summary>
+        /// Called directly rather than through the handler, because the handler's own bare <c>catch</c>
+        /// hides the failure this guards: flipping <c>Record</c>'s guard from <c>||</c> to <c>&amp;&amp;</c>
+        /// passes all four HTTP-level tests here — the resulting <c>Nullable&lt;int&gt;.Value</c>
+        /// exception is swallowed, the quota simply stays null, and "stays null" is exactly what those
+        /// tests expect anyway. One header present and one absent is the only input that separates the
+        /// two guards, and no HTTP plumbing is needed to feed it in.
+        /// </summary>
+        [Fact]
+        public void Record_WithOnlyOneOfTheTwoFigures_RecordsNothing()
+        {
+            var now = new DateTimeOffset(2026, 9, 19, 12, 0, 0, TimeSpan.Zero);
+            var holder = new AeroDataBoxQuotaHolder();
+
+            holder.Record(5, null, now);
+
+            Assert.Null(holder.AeroDataBox);
+        }
+
         [Fact]
         public async Task SendAsync_TransportFailure_RethrowsUnchanged()
         {

@@ -135,6 +135,98 @@ namespace FlightAssistant.Application.Tests.Commands.Admin.Providers
             await _repository.DidNotReceive().UpsertAsync(Arg.Any<ProviderRoute>(), Arg.Any<CancellationToken>());
         }
 
+        // Whole-branch review: flight-search-route's reader, FlightSearchRouter, takes providers[0]
+        // and discards the rest -- so ["aeroapi","aerodatabox"] used to pass every check here, store
+        // as "aeroapi,aerodatabox", and have GET /admin/providers echo the whole list back as the
+        // current routing while only the first name was ever in force. Not a length or duplicate
+        // problem: this list is short and its names are distinct, so only a cardinality check catches
+        // it.
+        [Fact]
+        public async Task Handle_SingleChoiceKeyNamingMoreThanOneProvider_Throws400()
+        {
+            var handler = Build();
+            var providers = new[] { ProviderJobs.AeroApi, ProviderJobs.AeroDataBox };
+
+            var ex = await Assert.ThrowsAsync<DomainException>(() => handler.Handle(
+                new SetProviderRouteCommand(ProviderJobs.FlightSearchRoute, providers, null), default));
+
+            Assert.Equal(400, ex.StatusCode);
+            Assert.Contains("exactly one provider", ex.Message);
+            await _repository.DidNotReceive().UpsertAsync(Arg.Any<ProviderRoute>(), Arg.Any<CancellationToken>());
+            await _audit.DidNotReceive().AddAsync(Arg.Any<AdminAuditLog>(), Arg.Any<CancellationToken>());
+        }
+
+        // The companion, so the refusal above cannot quietly grow to cover every key: a verification
+        // key genuinely takes an ordered list -- ReferenceDataProvisioner asks each source in turn
+        // until one answers -- and must keep accepting one.
+        [Fact]
+        public async Task Handle_VerificationKeyNamingTwoSupportingSources_Upserts()
+        {
+            var ourairports = Substitute.For<IVerificationSource>();
+            ourairports.Name.Returns("ourairports");
+            ourairports.SupportedEntityTypes.Returns(new[] { VerificationEntityType.Airport });
+            var aeroapi = Substitute.For<IVerificationSource>();
+            aeroapi.Name.Returns("aeroapi");
+            aeroapi.SupportedEntityTypes.Returns(new[] { VerificationEntityType.Airport });
+            _registry.TryGet("ourairports").Returns(ourairports);
+            _registry.TryGet("aeroapi").Returns(aeroapi);
+            _registry.Sources.Returns(new[] { ourairports, aeroapi });
+
+            var result = await Build().Handle(new SetProviderRouteCommand(
+                ProviderJobs.VerificationAirport, new[] { "ourairports", "aeroapi" }, null), default);
+
+            await _repository.Received(1).UpsertAsync(
+                Arg.Is<ProviderRoute>(row => row.Providers == "ourairports,aeroapi"),
+                Arg.Any<CancellationToken>());
+            Assert.Equal(new[] { "ourairports", "aeroapi" }, result.Providers);
+        }
+
+        // Whole-branch review: provider_routes.changed_by is varchar(256) and took
+        // IAdminContext.ActorName ?? ActorId straight from a claim with no check -- the one column of
+        // the three left unbounded, so an over-long display name reached Postgres as an unhandled
+        // DbUpdateException (a 500), invisible on the API suite's InMemory provider.
+        [Fact]
+        public async Task Handle_ActingAdminsNameTooLong_Throws400()
+        {
+            var handler = Build();
+            // After Build(), which sets the ordinary "Ada" baseline this must override.
+            _adminContext.ActorName.Returns(
+                new string('n', SetProviderRouteCommandHandler.MaxChangedByLength + 1));
+
+            var ex = await Assert.ThrowsAsync<DomainException>(() => handler.Handle(
+                new SetProviderRouteCommand(ProviderJobs.FlightSearchRoute, new[] { ProviderJobs.AeroApi }, null),
+                default));
+
+            Assert.Equal(400, ex.StatusCode);
+            Assert.Contains(SetProviderRouteCommandHandler.MaxChangedByLength.ToString(), ex.Message);
+            await _repository.DidNotReceive().UpsertAsync(Arg.Any<ProviderRoute>(), Arg.Any<CancellationToken>());
+            // Refused before StageAuditAsync, so the audit row is not staged either -- the audit row
+            // carries the same string in AdminAuditLog.ActorName.
+            await _audit.DidNotReceive().AddAsync(Arg.Any<AdminAuditLog>(), Arg.Any<CancellationToken>());
+        }
+
+        /// <summary>
+        /// Whole-branch review: the audit row is staged <em>before</em> the routing upsert so the
+        /// upsert's own <c>SaveChangesAsync</c> commits both in one transaction (see
+        /// <c>StageAuditAsync</c>'s remarks). Moving the stage back below the upsert -- its original
+        /// shape -- reopens the two-transaction defect with the whole suite green, because every other
+        /// test here asserts only that both calls happened. This pins the order itself.
+        /// </summary>
+        [Fact]
+        public async Task Handle_StagesTheAuditRowBeforeTheRoutingUpsert()
+        {
+            var handler = Build();
+
+            await handler.Handle(new SetProviderRouteCommand(
+                ProviderJobs.FlightSearchRoute, new[] { ProviderJobs.AeroApi }, "quota gone"), default);
+
+            Received.InOrder(() =>
+            {
+                _audit.AddAsync(Arg.Any<AdminAuditLog>(), Arg.Any<CancellationToken>());
+                _repository.UpsertAsync(Arg.Any<ProviderRoute>(), Arg.Any<CancellationToken>());
+            });
+        }
+
         [Fact]
         public async Task Handle_Valid_UpsertsTheRowAndWritesOneAuditRowCarryingTheReason()
         {
@@ -160,6 +252,10 @@ namespace FlightAssistant.Application.Tests.Commands.Admin.Providers
             await _audit.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
 
             Assert.Equal(new[] { ProviderJobs.AeroApi }, result.Providers);
+            // Identical here by construction, not coincidence: the 409 ceiling check above already
+            // refused a key whose configuration overrides the stored row, so nothing can override
+            // what was just written. GET /admin/providers is where the two can differ.
+            Assert.Equal(new[] { ProviderJobs.AeroApi }, result.EffectiveProviders);
             Assert.False(result.IsDefault);
         }
 

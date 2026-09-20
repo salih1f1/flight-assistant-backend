@@ -75,6 +75,31 @@ namespace FlightAssistant.Application.Providers
         };
 
         /// <summary>
+        /// Whether this key's reader honours an ordered <i>list</i> of providers or exactly one.
+        ///
+        /// <para>
+        /// A verification key genuinely takes a list: <c>ReferenceDataProvisioner.FetchFromSourcesAsync</c>
+        /// asks each named source in turn until one answers, and a <c>VerificationRequest</c> is
+        /// queued naming all of them. <see cref="FlightSearchRoute"/> does not —
+        /// <c>FlightSearchRouter</c> reads <c>providers[0]</c> and discards the rest — so storing a
+        /// list there would have <c>GET /admin/providers</c> publish a routing that is not the one
+        /// in force, which is why <c>SetProviderRouteCommandHandler</c> refuses one.
+        /// </para>
+        ///
+        /// <para>
+        /// Not derivable from <see cref="OptionsFor"/>: that returns two options for
+        /// <see cref="FlightSearchRoute"/> — the two providers to choose *between* — which says
+        /// nothing about how many may be chosen at once.
+        /// </para>
+        /// </summary>
+        public static bool TakesOrderedList(string job) => job switch
+        {
+            FlightSearchRoute => false,
+            VerificationAirport or VerificationAirline or VerificationCountry => true,
+            _ => throw Unknown(job)
+        };
+
+        /// <summary>
         /// The registered sources that can check <paramref name="entityType"/>. Lives here so the
         /// command's validation and the query's reported options cannot disagree about what is
         /// selectable.
