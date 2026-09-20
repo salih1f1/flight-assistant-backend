@@ -131,4 +131,61 @@ public class TravelerEndpointTests(FlightAssistantWebApplicationFactory factory)
         var response = await client.GetAsync("travelers/me");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
+
+    // The defect #546 exists for: a token the traveler does not already hold was tracked
+    // Modified rather than Added — EF's convention marks the Guid key ValueGeneratedOnAdd while
+    // BaseEntity pre-assigns it, so the graph attacher read a set key as an existing row — and
+    // SaveChangesAsync issued an UPDATE that matched nothing. Every first registration was a 500.
+    [Fact]
+    public async Task AddDeviceToken_FirstTokenForTheTraveler_Returns204AndIsListed()
+    {
+        var client = factory.CreateUserClient();
+        await client.PostAsync("travelers", null);
+
+        var response = await client.PostAsJsonAsync(
+            "travelers/me/device-tokens", new { platform = "ios", token = "device-token-abc" });
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+        var tokens = await client.GetFromJsonAsync<JsonElement>("travelers/me/device-tokens");
+        Assert.Equal("device-token-abc", Assert.Single(tokens.EnumerateArray()).GetProperty("token").GetString());
+    }
+
+    // The path that always worked, kept beside it: a repeat registration touches LastSeenUtc on a
+    // row that really exists, so it never took the broken branch above.
+    [Fact]
+    public async Task AddDeviceToken_SameTokenTwice_Returns204AndStoresOne()
+    {
+        var client = factory.CreateUserClient();
+        await client.PostAsync("travelers", null);
+
+        var first = await client.PostAsJsonAsync(
+            "travelers/me/device-tokens", new { platform = "ios", token = "device-token-abc" });
+        var second = await client.PostAsJsonAsync(
+            "travelers/me/device-tokens", new { platform = "ios", token = "device-token-abc" });
+
+        Assert.Equal(HttpStatusCode.NoContent, first.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, second.StatusCode);
+
+        var tokens = await client.GetFromJsonAsync<JsonElement>("travelers/me/device-tokens");
+        Assert.Single(tokens.EnumerateArray());
+    }
+
+    // A second, different token on a traveler that already holds one: the same Added-vs-Modified
+    // decision, made this time with the collection non-empty.
+    [Fact]
+    public async Task AddDeviceToken_SecondDistinctToken_Returns204AndStoresBoth()
+    {
+        var client = factory.CreateUserClient();
+        await client.PostAsync("travelers", null);
+        await client.PostAsJsonAsync("travelers/me/device-tokens", new { platform = "ios", token = "tok-1" });
+
+        var response = await client.PostAsJsonAsync(
+            "travelers/me/device-tokens", new { platform = "ios", token = "tok-2" });
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+        var tokens = await client.GetFromJsonAsync<JsonElement>("travelers/me/device-tokens");
+        Assert.Equal(2, tokens.EnumerateArray().Count());
+    }
 }
