@@ -119,6 +119,18 @@ namespace FlightAssistant.Application.Queries.Admin.Providers
         /// back. A failed read reports nulls rather than zeros: "cannot tell" is not "nothing spent",
         /// the same rule <see cref="IProviderQuotaReader"/> already follows for AeroDataBox.
         /// </summary>
+        /// <remarks>
+        /// The catch below discards <c>state</c> too, not just the spend, and that is deliberate, not
+        /// merely convenient: <see cref="ProviderBudgetGuard.GetStateAsync"/> never throws -- it has
+        /// its own catch-all -- so the only way this method's own fetch can land here is for that same
+        /// call, moments earlier in this method, to have already left the shared cache entry cold:
+        /// either it skipped reading outright (the month's first 10 minutes, or a cached read-failure
+        /// marker), or its own fetch just failed and fell open itself. Either way, <c>state</c> is
+        /// never a genuine observation by the time this catch runs -- it is always the guard's
+        /// <c>Normal</c> default -- so keeping it would print "Normal" beside a null spend on a
+        /// budget-headroom row: a guess dressed up as the one fact an operator most wants, exactly
+        /// when it is wrong.
+        /// </remarks>
         private async Task<AdminProviderHeadroomDto> BuildAeroApiHeadroomAsync(CancellationToken ct)
         {
             try
