@@ -94,6 +94,24 @@ namespace FlightAssistant.Domain.Administration.Entities
         {
             if (string.IsNullOrWhiteSpace(actorId)) throw new DomainException("ActorId is required.");
             if (string.IsNullOrWhiteSpace(entityType)) throw new DomainException("EntityType is required.");
+
+            // Length guards (#541). Without them an over-long value reached PostgreSQL and failed
+            // its column constraint as an unhandled DbUpdateException — a 500 naming nothing the
+            // caller could act on, and invisible to the API suite, which runs on the InMemory
+            // provider and ignores HasMaxLength. Throwing here follows VerificationGuard, the
+            // established domain-side precedent for exactly this.
+            //
+            // Identifiers throw rather than truncate because a truncated one still looks real: an
+            // auditor's `WHERE entity_id = '<guid>'` would silently miss the row, the same failure
+            // CLAUDE.md already records for a non-canonical EntityId. Summary throws too — it is
+            // required, and its callers already bound their own inputs (SetProviderRouteCommand
+            // caps a reason at 512 against a 1000-char Summary), so an overflow here is a
+            // programming error rather than something an operator can cause.
+            EnsureFits(actorId, MaxActorIdLength, nameof(actorId));
+            EnsureFits(entityType, MaxEntityTypeLength, nameof(entityType));
+            EnsureFits(entityId, MaxEntityIdLength, nameof(entityId));
+            EnsureFits(summary, MaxSummaryLength, nameof(summary));
+            EnsureFits(traceId, MaxTraceIdLength, nameof(traceId));
             // entityId may be null (store-generated key not yet assigned — see the property's
             // doc comment) but never blank/whitespace: that would be a caller bug, not the
             // legitimate "not known yet" case.
@@ -103,7 +121,14 @@ namespace FlightAssistant.Domain.Administration.Entities
             return new AdminAuditLog
             {
                 ActorId = actorId,
-                ActorName = string.IsNullOrWhiteSpace(actorName) ? null : actorName,
+                // The one column truncated rather than refused, and the only one an operator can
+                // realistically overflow: it comes from a display-name claim. Refusing it would stop
+                // an admin whose name is over 200 characters performing ANY audited write — and
+                // since #531/#540 stage the audit row in the same transaction as the change, that
+                // means their actual change too, not just its audit row. Nothing queries by
+                // actor_name (an auditor filters actor_id), so losing its tail costs nothing an
+                // identifier's truncation would.
+                ActorName = TruncateActorName(actorName),
                 Action = action,
                 EntityType = entityType,
                 EntityId = entityId,
@@ -113,6 +138,48 @@ namespace FlightAssistant.Domain.Administration.Entities
                 TraceId = traceId ?? Activity.Current?.Id,
                 ActionUtc = actionUtc ?? DateTime.UtcNow
             };
+        }
+
+        /// <summary>Column size of <c>actor_id</c>.</summary>
+        public const int MaxActorIdLength = 200;
+
+        /// <summary>Column size of <c>actor_name</c>. Truncated to fit, never refused — see the
+        /// comment at its assignment in <see cref="Create"/>.</summary>
+        public const int MaxActorNameLength = 200;
+
+        /// <summary>Column size of <c>entity_type</c>.</summary>
+        public const int MaxEntityTypeLength = 200;
+
+        /// <summary>Column size of <c>entity_id</c>.</summary>
+        public const int MaxEntityIdLength = 200;
+
+        /// <summary>Column size of <c>summary</c>.</summary>
+        public const int MaxSummaryLength = 1000;
+
+        /// <summary>Column size of <c>trace_id</c>.</summary>
+        public const int MaxTraceIdLength = 100;
+
+        /// <summary>
+        /// Refuses a value that would not fit its column. <c>Before</c> and <c>After</c> are absent
+        /// from the callers here because their columns are unbounded text.
+        /// </summary>
+        private static void EnsureFits(string? value, int limit, string name)
+        {
+            if (value is not null && value.Length > limit)
+                throw new DomainException($"{name} is {value.Length} characters; the limit is {limit}.");
+        }
+
+        /// <summary>
+        /// Fits a display name to <see cref="MaxActorNameLength"/>, marking that it was cut so a
+        /// reader does not mistake the result for the whole name. Blank becomes null, as before.
+        /// </summary>
+        private static string? TruncateActorName(string? actorName)
+        {
+            if (string.IsNullOrWhiteSpace(actorName)) return null;
+            if (actorName.Length <= MaxActorNameLength) return actorName;
+
+            const string marker = "…";
+            return string.Concat(actorName.AsSpan(0, MaxActorNameLength - marker.Length), marker);
         }
     }
 }
