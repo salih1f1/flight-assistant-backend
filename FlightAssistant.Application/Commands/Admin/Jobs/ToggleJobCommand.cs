@@ -70,6 +70,9 @@ namespace FlightAssistant.Application.Commands.Admin.Jobs
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             var changedBy = _adminContext.ActorName ?? _adminContext.ActorId;
 
+            // Stage the audit row before the switch write -- see StageAuditAsync's own remarks.
+            await StageAuditAsync(request, now, ct);
+
             await _repository.UpsertAsync(new JobSwitch
             {
                 Job = request.Job,
@@ -79,7 +82,11 @@ namespace FlightAssistant.Application.Commands.Admin.Jobs
                 Reason = request.Reason,
             }, ct);
 
-            await WriteAuditAsync(request, now, ct);
+            // Harmless no-op here: UpsertAsync's own SaveChangesAsync above already committed
+            // everything StageAuditAsync staged, in the same transaction. Kept so this handler
+            // still audits correctly if IJobSwitchRepository's implementation ever stops saving
+            // internally.
+            await _auditRepository.SaveChangesAsync(ct);
 
             return new AdminJobDto(
                 Job: request.Job,
@@ -96,12 +103,24 @@ namespace FlightAssistant.Application.Commands.Admin.Jobs
         }
 
         /// <summary>
-        /// Writes the one audit row this toggle produces. <c>AdminAuditInterceptor</c> excludes
+        /// Stages the one audit row this toggle produces. <c>AdminAuditInterceptor</c> excludes
         /// <see cref="JobSwitch"/> entirely (Task 2) precisely so this write can carry the operator's
         /// reason text, which the interceptor's generic before/after diff has no field for — letting
         /// both fire would put two rows in the log for one toggle, saying different things.
+        ///
+        /// <para>
+        /// <b>Staged, not saved, and called before the switch write (#540).</b> Both repositories
+        /// resolve the same scoped <c>FlightAssistantDbContext</c>, so adding the row here and
+        /// letting <c>UpsertAsync</c>'s own <c>SaveChangesAsync</c> commit puts the audit row and
+        /// the switch row in one transaction. Auditing afterwards — this method's original shape —
+        /// meant a failure or cancellation between the two calls could leave the job switched with
+        /// no record of who did it or why: "An audit row that can roll back independently of the
+        /// change it describes is worse than no audit row" (CLAUDE.md). The switch is what an
+        /// operator reaches for when something is already going wrong, which is exactly when that
+        /// gap was most likely and least welcome.
+        /// </para>
         /// </summary>
-        private async Task WriteAuditAsync(ToggleJobCommand request, DateTime now, CancellationToken ct)
+        private async Task StageAuditAsync(ToggleJobCommand request, DateTime now, CancellationToken ct)
         {
             var actorId = _adminContext.ActorId;
             if (string.IsNullOrWhiteSpace(actorId)) return;
@@ -121,8 +140,9 @@ namespace FlightAssistant.Application.Commands.Admin.Jobs
                 traceId: _adminContext.CorrelationId ?? Activity.Current?.Id,
                 actionUtc: now);
 
+            // Added, not saved: Handle's UpsertAsync commits this in the same transaction as the
+            // switch row.
             await _auditRepository.AddAsync(audit, ct);
-            await _auditRepository.SaveChangesAsync(ct);
         }
     }
 }
