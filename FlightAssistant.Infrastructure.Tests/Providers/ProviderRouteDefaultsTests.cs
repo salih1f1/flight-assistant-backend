@@ -107,8 +107,12 @@ namespace FlightAssistant.Infrastructure.Tests.Providers
                     failures.Add($"{job}: the options path threw {ex.GetType().Name}: {ex.Message}");
                 }
 
-                // SetProviderRouteCommandHandler asks this on every PUT, before anything else that
-                // could refuse the request -- so an unnamed key makes every write to it a 500.
+                // SetProviderRouteCommandHandler reaches this for any key in ProviderJobs.All, so an
+                // unnamed key turns an otherwise-valid PUT to that key into a 500. The obligation is
+                // membership in All -- not a position in that handler's check order: the cardinality
+                // check this feeds sits deliberately LAST of its three list checks (see that check's
+                // own comment for why), so several earlier checks can refuse a request before it, and
+                // a malformed one never reaches it at all.
                 try
                 {
                     ProviderJobs.TakesOrderedList(job);
