@@ -118,6 +118,93 @@ namespace FlightAssistant.Domain.Tests.Administration
                 AdminAuditLog.Create("actor", null, AdminAuditAction.Create, "Traveler", "1", ""));
         }
 
+        /// <summary>
+        /// #541. Without these guards an over-long value reached PostgreSQL and failed its column
+        /// constraint as an unhandled DbUpdateException — a 500 naming nothing the caller could act
+        /// on, and invisible to the API suite, which runs on InMemory and ignores HasMaxLength.
+        /// </summary>
+        public class LengthGuards
+        {
+            private static AdminAuditLog Create(
+                string? actorId = "actor", string? actorName = null, string? entityId = "1",
+                string? entityType = "Traveler", string? summary = "Created Traveler", string? traceId = null) =>
+                AdminAuditLog.Create(
+                    actorId!, actorName, AdminAuditAction.Create, entityType!, entityId, summary!, traceId: traceId);
+
+            // Identifiers are refused rather than cut: a truncated one still looks real, so an
+            // auditor's `WHERE entity_id = '<guid>'` would silently miss the row.
+            [Theory]
+            [InlineData("actorId")]
+            [InlineData("entityType")]
+            [InlineData("entityId")]
+            [InlineData("summary")]
+            [InlineData("traceId")]
+            public void Create_WithAnOverLongValue_ThrowsNamingTheColumnAndItsLimit(string column)
+            {
+                var limit = column switch
+                {
+                    "actorId" => AdminAuditLog.MaxActorIdLength,
+                    "entityType" => AdminAuditLog.MaxEntityTypeLength,
+                    "entityId" => AdminAuditLog.MaxEntityIdLength,
+                    "summary" => AdminAuditLog.MaxSummaryLength,
+                    "traceId" => AdminAuditLog.MaxTraceIdLength,
+                    _ => throw new ArgumentOutOfRangeException(nameof(column)),
+                };
+                var tooLong = new string('x', limit + 1);
+
+                var ex = Assert.Throws<DomainException>(() => column switch
+                {
+                    "actorId" => Create(actorId: tooLong),
+                    "entityType" => Create(entityType: tooLong),
+                    "entityId" => Create(entityId: tooLong),
+                    "summary" => Create(summary: tooLong),
+                    "traceId" => Create(traceId: tooLong),
+                    _ => throw new ArgumentOutOfRangeException(nameof(column)),
+                });
+
+                Assert.Contains(column, ex.Message);
+                Assert.Contains(limit.ToString(), ex.Message);
+            }
+
+            [Fact]
+            public void Create_WithAValueExactlyAtItsLimit_IsAccepted()
+            {
+                var log = Create(entityId: new string('x', AdminAuditLog.MaxEntityIdLength));
+
+                Assert.Equal(AdminAuditLog.MaxEntityIdLength, log.EntityId!.Length);
+            }
+
+            /// <summary>
+            /// The one column cut rather than refused, and the only one an operator can realistically
+            /// overflow — it comes from a display-name claim. Refusing it would stop an admin whose
+            /// name is over 200 characters performing any audited write, and since #531/#540 stage the
+            /// audit row in the same transaction as the change, that means their change too.
+            /// </summary>
+            [Fact]
+            public void Create_WithAnOverLongActorName_TruncatesItRatherThanRefusingTheWrite()
+            {
+                var log = Create(actorName: new string('n', AdminAuditLog.MaxActorNameLength + 50));
+
+                Assert.Equal(AdminAuditLog.MaxActorNameLength, log.ActorName!.Length);
+            }
+
+            [Fact]
+            public void Create_WhenItTruncatesAnActorName_MarksThatItWasCut()
+            {
+                var log = Create(actorName: new string('n', AdminAuditLog.MaxActorNameLength + 50));
+
+                Assert.EndsWith("…", log.ActorName);
+            }
+
+            [Fact]
+            public void Create_WithAnActorNameThatFits_LeavesItUnmarked()
+            {
+                var log = Create(actorName: "Ada Lovelace");
+
+                Assert.Equal("Ada Lovelace", log.ActorName);
+            }
+        }
+
         [Fact]
         public void Create_WithWhitespaceActorName_NormalizesToNull()
         {
