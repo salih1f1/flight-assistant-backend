@@ -3166,7 +3166,7 @@
           "Admin - Providers"
         ],
         "summary": "Which provider serves each routing decision",
-        "description": "Every routing decision an admin can change, its current providers, and whether the value came from an operator or from configuration. 'canChange' is false when this environment configures no alternative — for route search, when AeroDataBox:ApiKey is unset — and configuration is a hard ceiling no change can lift. Also returns the full call map, including the operations whose provider is fixed and why, and each provider's remaining headroom. AeroDataBox quota is null until this instance has called it — unknown, not exhausted — and is per instance. List prices are authored and carry their own date; neither provider publishes a price list through an API.",
+        "description": "Every routing decision an admin can change, its current providers, and whether the value came from an operator or from configuration. 'canChange' is false when this environment configures no alternative — for route search, when AeroDataBox has no credential configured — and configuration is a hard ceiling no change can lift. Also returns the full call map, including the operations whose provider is fixed and why, and each provider's remaining headroom. AeroDataBox quota is null until this instance has called it — unknown, not exhausted — and is per instance. List prices are authored and carry their own date; neither provider publishes a price list through an API.",
         "operationId": "AdminGetProviderRoutes",
         "responses": {
           "200": {
