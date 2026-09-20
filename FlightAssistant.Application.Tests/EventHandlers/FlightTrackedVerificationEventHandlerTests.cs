@@ -37,6 +37,7 @@ public class FlightTrackedVerificationEventHandlerTests
     private readonly IVerificationQueue _queue = Substitute.For<IVerificationQueue>();
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(Now));
     private readonly FakeJobOptions _options = new(StaleAfterDays: StaleAfterDays);
+    private readonly IVerificationSourceDefaults _sourceDefaults = Substitute.For<IVerificationSourceDefaults>();
 
     // Costed like the real defaults (ourairports/mledoze free, aeroapi $0.015/row) so a test can prove
     // the queued cost really is summed from the registry rather than hardcoded.
@@ -81,10 +82,19 @@ public class FlightTrackedVerificationEventHandlerTests
                 Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<VerificationTrigger>(), Arg.Any<string>(),
                 Arg.Any<decimal>(), Arg.Any<CancellationToken>())
             .Returns(new VerificationEnqueueResult(Queued: 1, Skipped: 0));
+
+        // Baseline: the switch mirrors Verification:DefaultSources:* for every type, exactly like
+        // FakeJobOptions above -- a test that cares about the switch itself overrides one of these.
+        _sourceDefaults.ForAsync(VerificationEntityType.Airport, Arg.Any<CancellationToken>())
+            .Returns(new[] { "ourairports" });
+        _sourceDefaults.ForAsync(VerificationEntityType.Airline, Arg.Any<CancellationToken>())
+            .Returns(new[] { "aeroapi" });
+        _sourceDefaults.ForAsync(VerificationEntityType.Country, Arg.Any<CancellationToken>())
+            .Returns(new[] { "mledoze" });
     }
 
     private FlightTrackedVerificationEventHandler Handler() => new(
-        _airlines, _airports, _countries, _queue, _registry, _options, _clock,
+        _airlines, _airports, _countries, _queue, _registry, _options, _sourceDefaults, _clock,
         NullLogger<FlightTrackedVerificationEventHandler>.Instance);
 
     private static FlightTracked Event() =>
@@ -268,6 +278,31 @@ public class FlightTrackedVerificationEventHandlerTests
 
         // Never more than one call per type -- three in all, not one per row.
         await _queue.ReceivedWithAnyArgs(3).EnqueueAsync(default, default!, default!, default, default!, default, default);
+    }
+
+    // ── #531: the runtime switch ────────────────────────────────────────────
+
+    [Fact]
+    public async Task Handle_QueuesWithTheSwitchedSources_NotTheConfiguredOnes()
+    {
+        // The whole point of the switch: an admin routes airline checks to a free source and the
+        // next track request queues against that source, with no restart.
+        var airline = NewAirline(AirlineId, "GB"); // unverified -> needs a check
+        _airlines.GetByIdAsync(AirlineId, Arg.Any<CancellationToken>()).Returns(airline);
+
+        _sourceDefaults.ForAsync(VerificationEntityType.Airline, Arg.Any<CancellationToken>())
+            .Returns(new[] { "ourairports" });
+
+        await Handler().Handle(Event(), default);
+
+        await _queue.Received(1).EnqueueAsync(
+            VerificationEntityType.Airline,
+            Arg.Any<IReadOnlyCollection<string>>(),
+            Arg.Is<IReadOnlyCollection<string>>(s => s.SequenceEqual(new[] { "ourairports" })),
+            VerificationTrigger.Flight,
+            VerificationJobActor.ActorId,
+            Arg.Any<decimal>(),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]

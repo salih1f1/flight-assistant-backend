@@ -1,8 +1,10 @@
 using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Application.Providers;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Infrastructure.Caching;
 using FlightAssistant.Infrastructure.Tests.TestSupport;
+using FlightAssistant.Infrastructure.ExternalServices;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
 using Microsoft.Extensions.Caching.Distributed;
@@ -55,14 +57,28 @@ public class AeroApiFlightSearchCachingDecoratorTests
 
     private static ICacheService NewMemoryCache() => new MemoryCacheService(new MemoryCache(new MemoryCacheOptions()));
 
+    /// <summary>
+    /// A router stub that resolves every criteria to the same fixed provider, so tests that don't
+    /// care about the routing dimension (everything except the two #531 tests below) see the same
+    /// provider on every call and the provider portion of the key never varies underneath them.
+    /// </summary>
+    private static IFlightSearchRouter StubRouter(string provider = ProviderJobs.AeroDataBox)
+    {
+        var router = Substitute.For<IFlightSearchRouter>();
+        router.ResolveAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>()).Returns(provider);
+        return router;
+    }
+
     private static AeroApiFlightSearchCachingDecorator Decorator(
         IFlightSearchProvider inner,
         ICacheService? cache = null,
         FakeTimeProvider? clock = null,
         TimeSpan? ttlPastOrToday = null,
-        TimeSpan? ttlFuture = null) =>
+        TimeSpan? ttlFuture = null,
+        IFlightSearchRouter? router = null) =>
         new(
             inner,
+            router ?? StubRouter(),
             cache ?? NewMemoryCache(),
             Options.Create(new AeroApiOptions
             {
@@ -213,5 +229,49 @@ public class AeroApiFlightSearchCachingDecoratorTests
         Assert.Equal(preciseResult, result);
         Assert.Equal(DateTimeKind.Utc, result.ScheduledDepartureUtc.Kind);
         Assert.Equal(DateTimeKind.Utc, result.ScheduledArrivalUtc.Kind);
+    }
+
+    [Fact]
+    public async Task SearchAsync_SameCriteriaUnderTwoProviders_DoesNotShareACacheEntry()
+    {
+        // The defect this dimension prevents: before #531 the key was dep|arr|date|fn|cs with no
+        // provider in it, so flipping the route switch served the other provider's rows for up to
+        // SearchCacheTtlFuture (12 h). That used to need a deploy and a documented prefix flush;
+        // a runtime switch would make it a per-button-press problem.
+        var criteria = Criteria(departure: "SOF", arrival: "IST", date: new DateOnly(2026, 12, 1));
+        var responses = new Queue<List<FlightSearchResult>>(new[]
+        {
+            new List<FlightSearchResult> { SampleResult with { FlightNumber = "FB101" } },
+            new List<FlightSearchResult> { SampleResult with { FlightNumber = "FB202" } }
+        });
+        var inner = new CountingFlightSearchProvider(_ => responses.Dequeue());
+        var router = Substitute.For<IFlightSearchRouter>();
+        router.ResolveAsync(criteria, Arg.Any<CancellationToken>()).Returns(ProviderJobs.AeroDataBox);
+        var decorator = Decorator(inner, router: router);
+
+        var first = await decorator.SearchAsync(criteria);
+
+        // The switch is flipped. The same criteria must now reach the provider, not the cache.
+        router.ResolveAsync(criteria, Arg.Any<CancellationToken>()).Returns(ProviderJobs.AeroApi);
+        var second = await decorator.SearchAsync(criteria);
+
+        Assert.Equal("FB101", Assert.Single(first).FlightNumber);
+        Assert.Equal("FB202", Assert.Single(second).FlightNumber);
+        Assert.Equal(2, inner.Calls);
+    }
+
+    [Fact]
+    public async Task SearchAsync_SameCriteriaSameProvider_StillHitsTheCache()
+    {
+        var criteria = Criteria(departure: "SOF", arrival: "IST", date: new DateOnly(2026, 12, 1));
+        var inner = new CountingFlightSearchProvider(_ => [SampleResult with { FlightNumber = "FB101" }]);
+        var router = Substitute.For<IFlightSearchRouter>();
+        router.ResolveAsync(criteria, Arg.Any<CancellationToken>()).Returns(ProviderJobs.AeroDataBox);
+        var decorator = Decorator(inner, router: router);
+
+        await decorator.SearchAsync(criteria);
+        await decorator.SearchAsync(criteria);
+
+        Assert.Equal(1, inner.Calls);
     }
 }

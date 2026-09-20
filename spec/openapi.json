@@ -3182,6 +3182,100 @@
         }
       }
     },
+    "/admin/providers": {
+      "get": {
+        "tags": [
+          "Admin - Providers"
+        ],
+        "summary": "Which provider serves each routing decision",
+        "description": "Every routing decision an admin can change, its current providers, and whether the value came from an operator or from configuration. 'canChange' is false when this environment configures no alternative — for route search, when AeroDataBox:ApiKey is unset — and configuration is a hard ceiling no change can lift. Also returns the full call map, including the operations whose provider is fixed and why, and each provider's remaining headroom. AeroDataBox quota is null until this instance has called it — unknown, not exhausted — and is per instance. List prices are authored and carry their own date; neither provider publishes a price list through an API.",
+        "operationId": "AdminGetProviderRoutes",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProviderMapDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/providers/{job}": {
+      "put": {
+        "tags": [
+          "Admin - Providers"
+        ],
+        "summary": "Choose which provider serves a routing decision",
+        "description": "Takes effect within the 10-second read cache for searches not already cached. Cached search results are unaffected and are not wrong: the search cache key carries the provider, so the two providers never serve each other's rows. A verification key affects newly queued requests and track-time provisioning only -- the job uses each request's own stored sources, so requests already in the queue keep the sources they were queued with. Audited. 400 when a provider is not an option for this key, when more than one is named for a key that honours only one (route search: a verification key does take an ordered list), or when a value is longer than its column allows; 404 when the key is unknown; 409 when this environment configures no alternative.",
+        "operationId": "AdminSetProviderRoute",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetProviderRouteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProviderRouteDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/refdata/countries": {
       "get": {
         "tags": [
@@ -6067,6 +6161,163 @@
         },
         "additionalProperties": false
       },
+      "AdminProviderHeadroomDto": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "nullable": true
+          },
+          "budgetState": {
+            "type": "string",
+            "nullable": true
+          },
+          "spentUsd": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "budgetUsd": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "quotaRemaining": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "quotaLimit": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "observedUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminProviderMapDto": {
+        "type": "object",
+        "properties": {
+          "routes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminProviderRouteDto"
+            },
+            "nullable": true
+          },
+          "operations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminProviderOperationDto"
+            },
+            "nullable": true
+          },
+          "headroom": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminProviderHeadroomDto"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminProviderOperationDto": {
+        "type": "object",
+        "properties": {
+          "trigger": {
+            "type": "string",
+            "nullable": true
+          },
+          "operation": {
+            "type": "string",
+            "nullable": true
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "routingKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "fixedReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "listPrice": {
+            "type": "string",
+            "nullable": true
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminProviderRouteDto": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "string",
+            "nullable": true
+          },
+          "displayName": {
+            "type": "string",
+            "nullable": true
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "effectiveProviders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "isDefault": {
+            "type": "boolean"
+          },
+          "canChange": {
+            "type": "boolean"
+          },
+          "changedUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "changedBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "AdminStatsDto": {
         "type": "object",
         "properties": {
@@ -7654,6 +7905,23 @@
             "nullable": true
           },
           "value": {
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "SetProviderRouteRequest": {
+        "type": "object",
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
             "nullable": true
           }
         },

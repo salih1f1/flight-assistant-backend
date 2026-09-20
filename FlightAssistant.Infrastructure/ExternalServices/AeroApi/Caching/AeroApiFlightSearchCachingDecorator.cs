@@ -40,12 +40,24 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching
     /// decorator lets it propagate before it ever reaches the caching step, so a transient upstream
     /// outage cannot get "stuck" cached for the TTL and the very next call retries upstream.
     /// </para>
+    ///
+    /// <para>
+    /// <b>The key carries the provider (#531).</b> Before this, the key was
+    /// <c>dep|arr|date|fn|cs</c> with no provider dimension, so a route-search key could be served
+    /// the other provider's rows for up to <see cref="AeroApiOptions.SearchCacheTtlFuture"/> after
+    /// routing changed — tolerable when that took a deploy, not when an operator can flip it from
+    /// the admin panel. The provider comes from <see cref="IFlightSearchRouter"/>, the same single
+    /// owner the selector reads, and this retires the "flush the <c>aeroapi:flight-search:</c>
+    /// prefix on rollback" step that used to be required. The cost is one extra cache miss per key
+    /// per provider after a flip.
+    /// </para>
     /// </summary>
     public sealed class AeroApiFlightSearchCachingDecorator : IFlightSearchProvider
     {
         private const string CacheKeyPrefix = "aeroapi:flight-search:";
 
         private readonly IFlightSearchProvider _inner;
+        private readonly IFlightSearchRouter _router;
         private readonly ICacheService _cache;
         private readonly TimeProvider _timeProvider;
         private readonly TimeSpan _ttlPastOrToday;
@@ -54,12 +66,14 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching
 
         public AeroApiFlightSearchCachingDecorator(
             IFlightSearchProvider inner,
+            IFlightSearchRouter router,
             ICacheService cache,
             IOptions<AeroApiOptions> options,
             TimeProvider timeProvider,
             ILogger<AeroApiFlightSearchCachingDecorator> logger)
         {
             _inner = inner;
+            _router = router;
             _cache = cache;
             _timeProvider = timeProvider;
             _ttlPastOrToday = options.Value.SearchCacheTtlPastOrToday;
@@ -71,7 +85,11 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching
             FlightSearchCriteria criteria,
             CancellationToken ct = default)
         {
-            var key = BuildCacheKey(criteria);
+            // Which provider will serve this search is part of the cache identity. The router is the
+            // single owner of that rule (#531) — re-deriving it here would be a second copy free to
+            // drift from the selector's.
+            var provider = await _router.ResolveAsync(criteria, ct);
+            var key = BuildCacheKey(criteria, provider);
 
             var cached = await _cache.GetAsync<List<FlightSearchResult>>(key, ct);
             if (cached is not null)
@@ -97,8 +115,9 @@ namespace FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching
 
         private DateOnly Today() => DateOnly.FromDateTime(_timeProvider.GetUtcNow().UtcDateTime);
 
-        private static string BuildCacheKey(FlightSearchCriteria criteria) =>
-            $"{CacheKeyPrefix}dep={Normalize(criteria.DepartureIata)}" +
+        private static string BuildCacheKey(FlightSearchCriteria criteria, string provider) =>
+            $"{CacheKeyPrefix}provider={provider}" +
+            $"|dep={Normalize(criteria.DepartureIata)}" +
             $"|arr={Normalize(criteria.ArrivalIata)}" +
             $"|date={criteria.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}" +
             $"|fn={Normalize(criteria.FlightNumber)}" +

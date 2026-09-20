@@ -8,6 +8,7 @@ using FlightAssistant.Application.Interfaces.Caching;
 using FlightAssistant.Application.Interfaces.Notifications;
 using FlightAssistant.Application.Interfaces.DataSources;
 using FlightAssistant.Application.Interfaces.Jobs;
+using FlightAssistant.Application.Interfaces.Providers;
 using FlightAssistant.Application.Interfaces.Repositories;
 using FlightAssistant.Application.Interfaces.Verification;
 using FlightAssistant.Application.ProviderBudget;
@@ -24,6 +25,7 @@ using FlightAssistant.Infrastructure.Jobs;
 using FlightAssistant.Infrastructure.Notifications;
 using FlightAssistant.Infrastructure.Persistance;
 using FlightAssistant.Infrastructure.Persistance.Repositories;
+using FlightAssistant.Infrastructure.Providers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -287,6 +289,16 @@ namespace FlightAssistant.Infrastructure
                 .ValidateDataAnnotations()
                 .ValidateOnStart();
 
+            // AeroDataBox quota (#531 task 10): the free RapidAPI plan reports remaining quota on
+            // its own x-ratelimit-requests-remaining/-limit response headers rather than being
+            // billed or counted locally — captured here off traffic already being sent, at zero
+            // extra cost, the same principle as AeroAPI's own /account/usage-sourced spend. Registered
+            // as a concrete singleton AND behind IProviderQuotaReader mapped to that SAME instance:
+            // the handler below needs the concrete type to call Record, and a future reader needs
+            // the interface — two separate singletons would silently never see each other's data.
+            services.AddSingleton<AeroDataBoxQuotaHolder>();
+            services.AddSingleton<IProviderQuotaReader>(sp => sp.GetRequiredService<AeroDataBoxQuotaHolder>());
+
             // No AeroApiThrottleGate and no resilience handler on this client: the gate exists to
             // stay inside a METERED tier's rate limit, and every resilience timeout in this repo is
             // derived from AeroApi:MinRequestInterval — neither applies to a free, quota-based API.
@@ -306,6 +318,9 @@ namespace FlightAssistant.Infrastructure
                 client.DefaultRequestHeaders.Add("X-RapidAPI-Host", AeroDataBoxOptions.RapidApiHost);
                 client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
             })
+            .AddHttpMessageHandler(sp => new AeroDataBoxQuotaHandler(
+                sp.GetRequiredService<AeroDataBoxQuotaHolder>(),
+                sp.GetRequiredService<TimeProvider>()))
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
             .AddDataSourceObservation(DataSourceKeys.AeroDataBox);
 
@@ -313,6 +328,18 @@ namespace FlightAssistant.Infrastructure
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient(AeroDataBoxFlightSearchProvider.HttpClientName),
                 sp.GetRequiredService<IOptions<AeroDataBoxOptions>>(),
                 sp.GetRequiredService<ILogger<AeroDataBoxFlightSearchProvider>>()));
+
+            // Runtime provider routing (#531): the admin switch for which provider serves a given
+            // job. Registered here, ahead of the search registration below, because
+            // FlightSearchRouter — and so the IFlightSearchProvider registration that depends on
+            // it — cannot resolve without IProviderRouting and IProviderRouteDefaults in the
+            // container. IProviderRouteRepository has no reader here yet (the admin write endpoint
+            // is a later task in #531) but is registered alongside its read-side counterparts so
+            // the whole provider_routes stack is wired up in one place.
+            services.AddSingleton<IProviderRouteDefaults, ProviderRouteDefaults>();
+            services.AddSingleton<IProviderRouting, CachedProviderRouting>();
+            services.AddScoped<IProviderRouteRepository, ProviderRouteRepository>();
+            services.AddScoped<IFlightSearchRouter, FlightSearchRouter>();
 
             // IFlightSearchProvider resolves to the caching decorator, which now fronts BOTH
             // providers (issue #282, widened by #422) — GET /flights/search is anonymous and only
@@ -330,17 +357,11 @@ namespace FlightAssistant.Infrastructure
             // refuses from SoftLimit onward, not only Exhausted), because it never touches AeroAPI
             // once AeroDataBox is configured — an improvement, and a real behaviour change.
             //
-            // The cache key (AeroApiFlightSearchCachingDecorator.BuildCacheKey) has no provider
-            // dimension. #422 final review, finding 4: that is NOT safe merely because routing is
-            // deterministic by criteria shape — it also depends on whether AeroDataBox:ApiKey is
-            // configured (AeroDataBoxOptions.IsConfigured), which is fixed for a process's lifetime
-            // but not across a restart or an instance sharing Redis. After the key is added or
-            // removed, a route-search key can be served the OTHER provider's cached rows until the
-            // TTL runs out (AeroApiOptions.SearchCacheTtlPastOrToday 5 min / SearchCacheTtlFuture
-            // 12h). On a rollback — pulling the key because AeroDataBox rows turned out wrong or
-            // empty — flush the "aeroapi:flight-search:" cache prefix rather than waiting out the
-            // TTL. If a shape is ever routed to both providers AT ONCE (not merely at different
-            // times), the key must gain a provider dimension.
+            // The cache key carries the resolved provider as of #531, so the two providers can no
+            // longer serve each other's cached rows and the prefix-flush-on-rollback step this
+            // comment used to require is gone. Routing is now a persisted admin decision
+            // (provider_routes) on top of the AeroDataBox:ApiKey ceiling, read through
+            // IFlightSearchRouter by both the selector and the cache.
             //
             // AeroApiFlightSearchProvider itself stays registered and resolvable — the decorator
             // wraps it, it does not replace it.
@@ -352,8 +373,9 @@ namespace FlightAssistant.Infrastructure
                         sp.GetRequiredService<AeroApiFlightSearchProvider>(),
                         sp.GetRequiredService<IProviderBudgetGuard>(),
                         sp.GetRequiredService<ILogger<AeroApiFlightSearchBudgetDecorator>>()),
-                    sp.GetRequiredService<IOptions<AeroDataBoxOptions>>(),
+                    sp.GetRequiredService<IFlightSearchRouter>(),
                     sp.GetRequiredService<ILogger<FlightSearchProviderSelector>>()),
+                sp.GetRequiredService<IFlightSearchRouter>(),
                 sp.GetRequiredService<ICacheService>(),
                 sp.GetRequiredService<IOptions<AeroApiOptions>>(),
                 sp.GetRequiredService<TimeProvider>(),

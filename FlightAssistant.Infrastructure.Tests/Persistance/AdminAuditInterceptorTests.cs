@@ -8,6 +8,7 @@ using FlightAssistant.Domain.Configuration.Entities;
 using FlightAssistant.Domain.DataSources.Entities;
 using FlightAssistant.Domain.Jobs.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
+using FlightAssistant.Domain.Providers.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
 using FlightAssistant.Domain.Verification.Entities;
@@ -135,6 +136,49 @@ public class AdminAuditInterceptorTests
         using var db = CreateContext(dbName, AdminActor());
         var row = await db.JobSwitches.SingleAsync();
         row.Enabled = false;
+        await db.SaveChangesAsync();
+
+        Assert.Empty(await db.AdminAuditLogs.ToListAsync());
+    }
+
+    /// <summary>
+    /// #531: excluded for exactly the reason <see cref="JobSwitch"/> is, and pinned for exactly the
+    /// same reason — <c>SetProviderRouteCommandHandler</c> stages its own <c>AdminAuditLog</c> row so
+    /// the operator's <c>reason</c> text can ride along, which the interceptor's generic before/after
+    /// diff has no field for. Without this pair, removing <c>typeof(ProviderRoute)</c> from
+    /// <c>NotAuditedTypes</c> makes every <c>PUT /admin/providers/{job}</c> write two audit rows
+    /// saying different things, with nothing failing.
+    /// </summary>
+    [Fact]
+    public async Task SaveChangesAsync_ProviderRoute_WritesNoAuditRow()
+    {
+        var dbName = Guid.NewGuid().ToString();
+
+        using var db = CreateContext(dbName, AdminActor());
+        db.ProviderRoutes.Add(new ProviderRoute { Job = "flight-search-route", Providers = "aeroapi" });
+        await db.SaveChangesAsync();
+
+        Assert.Empty(await db.AdminAuditLogs.ToListAsync());
+    }
+
+    // A second flip of the same key is an update, and the update is the shape that would double-audit
+    // against the explicit row the command handler writes — the row for this key already exists after
+    // the first PUT, so every subsequent one takes this path.
+    [Fact]
+    public async Task SaveChangesAsync_UpdatedProviderRoute_WritesNoAuditRow()
+    {
+        var dbName = Guid.NewGuid().ToString();
+
+        using (var seed = CreateContext(dbName, AdminActor()))
+        {
+            seed.ProviderRoutes.Add(new ProviderRoute { Job = "flight-search-route", Providers = "aeroapi" });
+            await seed.SaveChangesAsync();
+        }
+
+        using var db = CreateContext(dbName, AdminActor());
+        var row = await db.ProviderRoutes.SingleAsync();
+        row.Providers = "aerodatabox";
+        row.ChangedBy = "admin-oid-1";
         await db.SaveChangesAsync();
 
         Assert.Empty(await db.AdminAuditLogs.ToListAsync());

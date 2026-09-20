@@ -53,6 +53,7 @@ namespace FlightAssistant.Application.EventHandlers
         private readonly IVerificationQueue _queue;
         private readonly IVerificationSourceRegistry _registry;
         private readonly IVerificationJobOptions _options;
+        private readonly IVerificationSourceDefaults _sourceDefaults;
         private readonly TimeProvider _timeProvider;
         private readonly ILogger<FlightTrackedVerificationEventHandler> _logger;
 
@@ -63,6 +64,7 @@ namespace FlightAssistant.Application.EventHandlers
             IVerificationQueue queue,
             IVerificationSourceRegistry registry,
             IVerificationJobOptions options,
+            IVerificationSourceDefaults sourceDefaults,
             TimeProvider timeProvider,
             ILogger<FlightTrackedVerificationEventHandler> logger)
         {
@@ -72,6 +74,7 @@ namespace FlightAssistant.Application.EventHandlers
             _queue = queue;
             _registry = registry;
             _options = options;
+            _sourceDefaults = sourceDefaults;
             _timeProvider = timeProvider;
             _logger = logger;
         }
@@ -144,15 +147,17 @@ namespace FlightAssistant.Application.EventHandlers
             return keys;
         }
 
-        private Task EnqueueAsync(VerificationEntityType entityType, IReadOnlyCollection<string> keys, CancellationToken ct)
+        private async Task EnqueueAsync(
+            VerificationEntityType entityType, IReadOnlyCollection<string> keys, CancellationToken ct)
         {
-            var sources = _options.DefaultSourcesFor(entityType);
+            // #531: the runtime switch, falling back to Verification:DefaultSources:*.
+            var sources = await _sourceDefaults.ForAsync(entityType, ct);
 
             var cost = 0m;
             foreach (var name in sources)
                 cost += _registry.TryGet(name)?.CostPerRowUsd ?? 0m;
 
-            return _queue.EnqueueAsync(
+            await _queue.EnqueueAsync(
                 entityType, keys, sources, VerificationTrigger.Flight, VerificationJobActor.ActorId, cost, ct);
         }
 

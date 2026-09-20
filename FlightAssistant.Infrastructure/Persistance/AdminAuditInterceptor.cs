@@ -7,6 +7,7 @@ using FlightAssistant.Domain.DataSources.Entities;
 using FlightAssistant.Domain.Administration.Enums;
 using FlightAssistant.Domain.Common.Interfaces;
 using FlightAssistant.Domain.Jobs.Entities;
+using FlightAssistant.Domain.Providers.Entities;
 using FlightAssistant.Domain.Verification.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
@@ -72,13 +73,18 @@ namespace FlightAssistant.Infrastructure.Persistance
         //   writes are audited EXPLICITLY by ToggleJobCommandHandler so the operator's reason text can
         //   be carried. Letting the interceptor fire too would put two rows in the audit log for one
         //   toggle, saying different things.
+        // - ProviderRoute (#531): excluded for exactly the reason JobSwitch above is. Written rarely
+        //   and deliberately, and audited EXPLICITLY by SetProviderRouteCommandHandler so the
+        //   operator's reason text can be carried, which this interceptor's generic before/after diff
+        //   has no field for. Letting both fire would put two rows in the log for one change.
         // The append-only guard below is separate and still covers AdminAuditLog only.
         private static readonly HashSet<Type> NotAuditedTypes = new()
         {
             typeof(AdminAuditLog),
             typeof(VerificationRequest),
             typeof(DataSourceStatus),
-            typeof(JobSwitch)
+            typeof(JobSwitch),
+            typeof(ProviderRoute)
         };
 
         private readonly IAdminContext _adminContext;

@@ -1,7 +1,9 @@
 using FlightAssistant.Application.Interfaces.ExternalServices;
 using FlightAssistant.Application.ProviderBudget;
+using FlightAssistant.Application.Providers;
 using FlightAssistant.Domain.Common.Exceptions;
 using FlightAssistant.Infrastructure.Caching;
+using FlightAssistant.Infrastructure.ExternalServices;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi;
 using FlightAssistant.Infrastructure.ExternalServices.AeroApi.Caching;
 using Microsoft.Extensions.Caching.Memory;
@@ -78,8 +80,16 @@ public class AeroApiFlightSearchBudgetDecoratorTests
     [Fact]
     public async Task SearchAsync_BehindTheCache_ACachedSearchIsStillAnswered_PastTheBudget()
     {
+        // The router dimension is irrelevant here — this test is about budget-vs-cache ordering,
+        // not routing — so it resolves to a fixed provider (AeroApi, matching what this decorator
+        // stack actually wraps in production) on every call.
+        var router = Substitute.For<IFlightSearchRouter>();
+        router.ResolveAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>())
+            .Returns(ProviderJobs.AeroApi);
+
         var search = new AeroApiFlightSearchCachingDecorator(
             Decorator(),
+            router,
             new MemoryCacheService(new MemoryCache(new MemoryCacheOptions())),
             Options.Create(new AeroApiOptions { ApiKey = "dummy" }),
             new FakeTimeProvider(new DateTimeOffset(2026, 9, 15, 0, 0, 0, TimeSpan.Zero)),

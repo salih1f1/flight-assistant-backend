@@ -43,12 +43,33 @@ namespace FlightAssistant.Application.ReferenceData
         /// The cache key remembering that a source has no such entity. Upper-cased so a caller's
         /// casing cannot produce a second entry for the same code -- <c>POST /flights</c> does not
         /// canonicalise the designator before the lookup.
+        ///
+        /// <para>
+        /// <b>The resolved source names are part of the key (#531).</b> "This entity does not exist"
+        /// is only ever the answer <em>those</em> sources gave; another source may well have it. Once
+        /// <c>verification-airport</c> and friends became runtime-switchable, a key without this
+        /// dimension meant that switching a key left every entity already remembered under the old
+        /// source 404-ing <c>POST /flights</c> for up to <c>ReferenceProvisioning:NegativeCacheTtl</c>
+        /// (24 h by default), with no remedy at all -- <c>ICacheService</c> offers only
+        /// <c>Get</c>/<c>Set</c>/<c>Remove</c>, so there is no prefix to flush. This is the same
+        /// hazard the search cache key closed by carrying its resolved provider, for the same reason:
+        /// a runtime switch turns a deploy-time staleness window into a per-button-press one.
+        /// </para>
+        ///
+        /// <para>
+        /// Joined in the order they are asked and with their own casing, neither sorted nor folded:
+        /// order decides which source answers first, so two orders are genuinely two resolutions,
+        /// and <c>VerificationSourceRegistry</c> resolves a name <c>Ordinal</c>, so a differently
+        /// cased name is a name that resolves to nothing rather than the same source. The worst a
+        /// spelling difference can cost here is one extra cache miss.
+        /// </para>
         /// </summary>
-        public static string NegativeCacheKeyFor(VerificationEntityType type, string code) =>
-            $"refdata:missing:{type}:{code.Trim().ToUpperInvariant()}";
+        public static string NegativeCacheKeyFor(
+            VerificationEntityType type, string code, IReadOnlyList<string> sourceNames) =>
+            $"refdata:missing:{type}:{code.Trim().ToUpperInvariant()}:{string.Join(',', sourceNames)}";
 
         private readonly IVerificationSourceRegistry _registry;
-        private readonly IVerificationJobOptions _verificationOptions;
+        private readonly IVerificationSourceDefaults _sourceDefaults;
         private readonly ICountryNameResolver _countryNames;
         private readonly ICacheService _cache;
         private readonly IProviderBudgetGuard _budget;
@@ -58,7 +79,7 @@ namespace FlightAssistant.Application.ReferenceData
 
         public ReferenceDataProvisioner(
             IVerificationSourceRegistry registry,
-            IVerificationJobOptions verificationOptions,
+            IVerificationSourceDefaults sourceDefaults,
             ICountryNameResolver countryNames,
             ICacheService cache,
             IProviderBudgetGuard budget,
@@ -67,7 +88,7 @@ namespace FlightAssistant.Application.ReferenceData
             ILogger<ReferenceDataProvisioner> logger)
         {
             _registry = registry;
-            _verificationOptions = verificationOptions;
+            _sourceDefaults = sourceDefaults;
             _countryNames = countryNames;
             _cache = cache;
             _budget = budget;
@@ -212,7 +233,8 @@ namespace FlightAssistant.Application.ReferenceData
                             {
                                 await FlagIataConflictAsync(
                                     heldAirport, heldAirport.Iata, heldAirport.Icao, entry,
-                                    fetch.SourceName!, airports.SaveChangesAsync, ct).ConfigureAwait(false);
+                                    fetch.SourceName!, fetch.SourceNames!,
+                                    airports.SaveChangesAsync, ct).ConfigureAwait(false);
                                 return ReferenceProvisionResult.NotFound(entry.Type, entry.Code);
                             }
 
@@ -225,8 +247,10 @@ namespace FlightAssistant.Application.ReferenceData
                         if (airport is null)
                         {
                             // A NotFound decided after the lookup is remembered just like one the
-                            // source itself reported -- see RememberMissAsync.
-                            await RememberMissAsync(entry.Type, entry.Code, ct).ConfigureAwait(false);
+                            // source itself reported -- see RememberMissAsync. Under this fetch's own
+                            // resolved sources (#531), which is the key FetchAsync read.
+                            await RememberMissAsync(
+                                entry.Type, entry.Code, fetch.SourceNames!, ct).ConfigureAwait(false);
                             return ReferenceProvisionResult.NotFound(entry.Type, entry.Code);
                         }
 
@@ -249,7 +273,8 @@ namespace FlightAssistant.Application.ReferenceData
                             {
                                 await FlagIataConflictAsync(
                                     heldAirline, heldAirline.Iata, heldAirline.Icao, entry,
-                                    fetch.SourceName!, airlines.SaveChangesAsync, ct).ConfigureAwait(false);
+                                    fetch.SourceName!, fetch.SourceNames!,
+                                    airlines.SaveChangesAsync, ct).ConfigureAwait(false);
                                 return ReferenceProvisionResult.NotFound(entry.Type, entry.Code);
                             }
 
@@ -278,7 +303,8 @@ namespace FlightAssistant.Application.ReferenceData
                             // The billed lookup already happened, so this miss is remembered too --
                             // otherwise a carrier whose country name mledoze spells differently
                             // costs $0.015 on every attempt, forever. See RememberMissAsync.
-                            await RememberMissAsync(entry.Type, entry.Code, ct).ConfigureAwait(false);
+                            await RememberMissAsync(
+                                entry.Type, entry.Code, fetch.SourceNames!, ct).ConfigureAwait(false);
                             return ReferenceProvisionResult.NotFound(entry.Type, entry.Code);
                         }
 
@@ -511,12 +537,17 @@ namespace FlightAssistant.Application.ReferenceData
         /// the entry is never read.
         /// </para>
         /// </summary>
+        /// <param name="sourceName">The source that answered, named in the flag's own text.</param>
+        /// <param name="resolvedSources">Every source this fetch was resolved to ask — the negative
+        /// cache's key dimension (#531), passed down rather than re-resolved so the entry lands under
+        /// the key <see cref="FetchAsync"/> read.</param>
         private async Task FlagIataConflictAsync(
             SeedableEntity held,
             string? heldIata,
             string? heldIcao,
             MissingReference entry,
             string sourceName,
+            IReadOnlyList<string> resolvedSources,
             Func<CancellationToken, Task> saveAsync,
             CancellationToken ct)
         {
@@ -531,7 +562,7 @@ namespace FlightAssistant.Application.ReferenceData
                 entry.Type, entry.Code, heldIcao, heldIata);
 
             await saveAsync(ct).ConfigureAwait(false);
-            await RememberMissAsync(entry.Type, entry.Code, ct).ConfigureAwait(false);
+            await RememberMissAsync(entry.Type, entry.Code, resolvedSources, ct).ConfigureAwait(false);
         }
 
         /// <summary>The source's value only where the row has none. Blank counts as none: a row
@@ -629,12 +660,27 @@ namespace FlightAssistant.Application.ReferenceData
 
         private enum FetchStatus { Found, NotFound, Unavailable }
 
+        /// <param name="SourceName">The one source that answered, for the row's <c>VerificationSource</c>
+        /// stamp and the conflict message. Non-null on <see cref="FetchStatus.Found"/> only.</param>
+        /// <param name="SourceNames">Every source this fetch was resolved to ask, in ask order — the
+        /// negative cache's key dimension (#531). Carried on the fetch so the two <c>NotFound</c>
+        /// decisions made <em>after</em> a successful lookup, and the IATA-conflict flag, can remember
+        /// the miss under the very key <see cref="FetchAsync"/> read, without re-resolving the switch.
+        /// Non-null on <see cref="FetchStatus.Found"/> only: the other two statuses are never
+        /// remembered, so nothing needs it there.</param>
         private sealed record Fetch(
-            FetchStatus Status, string? SourceName, IReadOnlyDictionary<string, string?>? Values, string? Error)
+            FetchStatus Status,
+            string? SourceName,
+            IReadOnlyDictionary<string, string?>? Values,
+            string? Error,
+            IReadOnlyList<string>? SourceNames = null)
         {
             public static readonly Fetch NotFound = new(FetchStatus.NotFound, null, null, null);
-            public static Fetch Found(string sourceName, IReadOnlyDictionary<string, string?> values) =>
-                new(FetchStatus.Found, sourceName, values, null);
+            public static Fetch Found(
+                string sourceName,
+                IReadOnlyDictionary<string, string?> values,
+                IReadOnlyList<string> sourceNames) =>
+                new(FetchStatus.Found, sourceName, values, null, sourceNames);
             public static Fetch Unavailable(string? error) => new(FetchStatus.Unavailable, null, null, error);
 
             public ReferenceProvisionResult ToProvisionResult(VerificationEntityType type, string code) =>
@@ -654,8 +700,16 @@ namespace FlightAssistant.Application.ReferenceData
         /// </summary>
         private async Task<Fetch> FetchAsync(VerificationEntityType type, string code, CancellationToken ct)
         {
+            // #531: resolved here rather than inside FetchFromSourcesAsync, because the cache key
+            // below carries these names -- so the switch has to be read before the cache *read*, not
+            // merely before the lookup. Cheap: IVerificationSourceDefaults.ForAsync reads
+            // CachedProviderRouting's in-process 10-second entry and makes no provider call. Resolved
+            // exactly once per fetch and threaded onward, so the key read, the key written and the
+            // sources actually asked can never be three different lists.
+            var sourceNames = await _sourceDefaults.ForAsync(type, ct).ConfigureAwait(false);
+
             var ttl = _options.NegativeCacheTtl;
-            var cacheKey = NegativeCacheKeyFor(type, code);
+            var cacheKey = NegativeCacheKeyFor(type, code, sourceNames);
 
             if (ttl > TimeSpan.Zero)
             {
@@ -671,10 +725,10 @@ namespace FlightAssistant.Application.ReferenceData
                 }
             }
 
-            var fetch = await FetchFromSourcesAsync(type, code, ct).ConfigureAwait(false);
+            var fetch = await FetchFromSourcesAsync(type, code, sourceNames, ct).ConfigureAwait(false);
 
             if (fetch.Status == FetchStatus.NotFound)
-                await RememberMissAsync(type, code, ct).ConfigureAwait(false);
+                await RememberMissAsync(type, code, sourceNames, ct).ConfigureAwait(false);
 
             return fetch;
         }
@@ -700,13 +754,18 @@ namespace FlightAssistant.Application.ReferenceData
         /// hours of 404s. A cache outage fails open, exactly as the read side does.
         /// </para>
         /// </summary>
-        private async Task RememberMissAsync(VerificationEntityType type, string code, CancellationToken ct)
+        /// <param name="sourceNames">The sources this entry's miss is attributable to — the same list
+        /// <see cref="FetchAsync"/> resolved and read the cache under, passed in rather than
+        /// re-resolved so a switch flipping between the read and the write cannot write a key nothing
+        /// will read back.</param>
+        private async Task RememberMissAsync(
+            VerificationEntityType type, string code, IReadOnlyList<string> sourceNames, CancellationToken ct)
         {
             var ttl = _options.NegativeCacheTtl;
             if (ttl <= TimeSpan.Zero)
                 return;
 
-            var cacheKey = NegativeCacheKeyFor(type, code);
+            var cacheKey = NegativeCacheKeyFor(type, code, sourceNames);
             try
             {
                 await _cache.SetAsync(cacheKey, "1", ttl, ct).ConfigureAwait(false);
@@ -726,9 +785,16 @@ namespace FlightAssistant.Application.ReferenceData
         /// naming a country-only source -- that is <c>Unavailable</c>, not <c>NotFound</c>: nothing
         /// ever actually answered, so there is no basis to tell a traveler the airport doesn't exist.
         /// </summary>
-        private async Task<Fetch> FetchFromSourcesAsync(VerificationEntityType type, string code, CancellationToken ct)
+        /// <param name="sourceNames">Already resolved by <see cref="FetchAsync"/> from the runtime
+        /// switch (#531), falling back to <c>Verification:DefaultSources:*</c>. Passed in rather than
+        /// resolved here because the negative cache key in front of this call is built from the same
+        /// list — see <see cref="NegativeCacheKeyFor"/>.</param>
+        private async Task<Fetch> FetchFromSourcesAsync(
+            VerificationEntityType type,
+            string code,
+            IReadOnlyList<string> sourceNames,
+            CancellationToken ct)
         {
-            var sourceNames = _verificationOptions.DefaultSourcesFor(type);
             if (sourceNames.Count == 0)
                 return Fetch.Unavailable($"No source is configured for {type}.");
 
@@ -781,7 +847,7 @@ namespace FlightAssistant.Application.ReferenceData
                 }
 
                 if (result.Lookup!.IsFound)
-                    return Fetch.Found(sourceName, result.Lookup.Values!);
+                    return Fetch.Found(sourceName, result.Lookup.Values!, sourceNames);
             }
 
             return anySourceSupportedType

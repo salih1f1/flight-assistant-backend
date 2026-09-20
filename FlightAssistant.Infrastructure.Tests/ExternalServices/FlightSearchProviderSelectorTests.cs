@@ -1,4 +1,6 @@
 using FlightAssistant.Application.Interfaces.ExternalServices;
+using FlightAssistant.Application.Interfaces.Providers;
+using FlightAssistant.Application.Providers;
 using FlightAssistant.Infrastructure.ExternalServices;
 using FlightAssistant.Infrastructure.ExternalServices.AeroDataBox;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -8,15 +10,18 @@ using NSubstitute;
 namespace FlightAssistant.Infrastructure.Tests.ExternalServices;
 
 /// <summary>
-/// Proves <see cref="FlightSearchProviderSelector"/> routes a search by criteria shape AND by
-/// whether AeroDataBox is configured (#422 final review, finding 4 — not "by criteria shape alone":
-/// <see cref="SearchAsync_FullRouteNoFlightNumber_AeroDataBoxUnconfigured_FallsBackToAeroApi"/>
-/// below is exactly the configuration dimension, in this same file): a full route with no usable
-/// flight number goes to AeroDataBox only when it is configured; everything else — including every
-/// shape <c>AeroApiFlightSearchProvider</c>'s own guard rejects — goes to AeroAPI, so that guard
-/// keeps producing the same error for the same input. Both targets are NSubstitute fakes; every
-/// test asserts which one received the call AND that the other received none, since a selector that
-/// calls both (or neither) would still let the "answer" assertion alone pass.
+/// Proves <see cref="FlightSearchProviderSelector"/> dispatches to whichever provider
+/// <see cref="IFlightSearchRouter"/> names, forwarding the same criteria and cancellation token, and
+/// leaves the other provider untouched. Before #531 the selector decided criteria shape AND
+/// AeroDataBox configuration itself; that decision now lives in <see cref="IFlightSearchRouter"/>
+/// (proven separately by <see cref="FlightSearchRouterTests"/> below), so every test here drives a
+/// substitute router rather than real configuration. Each test keeps its original per-shape name and
+/// criteria so the scenario it documents — including
+/// <see cref="SearchAsync_FullRouteNoFlightNumber_AeroDataBoxUnconfigured_FallsBackToAeroApi"/>'s
+/// configuration-ceiling case — is still legible, even though the router substitute, not the
+/// criteria, is what actually supplies the selector's answer now. Both targets are NSubstitute
+/// fakes; every test asserts which one received the call AND that the other received none, since a
+/// selector that calls both (or neither) would still let the "answer" assertion alone pass.
 /// </summary>
 public class FlightSearchProviderSelectorTests
 {
@@ -34,16 +39,23 @@ public class FlightSearchProviderSelectorTests
 
     private readonly IFlightSearchProvider _aeroDataBox = Substitute.For<IFlightSearchProvider>();
     private readonly IFlightSearchProvider _aeroApi = Substitute.For<IFlightSearchProvider>();
+    private readonly IFlightSearchRouter _router = Substitute.For<IFlightSearchRouter>();
 
-    private FlightSearchProviderSelector Selector(bool aeroDataBoxConfigured = true) =>
+    // #531: the selector no longer decides configuration or criteria shape itself — it only
+    // dispatches to whatever IFlightSearchRouter resolves. That decision now lives in
+    // FlightSearchRouter (covered separately by FlightSearchRouterTests below), so this helper no
+    // longer needs an AeroDataBoxOptions of its own.
+    private FlightSearchProviderSelector Selector() =>
         new(
             _aeroDataBox,
             _aeroApi,
-            Options.Create(new AeroDataBoxOptions { ApiKey = aeroDataBoxConfigured ? "dummy-test-key" : null }),
+            _router,
             NullLogger<FlightSearchProviderSelector>.Instance);
 
     private async Task AssertRoutesToAeroDataBoxAsync(FlightSearchCriteria criteria)
     {
+        _router.ResolveAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>())
+            .Returns(ProviderJobs.AeroDataBox);
         _aeroDataBox.SearchAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>())
             .Returns(new List<FlightSearchResult> { AeroDataBoxRow });
 
@@ -54,12 +66,20 @@ public class FlightSearchProviderSelectorTests
         await _aeroApi.DidNotReceive().SearchAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>());
     }
 
+    // aeroDataBoxConfigured no longer changes the selector's own behaviour: #531 moved the
+    // configuration ceiling into IFlightSearchRouter (ResolveAsync_ConfigCeiling_OverridesTheSwitch
+    // in FlightSearchRouterTests below covers it directly now). Kept as a parameter purely so
+    // SearchAsync_FullRouteNoFlightNumber_AeroDataBoxUnconfigured_FallsBackToAeroApi's call site
+    // below still documents that scenario by name; the router substitute is what actually decides
+    // the selector's outcome here.
     private async Task AssertRoutesToAeroApiAsync(FlightSearchCriteria criteria, bool aeroDataBoxConfigured = true)
     {
+        _router.ResolveAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>())
+            .Returns(ProviderJobs.AeroApi);
         _aeroApi.SearchAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>())
             .Returns(new List<FlightSearchResult> { AeroApiRow });
 
-        var result = await Selector(aeroDataBoxConfigured).SearchAsync(criteria);
+        var result = await Selector().SearchAsync(criteria);
 
         Assert.Equal(AeroApiRow, Assert.Single(result));
         await _aeroApi.Received(1).SearchAsync(criteria, Arg.Any<CancellationToken>());
@@ -92,8 +112,14 @@ public class FlightSearchProviderSelectorTests
 
     /// <summary>A 1-character flight number is not "usable" per
     /// <c>AeroApiFlightSearchProvider.HasUsableFlightNumber</c> (needs the 2-character airline
-    /// prefix), so the selector must mirror that guard exactly rather than restate its own
-    /// threshold.</summary>
+    /// prefix). Before #531 the selector decided this itself and had to mirror that guard exactly
+    /// rather than restate its own threshold; that rule now lives entirely in
+    /// <see cref="FlightSearchRouter"/> and is pinned there by
+    /// <c>FlightSearchRouterTests.ResolveAsync_FullRoutePlusOneCharacterFlightNumber_ReturnsAeroDataBox_MirroringTheGuardExactly</c>.
+    /// This test's own <c>FlightNumber</c> value is no longer load-bearing for that rule — the
+    /// stubbed router below answers AeroDataBox regardless of what criteria it's called with — so
+    /// what remains here is only proof that the selector dispatches to whichever provider the
+    /// router names.</summary>
     [Fact]
     public Task SearchAsync_FullRoutePlusOneCharacterFlightNumber_RoutesToAeroDataBox_MirroringTheGuardExactly() =>
         AssertRoutesToAeroDataBoxAsync(new FlightSearchCriteria("IST", "JFK", Date, "B", false));
@@ -113,6 +139,8 @@ public class FlightSearchProviderSelectorTests
     {
         using var cts = new CancellationTokenSource();
         var criteria = new FlightSearchCriteria("IST", "JFK", Date, null, false);
+        _router.ResolveAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>())
+            .Returns(ProviderJobs.AeroDataBox);
         _aeroDataBox.SearchAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>())
             .Returns(new List<FlightSearchResult> { AeroDataBoxRow });
 
@@ -126,11 +154,132 @@ public class FlightSearchProviderSelectorTests
     {
         using var cts = new CancellationTokenSource();
         var criteria = new FlightSearchCriteria(null, null, Date, "BA123", false);
+        _router.ResolveAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>())
+            .Returns(ProviderJobs.AeroApi);
         _aeroApi.SearchAsync(Arg.Any<FlightSearchCriteria>(), Arg.Any<CancellationToken>())
             .Returns(new List<FlightSearchResult> { AeroApiRow });
 
         await Selector().SearchAsync(criteria, cts.Token);
 
         await _aeroApi.Received(1).SearchAsync(criteria, cts.Token);
+    }
+}
+
+/// <summary>
+/// Proves <see cref="FlightSearchRouter"/> combines the three inputs correctly: the criteria-shape
+/// rule (#422, unchanged and not switchable), the AeroDataBox configuration ceiling, and the
+/// admin-controlled routing switch (#531) read through <see cref="IProviderRouting"/>.
+/// </summary>
+public class FlightSearchRouterTests
+{
+    private static FlightSearchRouter Build(string chosen, bool aeroDataBoxConfigured = true)
+    {
+        var routing = Substitute.For<IProviderRouting>();
+        routing.GetProvidersAsync(ProviderJobs.FlightSearchRoute, Arg.Any<CancellationToken>())
+               .Returns(new[] { chosen });
+
+        var options = Options.Create(new AeroDataBoxOptions
+        {
+            ApiKey = aeroDataBoxConfigured ? "key" : null,
+        });
+
+        return new FlightSearchRouter(routing, options, NullLogger<FlightSearchRouter>.Instance);
+    }
+
+    private static FlightSearchCriteria Route() => new("SOF", "IST", new DateOnly(2026, 9, 20), null);
+
+    [Fact]
+    public async Task ResolveAsync_RouteShapeAndSwitchSaysAeroDataBox_ReturnsAeroDataBox()
+    {
+        var router = Build(ProviderJobs.AeroDataBox);
+        Assert.Equal(ProviderJobs.AeroDataBox, await router.ResolveAsync(Route(), default));
+    }
+
+    [Fact]
+    public async Task ResolveAsync_RouteShapeAndSwitchSaysAeroApi_ReturnsAeroApi()
+    {
+        var router = Build(ProviderJobs.AeroApi);
+        Assert.Equal(ProviderJobs.AeroApi, await router.ResolveAsync(Route(), default));
+    }
+
+    [Fact]
+    public async Task ResolveAsync_ConfigCeiling_OverridesTheSwitch()
+    {
+        // AeroDataBox:ApiKey unset is a hard ceiling: a switch must never select a provider the
+        // deployment cannot authenticate to.
+        var router = Build(ProviderJobs.AeroDataBox, aeroDataBoxConfigured: false);
+        Assert.Equal(ProviderJobs.AeroApi, await router.ResolveAsync(Route(), default));
+    }
+
+    [Fact]
+    public async Task ResolveAsync_FlightNumberShape_StaysOnAeroApiWhateverTheSwitchSays()
+    {
+        // #422: AeroDataBox resolves a marketing number to its operator (6E4120 -> TK 1028), so
+        // this is a correctness rule, not a cost preference, and the switch cannot reach it.
+        var router = Build(ProviderJobs.AeroDataBox);
+        var criteria = new FlightSearchCriteria("SOF", "IST", new DateOnly(2026, 9, 20), "TK1028");
+
+        Assert.Equal(ProviderJobs.AeroApi, await router.ResolveAsync(criteria, default));
+    }
+
+    [Fact]
+    public async Task ResolveAsync_SingleAirport_StaysOnAeroApiSoItsOwnGuardStillRefuses()
+    {
+        var router = Build(ProviderJobs.AeroDataBox);
+        var criteria = new FlightSearchCriteria("SOF", null, new DateOnly(2026, 9, 20), null);
+
+        Assert.Equal(ProviderJobs.AeroApi, await router.ResolveAsync(criteria, default));
+    }
+
+    // ------------------------------------------------------------------
+    // The three tests below each pin one specific way IsRouteShaped could be broken while every
+    // other test in this file still passes (review round 1, Important finding): the selector-level
+    // tests that used to catch these moved their criteria to a stubbed router that answers the same
+    // way regardless of criteria shape, so this file is the only place left that can catch them.
+    // ------------------------------------------------------------------
+
+    /// <summary>A 1-character flight number is not "usable" per
+    /// <c>AeroApiFlightSearchProvider.HasUsableFlightNumber</c> (needs the 2-character airline
+    /// prefix), which <c>FlightSearchRouter.IsRouteShaped</c> must call directly rather than
+    /// restate — e.g. as a bare <c>IsNullOrWhiteSpace</c> check — since restating it would silently
+    /// lose the length-2 threshold and route a marketing number like "B1" (or worse, let a
+    /// genuinely short/invalid designator through) to AeroDataBox.</summary>
+    [Fact]
+    public async Task ResolveAsync_FullRoutePlusOneCharacterFlightNumber_ReturnsAeroDataBox_MirroringTheGuardExactly()
+    {
+        var router = Build(ProviderJobs.AeroDataBox);
+        var criteria = new FlightSearchCriteria("SOF", "IST", new DateOnly(2026, 9, 20), "B");
+
+        Assert.Equal(ProviderJobs.AeroDataBox, await router.ResolveAsync(criteria, default));
+    }
+
+    /// <summary>Both airports whitespace-only (not merely empty) must still fail the shape check —
+    /// <c>string.IsNullOrWhiteSpace</c>, not <c>string.IsNullOrEmpty</c>, is the correct guard on
+    /// <see cref="FlightSearchCriteria.DepartureIata"/>/<see cref="FlightSearchCriteria.ArrivalIata"/>,
+    /// since an <c>IsNullOrEmpty</c> swap would treat "   " as a real airport code and send a search
+    /// AeroAPI's own guard would otherwise refuse to AeroDataBox instead.</summary>
+    [Fact]
+    public async Task ResolveAsync_WhitespaceAirports_StaysOnAeroApi()
+    {
+        var router = Build(ProviderJobs.AeroDataBox);
+        var criteria = new FlightSearchCriteria("   ", "  ", new DateOnly(2026, 9, 20), null);
+
+        Assert.Equal(ProviderJobs.AeroApi, await router.ResolveAsync(criteria, default));
+    }
+
+    /// <summary>A non-blank <see cref="FlightSearchCriteria.ArrivalIata"/> alone is not a route:
+    /// <see cref="FlightSearchCriteria.DepartureIata"/> must independently be non-blank too, exactly
+    /// as <see cref="ResolveAsync_SingleAirport_StaysOnAeroApiSoItsOwnGuardStillRefuses"/> above
+    /// proves for the reverse (departure set, arrival blank). Every other test in this file uses
+    /// <see cref="Route"/>'s non-blank "SOF" departure, so this is the only case in the suite that
+    /// would catch the <c>DepartureIata</c> conjunct being dropped from
+    /// <c>FlightSearchRouter.IsRouteShaped</c> entirely.</summary>
+    [Fact]
+    public async Task ResolveAsync_ArrivalOnly_StaysOnAeroApi()
+    {
+        var router = Build(ProviderJobs.AeroDataBox);
+        var criteria = new FlightSearchCriteria(null, "JFK", new DateOnly(2026, 9, 20), null);
+
+        Assert.Equal(ProviderJobs.AeroApi, await router.ResolveAsync(criteria, default));
     }
 }

@@ -5,6 +5,7 @@ using FlightAssistant.Domain.Flights.Entities;
 using FlightAssistant.Domain.Jobs.Entities;
 using FlightAssistant.Domain.Lounges.Entities;
 using FlightAssistant.Domain.Loyalty.Entities;
+using FlightAssistant.Domain.Providers.Entities;
 using FlightAssistant.Domain.ReferenceData.Entities;
 using FlightAssistant.Domain.Travelers.Entities;
 using FlightAssistant.Domain.Verification.Entities;
@@ -378,6 +379,19 @@ namespace FlightAssistant.Application.Administration
                 nameof(JobSwitch.ChangedUtc),
                 nameof(JobSwitch.ChangedBy),
                 nameof(JobSwitch.Reason),
+            }),
+
+            // #531. Changed through the dedicated admin endpoint (audited explicitly there, see
+            // AdminAuditInterceptor's ProviderRoute exclusion) — browsable all the same, following
+            // this registry's "default to including things" rule. Nothing here is sensitive:
+            // ChangedBy is an admin id, and Providers is a source name.
+            new("provider-routes", typeof(ProviderRoute), "Provider Routes", new[]
+            {
+                nameof(ProviderRoute.Job),
+                nameof(ProviderRoute.Providers),
+                nameof(ProviderRoute.ChangedUtc),
+                nameof(ProviderRoute.ChangedBy),
+                nameof(ProviderRoute.Reason),
             }),
         };
 
