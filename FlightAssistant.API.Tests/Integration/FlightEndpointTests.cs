@@ -30,12 +30,7 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
         var userId = Guid.NewGuid().ToString();
         var client = factory.CreateUserClient(userId);
 
-        await client.PostAsJsonAsync("travelers", new
-        {
-            email = $"{userId}@example.com",
-            displayName = "Test",
-            countryCode = (string?)null
-        });
+        await client.PostAsync("travelers", null);
 
         var response = await client.GetAsync("flights?page=1&pageSize=10");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -181,7 +176,7 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
     {
         var userId = Guid.NewGuid();
         var client = factory.CreateUserClient(userId.ToString());
-        await client.PostAsJsonAsync("travelers", new { email = $"{userId}@example.com", displayName = "Test", countryCode = (string?)null });
+        await client.PostAsync("travelers", null);
 
         var departure = DateTime.UtcNow.Date.AddDays(30).AddHours(9);
         var flight = Flight.Create(1, $"TK{Random.Shared.Next(1000, 9999)}", 10, 20, DateOnly.FromDateTime(departure), departure, departure.AddHours(3));
@@ -267,7 +262,7 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
 
         var userId = Guid.NewGuid();
         var client = factory.CreateUserClient(userId.ToString());
-        await client.PostAsJsonAsync("travelers", new { email = $"{userId}@example.com", displayName = "Test", countryCode = (string?)null });
+        await client.PostAsync("travelers", null);
 
         var serviceDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30));
         var body = new TrackFlightRequest(
@@ -436,7 +431,7 @@ public class FlightEndpointTests(FlightAssistantWebApplicationFactory factory)
         var userId = Guid.NewGuid();
         var client = scopedFactory.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", $"test-{userId}");
-        await client.PostAsJsonAsync("travelers", new { email = $"{userId}@example.com", displayName = "Test", countryCode = (string?)null });
+        await client.PostAsync("travelers", null);
 
         var serviceDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30));
         var body = new TrackFlightRequest(
