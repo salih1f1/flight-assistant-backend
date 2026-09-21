@@ -325,6 +325,22 @@ public class ValidatorEdgeCaseTests
         AssertInvalid(v, cmd, "TierExpiryDate");
     }
 
+    [Fact]
+    public void UpdateMembership_NullAccountNumber_Passes()
+    {
+        var v = new UpdateLoyaltyMembershipCommandValidator();
+        AssertValid(v, new UpdateLoyaltyMembershipCommand(Guid.NewGuid(), Guid.NewGuid(), null, 5, null));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void UpdateMembership_BlankAccountNumber_Fails(string accountNumber)
+    {
+        var v = new UpdateLoyaltyMembershipCommandValidator();
+        AssertInvalid(v, new UpdateLoyaltyMembershipCommand(Guid.NewGuid(), Guid.NewGuid(), accountNumber, null, null), "AccountNumber");
+    }
+
     // ── AddDeviceToken platform whitelist ─────────────────────────────────────
 
     [Fact]

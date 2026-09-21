@@ -94,14 +94,19 @@ namespace FlightAssistant.API.Endpoints
             .WithName("UpdateMembership")
             .WithSummary("Update a loyalty membership")
             .WithDescription(
-                "Replaces the account number, tier, and tier expiry date for the specified membership. " +
+                "Replaces the tier and tier expiry date for the specified membership, and the account number when one is sent. " +
                 "Route parameter: id — the membership ID returned when it was added. " +
+                "Body fields: AccountNumber (optional — omit it or send null to keep the current one; a blank value is a 400), " +
+                "TierId (optional, from the membership's program's tier list; omitting it clears the tier), " +
+                "TierExpiryDate (optional, YYYY-MM-DD; omitting it clears the date). " +
                 "Only the authenticated traveler's own memberships can be updated. " +
-                "Returns 404 if no membership with that id exists, and 403 if it belongs to another traveler.")
+                "Returns 404 if no membership with that id exists, 403 if it belongs to another traveler, " +
+                "and 409 if TierId is not a tier of the membership's program (#548).")
             .Produces(204)
             .ProducesValidationProblem()
             .ProducesProblem(403)
-            .ProducesProblem(404);
+            .ProducesProblem(404)
+            .ProducesProblem(409);
 
             // DELETE /loyalty/memberships/{id}
             group.MapDelete("memberships/{id:guid}", async (HttpContext http, Guid id, IMediator mediator, CancellationToken ct) =>

@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using FlightAssistant.Domain.Loyalty.Entities;
 using FlightAssistant.Infrastructure.Persistance;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace FlightAssistant.API.Tests.Integration;
@@ -178,6 +179,57 @@ public class LoyaltyEndpointTests(FlightAssistantWebApplicationFactory factory)
         });
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateMembership_TierOnly_KeepsAccountNumber()
+    {
+        // #548: a tier change used to need the account number resent, since the body required it.
+        var client = factory.CreateUserClient();
+        var membershipId = await AddMembershipAsAsync(client);
+        var tierId = await SeedTierForMembershipProgramAsync(membershipId);
+
+        var response = await client.PutAsJsonAsync($"loyalty/memberships/{membershipId}", new { tierId });
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        var membership = await db.TravelerLoyaltyMemberships.AsNoTracking().SingleAsync(m => m.Id == membershipId);
+        Assert.Equal("ACC123", membership.AccountNumber);
+        Assert.Equal(tierId, membership.TierId);
+    }
+
+    [Fact]
+    public async Task UpdateMembership_TierOfAnotherProgram_Returns409()
+    {
+        // #548: the update path had no tier check at all, unlike Add (#475).
+        var client = factory.CreateUserClient();
+        var membershipId = await AddMembershipAsAsync(client);
+        var otherProgramId = await SeedLoyaltyProgramAsync();
+        var foreignTierId = await SeedTierAsync(otherProgramId);
+
+        var response = await client.PutAsJsonAsync($"loyalty/memberships/{membershipId}", new { tierId = foreignTierId });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    private async Task<int> SeedTierForMembershipProgramAsync(Guid membershipId)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        var programId = (await db.TravelerLoyaltyMemberships.AsNoTracking().SingleAsync(m => m.Id == membershipId)).ProgramId;
+        return await SeedTierAsync(programId);
+    }
+
+    private async Task<int> SeedTierAsync(int programId)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        var program = await db.LoyaltyPrograms.Include(p => p.Tiers).SingleAsync(p => p.Id == programId);
+        var tier = LoyaltyTier.Create(programId, $"T{Guid.NewGuid():N}"[..8], "Test tier", 1);
+        program.AddTier(tier);
+        await db.SaveChangesAsync();
+        return tier.Id;
     }
 
     [Fact]
