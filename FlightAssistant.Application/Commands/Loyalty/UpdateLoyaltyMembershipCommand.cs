@@ -21,11 +21,11 @@ namespace FlightAssistant.Application.Commands.Loyalty
 
         public async Task Handle(UpdateLoyaltyMembershipCommand cmd, CancellationToken ct)
         {
-            var membership = await _loyalty.GetMembershipByIdAsync(cmd.MembershipId, ct)
-                ?? throw new DomainException($"Membership {cmd.MembershipId} not found.", 404);
-
-            if (membership.TravelerId != cmd.TravelerId)
-                throw new DomainException("Cannot update another traveler's membership.", 403);
+            // Another traveler's membership gets the same 404 as a missing one, so the response
+            // never reveals that the id exists (#550).
+            var membership = await _loyalty.GetMembershipByIdAsync(cmd.MembershipId, ct);
+            if (membership is null || membership.TravelerId != cmd.TravelerId)
+                throw new DomainException($"Membership {cmd.MembershipId} not found.", 404);
 
             // Add has checked the tier against the program since #475; this path never did, so a
             // tier of another program was saved as-is (#548). The program is the membership's own —

@@ -36,7 +36,7 @@ public class UpdateLoyaltyMembershipCommandHandlerTests
     }
 
     [Fact]
-    public async Task WrongTraveler_Throws()
+    public async Task WrongTraveler_Throws404LikeAMissingMembership()
     {
         var membershipId = Guid.NewGuid();
         var membership = TravelerLoyaltyMembership.Create(Guid.NewGuid(), 1, "NUM");
@@ -46,7 +46,9 @@ public class UpdateLoyaltyMembershipCommandHandlerTests
 
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
             _handler.Handle(cmd, CancellationToken.None));
-        Assert.Equal(403, ex.StatusCode);
+        Assert.Equal(404, ex.StatusCode);
+        Assert.Equal($"Membership {membershipId} not found.", ex.Message);
+        await _loyalty.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 
     [Fact]

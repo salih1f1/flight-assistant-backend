@@ -162,23 +162,25 @@ public class LoyaltyEndpointTests(FlightAssistantWebApplicationFactory factory)
     }
 
     [Fact]
-    public async Task UpdateMembership_AnotherTravelersMembership_Returns403()
+    public async Task UpdateMembership_AnotherTravelersMembership_Returns404LikeAMissingOne()
     {
-        // Pins the 403 this branch declared (#407): without this test, a repository scoped by
-        // traveler — the obvious refactor of GetMembershipByIdAsync — would silently turn this
-        // into a 404 with the suite still green.
+        // #550: a 403 here told a caller the id was real. Another traveler's membership must be
+        // indistinguishable from one that does not exist — same status, same message — and untouched.
         var owner = factory.CreateUserClient();
         var membershipId = await AddMembershipAsAsync(owner);
 
         var other = factory.CreateUserClient();
-        var response = await other.PutAsJsonAsync($"loyalty/memberships/{membershipId}", new
-        {
-            accountNumber = "ACC999",
-            tierId = (int?)null,
-            tierExpiryDate = (string?)null
-        });
+        var body = new { accountNumber = "ACC999", tierId = (int?)null, tierExpiryDate = (string?)null };
+        var response = await other.PutAsJsonAsync($"loyalty/memberships/{membershipId}", body);
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal($"Membership {membershipId} not found.", problem.GetProperty("title").GetString());
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        var membership = await db.TravelerLoyaltyMemberships.AsNoTracking().SingleAsync(m => m.Id == membershipId);
+        Assert.Equal("ACC123", membership.AccountNumber);
     }
 
     [Fact]
@@ -233,17 +235,19 @@ public class LoyaltyEndpointTests(FlightAssistantWebApplicationFactory factory)
     }
 
     [Fact]
-    public async Task RemoveMembership_AnotherTravelersMembership_Returns403()
+    public async Task RemoveMembership_AnotherTravelersMembership_Returns204AndDeletesNothing()
     {
-        // Pins the 403 this branch declared (#407): without this test, a repository scoped by
-        // traveler — the obvious refactor of GetMembershipByIdAsync — would silently turn this
-        // into a 204 with the suite still green.
+        // #550: a 403 here told a caller the id was real. Another traveler's membership answers
+        // the same idempotent 204 as a missing one — and must still exist afterwards.
         var owner = factory.CreateUserClient();
         var membershipId = await AddMembershipAsAsync(owner);
 
         var other = factory.CreateUserClient();
         var response = await other.DeleteAsync($"loyalty/memberships/{membershipId}");
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FlightAssistantDbContext>();
+        Assert.True(await db.TravelerLoyaltyMemberships.AsNoTracking().AnyAsync(m => m.Id == membershipId));
     }
 }
