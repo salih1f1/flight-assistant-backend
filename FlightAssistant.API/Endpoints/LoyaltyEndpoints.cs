@@ -100,11 +100,11 @@ namespace FlightAssistant.API.Endpoints
                 "TierId (optional, from the membership's program's tier list; omitting it clears the tier), " +
                 "TierExpiryDate (optional, YYYY-MM-DD; omitting it clears the date). " +
                 "Only the authenticated traveler's own memberships can be updated. " +
-                "Returns 404 if no membership with that id exists, 403 if it belongs to another traveler, " +
+                "Returns 404 if the traveler has no membership with that id — including one that belongs to another traveler, " +
+                "so the response never reveals whether an id exists (#550) — " +
                 "and 409 if TierId is not a tier of the membership's program (#548).")
             .Produces(204)
             .ProducesValidationProblem()
-            .ProducesProblem(403)
             .ProducesProblem(404)
             .ProducesProblem(409);
 
@@ -121,10 +121,10 @@ namespace FlightAssistant.API.Endpoints
                 "Deletes a loyalty membership from the authenticated traveler's profile. " +
                 "Route parameter: id — the membership ID to remove. " +
                 "Idempotent: removing a membership that does not exist also returns 204, so there is no 404. " +
-                "Returns 403 if the membership belongs to another traveler.")
+                "Another traveler's membership is treated the same way — 204, nothing deleted — " +
+                "so the response never reveals whether an id exists (#550).")
             .Produces(204)
-            .ProducesValidationProblem()
-            .ProducesProblem(403);
+            .ProducesValidationProblem();
         }
 
     }

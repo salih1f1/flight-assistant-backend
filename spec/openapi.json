@@ -4891,7 +4891,7 @@
           "Loyalty"
         ],
         "summary": "Update a loyalty membership",
-        "description": "Replaces the tier and tier expiry date for the specified membership, and the account number when one is sent. Route parameter: id — the membership ID returned when it was added. Body fields: AccountNumber (optional — omit it or send null to keep the current one; a blank value is a 400), TierId (optional, from the membership's program's tier list; omitting it clears the tier), TierExpiryDate (optional, YYYY-MM-DD; omitting it clears the date). Only the authenticated traveler's own memberships can be updated. Returns 404 if no membership with that id exists, 403 if it belongs to another traveler, and 409 if TierId is not a tier of the membership's program (#548).",
+        "description": "Replaces the tier and tier expiry date for the specified membership, and the account number when one is sent. Route parameter: id — the membership ID returned when it was added. Body fields: AccountNumber (optional — omit it or send null to keep the current one; a blank value is a 400), TierId (optional, from the membership's program's tier list; omitting it clears the tier), TierExpiryDate (optional, YYYY-MM-DD; omitting it clears the date). Only the authenticated traveler's own memberships can be updated. Returns 404 if the traveler has no membership with that id — including one that belongs to another traveler, so the response never reveals whether an id exists (#550) — and 409 if TierId is not a tier of the membership's program (#548).",
         "operationId": "UpdateMembership",
         "parameters": [
           {
@@ -4928,16 +4928,6 @@
               }
             }
           },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            }
-          },
           "404": {
             "description": "Not Found",
             "content": {
@@ -4965,7 +4955,7 @@
           "Loyalty"
         ],
         "summary": "Remove a loyalty membership",
-        "description": "Deletes a loyalty membership from the authenticated traveler's profile. Route parameter: id — the membership ID to remove. Idempotent: removing a membership that does not exist also returns 204, so there is no 404. Returns 403 if the membership belongs to another traveler.",
+        "description": "Deletes a loyalty membership from the authenticated traveler's profile. Route parameter: id — the membership ID to remove. Idempotent: removing a membership that does not exist also returns 204, so there is no 404. Another traveler's membership is treated the same way — 204, nothing deleted — so the response never reveals whether an id exists (#550).",
         "operationId": "RemoveMembership",
         "parameters": [
           {
@@ -4988,16 +4978,6 @@
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/HttpValidationProblemDetails"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
                 }
               }
             }

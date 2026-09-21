@@ -1,5 +1,4 @@
 using FlightAssistant.Application.Interfaces.Repositories;
-using FlightAssistant.Domain.Common.Exceptions;
 using FluentValidation;
 using MediatR;
 
@@ -15,11 +14,11 @@ namespace FlightAssistant.Application.Commands.Loyalty
 
         public async Task Handle(RemoveLoyaltyMembershipCommand cmd, CancellationToken ct)
         {
+            // Another traveler's membership is treated as missing, so the response never reveals
+            // that the id exists (#550).
             var membership = await _loyalty.GetMembershipByIdAsync(cmd.MembershipId, ct);
-            if (membership is null) return; // already removed — idempotent
-
-            if (membership.TravelerId != cmd.TravelerId)
-                throw new DomainException("Cannot remove another traveler's membership.", 403);
+            if (membership is null || membership.TravelerId != cmd.TravelerId)
+                return; // already removed — idempotent
 
             await _loyalty.RemoveMembershipAsync(membership, ct);
             await _loyalty.SaveChangesAsync(ct);
