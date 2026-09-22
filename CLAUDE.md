@@ -57,6 +57,8 @@ ASP.NET Core Web API using **Clean Architecture + CQRS** (MediatR) with **Domain
 
 **Bounded contexts:** Travelers, Flights, Loyalty, Lounges, Configuration (reference data).
 
+**Design patterns:** the catalogue — pattern → representative class — lives in the README's "Design Patterns" section. Keep it in sync when adding a pattern (a new decorator, source, probe or registry); the reasoning for each stays here in Key Patterns.
+
 ## Domain Base Classes
 
 All live in `FlightAssistant.Domain/Common/`, **not** SharedKernel (which is empty):

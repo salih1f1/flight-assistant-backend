@@ -73,6 +73,73 @@ ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://localhost:5100 FlightS
 
 ---
 
+## 🧩 Design Patterns
+
+The patterns this codebase actually uses, with a representative class for each. [CLAUDE.md](CLAUDE.md) explains the reasoning behind most of them in detail.
+
+**Architecture**
+
+| Pattern | Where |
+|---|---|
+| Clean Architecture (Domain → Application → Infrastructure/API) | The four `FlightAssistant.*` projects; `Contracts` holds DTOs with no dependencies |
+| CQRS | Commands in `Application/Commands`, queries in `Application/Queries`, dispatched through MediatR |
+| Mediator | MediatR — endpoints send a request, never call a handler directly |
+| Pipeline / cross-cutting behaviour | `ValidationBehaviour<TRequest,TResponse>` runs every FluentValidation validator before the handler |
+| Dependency Inversion / Ports & Adapters | Application defines interfaces (`IFlightStatusProvider`, `ICacheService`, `IAdminContext`, …); Infrastructure implements them |
+| Anti-Corruption Layer | `AeroApiFlightStatusProvider`, `AeroDataBoxFlightSearchProvider` translate provider payloads into our own result types |
+
+**Domain-Driven Design**
+
+| Pattern | Where |
+|---|---|
+| Aggregate Root | `Traveler`, `Flight` (marked with `IAggregateRoot`) |
+| Entity / Value Object | `BaseEntity`, `AuditableEntity`, `ValueObject` in `Domain/Common` |
+| Factory Method | Private constructors everywhere; entities are created via static `Create(...)` methods |
+| Domain Events | Aggregates `Raise()` events; `DomainEventDispatchInterceptor` publishes them after commit |
+| Domain Service | `LoungeEligibilityService`, `FlightSyncPlanner`, `FlightStatusApplier` |
+| Guard clauses | `VerificationGuard`, `LoyaltyTierGuard` |
+
+**Persistence**
+
+| Pattern | Where |
+|---|---|
+| Repository | `FlightRepository`, `TravelerRepository`, generic `EfVerifiableRepository<TEntity>` |
+| Unit of Work | EF Core `DbContext`; handlers call `SaveChangesAsync()` explicitly |
+| Interceptor | `AdminAuditInterceptor` (audit in the same transaction), `DomainEventDispatchInterceptor` (post-commit) |
+| Optimistic concurrency | PostgreSQL `xmin` token on `verification_requests` |
+| Database-backed queue / Competing Consumers | `verification_requests` claimed with `FOR UPDATE SKIP LOCKED` |
+
+**Behavioural & structural (GoF)**
+
+| Pattern | Where |
+|---|---|
+| Strategy | `IFlightSearchProvider` and `IVerificationSource` implementations (`OurAirports…`, `Mledoze…`, `AeroApi…`) |
+| Decorator | `AeroApiFlightSearchCachingDecorator` → `FlightSearchProviderSelector` → `AeroApiFlightSearchBudgetDecorator` → provider |
+| Router / Selector | `FlightSearchRouter` decides the provider once; `FlightSearchProviderSelector` dispatches to it |
+| Chain of Responsibility | `DelegatingHandler`s on named `HttpClient`s: `AeroApiThrottlingHandler`, `AeroDataBoxQuotaHandler`, `DataSourceObservingHandler`; ASP.NET middleware (`CorrelationIdMiddleware`, `TravelerContextMiddleware`) |
+| Template Method | `HttpDataSourceProbe` base class for the health probes |
+| Registry | `VerificationSourceRegistry`, `BrowsableTables`, `SensitiveProperties`, `DataSourceCatalog` |
+| Builder | `AdminHealthReportBuilder`, `VerificationSummaryBuilder` |
+| Observer | Domain event handlers (`FlightStatusChangedNotificationHandler`, `FlightTrackedVerificationEventHandler`); `BufferedDataSourceObserver` |
+| Immutable Snapshot | `FlightSyncHeartbeat` publishes a `FlightSyncSnapshot` by atomic reference swap |
+
+**Infrastructure & resilience**
+
+| Pattern | Where |
+|---|---|
+| Options pattern | `AddOptions<T>().BindConfiguration(...).ValidateOnStart()` for every external service |
+| Cache-Aside (with fallback) | `ICacheService` → `RedisCacheService`, or `MemoryCacheService` when Redis isn't configured; `AeroApiUsageCache`, `VerificationDatasetCache` |
+| Negative caching | `ReferenceDataProvisioner` remembers "not found" answers (`refdata:missing:…`) |
+| Retry / Circuit Breaker / Timeout | Polly via `AddStandardResilienceHandler` on the AeroAPI client |
+| Throttling / Rate limiting | Outbound: `AeroApiThrottleGate`; inbound: ASP.NET rate-limiter policies |
+| Budget guard / Fail-open | `ProviderBudgetGuard` holds back metered calls as spend approaches the budget |
+| Background worker / Heartbeat | `FlightStatusSyncBackgroundService`, `ReferenceVerificationBackgroundService` + their heartbeats |
+| Feature switches | `job_switches` and `provider_routes` tables, capped by configuration |
+| Correlation ID | `CorrelationIdMiddleware` → logs, ProblemDetails `traceId`, audit rows |
+| Global exception handling / Problem Details | `GlobalExceptionHandler`, `DomainException` → RFC 9457 `application/problem+json` |
+
+---
+
 ## ✨ Features
 
 ### ✅ MVP
