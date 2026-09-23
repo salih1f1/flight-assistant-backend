@@ -45,15 +45,15 @@ namespace FlightAssistant.Infrastructure.ExternalServices
         {
             var provider = await _router.ResolveAsync(criteria, ct);
 
-            if (string.Equals(provider, ProviderJobs.AeroDataBox, StringComparison.Ordinal))
-            {
-                _logger.LogDebug(
-                    "Routing flight search {Departure}-{Arrival} on {Date} to AeroDataBox (#422)",
-                    criteria.DepartureIata, criteria.ArrivalIata, criteria.Date);
-                return await _aeroDataBox.SearchAsync(criteria, ct);
-            }
+            // Logged for both providers: since #531 a route search can land on AeroAPI through the
+            // admin switch or a missing key, and that is the case worth seeing.
+            _logger.LogDebug(
+                "Routing flight search {Departure}-{Arrival} {FlightNumber} on {Date} to {Provider}",
+                criteria.DepartureIata, criteria.ArrivalIata, criteria.FlightNumber, criteria.Date, provider);
 
-            return await _aeroApi.SearchAsync(criteria, ct);
+            return string.Equals(provider, ProviderJobs.AeroDataBox, StringComparison.Ordinal)
+                ? await _aeroDataBox.SearchAsync(criteria, ct)
+                : await _aeroApi.SearchAsync(criteria, ct);
         }
     }
 }
