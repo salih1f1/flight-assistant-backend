@@ -341,45 +341,42 @@ namespace FlightAssistant.Infrastructure
             services.AddScoped<IProviderRouteRepository, ProviderRouteRepository>();
             services.AddScoped<IFlightSearchRouter, FlightSearchRouter>();
 
-            // IFlightSearchProvider resolves to the caching decorator, which now fronts BOTH
-            // providers (issue #282, widened by #422) — GET /flights/search is anonymous and only
-            // rate-limited per IP, so without a cache in front of it, a scripted client could drain
-            // the $5/month metered AeroAPI tier long before the throttle (a latency control, not a
-            // spend cap) even slowed it down. AeroDataBox costs nothing, but a repeated identical
-            // search still shouldn't re-issue two upstream calls on every request.
+            // IFlightSearchProvider is a chain, outermost first:
             //
-            // FlightSearchProviderSelector sits INSIDE the cache and OUTSIDE the AeroAPI budget
-            // decorator: the budget decorator refuses on AeroAPI spend specifically, so wrapping the
-            // free AeroDataBox path in it would refuse free searches for no reason, and the cache
-            // must stay outermost so a cached result is still answered past the budget (#303). A
-            // consequence worth stating rather than discovering later: a route search is no longer
-            // refused once the AeroAPI budget leaves Normal (AeroApiFlightSearchBudgetDecorator
-            // refuses from SoftLimit onward, not only Exhausted), because it never touches AeroAPI
-            // once AeroDataBox is configured — an improvement, and a real behaviour change.
+            //   cache → selector → AeroDataBox (route search, free)
+            //                    → budget guard → AeroAPI (flight-number search, metered)
             //
-            // The cache key carries the resolved provider as of #531, so the two providers can no
-            // longer serve each other's cached rows and the prefix-flush-on-rollback step this
-            // comment used to require is gone. Routing is now a persisted admin decision
-            // (provider_routes) on top of the AeroDataBox:ApiKey ceiling, read through
-            // IFlightSearchRouter by both the selector and the cache.
+            // - Cache outermost (#282): GET /flights/search is anonymous, so a repeated search must
+            //   not reach a provider again, and a cached result is still answered past the budget (#303).
+            // - Budget guard wraps AeroAPI only: it refuses on AeroAPI spend, so it must not refuse
+            //   free AeroDataBox searches. A route search therefore keeps working past the budget.
+            // - The cache key includes the resolved provider (#531), so the two never serve each
+            //   other's cached rows. Both the cache and the selector ask IFlightSearchRouter.
             //
-            // AeroApiFlightSearchProvider itself stays registered and resolvable — the decorator
-            // wraps it, it does not replace it.
-            services.AddScoped<IFlightSearchProvider>(sp => new AeroApiFlightSearchCachingDecorator(
-                new FlightSearchProviderSelector(
+            // AeroApiFlightSearchProvider stays registered on its own; the chain wraps it.
+            services.AddScoped<IFlightSearchProvider>(sp =>
+            {
+                var router = sp.GetRequiredService<IFlightSearchRouter>();
+
+                var aeroApi = new AeroApiFlightSearchBudgetDecorator(
+                    sp.GetRequiredService<AeroApiFlightSearchProvider>(),
+                    sp.GetRequiredService<IProviderBudgetGuard>(),
+                    sp.GetRequiredService<ILogger<AeroApiFlightSearchBudgetDecorator>>());
+
+                var selector = new FlightSearchProviderSelector(
                     sp.GetRequiredService<AeroDataBoxFlightSearchProvider>(),
-                    // Inside the cache, so a cached search is answered past the budget (#303).
-                    new AeroApiFlightSearchBudgetDecorator(
-                        sp.GetRequiredService<AeroApiFlightSearchProvider>(),
-                        sp.GetRequiredService<IProviderBudgetGuard>(),
-                        sp.GetRequiredService<ILogger<AeroApiFlightSearchBudgetDecorator>>()),
-                    sp.GetRequiredService<IFlightSearchRouter>(),
-                    sp.GetRequiredService<ILogger<FlightSearchProviderSelector>>()),
-                sp.GetRequiredService<IFlightSearchRouter>(),
-                sp.GetRequiredService<ICacheService>(),
-                sp.GetRequiredService<IOptions<AeroApiOptions>>(),
-                sp.GetRequiredService<TimeProvider>(),
-                sp.GetRequiredService<ILogger<AeroApiFlightSearchCachingDecorator>>()));
+                    aeroApi,
+                    router,
+                    sp.GetRequiredService<ILogger<FlightSearchProviderSelector>>());
+
+                return new AeroApiFlightSearchCachingDecorator(
+                    selector,
+                    router,
+                    sp.GetRequiredService<ICacheService>(),
+                    sp.GetRequiredService<IOptions<AeroApiOptions>>(),
+                    sp.GetRequiredService<TimeProvider>(),
+                    sp.GetRequiredService<ILogger<AeroApiFlightSearchCachingDecorator>>());
+            });
 
             // Flight status (issue #280). ProviderName ("AeroAPI") feeds the stored
             // FlightStatusEvent dedup hash (see SyncFlightStatusCommand.cs) — the prior provider's
