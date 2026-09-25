@@ -62,7 +62,13 @@ Only one row in `travelers` (an admin email, no password). The rest of the DB is
 
 Both scripts default to `--dry-run` and refuse to touch anything without `--apply`.
 
-1. **Take the dump.** `scripts/pause-azure.sh --dump-only` runs `pg_dump` to `./flightassistant-YYYY-MM-DD.dump`. It also creates a temporary firewall rule for your public IP and removes it after. Store the file **outside this repo** (external drive, private storage, wherever). Verify with `pg_restore --list flightassistant-*.dump | head`.
+1. **Take the dump.** `scripts/pause-azure.sh --dump-only` runs `pg_dump` to `./flightassistant-YYYY-MM-DD.dump`. It also creates a temporary firewall rule for your public IP and removes it after. Move the file **out of this repo** — iCloud Drive is a good home given there's no PII:
+
+   ```bash
+   mv flightassistant-*.dump ~/Library/Mobile\ Documents/com~apple~CloudDocs/flight-assistant-backups/
+   ```
+
+   Verify the dump is readable with `pg_restore --list ~/Library/Mobile\ Documents/com~apple~CloudDocs/flight-assistant-backups/flightassistant-*.dump | head` before deleting anything in Azure.
 2. **Delete everything else.** `scripts/pause-azure.sh --apply` deletes both Web Apps, the App Service Plan, and the Postgres server. It leaves the Key Vault, App Insights, managed identity, and action groups intact — so config wiring and secret names survive.
 3. **Verify $0.** After the next Azure bill cycle, `/admin/health` shows the panel side, but the API itself is gone; use Azure Cost Management on the subscription to confirm daily spend is $0.
 
