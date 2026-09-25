@@ -35,6 +35,51 @@ Swagger: <http://localhost:5100/swagger>. To apply migrations locally EF reads `
 - **Do not hand-edit `spec/openapi.json`.** It's generated; regenerate with `scripts/generate-openapi.sh` from the repo root. CI fails the build on drift.
 - **Do not flip `FlightSync__Enabled` / `Verification__Enabled` to `true` in `launchSettings.json` and commit it.** See above.
 
+## Pausing Azure to $0/month
+
+The dev subscription costs ~$30/mo when idle. To pause to **$0** while keeping the ability to come back in an afternoon.
+
+### Inventory (resource group `flight-assistant-dev`, West Europe)
+
+| Resource | SKU | Idle cost | Action |
+|---|---|---|---|
+| App Service Plan `ASP-flightassistantdev-88a9` | B1 Basic | ~$13/mo | **Delete** (bills whether apps run or not) |
+| `flight-assistant-dev-api` (Web/sites) | on plan | — | Delete |
+| `flight-assistant-dev-panel` (Web/sites) | on plan | — | Delete |
+| Postgres Flexible `flightassistantdev-db` | Standard_B1ms, 32 GB, PG 17, admin `pgadmin` | ~$16/mo | **Dump then delete** — a `stop` still bills storage and auto-restarts after 7 days |
+| Key Vault `flightassistantdev-kv` | Standard | pennies | **Keep** — soft-delete on, secrets stay recoverable |
+| App Insights `flight-assistant-dev-api` | pay-per-GB | $0 when idle | Keep |
+| Managed identity `flight-assistant-id-9909` | — | free | Keep |
+| Action groups (2) | — | free | Keep |
+
+No Redis in dev, no storage account of ours — nothing else to delete.
+
+### PII note
+
+Only one row in `travelers` (an admin email, no password). The rest of the DB is public reference data — airports, airlines, countries, alliances, loyalty programs, lounges — plus verification history. Not sensitive, but expensive to rebuild: rerunning imports and the verification queue costs metered AeroAPI calls. **Take the dump.**
+
+### Pause procedure
+
+Both scripts default to `--dry-run` and refuse to touch anything without `--apply`.
+
+1. **Take the dump.** `scripts/pause-azure.sh --dump-only` runs `pg_dump` to `./flightassistant-YYYY-MM-DD.dump`. It also creates a temporary firewall rule for your public IP and removes it after. Store the file **outside this repo** (external drive, private storage, wherever). Verify with `pg_restore --list flightassistant-*.dump | head`.
+2. **Delete everything else.** `scripts/pause-azure.sh --apply` deletes both Web Apps, the App Service Plan, and the Postgres server. It leaves the Key Vault, App Insights, managed identity, and action groups intact — so config wiring and secret names survive.
+3. **Verify $0.** After the next Azure bill cycle, `/admin/health` shows the panel side, but the API itself is gone; use Azure Cost Management on the subscription to confirm daily spend is $0.
+
+### Resume procedure
+
+`scripts/resume-azure.sh --apply` (against the dump path you saved) does, in order:
+
+1. Recreate the Postgres server with the same name, region, SKU, storage. About 10 min.
+2. `pg_restore` your dump into it.
+3. Recreate the App Service Plan (B1) and both Web Apps under the same names.
+4. Reattach the surviving managed identity to each site and re-grant Key Vault access if RBAC needs it.
+5. Print the next-step reminder: push to `development` to trigger `.github/workflows/development_flight-assistant-dev-api.yml`, which redeploys the API. The panel's own workflow in the panel repo redeploys the panel.
+
+### Warned-subscription reminder
+
+The subscription is in ARM state `Warned` (see `project_dev_subscription_billing_state` in the Claude Code memory). Deleting resources does not clear that — check `az account show --query state` if resume fails with 403s.
+
 ## Deep context
 
 - Design decisions, invariants, cost/rate-limit rules: [CLAUDE.md](CLAUDE.md). It is the source of truth; this doc deliberately doesn't duplicate it.
