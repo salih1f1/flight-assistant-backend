@@ -6,9 +6,6 @@
 [![Redis](https://img.shields.io/badge/Redis-Cache-red?logo=redis)](https://redis.io/)  
 [![Azure](https://img.shields.io/badge/Azure-App%20Service-0089D6?logo=microsoft-azure)](https://azure.microsoft.com/)  
 
-📚 Full documentation → [See Notion Wiki](https://www.notion.so/24c209410885800f9a9cf4f0b1a83d35?v=24c20941088580c596e0000ca2b0fc14&source=copy_link)
-
-
 Flight Assistant is a **cross-platform travel companion app** that helps frequent flyers:  
 
 - Track flights with live status updates  
